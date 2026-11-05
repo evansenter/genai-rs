@@ -22,6 +22,12 @@ and the `run:` steps of the composite actions under `.github/actions/`
 (`runs.steps`), which run wherever a job uses them — including a
 schedule-only job (#457).
 
+A repo script a `run:` block runs directly (`.github/scripts/x.sh args`,
+not `bash .github/scripts/x.sh`) must be executable: committed without the
+bit, it fails with exit 126 only when the step runs, which for a
+schedule-only workflow is days later (the flake counter shipped that way,
+#492).
+
 Limits worth stating, so a green check is not read as broader coverage than
 it is:
 
@@ -46,18 +52,26 @@ it is:
   today — and the summary line counts them, so the assumption is stated
   rather than hidden.
 
-Exit status: 0 when every block parses, 1 otherwise.
+Exit status: 0 when every block parses and every script run directly is
+executable, 1 otherwise.
 """
 
 from __future__ import annotations
 
 import glob
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
 import yaml
+
+# A repo script path in a `run:` block, at a command position or anywhere a
+# word starts. Whether it is run directly is decided by the word before it.
+SCRIPT_PATH = re.compile(r"(?:^|(?<=[\s;&|(`]))((?:\./)?(?:\.github|scripts)/[\w./-]+\.(?:sh|py))")
+# Words that run a script themselves, so its own mode does not matter.
+INTERPRETERS = {"bash", "sh", "zsh", "python", "python3", "source", ".", "exec"}
 
 # `run:` defaults to bash on Linux; other explicit interpreters are skipped.
 # Matched on the leading word, so `bash -euo pipefail {0}` stays covered.
@@ -150,6 +164,39 @@ def iter_action_run_steps(path: str):
         yield "runs", index, step.get("name", "(unnamed)"), run, False
 
 
+def directly_run_scripts(run: str) -> list[str]:
+    """The repo scripts `run` executes as commands rather than through an
+    interpreter. Comment lines are skipped, and flags between an interpreter
+    and the path (`python3 -I x.py`) are passed over."""
+    found = []
+    for line in run.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for match in SCRIPT_PATH.finditer(line):
+            words = line[: match.start(1)].split()
+            while words and words[-1].startswith("-"):
+                words.pop()
+            if words and words[-1].lstrip("$(`") in INTERPRETERS:
+                continue
+            found.append(match.group(1))
+    return found
+
+
+def check_modes(path: str, job_name: str, step_name: str, run: str) -> int:
+    """Fails each existing repo script `run` executes directly without the
+    executable bit. Returns the failure count."""
+    failures = 0
+    for script in directly_run_scripts(run):
+        if os.path.isfile(script) and not os.access(script, os.X_OK):
+            failures += 1
+            print(
+                f"::error file={path}::{job_name} / {step_name}: {script} is run "
+                "directly but is not executable (git update-index --chmod=+x)"
+            )
+            print(f"FAIL {path} :: {job_name} :: {step_name}: {script} is not executable")
+    return failures
+
+
 def check(path: str, steps=iter_run_steps) -> tuple[int, int, int]:
     """Returns (blocks checked, blocks assumed bash, failures)."""
     checked = 0
@@ -159,6 +206,7 @@ def check(path: str, steps=iter_run_steps) -> tuple[int, int, int]:
         checked += 1
         if assumed_bash:
             assumed += 1
+        failures += check_modes(path, job_name, step_name, run)
         handle = tempfile.NamedTemporaryFile(
             "w", suffix=".sh", delete=False, encoding="utf-8"
         )
@@ -247,7 +295,7 @@ def main() -> int:
     total = checked + action_checked + script_checked
 
     if failures:
-        print(f"\n{failures} of {total} shell block(s) failed to parse.")
+        print(f"\n{failures} problem(s) in {total} shell block(s).")
         return 1
 
     # Fail on zero: an inert gate must not look like a pass.

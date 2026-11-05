@@ -154,6 +154,37 @@ expect_rc     "broken workflow step: fails" 1
 expect_output "broken workflow step: names the job and step" \
   "FAIL .github/workflows/ci.yml :: build :: steps[0] Broken"
 
+# --- A script run directly must be executable: without the bit it fails
+#     with exit 126, only once the step runs (#492's flake counter). Run
+#     through an interpreter, its mode does not matter.
+make_tree "$WORK/modes"
+cat > "$WORK/modes/.github/workflows/ci.yml" <<'YAML'
+name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Count
+        run: |
+          # .github/scripts/tool.sh in a comment is not a call
+          bash .github/scripts/tool.sh
+          out=$(.github/scripts/tool.sh --flag)
+YAML
+chmod -x "$WORK/modes/.github/scripts/tool.sh"
+run_checker "$WORK/modes"
+expect_rc     "non-executable script run directly: fails" 1
+expect_output "non-executable script run directly: names it" \
+  "FAIL .github/workflows/ci.yml :: build :: Count: .github/scripts/tool.sh is not executable"
+chmod +x "$WORK/modes/.github/scripts/tool.sh"
+run_checker "$WORK/modes"
+expect_rc "executable script run directly: passes" 0
+chmod -x "$WORK/modes/.github/scripts/tool.sh"
+sed -i.bak 's|out=$(.github/scripts/tool.sh --flag)|python3 -I .github/scripts/tool.sh|' \
+  "$WORK/modes/.github/workflows/ci.yml"
+run_checker "$WORK/modes"
+expect_rc "non-executable script run through an interpreter: passes" 0
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed."
