@@ -91,6 +91,18 @@ clock held until that data is in hand: auto-advance can otherwise fire the
 timeout while the bytes travel over localhost
 (`read_timeout_ends_a_stalled_stream`).
 
+The exception is the four stream-tail tests in `reliability_tests.rs`
+(#518; `stream_ends_once_the_tail_after_completed_has_arrived`,
+`bad_frame_after_completed_does_not_stop_the_tail_read`,
+`per_chunk_timeout_does_not_bound_the_tail_read` and
+`auto_function_stream_reads_each_round_to_its_end_before_the_next`). Each
+times a tail that the stub sends after `Completed`, once a delay of its own
+has passed, against the 5 s tail limit. A held clock would hold that
+delay too, and a released one can auto-advance to the limit while the
+tail's bytes are in flight, so they run on real time. Their bounds keep
+wide margins: a floor at the stub's delay, and ceilings 20 to 50 times the
+few milliseconds the step takes.
+
 ### Captured fixtures
 
 `tests/captured_fixtures.rs` replays real API responses through the client
@@ -291,21 +303,29 @@ Uploaded files expire 48 hours after upload, and a test deletes the
 stored interactions it creates itself (they cannot be listed). Nothing else
 a live test creates expires on its own: environments from 2026-07 were
 still there in November. `test-resource-janitor.yml` runs
-`.github/scripts/cleanup_test_resources.py` daily and deletes resources
-that carry a live test's marker and are more than six hours old:
-credentials and agents whose id starts with `genai-rs-test`, triggers, file
-search stores and prompted voices whose display name does, webhooks on the
-test endpoint, and environments with no sources or only fixture sources.
-Anything else on the key is left alone. To see what it would delete:
+`.github/scripts/cleanup_test_resources.py` daily over resources that
+carry a live test's marker and are more than six hours old: credentials
+and agents whose id starts with `genai-rs-test`, triggers, file search
+stores (with their documents) and prompted voices whose display name does,
+webhooks on the test endpoint, and environments with no sources or only
+fixture sources. Anything else on the key is left alone. To see what it
+would delete:
 
 ```bash
 python3 .github/scripts/cleanup_test_resources.py --dry-run
 ```
 
-A manual run of the workflow is a dry run unless `mode` is `delete`. Its
-harness, `.github/scripts/tests/test_cleanup_test_resources.sh`, replays
-recorded listings through a local fake API and asserts the exact set of
-deletes.
+Deleting is the key owner's opt-in. A scheduled run is a dry run that
+lists what it would delete in the job summary, unless the repository
+variable `JANITOR_DELETE` is `true` (Settings, Secrets and variables,
+Actions, Variables); the first deleting run on the shared key would remove
+about 112 environments and 3 credentials (2026-11-05). A manual run
+follows its `mode` input whatever the variable says, and is a dry run
+unless `mode` is `delete`. The harness,
+`.github/scripts/tests/test_cleanup_test_resources.sh`, replays recorded
+listings through a local fake API and asserts the exact set of deletes in
+each mode, including that a scheduled run deletes nothing without the
+opt-in.
 
 ## Assertions on model output
 

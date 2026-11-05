@@ -11,8 +11,13 @@ name: Test Resource Janitor
 # than six hours old, so a running test never loses its own. Its harness,
 # test_cleanup_test_resources.sh, replays recorded listings on every PR.
 #
-# Scheduled runs delete. A manual run is a dry run unless `mode` is
-# `delete`, so the first look at what it would take costs nothing.
+# Deleting is the key owner's opt-in. A scheduled run is a dry run, listing
+# what it would delete in the job summary, unless the repository variable
+# JANITOR_DELETE is `true` (Settings > Secrets and variables > Actions >
+# Variables): its first deleting run would remove about 112 environments
+# and 3 credentials from the shared key (2026-11-05). A manual run follows
+# its `mode` input whatever the variable says, and is a dry run unless
+# `mode` is `delete`.
 
 on:
   schedule:
@@ -55,29 +60,30 @@ jobs:
       - name: Delete test resources older than the floor
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
           # Through env, not inline: a dispatch input is free text.
-          MODE: ${{ github.event_name == 'schedule' && 'delete' || inputs.mode }}
+          INPUT_MODE: ${{ inputs.mode }}
           MIN_AGE_HOURS: ${{ inputs.min_age_hours || '6' }}
+          # Read by `--scheduled`: only `true` lets a scheduled run delete.
+          JANITOR_DELETE: ${{ vars.JANITOR_DELETE }}
         run: |
           set -euo pipefail
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset, so the janitor cannot list anything"
             exit 1
           fi
-          case "$MODE" in
-            dry-run|delete) ;;
-            *) echo "::error::mode must be dry-run or delete, got '$MODE'"; exit 1 ;;
-          esac
-          rc=0
-          python3 .github/scripts/cleanup_test_resources.py "--$MODE" \
-            --min-age-hours "$MIN_AGE_HOURS" | tee janitor.txt || rc=$?
-          {
-            echo "## Test resource janitor ($MODE)"
-            echo
-            # The per-kind table and the closing line.
-            sed -n '/^| Kind /,$p' janitor.txt
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+          if [ "$EVENT_NAME" = schedule ]; then
+            mode=scheduled
+          else
+            case "$INPUT_MODE" in
+              dry-run|delete) mode="$INPUT_MODE" ;;
+              *) echo "::error::mode must be dry-run or delete, got '$INPUT_MODE'"; exit 1 ;;
+            esac
+          fi
+          # The script writes the summary: what it deleted or would delete,
+          # and the per-kind table.
+          python3 .github/scripts/cleanup_test_resources.py "--$mode" \
+            --min-age-hours "$MIN_AGE_HOURS" --summary "$GITHUB_STEP_SUMMARY"
 
       # Scheduled failures otherwise only email the last committer (#431).
       - name: Escalate a failing scheduled run

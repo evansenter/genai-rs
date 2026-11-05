@@ -18,6 +18,7 @@ command -v python3 >/dev/null 2>&1 || {
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$(dirname "$HERE")/cleanup_test_resources.py"
+WORKFLOW="$(dirname "$(dirname "$HERE")")/workflows/test-resource-janitor.yml"
 SERVER="$HERE/fake_api_server.py"
 FIXTURES="$HERE/fixtures/janitor"
 WORK="$(mktemp -d)"
@@ -35,6 +36,8 @@ trap 'stop_server; rm -rf "$WORK"' EXIT
 # is 2026-11-05T06:00:00Z.
 NOW="2026-11-05T12:00:00Z"
 failures=0
+# The opt-in a scheduled run reads; a developer's own must not leak in.
+unset JANITOR_DELETE
 
 # Starts the fake API with `routes` (a file) and waits for its port.
 start_server() {
@@ -78,6 +81,17 @@ expect_output() {
   else
     echo "FAIL - $label: expected to find '$needle'"
     sed 's/^/         /' <<<"$out"
+    failures=$((failures + 1))
+  fi
+}
+
+expect_in_file() {
+  local label="$1" file="$2" needle="$3"
+  if grep -qF -- "$needle" "$file"; then
+    echo "ok   - $label"
+  else
+    echo "FAIL - $label: expected to find '$needle' in $(basename "$file")"
+    sed 's/^/         /' "$file" 2>/dev/null || true
     failures=$((failures + 1))
   fi
 }
@@ -151,6 +165,86 @@ for id in 0b1d0e5c0de0c0ffee0000000000user 0b1d0e5c0de0c0ffee000000000mixed \
   fi
 done
 [ "$touched" -eq 1 ] || echo "ok   - delete: no resource without a marker was touched"
+
+# --- A scheduled run is a dry run unless JANITOR_DELETE is true: deleting
+#     is the key owner's opt-in (its first run would take about 112
+#     environments and 3 credentials). The summary lists what it would take.
+for value in "" false 1 yes "true-ish"; do
+  start_server "$FIXTURES/routes.json"
+  rm -f "$WORK/summary.md"
+  if [ -z "$value" ]; then
+    run_janitor --scheduled --summary "$WORK/summary.md"
+    shown="unset"
+  else
+    JANITOR_DELETE="$value" run_janitor --scheduled --summary "$WORK/summary.md"
+    shown="'$value'"
+  fi
+  expect_rc      "scheduled, JANITOR_DELETE $shown: exits 0" 0
+  expect_deletes "scheduled, JANITOR_DELETE $shown: sends no DELETE" ""
+  expect_output  "scheduled, JANITOR_DELETE $shown: says why it is a dry run" \
+    "Scheduled run: JANITOR_DELETE is $shown, not true, so this is a dry run."
+done
+expect_output  "scheduled dry run: names the opt-in in a notice" \
+  "::notice::15 test resource(s) would be deleted. Set the repository variable JANITOR_DELETE to true"
+expect_in_file "scheduled dry run: the summary is headed as a dry run" "$WORK/summary.md" \
+  "## Test resource janitor (scheduled, dry run)"
+expect_in_file "scheduled dry run: the summary says how to opt in" "$WORK/summary.md" \
+  "Set the repository variable JANITOR_DELETE to true to let scheduled runs delete."
+expect_in_file "scheduled dry run: the summary counts what it would delete" "$WORK/summary.md" \
+  "### Would delete (15)"
+expect_in_file "scheduled dry run: the summary lists each resource" "$WORK/summary.md" \
+  '- `environments/52ab487220d5f6d72523f3c8f87a86e1`: no sources'
+expect_in_file "scheduled dry run: the summary lists a store" "$WORK/summary.md" \
+  '- `fileSearchStores/fileSearchStores/genairstestbasics-a1b2c3d4e5f6`: a genai-rs-test display name'
+expect_in_file "scheduled dry run: the summary names a marked resource of unknown age" "$WORK/summary.md" \
+  '- `agents/genai-rs-test-agent-287338089`: a genai-rs-test id'
+expect_in_file "scheduled dry run: the summary has the table" "$WORK/summary.md" \
+  "| environments | 10 | 7 | 5 | 2 | 0 |"
+expect_in_file "scheduled dry run: the summary says nothing was deleted" "$WORK/summary.md" \
+  "Dry run: nothing was deleted"
+
+for value in true TRUE " true "; do
+  start_server "$FIXTURES/routes.json"
+  rm -f "$WORK/summary.md"
+  JANITOR_DELETE="$value" run_janitor --scheduled --summary "$WORK/summary.md"
+  expect_rc      "scheduled, JANITOR_DELETE '$value': exits 0" 0
+  expect_deletes "scheduled, JANITOR_DELETE '$value': deletes exactly the old test resources" "$EXPECTED"
+done
+expect_output  "scheduled delete: says it deletes" "Scheduled run: JANITOR_DELETE is true, so it deletes."
+expect_in_file "scheduled delete: the summary is headed as a delete" "$WORK/summary.md" \
+  "## Test resource janitor (scheduled, delete)"
+expect_in_file "scheduled delete: the summary lists what it deleted" "$WORK/summary.md" \
+  "### Deleted (15)"
+if grep -q '::notice::' <<<"$out"; then
+  echo "FAIL - scheduled delete: printed the dry-run notice"
+  failures=$((failures + 1))
+else
+  echo "ok   - scheduled delete: no dry-run notice"
+fi
+
+# --- The explicit modes ignore the opt-in: --dry-run never deletes.
+start_server "$FIXTURES/routes.json"
+JANITOR_DELETE=true run_janitor --dry-run
+expect_rc      "dry run with JANITOR_DELETE=true: exits 0" 0
+expect_deletes "dry run with JANITOR_DELETE=true: sends no DELETE" ""
+
+# --- The workflow passes --scheduled on a schedule, never --delete, and
+#     hands it the repository variable; a manual run keeps its input.
+if grep -qE "event_name == 'schedule' && 'delete'" "$WORKFLOW"; then
+  echo "FAIL - workflow: a scheduled run is mapped straight to delete"
+  failures=$((failures + 1))
+else
+  echo "ok   - workflow: a scheduled run is not mapped straight to delete"
+fi
+expect_in_file "workflow: a scheduled run passes --scheduled" "$WORKFLOW" \
+  'if [ "$EVENT_NAME" = schedule ]; then'
+expect_in_file "workflow: --scheduled is the scheduled mode" "$WORKFLOW" "mode=scheduled"
+expect_in_file "workflow: the opt-in comes from the repository variable" "$WORKFLOW" \
+  'JANITOR_DELETE: ${{ vars.JANITOR_DELETE }}'
+expect_in_file "workflow: a manual run follows its mode input" "$WORKFLOW" \
+  'dry-run|delete) mode="$INPUT_MODE" ;;'
+expect_in_file "workflow: the summary goes to the job summary" "$WORKFLOW" \
+  '--summary "$GITHUB_STEP_SUMMARY"'
 
 # --- A raised floor keeps more: 100 hours before "now" is
 #     2026-11-01T08:00:00Z, so the credentials from 07:59:48 and the webhook
@@ -230,6 +324,8 @@ run_janitor
 expect_rc "no mode: usage error" 2
 run_janitor --dry-run --delete
 expect_rc "both modes: usage error" 2
+run_janitor --scheduled --delete
+expect_rc "scheduled and delete: usage error" 2
 run_janitor --dry-run --min-age-hours 0.5
 expect_rc "floor under an hour: usage error" 2
 run_janitor --dry-run --kinds environments,files

@@ -34,10 +34,18 @@ Not covered: Files expire 48 hours after upload (`expirationTime`,
 starts a background interaction cancels and deletes it itself.
 
 Usage:
-  cleanup_test_resources.py --dry-run | --delete
-                            [--min-age-hours N] [--kinds a,b] [--base-url URL]
+  cleanup_test_resources.py --dry-run | --delete | --scheduled
+                            [--min-age-hours N] [--kinds a,b] [--summary FILE]
 
-`--dry-run` lists what would be deleted and deletes nothing. A delete
+`--dry-run` lists what would be deleted and deletes nothing. `--scheduled`
+is what the daily workflow passes: a dry run unless the environment
+variable `JANITOR_DELETE` is `true` (any case), when it deletes. The
+workflow sets it from the repository variable of that name, so deleting on
+a schedule is the key owner's opt-in: the first run against the shared key
+would remove about 112 environments and 3 credentials (2026-11-05).
+`--summary` appends a Markdown report to FILE (the job summary): the
+mode, every resource deleted or that would be, the marked resources whose
+age is unknown, and the per-kind table. A delete
 that answers 404 counts as done: the resource is already gone (a test's own
 cleanup got there first, or a retried delete whose first try went through).
 Credentials and webhooks answer a delete of a missing id with 404;
@@ -83,6 +91,8 @@ EMBEDDED_TIME = re.compile(r"-(\d{10})-\d+$")
 # A prompted voice's expire_time is its creation plus a year (2026-11-05).
 VOICE_LIFETIME = dt.timedelta(days=365)
 MAX_ATTEMPTS = 4
+# The repository variable that lets a scheduled run delete.
+DELETE_OPT_IN = "JANITOR_DELETE"
 
 
 class ApiError(Exception):
@@ -312,6 +322,53 @@ def list_all(api: Api, kind: dict) -> list[dict]:
     return found
 
 
+def scheduled_mode() -> tuple[bool, str]:
+    """`(dry_run, why)` for a scheduled run: it deletes only when the owner
+    has set `JANITOR_DELETE` to `true`."""
+    value = os.environ.get(DELETE_OPT_IN, "")
+    if value.strip().lower() == "true":
+        return False, f"Scheduled run: {DELETE_OPT_IN} is true, so it deletes."
+    shown = f"'{value.strip()}'" if value.strip() else "unset"
+    return True, (
+        f"Scheduled run: {DELETE_OPT_IN} is {shown}, not true, so this is a dry run. "
+        f"Set the repository variable {DELETE_OPT_IN} to true to let scheduled runs delete."
+    )
+
+
+def md_code(text) -> str:
+    return "`" + str(text).replace("`", "'") + "`"
+
+
+def write_summary(path: str, title: str, notes: list[str], acted: list[tuple],
+                  unknown: list[tuple], verb: str, totals: list[tuple], closing: str) -> None:
+    out = [f"## Test resource janitor ({title})", ""]
+    for note in notes:
+        out += [note, ""]
+    out += [f"### {verb.capitalize()} ({len(acted)})", ""]
+    if acted:
+        out += [f"- {md_code(ref)}: {detail}" for ref, detail in acted]
+    else:
+        out.append("Nothing.")
+    out.append("")
+    if unknown:
+        out += [f"### Marked, age unknown: delete by hand ({len(unknown)})", ""]
+        out += [f"- {md_code(ref)}: {detail}" for ref, detail in unknown]
+        out.append("")
+    out += table(totals, verb)
+    out += ["", closing, ""]
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write("\n".join(out))
+
+
+def table(totals: list[tuple], verb: str) -> list[str]:
+    rows = [
+        f"| Kind | Listed | Test-created | {verb.capitalize()} | Too new | Age unknown |",
+        "|------|--------|--------------|--------------|---------|-------------|",
+    ]
+    rows += ["| " + " | ".join(str(c) for c in row) + " |" for row in totals]
+    return rows
+
+
 def run(args) -> int:
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
@@ -322,10 +379,18 @@ def run(args) -> int:
     if now is None:
         print(f"::error::--now is not a timestamp: {args.now}", file=sys.stderr)
         return 2
+    notes = []
+    if args.scheduled:
+        args.dry_run, why = scheduled_mode()
+        print(why)
+        print()
+        notes.append(why)
     cutoff = now - dt.timedelta(hours=args.min_age_hours)
     verb = "would delete" if args.dry_run else "deleted"
     failed = 0
     totals = []
+    acted = []    # (kind/id, detail): deleted, or would be
+    unknown = []  # (kind/id, detail): marked, but its age cannot be told
 
     for name in args.kinds:
         kind = KINDS[name]
@@ -348,6 +413,7 @@ def run(args) -> int:
             when = created.isoformat(timespec="seconds") if created else "unknown"
             if created is None:
                 unknown_age += 1
+                unknown.append((f"{name}/{ident}", reason))
                 print(f"kept     {name}/{ident}: {reason}, but its age is unknown; delete it by hand")
                 continue
             if created > cutoff:
@@ -366,20 +432,29 @@ def run(args) -> int:
                     # Gone already: a retry after a delete that went through
                     # but answered 5xx, or the test's own cleanup.
                     removed += 1
+                    acted.append((f"{name}/{ident}", f"{reason}, created {when}; already deleted (404)"))
                     print(f"{'gone':<8} {name}/{ident}: {reason}, created {when}; already deleted (404)")
                     continue
             removed += 1
+            acted.append((f"{name}/{ident}", f"{reason}, created {when}"))
             print(f"{verb:<8} {name}/{ident}: {reason}, created {when}")
         totals.append((name, len(resources), marked, removed, too_new, unknown_age))
 
     print()
-    print(f"| Kind | Listed | Test-created | {verb.capitalize()} | Too new | Age unknown |")
-    print("|------|--------|--------------|--------------|---------|-------------|")
-    for row in totals:
-        print("| " + " | ".join(str(c) for c in row) + " |")
+    for row in table(totals, verb):
+        print(row)
     print()
     mode = "Dry run: nothing was deleted" if args.dry_run else "Deleted"
-    print(f"{mode}. Kept anything without a test marker, and test resources under {args.min_age_hours:g}h old.")
+    closing = f"{mode}. Kept anything without a test marker, and test resources under {args.min_age_hours:g}h old."
+    print(closing)
+    if args.scheduled and args.dry_run and acted:
+        print(f"::notice::{len(acted)} test resource(s) would be deleted. "
+              f"Set the repository variable {DELETE_OPT_IN} to true to let scheduled runs delete them.")
+    if args.summary:
+        title = "dry run" if args.dry_run else "delete"
+        if args.scheduled:
+            title = f"scheduled, {title}"
+        write_summary(args.summary, title, notes, acted, unknown, verb, totals, closing)
     return 1 if failed else 0
 
 
@@ -388,10 +463,14 @@ def main(argv=None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true", help="list what would be deleted; delete nothing")
     mode.add_argument("--delete", action="store_true", help="delete the test-created resources")
+    mode.add_argument("--scheduled", action="store_true",
+                      help=f"a scheduled run: --delete when ${DELETE_OPT_IN} is true, else --dry-run")
     parser.add_argument("--min-age-hours", type=float, default=6.0,
                         help="only delete resources at least this old (default 6)")
     parser.add_argument("--kinds", default=",".join(KINDS),
                         help=f"comma-separated subset of {','.join(KINDS)}")
+    parser.add_argument("--summary", default=None, metavar="FILE",
+                        help="append a Markdown report to FILE (the job summary)")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help=argparse.SUPPRESS)
     # For the harness: a fixed "now", so ages in recorded responses hold.
     parser.add_argument("--now", default=None, help=argparse.SUPPRESS)

@@ -199,7 +199,9 @@ reaches the wire must use a real id.
   accepted (#492).
 - Timing tests against the HTTP stub run on a paused clock and assert
   virtual time, never `std::time::Instant` (#501; `docs/TESTING.md`). The
-  Antigravity suites drive real processes, so their bounds stay wall-clock.
+  Antigravity suites drive real processes, so their bounds stay wall-clock,
+  as do the four stream-tail tests in `reliability_tests.rs` (#518), whose
+  tail arrives after a stub delay that a held clock would hold too.
 - Don't assert `text.contains(..)` on non-deterministic model output; use
   `assert_response_semantic()` (see `docs/TESTING.md`). Exact computed values
   are fine.
@@ -285,9 +287,11 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   `SUPPORTED_HARNESS_VERSION`), `fuzz.yml` (the `fuzz/` cargo-fuzz targets,
   a minute each on nightly: weekly, and on PRs touching what the targets
   build, keeping the grown corpus between scheduled runs; `fuzz/README.md`),
-  and `test-resource-janitor.yml` (daily; deletes the marked resources live
-  tests leaked once they are six hours old, a dry run when dispatched by
-  hand; `docs/TESTING.md`).
+  and `test-resource-janitor.yml` (daily; the marked resources live tests
+  leaked, once six hours old. A scheduled run only lists them in the job
+  summary unless the repository variable `JANITOR_DELETE` is `true`, the
+  key owner's opt-in; a manual run deletes only with `mode: delete`;
+  `docs/TESTING.md`).
 - **Example size gate:** `build-metrics` fails when an example binary grows
   more than 15% against the last main build. For intended growth, add the
   `size-growth-ok` label **and push a commit** (a re-run replays the old event
