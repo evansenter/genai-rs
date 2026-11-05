@@ -248,13 +248,13 @@ impl<'a> FileSearchStores<'a> {
     /// Uploads a document into a file search store, from disk or from
     /// memory, and returns it.
     ///
-    /// Takes a [`FileUpload`], or a [`DocumentUpload`] wrapping one with the
+    /// Takes a [`FileUpload`](crate::FileUpload), or a [`DocumentUpload`] wrapping one with the
     /// [custom metadata](DocumentUpload::add_custom_metadata) to attach and
     /// the [chunking](DocumentUpload::with_chunking_config) to index it with.
-    /// The MIME type is the one set on the [`FileUpload`], or for a path, the
+    /// The MIME type is the one set on the [`FileUpload`](crate::FileUpload), or for a path, the
     /// one its extension maps to, as for [`Files::upload`](crate::Files::upload).
     /// The document's display name is the one set with
-    /// [`FileUpload::with_display_name`]; without one, a path upload is named
+    /// [`FileUpload::with_display_name`](crate::FileUpload::with_display_name); without one, a path upload is named
     /// after its file and an in-memory upload is unnamed (live 2026-11-05).
     ///
     /// The document is indexed asynchronously and starts in
@@ -274,7 +274,7 @@ impl<'a> FileSearchStores<'a> {
     /// Returns [`GenaiError::InvalidInput`], before any request, for a store
     /// name that is not `fileSearchStores/<id>`, a file that cannot be read,
     /// empty contents or contents over 2 GB, no MIME type (a path whose
-    /// extension doesn't map to one, without [`FileUpload::with_mime_type`]),
+    /// extension doesn't map to one, without [`FileUpload::with_mime_type`](crate::FileUpload::with_mime_type)),
     /// or a MIME type that cannot be sent as a header value. MIME *syntax* is
     /// not checked: `nonsense` or `text/` reach the API and come back as an
     /// API error. Returns an API or network error if the upload fails (a

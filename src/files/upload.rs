@@ -36,7 +36,7 @@ pub(crate) enum UploadSource {
     Bytes(Vec<u8>),
 }
 
-/// A file to upload with [`Files::upload`] or
+/// A file to upload with [`Files::upload`](crate::Files::upload) or
 /// [`FileSearchStores::upload`](crate::FileSearchStores::upload): a path or
 /// bytes in memory, with an optional MIME type and display name.
 ///
@@ -63,7 +63,7 @@ pub struct FileUpload {
 impl FileUpload {
     /// An upload of the file at `path`, read when it is sent.
     ///
-    /// Nothing is read until the upload: [`Files::upload`] streams the file
+    /// Nothing is read until the upload: [`Files::upload`](crate::Files::upload) streams the file
     /// from disk, and
     /// [`FileSearchStores::upload`](crate::FileSearchStores::upload) reads it
     /// into memory. A missing, unreadable or empty file, or one over 2 GB,
@@ -106,7 +106,7 @@ impl FileUpload {
     }
 
     /// Sets the display name the file is listed under
-    /// ([`FileMetadata::display_name`], or
+    /// ([`FileMetadata::display_name`](crate::FileMetadata::display_name), or
     /// [`FileSearchDocument::display_name`](crate::FileSearchDocument::display_name)
     /// in a store). A path upload defaults to the file name.
     #[must_use]
