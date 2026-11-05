@@ -115,8 +115,8 @@ impl std::fmt::Debug for SigningSecret {
 /// A Webhook resource.
 ///
 /// Create with [`Webhook::new()`] and register it via [`Webhooks::create`].
-/// Fields marked "output only" are populated by the API and ignored on
-/// create.
+/// Fields marked "output only" are populated by the API, and
+/// [`Webhooks::create`] does not send them.
 ///
 /// # Example
 ///
@@ -180,11 +180,12 @@ pub struct Webhook {
     /// point-in-time snapshot, not a guarantee the shape stays fixed.
     ///
     /// **Also read on serialize into a request body.** [`Webhooks::create`]
-    /// sends this whole struct, so `extra` is an *outbound* escape hatch too —
-    /// a way to send a field the crate has not modeled yet, exactly like
+    /// sends `uri`, `subscribed_events`, `name` and this map, so `extra` is
+    /// an *outbound* escape hatch too — a way to send a field the crate has
+    /// not modeled yet, exactly like
     /// [`CreateEnvironmentRequest::extra`](crate::CreateEnvironmentRequest::extra).
     /// It also means a get-modify-create cycle echoes unmodeled server
-    /// fields back.
+    /// fields back (the modeled output-only fields are not sent).
     ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value`, matching the request-side escape hatches.

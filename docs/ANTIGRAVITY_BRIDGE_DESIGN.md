@@ -116,6 +116,16 @@ releases. Mitigations:
    instead of breaking.
 3. **`ClientInfo{language: "rust", version: <crate version>}`** is sent
    honestly so the harness can version-gate if it grows that capability.
+4. **Check the version at spawn** and **watch for releases** (#499). The
+   binary has no version of its own, so `spawn()` reads the wheel's
+   dist-info beside it and warns on a mismatch (`harness_version()`
+   exposes it; init failures and turn timeouts name a known mismatch). It
+   warns rather than refuses: the failures a mismatch causes are already
+   loud, and a deliberate newer wheel is how a bump is tested. The
+   `antigravity-release-watch.yml` workflow diffs PyPI's latest wheel's
+   protobuf descriptors against the pin's daily and keeps an
+   `antigravity-release` issue open until the pin catches up, so a release
+   no longer waits for someone to notice it.
 
 ## Binary acquisition & discovery
 
@@ -191,7 +201,10 @@ src/antigravity/
   handshake.rs     Binary-proto InputConfig/OutputConfig encode/decode
                    (hand-rolled, ~100 LOC, exhaustively unit-tested)
   process.rs       Spawn, stdin-EOF shutdown ordering, SIGTERM/SIGKILL
-                   escalation, stderr drain task (pipe-deadlock avoidance)
+                   escalation, stderr drain task (pipe-deadlock avoidance),
+                   wheel-version detection
+  process_tree.rs  Signals the harness's process group and its children's
+                   (unix; run_command commands lead groups of their own)
   session.rs       WebSocket pump: reader task, step routing, idle tracking,
                    confirmation-request debouncing
   tools.rs         Custom tool dispatch — bridges harness ToolCall to the
@@ -284,10 +297,24 @@ transports feed one canonical debugging surface:
   spawn/handshake/init against the pinned wheel binary — **no API key
   needed** (verified: init succeeds with a placeholder key), so these run in
   CI wherever the wheel installs.
+- **Scripted harness** (`tests/antigravity_scripted.rs`, same ignore
+  reason): the real harness against a scripted local model reached through
+  `with_gemini_base_url`, so turns run end to end with no key and a
+  deterministic "model" — builtins through the pre-tool hook, custom tools
+  through policies, containment both ways, cancellation, a trigger turn,
+  backend and tool errors, the turn deadline over a hung async tool, a
+  blocking sync tool and a blocking hook, the key-free harness environment
+  under a custom host, and the process-tree kill. This replaced the planned
+  mockable transport trait: it tests the bridge *and* the harness behavior
+  it depends on, which a mock of the socket could not. CI runs it in the
+  required `Test Suite (antigravity)` job with the key blanked, forks
+  included.
 - **Full-integration** (`#[ignore = "Requires API key"]`): real chat, tool
-  round-trip, policy confirmation flow, structured output, resume.
-- CI: a new integration matrix group `antigravity`; a pipeline step
-  `pip install google-antigravity==<pinned>`.
+  round-trip, policy confirmation flow, structured output, resume — what a
+  real model's choices exercise.
+- CI: the `test-antigravity` job installs `google-antigravity==<pinned>`,
+  runs the scripted suite on every PR, and the live harness suite where the
+  key is available.
 
 ## Example projects
 
@@ -376,7 +403,116 @@ Lessons from 0.1.18, each now encoded somewhere:
 Probing technique worth reusing: point `GeminiApiEndpoint.base_url` at a
 local capture server and read the harness's model request. It gives the
 exact tool declarations (and parameter schemas) and system prompt a config
-produces, deterministically, with no API key.
+produces, deterministically, with no API key. The builder exposes it as
+`with_gemini_base_url`, and the scripted suite is built on it.
+
+Process lifecycle findings (0.1.23, 2026-11-04, same technique):
+
+- The harness gives every `run_command` command a process group of its
+  own (pgid == the command's pid). Killing the harness's pid, or its
+  group, orphans the command (reparented to init, still running). The
+  bridge now spawns the harness in its own group and, on the forced paths,
+  signals that group and each child's group (`process_tree.rs`).
+- Stdin EOF is the only graceful exit: the harness then stops its command
+  groups itself. SIGTERM takes the default action (the harness dies of
+  the signal, nothing cleaned up), so the shutdown escalation's SIGTERM is for the harness's
+  children, not the harness.
+- Stdio MCP servers inherit the harness's group and exit on their own
+  stdin EOF when it dies.
+- With a custom `baseUrl` and no `apiKey` (or `apiKey: ""`, which proto3
+  JSON treats as unset), the harness sends its own environment's
+  `GEMINI_API_KEY` to that host. So `with_gemini_base_url` requires a
+  non-blank `with_api_key`, and while a base URL is set the bridge starts
+  the harness without `GEMINI_API_KEY` and `GOOGLE_API_KEY` in its
+  environment. Commands the harness runs inherit its environment.
+
+## Interactions-mode transport (#494): decision
+
+**Stay on the bespoke `localharness` proto** (D-018). Do not build the
+Interactions-mode transport or a builder switch for it now.
+
+### Probe (google-antigravity 0.1.23, darwin arm64, 2026-11-04)
+
+The harness takes `InputConfig.use_interactions_api = true` (field 6) on the
+same stdio handshake and WebSocket, then rejects every `interaction.create`
+that carries an agent config, and closes the socket:
+
+```text
+Failed to parse initial message: failed to unmarshal ExternalClientEvent:
+genai json unmarshal error for genai.ExternalClientEvent: Field
+genai.AgentInteraction.dynamic_config has json_only_discriminator 'type'
+but 'type' is not a reserved field in message genai.DynamicAgentConfig.
+```
+
+| First message | Harness answer |
+|---------------|----------------|
+| The Python SDK's own event (`interactions_config_converter.build_create_interaction_event`), `agent_config: {"type": "antigravity", ...}` | the error above |
+| `agent_config: {"antigravity_config": {...}}` | the error above |
+| `antigravity_config` at the top level; `agentConfig` | `Unknown parameter` |
+| `interaction.create` with no agent config | `only antigravity_config is supported, got not set` |
+| `input` first | `expected create_interaction in initial payload` |
+
+The Python SDK fails the same way end to end: `Agent(InteractionsAgentConfig(...))`
+raises `RuntimeError: Failed to initialize interaction ...` with that
+message, while `Agent(LocalAgentConfig(...))` completes a turn against the
+same scripted model. `InteractionsAgentConfig` is not exported from
+`google.antigravity`; the default `LocalAgentConfig` uses the bespoke proto.
+
+No turn can run in this mode on 0.1.23, so the shapes below come from the
+SDK's client for it (`interactions_config_converter.py`,
+`interactions_event_processor.py`, `interactions_step_assembler.py`), not
+from the wire.
+
+### Shapes against genai-rs types
+
+| Event (direction) | Shape, per the SDK client | genai-rs type | Fit |
+|-------------------|---------------------------|---------------|-----|
+| `interaction.create` (out) | `agent`, typed `tools` (`function`, `bash`, `filesystem{supported_operations}`, `google_search`, `url_context`, `mcp_server`, `manage_task`, `schedule`), `developer_instructions` or `appended_developer_instructions`, `agent_config{type: "antigravity", models, workspaces, policy, policy_config, subagents_config, enabled_hooks, compaction_config, budget_config, retry_config, agent_behavior, ...}` | `InteractionRequest`, `AgentConfig` (hosted `{"type": "antigravity"}`), `Tool` | Envelope and `function`/`google_search`/`url_context`/`mcp_server` tools fit; `bash`, `filesystem`, `manage_task`, `schedule` and every local `agent_config` field do not exist |
+| `input` (out) | `{content: [Content]}`, or `input_content` with slash commands | `Content` | Content fits; the event is new |
+| `interaction.created` (in) | `{interaction_id}` | `StreamChunk::Created` wants an interaction object | No |
+| `step.start` / `step.delta` / `step.stop` (in) | `index`, `step` / `delta`, plus `sub_interaction_id`, `parent_interaction_id`, `depth` | `StreamChunk::StepStart` / `StepDelta` / `StepStop` | Envelope fits; subagent identity only in the raw event |
+| Steps `user_input`, `model_output`, `thought`, `function_call`/`_result`, `code_execution_*`, `google_search_*`, `url_context_*`, `mcp_server_tool_*` | | `Step` variants of those names | Fit |
+| Steps `view_file_*`, `list_directory_*`, `find_file_*`, `search_directory_*`, `edit_file_*`, `generate_image_*`, `skill_lookup_*`, `elicitation_call`/`_result`, `compaction` | | none | `Step::Unknown` (an error under `strict-unknown`) |
+| Deltas `text`, `thought_summary`; `raw_thought` | | `StepDelta::Text`, `ThoughtSummary`; none | Fit; `raw_thought` is `Unknown` |
+| `state_update` (in) | `state` (`running`, `waiting_for_tasks`, `fully_idle`, `cancelled`), `reason`, `error` | `StreamChunk::StatusUpdate` (`InteractionStatus`) | No: trajectory states, not interaction statuses |
+| `usage_update` (in) | usage payload | `UsageMetadata` | Payload likely; the event is new |
+| `interaction.completed` (in) | acknowledges `interaction.complete` (session end) | `StreamChunk::Completed` (the finished interaction) | No: different meaning |
+| `function_invocation` (in) / `function_result` (out) | `{call_id, name, arguments}` / `{call_id, name, is_error, result}` | `Step::FunctionCall`, `Content::FunctionResult` | Payloads close; the hosted API has no client-event channel |
+| `call_hook_request` (in) / `call_hook_response` (out) | `{request_id, type, <type>_args}` / `{request_id, pre_tool_result{decision, reason, modified_args}, ...}` | none | New |
+| `elicitation_result` (out) | `{elicitation_id, multiple_choice{selected_choice_labels, user_input}}` or `confirmation{is_confirmed}` | none | New |
+| `interaction.cancel`, `interaction.complete` (out) | | none | New |
+
+### Gaps
+
+- **Triggers:** none. The mode has no trigger event; the SDK's
+  `InteractionsAgentConfig` rejects triggers and its
+  `send_trigger_notification` raises `NotImplementedError`. This crate's
+  interval triggers would have nothing to send.
+- **Hooks:** the round trip exists and is richer than what this crate uses
+  today (session, turn, tool-error, compaction and stop hooks, and
+  `modified_args` letting a pre-tool hook rewrite arguments). Not a blocker;
+  it would be new code either way.
+- **Policy round trips:** `policy_config` is static rules only. The SDK
+  refuses `when` predicates, `ask_user` and `auto` policies in this mode
+  ("not yet supported by the GAOS Interactions API protocol in
+  localharness"), so there is no equivalent of the bespoke proto's
+  `policyDecisionRequest`.
+- **Questions:** elicitation steps keyed by `elicitation_id` and answered
+  by choice label, not index: a different mapping from `on_questions`.
+- **Step model:** about half the step types the harness would emit are not
+  in `Step`, so "one event model for hosted and local" needs new variants
+  first, and the lifecycle events do not line up with `StreamChunk`'s.
+
+### Why, and when to revisit
+
+It does not run on 0.1.23 (for the SDK either); Python does not default to
+it; it drops triggers and dynamic policies; and reusing `Step`/`StepDelta`
+covers the envelope and the hosted-API step types, not the local ones.
+Revisit when any of these happens: Python makes it the default (the
+release watch quotes where each new wheel sets `use_interactions_api`), a
+scripted probe completes a turn in this mode, or the bespoke proto shows
+signs of deprecation. A Rust re-probe needs only `handshake::InputConfig`
+to carry field 6 (`use_interactions_api`, bool) and the scripted model.
 
 ### Still open
 
@@ -390,5 +526,7 @@ produces, deterministically, with no API key.
   allow-lists, per-subagent models, the harness-side `PolicyConfig`
   evaluator, `ON_COMPACTION`/`STOP` hooks) — see the user guide's
   limitations list.
-- **Mockable transport trait** (unit-test protocol logic without the binary).
+- ~~**Mockable transport trait**~~ — replaced by the scripted harness suite
+  (see [Testing strategy](#testing-strategy)), which needs the binary but
+  no key.
 - **`harness fetch`** (download + extract the matching wheel binary).

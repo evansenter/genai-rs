@@ -17,8 +17,8 @@
 
 | Rank | Source | Why |
 |------|--------|-----|
-| 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py` | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs**: `https://ai.google.dev/static/api/interactions.openapi.json` (v1beta) and `interactions-v1.openapi.json` (v1) | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. |
+| 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404 since about 2026-11-03, and no new public URL was found (2026-11-04), so the 2026-11-01 copies are the latest. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
 
@@ -32,6 +32,60 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
   `filesystem`, `tool_search`, `manage_task`, `schedule`, `bash`; the
   annotation types `in_context_file_citation` and `reference_metadata`; and
   extra usage and environment fields.
+
+## Coverage oracle (2026-11-04)
+
+Completeness against ranks 1 and 1b is a CI check, not a sweep finding:
+`src/coverage_oracle/` and `tests/request_wire_oracle.rs` check every
+request key against the binding classes and every response field for an
+empty `extra`, offline, against the committed snapshot; every binding class
+must be reached by those checks or listed with a reason; and
+`tests/ci_coverage.rs` maps every endpoint to the handle verbs that call it
+and requires a live test per handle verb. How it works and how to refresh
+the snapshot is in `docs/TESTING.md` ("Coverage oracle"). Its exception
+lists are this file's working list: the `GAPS`, `NOT_SENT` and `UNMAPPED`
+entries are what is not modeled yet.
+
+What the first run found (google-genai 2.34.0, spec of 2026-11-01), live
+facts from 2026-11-04:
+
+- **No wrong request keys.** Every key the crate sends is on its binding
+  class, `response_format` included, except response data a caller sends
+  back in history: `signature` on `function_call` (required, the bindings
+  omit it) and on `function_result`; `Place` fields beyond `place_id`,
+  `name` and `url` (not served); `GoogleSearchResultItem.title`/`url`/
+  `rendered_content` (not served); and `file_search_result.result` (the
+  bindings dropped it, and it was never filled). The bindings mark a
+  credential's `id` required; the API assigns one when it is omitted.
+- **Served, landing in `extra`:** on a stored interaction read back,
+  `generation_config` (with `speech_config` in the `{"speakers": [...]}`
+  form, whichever form was sent), `response_format`, `response_modalities`
+  and `safety_settings`. With `include_input=true` every one of those lists
+  (`speakers`, `stop_sequences`, `response_modalities`, `safety_settings`)
+  comes back with each entry twice, which modeling them has to allow for.
+  `FileSearchStore.activeDocumentsCount` and `sizeBytes` (string int64s);
+  `File.updateTime` and `File.source` (`UPLOADED`).
+- **In the snapshot, not modeled, not seen live yet:** the `queued` status
+  (#501); `Interaction.agent_config`, `environment`, `continuation_ids`,
+  `output_audio`/`_image`/`_video`, and the spec's `max_total_tokens`;
+  `Agent.agent_config`; the inline environment's `environment_id`; the
+  CodeMender agent config (#501); `CreateFileSearchStoreConfig.embeddingModel`;
+  the document upload config's `customMetadata` and `chunkingConfig`, and
+  `import_file` (`UploadToFileSearchStoreConfig`, `ImportFileConfig`);
+  nine `VoiceInput` fields (accent, context, description, gender,
+  language_code, persona, pitch, region_code, sample_audio);
+  `FileSearchStore.pending`/`failedDocumentsCount`; `Document.customMetadata`;
+  `File.downloadUri`; `FileStatus.details` (dropped, no `extra`).
+- **Read but lost:** `StreamChunk::StepDelta` drops the event's
+  `metadata.total_usage`. The spec types `file_search_result` delta items
+  as opaque objects, and `FileSearchResultItem` keeps only `title`, `text`
+  and `file_search_store` (#429). `Tool::Function` requires `name`,
+  `description` and `parameters`, which the bindings and the spec make
+  optional, so a function tool served without one reads as `Unknown`; the
+  oracle's bodies set every field, so this one was found by reading.
+- **Live coverage:** `FileSearchDocuments::get` and
+  `Interactions::get_with_input` had no live test; both have one now.
+  `include_input=true` now echoes the input as a `user_input` step.
 
 ## Protocol facts (live, 2026-09-24)
 
@@ -185,7 +239,7 @@ and the bindings don't list. Deprecated upstream but still accepted:
   bindings omit, and replay requires it.
 - **Phase 2 (2026-07):** service tier; webhooks (CRUD, `:ping`,
   `:rotateSigningSecret`; `update_mask` is ignored); `include_input`
-  (a no-op); retrieval tool (Vertex-only); video config and `VideoTask`
+  (a no-op then; it echoes the input as of 2026-11-04); retrieval tool (Vertex-only); video config and `VideoTask`
   (with `extend`); typed `response_format` (image: `image/jpeg` inline only;
   audio: `sample_rate` only); environments and agents (agent create was gated
   on a standard key through 2026-10-08 and works since 2026-10-30; agent
@@ -217,6 +271,8 @@ and the bindings don't list. Deprecated upstream but still accepted:
 New surface lands with wire-fixture unit tests taken from the bindings,
 next to the type (`src/steps/`, `src/voices.rs`, ...). It also gets a
 strict live test that cleans up after itself and is registered in the
-`rust.yml` integration matrix (`tests/ci_coverage.rs` enforces this).
+`rust.yml` integration matrix (`tests/ci_coverage.rs` enforces this), and
+the coverage oracle passes with any exception listed with its reason
+(`docs/TESTING.md`, "Coverage oracle").
 Before a release, run the integration suite with `LOUD_WIRE=1` and update
 `docs/ENUM_WIRE_FORMATS.md`.

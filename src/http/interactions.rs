@@ -48,7 +48,7 @@ pub async fn create_interaction(
 ///
 /// Returns `Some(chunk)` for events that should be surfaced to the consumer;
 /// `None` for events that were dropped (with a warning).
-fn dispatch_stream_event(
+pub(crate) fn dispatch_stream_event(
     event: InteractionStreamEvent,
     accumulator: &mut StepAccumulator,
 ) -> Option<StreamChunk> {

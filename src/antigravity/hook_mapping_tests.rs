@@ -292,6 +292,99 @@ fn test_pre_tool_hook_leaves_unwrapped_mcp_arguments_alone() {
     );
 }
 
+#[test]
+fn test_pre_tool_gate_fails_closed_on_unparseable_arguments_when_a_hook_judges() {
+    // Regression (#499): unparseable arguments became `{}`, so a path
+    // gate looking for `AbsolutePath` saw nothing to refuse and allowed
+    // the call. With a hook set, the call is denied before the hook runs.
+    let args = pre_tool_args("view_file", "", r#"{"AbsolutePath": "/etc/pass"#);
+    let Err(PreToolDecision::Deny { reason }) = pre_tool_gate(&args, true) else {
+        panic!("unparseable arguments must be denied when a hook would judge them");
+    };
+    assert!(
+        reason.contains("view_file") && reason.contains("could not be parsed"),
+        "the reason must say why: {reason}"
+    );
+}
+
+#[test]
+fn test_pre_tool_gate_leaves_name_policies_alone_without_a_hook() {
+    // Policies match names only, so unparseable arguments change nothing
+    // for them: the gate hands over the invocation to be decided by name.
+    let args = pre_tool_args("view_file", "", "not json");
+    let invocation = pre_tool_gate(&args, false).expect("policies decide by name");
+    assert_eq!(invocation.name, "view_file");
+    let denied = hooks::decide(&engine(vec![policy::deny("view_file")]), None, &invocation);
+    assert!(matches!(denied, PreToolDecision::Deny { .. }));
+}
+
+#[test]
+fn test_pre_tool_gate_passes_parseable_and_absent_arguments() {
+    let parsed = pre_tool_gate(&pre_tool_args("view_file", "", r#"{"a": 1}"#), true).unwrap();
+    assert_eq!(parsed.args, serde_json::json!({"a": 1}));
+    // A call with no arguments is not a parse failure.
+    for blank in ["", "  "] {
+        let invocation = pre_tool_gate(&pre_tool_args("finish", "", blank), true).unwrap();
+        assert_eq!(invocation.args, serde_json::json!({}));
+    }
+    let absent = protocol::PreToolArgs {
+        tool_name: Some("finish".to_string()),
+        ..Default::default()
+    };
+    assert!(pre_tool_gate(&absent, true).is_ok());
+}
+
+fn tool_call(
+    arguments_json: Option<&str>,
+    arguments: Option<serde_json::Value>,
+) -> protocol::ToolCall {
+    protocol::ToolCall {
+        id: Some("call_1".to_string()),
+        name: Some("antigravity_test_weather".to_string()),
+        arguments_json: arguments_json.map(str::to_string),
+        arguments,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_tool_call_arguments_prefers_json_then_the_struct_encoding() {
+    let json = tool_call(Some(r#"{"city": "Oslo"}"#), None);
+    assert_eq!(
+        tool_call_arguments(&json).unwrap(),
+        serde_json::json!({"city": "Oslo"})
+    );
+    // Unparseable JSON with a decodable struct beside it: same arguments,
+    // other encoding.
+    let structured = serde_json::json!({
+        "fields": [{"name": "city", "value": {"stringValue": "Oslo"}}]
+    });
+    let fallback = tool_call(Some("{broken"), Some(structured.clone()));
+    assert_eq!(
+        tool_call_arguments(&fallback).unwrap(),
+        serde_json::json!({"city": "Oslo"})
+    );
+    let struct_only = tool_call(None, Some(structured));
+    assert_eq!(
+        tool_call_arguments(&struct_only).unwrap(),
+        serde_json::json!({"city": "Oslo"})
+    );
+    // No arguments at all: an empty object, not an error.
+    assert_eq!(
+        tool_call_arguments(&tool_call(None, None)).unwrap(),
+        serde_json::json!({})
+    );
+}
+
+#[test]
+fn test_tool_call_arguments_fails_closed_when_nothing_decodes() {
+    // Regression (#499): this used to run the tool with `Null` arguments.
+    let err = tool_call_arguments(&tool_call(Some("{broken"), None)).unwrap_err();
+    assert!(err.contains("not JSON"), "got: {err}");
+    let err = tool_call_arguments(&tool_call(None, Some(serde_json::json!("opaque")))).unwrap_err();
+    assert!(err.contains("encoding"), "got: {err}");
+}
+
 // -------------------------------------------------------------------
 // Tool-confirmation decisions (see `confirmation_decision`)
 // -------------------------------------------------------------------

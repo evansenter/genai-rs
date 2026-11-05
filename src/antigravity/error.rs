@@ -86,3 +86,19 @@ pub enum AntigravityError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 }
+
+impl AntigravityError {
+    /// Appends a known harness version mismatch to an init failure's
+    /// message: a harness that rejects this build's config at init (0.1.18
+    /// refusing 0.1.23's `runWorkflow`) says so only on stderr, and the
+    /// version is the likeliest explanation.
+    pub(crate) fn with_version_note(self, harness_version: Option<&str>) -> Self {
+        match (self, process::version_mismatch(harness_version)) {
+            (Self::InitFailed { message, stderr }, Some(note)) => Self::InitFailed {
+                message: format!("{message} ({note})"),
+                stderr,
+            },
+            (error, _) => error,
+        }
+    }
+}

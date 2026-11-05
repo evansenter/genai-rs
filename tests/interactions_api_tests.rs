@@ -125,6 +125,26 @@ mod basic {
         assert_eq!(retrieved.id, response.id);
         assert_eq!(retrieved.status, InteractionStatus::Completed);
         assert!(!retrieved.steps.is_empty(), "Steps are empty");
+        assert!(
+            retrieved.input.is_none(),
+            "a plain get leaves the input out: {:?}",
+            retrieved.input
+        );
+
+        // `include_input=true` echoes the input as a `user_input` step (live
+        // 2026-11-04).
+        let with_input = client
+            .interactions()
+            .get_with_input(response.id.as_ref().expect("id should exist"))
+            .await
+            .expect("Get interaction with input failed");
+        match &with_input.input {
+            Some(InteractionInput::Steps(steps)) => assert!(
+                matches!(steps.first(), Some(Step::UserInput { .. })),
+                "expected the input as a user_input step, got {steps:?}"
+            ),
+            other => panic!("expected the input echoed as steps, got {other:?}"),
+        }
     }
 
     #[tokio::test]

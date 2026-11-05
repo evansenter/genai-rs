@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `AgentBuilder::with_gemini_base_url(url)` points the Antigravity harness's
+  model calls at another Gemini API host: a gateway, a recording proxy, or a
+  scripted local server in tests. It needs a non-empty `with_api_key`.
+  Without a configured key, or with an empty one, the harness sends its own
+  environment's `GEMINI_API_KEY` to the custom host (verified on harness
+  0.1.23, 2026-11-04), so `spawn()` fails with `AntigravityError::Config`
+  instead. While a base URL is set, the harness also starts without
+  `GEMINI_API_KEY` and `GOOGLE_API_KEY` in its environment, so it has no key
+  to fall back on; commands the agent runs (`run_command`) don't see them
+  either.
+- `AntigravityAgent::harness_version()` returns the `google-antigravity`
+  version of the running harness, read from the wheel install the binary
+  sits in (`None` outside one). `spawn()` logs a `warn!` when it differs
+  from `SUPPORTED_HARNESS_VERSION`. It warns rather than fails (D-019),
+  because a mismatch's failures are already loud and running a newer wheel
+  on purpose is how a bump is tested. An `InitFailed` message and a turn's
+  `Timeout` diagnosis name a known mismatch.
 - `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
   send a request field the crate doesn't model yet, flat beside the modeled
   ones, as `TriggerCreateParams::extra` already allowed. A repeated key
@@ -26,6 +43,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: Antigravity hooks run on a dedicated thread, not on the
+  thread driving the turn.** A hook that blocks (`on_pre_tool`,
+  `on_post_tool`, `on_questions`) therefore no longer stalls the runtime,
+  and the turn deadline still fires. A hook abandoned at the deadline runs
+  on until it returns, but holds up neither runtime shutdown nor process
+  exit. A hook no longer sees the turn's thread-local state, a tokio
+  `task_local!` scoped around the turn, or the turn's current tracing span;
+  take such state in through the hook's captures, and enter a span inside
+  the hook if its events should nest under one.
+  `tokio::runtime::Handle::current()` still works inside one. A panicking
+  hook still panics the turn.
+- **Breaking: the Antigravity turn deadline covers this crate's own work in
+  the turn.** A custom tool or hook still running when `with_turn_timeout`'s
+  budget runs out now ends the turn with `AntigravityError::Timeout`, whose
+  `operation` names it (`agent turn (custom tool 'x' was still running at
+  the deadline)`). Before, only waiting for harness events was bounded. Each
+  custom tool call runs on a tokio task of its own that the deadline aborts,
+  so an async tool stops at its next `.await`. A synchronous tool body that
+  blocks its thread is abandoned on time on a multi-thread runtime with two
+  or more workers. On a current-thread runtime, or a multi-thread one with a
+  single worker (`#[tokio::main]` on a one-CPU host or a container limited
+  to one CPU), it holds the thread that drives the timer until it returns;
+  make such a tool `async`, or call `spawn_blocking` inside it. A tool that
+  read a tokio `task_local!` of the turn's task no longer sees it; pass the
+  value as an argument or through the tool service's state. Raise the
+  budget, or call `without_turn_timeout()`, for tools that legitimately run
+  long.
+- **Breaking: unparseable Antigravity pre-tool hook arguments fail
+  closed.** When the harness sends tool arguments that are not valid JSON
+  and a pre-tool hook is set, the call is denied before the hook runs, with
+  the reason in the denial. The hook used to be handed `{}`, which a path
+  gate allows. Without a hook, name-based policies decide as before. A
+  custom tool call whose arguments decode in neither of the harness's
+  encodings is answered with an error instead of running the tool on
+  `Null`. Well-formed calls are unaffected.
+- **Breaking: a blank Antigravity API key counts as no key.**
+  `with_api_key("")` (or whitespace) together with `with_model` or
+  `with_gemini_base_url` now fails at `spawn()` with
+  `AntigravityError::Config`. Without either, the blank key is no longer
+  sent to the harness. Before, an empty key went on the wire as an unset
+  field and the harness fell back to its environment's `GEMINI_API_KEY`.
+  Code like `.with_api_key(env::var("X").unwrap_or_default())` hits this.
+  Pass a real key, or leave out `with_api_key`.
 - **Breaking: a cut-off stream ends with the new
   `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
   the connection can end a stream body before `interaction.completed` or an
@@ -77,6 +137,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wait's deadline cut it off rather than that it failed. Migration: to read
   the state once, call `files().get(name)` or
   `file_search_stores().documents().get(name)` instead.
+- The Antigravity harness runs in its own process group on Unix. A
+  terminal's Ctrl-C now reaches only your process; when it exits, the
+  harness sees stdin close and shuts down gracefully. To stop the harness on
+  Ctrl-C yourself, call `shutdown()` from your signal handler.
+- `Interactions::get_with_input` docs no longer say the input is not
+  echoed. With `include_input=true` the API returns the input as a list
+  holding one `user_input` step, and on that read it repeats every entry of
+  the stored request's lists (`stop_sequences`, `response_modalities`,
+  `safety_settings`, speech speakers), which arrive unmodeled in `extra`
+  (verified live 2026-11-04).
+- `docs/ENUM_WIRE_FORMATS.md` no longer says reads echo no
+  `generation_config`. A stored interaction read back carries it, with
+  `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
+  and `response_format`, `response_modalities` and `safety_settings` too;
+  `InteractionResponse` does not model them yet, so they arrive in `extra`
+  (verified live 2026-11-04).
 - `wait_until_active` (files and file-search documents):
   - It honors the `Retry-After` of a 429 it polls through, and gives up at
     once when that falls past the deadline.
@@ -105,6 +181,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Dropping an Antigravity agent no longer leaves processes the harness
+  started running; neither does a failed `spawn()` or a shutdown that had to
+  escalate. The kill used to signal only the harness's pid, and harness
+  0.1.23 gives every `run_command` command a process group of its own, so
+  the command was orphaned and kept running (verified on macOS,
+  2026-11-04). The forced paths now signal the harness's process group and
+  the group of each of its children. A command that detaches itself
+  (`setsid`) is still out of reach.
+- `Webhooks::create` sent a `Webhook`'s output-only fields (`id`, `state`,
+  `signing_secrets`, `new_signing_secret`, `create_time`, `update_time`)
+  whenever they were set, as on a webhook read back from the API. The
+  create body is now what google-genai's `WebhookInput` defines: `uri`,
+  `subscribed_events` and `name`, plus anything in `extra`.
 - An unknown `StreamChunk` whose type was spelled like a known `chunk_type`
   (`created`, `step_delta`, ...) read back as that known chunk after
   serializing. It now carries `"unknown": true` and stays unknown; chunks
