@@ -276,8 +276,9 @@ The constructors leave them unset; the API fills them in on audio it returns.
 | Text | `txt` → `text/plain`, `md` → `text/markdown`, `json`, `html`, `xml` |
 
 Detection doesn't guarantee the API accepts a format inline:
-`document_from_file` sends only the Document row (verified live 2026-11-05)
-and rejects the Text row. The Files API upload helpers use the same
+`document_from_file` sends only the Document row (verified live 2026-11-05;
+for `doc`, `xls` and `ppt` only the MIME type was checked, not parsing of a
+real legacy file) and rejects the Text row. The Files API upload helpers use the same
 detection for every row. Always pass full MIME types (`"image/png"`, not
 `"png"`).
 

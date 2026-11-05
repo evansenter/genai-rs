@@ -16,11 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files (verified live 2026-11-05). `document_from_file` now fails locally
   with `GenaiError::InvalidInput` for `.txt` and `.md`, and sends `.csv`,
   `.docx`, `.xlsx`, `.pptx`, `.doc`, `.xls`, `.ppt`, `.odt`, `.ods` and
-  `.odp`, which it rejected before. `detect_mime_type`, and so
-  `FileUpload::from_path`, now recognizes those Office/OpenDocument
-  extensions. Migration: send the text as
+  `.odp`, which it rejected before (for `.doc`, `.xls` and `.ppt`, only the
+  MIME type was verified, not parsing of a real legacy file).
+  `detect_mime_type`, and so `FileUpload::from_path`, now recognizes those
+  Office/OpenDocument extensions. Migration: send the text as
   `Content::text(std::fs::read_to_string(path)?)`, or upload the file with
-  `client.files().upload(FileUpload::from_path(path))` and pass
+  `client.files().upload(FileUpload::from_path(path))`, wait for it with
+  `client.files().wait_until_active(&file.name, poll)`, and pass
   `Content::from_file(&file)`; a `text/plain` or `text/markdown` file still
   works as a document by URI. `Content::document_data` and
   `document_from_file_with_mime` send any MIME type unchanged, so a

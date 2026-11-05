@@ -271,6 +271,10 @@ fn validate_mime_category(
             "video_from_file()"
         } else if DOCUMENT_MIME_TYPES.contains(&mime_type) {
             "document_from_file()"
+        } else if mime_type.starts_with("text/")
+            || matches!(mime_type, "application/json" | "application/xml")
+        {
+            "Content::text() with the file contents read via std::fs::read_to_string()"
         } else {
             "the appropriate *_from_file() function"
         };
@@ -540,7 +544,10 @@ pub async fn video_from_file_with_mime(
 }
 
 /// MIME types [`document_from_file`] sends as inline document content: the
-/// ones the Interactions API accepted, verified live 2026-11-05. Since
+/// ones the Interactions API accepted, verified live 2026-11-05 by reading
+/// back a real file of each type. The legacy `.doc`, `.xls` and `.ppt` types
+/// only passed the API's MIME check (with plain-text bytes); parsing a real
+/// legacy binary was not verified. Since
 /// 2026-11-04 it rejects every other inline document type, `text/plain` and
 /// `text/markdown` included, with `400 Unsupported mime_type`.
 const DOCUMENT_MIME_TYPES: &[&str] = &[
@@ -564,7 +571,8 @@ const DOCUMENT_MIME_TYPES: &[&str] = &[
 /// # Supported Formats
 ///
 /// The formats the Interactions API accepts as inline document content
-/// (verified live 2026-11-05):
+/// (verified live 2026-11-05; for `.doc`, `.xls` and `.ppt`, only that the
+/// API accepts the MIME type, not that it parses a real legacy file):
 ///
 /// | Extension | MIME Type |
 /// |-----------|-----------|
@@ -613,7 +621,9 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
     let mime_type = detect_mime_type(path).ok_or_else(|| {
         GenaiError::InvalidInput(format!(
             "Unsupported document extension '.{}' for file '{}'. \
-             Use document_from_file_with_mime() to override.",
+             If it is a PDF, CSV or Office/OpenDocument file, use \
+             document_from_file_with_mime() to name its type; the API rejects \
+             other inline document types, so send text as Content::text().",
             ext,
             path.display()
         ))
@@ -968,6 +978,25 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("document_from_file()"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_mime_category_suggests_content_text_for_text_types() {
+        // No *_from_file() helper accepts these since the API stopped taking
+        // text/plain and text/markdown documents, so the hint must not send
+        // the caller to one.
+        for (name, mime) in [
+            ("notes.txt", "text/plain"),
+            ("notes.md", "text/markdown"),
+            ("data.json", "application/json"),
+            ("page.html", "text/html"),
+        ] {
+            let err = validate_mime_category(mime, "image/", Path::new(name), "an image")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("Content::text()"), "{name}: {err}");
+            assert!(!err.contains("_from_file()"), "{name}: {err}");
+        }
     }
 
     #[tokio::test]
