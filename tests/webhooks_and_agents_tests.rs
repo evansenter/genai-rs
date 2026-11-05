@@ -1043,12 +1043,13 @@ async fn test_interaction_runs_in_an_existing_environment() {
     };
 
     // Only this environment holds the marker, so reading it back proves the
-    // interaction ran there.
+    // interaction ran there. `test_source_content` also marks the
+    // environment for the leaked-resource janitor.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock before epoch")
         .subsec_nanos();
-    let marker = format!("genai-rs-environment-marker-{nanos}");
+    let marker = test_source_content(&format!("environment marker {nanos}"));
     // Not retried: a lost response would only cost an unreferenced
     // environment, but a second create would hide that the first one leaked.
     let request =
