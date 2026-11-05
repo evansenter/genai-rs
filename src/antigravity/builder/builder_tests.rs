@@ -1,5 +1,6 @@
+use super::wire::{build_system_instructions, workspace_announcement};
 use super::*;
-use crate::antigravity::policy;
+use crate::antigravity::{BuiltinTool, PreToolDecision, policy};
 
 #[tokio::test]
 async fn test_spawn_requires_policy_for_write_tools() {

@@ -594,7 +594,7 @@ pub(crate) fn decode_genai_struct(value: &Value) -> Option<Value> {
 #[must_use]
 pub(crate) fn hook_tool_name(tool_name: &str, server_name: Option<&str>) -> String {
     match server_name.filter(|s| !s.is_empty()) {
-        Some(server) => crate::antigravity::hooks::mcp_tool_name(server, tool_name),
+        Some(server) => crate::antigravity::policies::mcp_tool_name(server, tool_name),
         None if tool_name == "invoke_subagent" => "start_subagent".to_string(),
         None => tool_name.to_string(),
     }

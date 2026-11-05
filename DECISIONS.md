@@ -626,3 +626,35 @@ runner's tests are in `turn_requests_tests.rs`.
 **Consequences.** Links to `src/antigravity/turn.rs:<line>` for the request
 handlers, or to `src/antigravity/process.rs:<line>` for its tests, written
 before 2026-11-04 point at the old layout.
+
+---
+
+## D-021 — The Antigravity builder, subagent, MCP and policy code split into modules (2026-11-05)
+
+**Context.** `src/antigravity/builder.rs` had reached 877 lines on the #499
+work, over D-014's roughly 800, and the Python SDK parity work (#493) adds
+about thirty setters and a dozen option types on top. `config.rs`
+(`Capabilities`, `Subagent`, `McpServer`) and `hooks.rs` (hook types and the
+policy engine) were next in line.
+
+**Decision.** Moved, per D-011, with no behavior or public-path change:
+
+| From | To |
+|------|----|
+| `src/antigravity/builder.rs` | `src/antigravity/builder/`: `mod.rs` (`AgentBuilder`, its setters and `spawn()`), `hooks.rs` (the `on_*` hook setters), `validate.rs` (spawn-time checks), `wire.rs` (`build_harness_config` and instruction composition) |
+| `src/antigravity/builder_tests.rs` | `src/antigravity/builder/builder_tests.rs` |
+| `Subagent` and its tests in `src/antigravity/config.rs` | `src/antigravity/subagent.rs`, `subagent_tests.rs` |
+| `McpServer` and its tests in `src/antigravity/config.rs` | `src/antigravity/mcp.rs`, `mcp_tests.rs` |
+| `Policy`, `PolicyDecision`, the `policy` constructors, `PolicyEngine`, `decide` and `mcp_tool_name` in `src/antigravity/hooks.rs`, and their tests | `src/antigravity/policies.rs`, `policies_tests.rs` |
+
+The new submodules are private; `antigravity/mod.rs` re-exports the same
+names it did, so `genai_rs::antigravity::{Subagent, McpServer, Policy,
+policy}` are unchanged. `config.rs` keeps `AgentBehavior`, `BuiltinTool`,
+`Capabilities` and `SUPPORTED_HARNESS_VERSION`; `hooks.rs` keeps the hook
+argument and verdict types.
+
+**Consequences.** Links to `src/antigravity/builder.rs:<line>`, or to the
+`Subagent`, `McpServer` and policy code in `config.rs` / `hooks.rs`, written
+before 2026-11-05 point at the old layout. `tracing` events from moved code
+log under the new module path (`genai_rs::antigravity::policies`), which an
+`antigravity` prefix filter still selects.

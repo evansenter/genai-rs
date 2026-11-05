@@ -244,7 +244,7 @@ fn test_pre_tool_hook_names_mcp_tools_by_policy_target() {
     assert_eq!(invocation.args, serde_json::json!({"name": "flange"}));
     assert_eq!(invocation.id.as_deref(), Some("call_1"));
 
-    let denied = hooks::decide(
+    let denied = policies::decide(
         &engine(vec![
             policy::allow_all(),
             policy::deny("mcp_widgets_lookup_widget_code"),
@@ -314,7 +314,7 @@ fn test_pre_tool_gate_leaves_name_policies_alone_without_a_hook() {
     let args = pre_tool_args("view_file", "", "not json");
     let invocation = pre_tool_gate(&args, false).expect("policies decide by name");
     assert_eq!(invocation.name, "view_file");
-    let denied = hooks::decide(&engine(vec![policy::deny("view_file")]), None, &invocation);
+    let denied = policies::decide(&engine(vec![policy::deny("view_file")]), None, &invocation);
     assert!(matches!(denied, PreToolDecision::Deny { .. }));
 }
 

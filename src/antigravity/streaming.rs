@@ -262,7 +262,7 @@ impl ToolAction {
             Self::ListDirectory(_) => "list_directory".to_string(),
             Self::FindFile(_) => "find_file".to_string(),
             Self::SearchDirectory(_) => "search_directory".to_string(),
-            Self::McpTool(a) => super::hooks::mcp_tool_name(
+            Self::McpTool(a) => super::policies::mcp_tool_name(
                 a.server_name.as_deref().unwrap_or_default(),
                 a.tool_name.as_deref().unwrap_or_default(),
             ),

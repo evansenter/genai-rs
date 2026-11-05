@@ -40,12 +40,15 @@ mod error;
 mod handshake;
 mod hook_mapping;
 mod hooks;
+mod mcp;
+mod policies;
 mod process;
 #[cfg(unix)]
 mod process_tree;
 pub mod protocol;
 mod session;
 mod streaming;
+mod subagent;
 mod tools;
 pub mod triggers;
 mod turn;
@@ -53,14 +56,15 @@ mod turn_requests;
 
 pub use agent::{AntigravityAgent, CancelHandle};
 pub use builder::{AgentBuilder, DEFAULT_TURN_TIMEOUT};
-pub use config::{
-    AgentBehavior, BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION, Subagent,
-};
+pub use config::{AgentBehavior, BuiltinTool, Capabilities, SUPPORTED_HARNESS_VERSION};
 pub use error::AntigravityError;
 pub use hooks::{
-    AgentQuestion, Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook,
-    QuestionAnswer, QuestionHook, QuestionReply, ToolInvocation, ToolOutcome, policy,
+    AgentQuestion, PostToolHook, PreToolDecision, PreToolHook, QuestionAnswer, QuestionHook,
+    QuestionReply, ToolInvocation, ToolOutcome,
 };
+pub use mcp::McpServer;
+pub use policies::{Policy, PolicyDecision, policy};
 pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
+pub use subagent::Subagent;
 pub use triggers::TriggerConfig;
 pub use turn::ChatResponse;

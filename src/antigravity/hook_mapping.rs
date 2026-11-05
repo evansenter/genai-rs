@@ -1,4 +1,5 @@
-use super::hooks::{self, PolicyEngine};
+use super::hooks;
+use super::policies::{self, PolicyEngine};
 use super::protocol::{self, StepUpdate};
 use super::{
     AgentQuestion, PreToolDecision, PreToolHook, QuestionReply, ToolInvocation, streaming,
@@ -188,7 +189,7 @@ pub(super) fn confirmation_decision(
             args,
             id: None,
         };
-        let decision = hooks::decide(engine, pre_tool, &invocation);
+        let decision = policies::decide(engine, pre_tool, &invocation);
         if let PreToolDecision::Deny { reason } = &decision {
             tracing::info!("Rejecting harness tool '{name}': {reason}");
         }
@@ -213,7 +214,7 @@ pub(super) fn confirmation_decision(
         args,
         id: None,
     };
-    let decision = hooks::decide_with_default(
+    let decision = policies::decide_with_default(
         engine,
         pre_tool,
         &invocation,

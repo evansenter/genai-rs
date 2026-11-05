@@ -7,7 +7,7 @@ use super::hook_mapping::{
     confirmation_decision, map_question_reply, map_questions, normalize_tool_error, pre_tool_gate,
     tool_call_arguments, unwrap_result_string, unwrap_result_value,
 };
-use super::hooks::{self, PolicyDecision};
+use super::policies::{self, PolicyDecision};
 use super::protocol::{self, HookDecision, HookVerdict, InputEvent, StepUpdate};
 use super::turn::{HookDenial, TurnState};
 use super::{
@@ -275,7 +275,7 @@ impl AntigravityAgent {
                 Arc::clone(hook)
             }
             _ => {
-                return Ok(hooks::decide(
+                return Ok(policies::decide(
                     &self.policy_engine,
                     self.pre_tool.as_ref(),
                     &invocation,
@@ -284,7 +284,8 @@ impl AntigravityAgent {
         };
         let engine = Arc::clone(&self.policy_engine);
         turn.running = Some(format!("the pre-tool hook for '{}'", invocation.name));
-        let decision = run_hook(move || hooks::decide(&engine, Some(&hook), &invocation)).await?;
+        let decision =
+            run_hook(move || policies::decide(&engine, Some(&hook), &invocation)).await?;
         turn.running = None;
         Ok(decision)
     }
