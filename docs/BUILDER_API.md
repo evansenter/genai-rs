@@ -161,6 +161,13 @@ each one replaced.
 | `.pages()` | Streams every page |
 | `.items()` | Streams every item across pages, in server order |
 
+A handle struct carries
+`#[must_use = "a resource handle does nothing until you call one of its methods"]`,
+word for word: `tests/ci_coverage.rs` finds handles by it and requires a
+live test of every public method on each (`docs/TESTING.md`, "Coverage
+oracle"). It fails when a `Client` accessor, or a handle method returning
+anything but a list builder, returns a struct without the marker.
+
 The streams need `futures_util::{StreamExt, TryStreamExt}` and follow these
 rules:
 

@@ -7,9 +7,11 @@ check: fmt clippy test test-scripts
 fmt:
 	cargo fmt --all -- --check
 
-# Lint with warnings as errors
+# Lint with warnings as errors: all features, then without strict-unknown,
+# which compiles code out (the coverage oracle's response side)
 clippy:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy --workspace --all-targets --features antigravity -- -D warnings
 
 # Unit tests only (doctests run in CI - excluded locally for speed)
 test:

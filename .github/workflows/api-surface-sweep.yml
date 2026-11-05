@@ -18,7 +18,13 @@ name: API Surface Sweep
 # (.github/scripts/dump_bindings_schema.py), because a raw `diff -r` of
 # 2.18.1 -> 2.25.0 was 2,771 lines of mostly lint headers and docstring
 # rewraps, and the old `types/interactions`-only scope missed two new
-# resources outright.
+# resources outright. The dump also covers the Files, File Search Store and
+# Document classes in the hand-written `types.py`.
+#
+# The same dump, resolved (`--json`), is the coverage oracle's snapshot in
+# `tests/fixtures/api_surface/`. Each run checks that the committed copy
+# matches the baseline release, and a run that finds new surface attaches
+# the snapshot regenerated for the latest release.
 
 on:
   schedule:
@@ -184,12 +190,18 @@ jobs:
             echo "   same change. Do **not** add a completed-items entry for something"
             echo "   still open — a struck-through line reads as shipped, which is the"
             echo "   confusion that file's header exists to prevent."
-            echo "4. Bump \`.github/last-swept-sdk-version\` to \`$LATEST\` and run"
-            echo "   \`.github/scripts/regen_bindings_snapshot.sh\` in the same change"
-            echo "   (\`make test-scripts\` fails until the snapshot matches). That is"
-            echo "   what closes this loop: the next run sees baseline == latest"
-            echo "   and closes this issue itself, which is what clears the"
-            echo "   staleness signal the tracker header points readers at."
+            echo "4. Bump the baseline with"
+            echo "   \`.github/scripts/refresh_api_snapshot.sh --version $LATEST\`,"
+            echo "   which rewrites \`.github/last-swept-sdk-version\` and the"
+            echo "   coverage oracle's snapshot (\`tests/fixtures/api_surface/\`)"
+            echo "   together; the regenerated snapshot is also attached to this run"
+            echo "   as the \`api-surface-snapshot\` artifact. Then run"
+            echo "   \`cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'\`:"
+            echo "   every new field, class or endpoint fails there until it is"
+            echo "   handled or listed with a reason."
+            echo "   The bump is what closes this loop: the next run sees baseline"
+            echo "   == latest and closes this issue itself, which is what clears"
+            echo "   the staleness signal the tracker header points readers at."
           } > sweep_report.md
 
           # GitHub rejects an issue body over 65,536 characters with a 422.
@@ -245,6 +257,25 @@ jobs:
           path: |
             schema.diff
             files.diff
+          retention-days: 30
+
+      # The snapshot the baseline bump will commit, so the issue's reader can
+      # see what the coverage oracle will test against before running
+      # anything. The same script writes it into the checkout on a bump.
+      - name: Regenerate the snapshot for the latest release
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          LATEST: ${{ steps.diff.outputs.latest }}
+        run: |
+          set -euo pipefail
+          .github/scripts/refresh_api_snapshot.sh --version "$LATEST" --out api-surface-snapshot
+
+      - name: Upload the regenerated snapshot
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-surface-snapshot
+          path: api-surface-snapshot/
           retention-days: 30
 
       - name: Open or update the sweep issue
@@ -414,19 +445,26 @@ jobs:
           gh issue close "$EXISTING" --reason completed
           echo "Closed issue #$EXISTING"
 
-      # The committed snapshot (.github/bindings-schema.txt) is what offline
-      # tests check wire keys against (#488). `make test-scripts` already
-      # fails when its header and the baseline disagree; this step also
-      # catches a hand-edited body, which needs the real wheel to compare
-      # against. Runs on every path, so a stale snapshot shows up as a red
-      # cron run within a day rather than at the next SDK release.
-      - name: Verify the committed bindings snapshot
-        if: always() && steps.diff.outcome == 'success'
+      # The coverage oracle (`src/coverage_oracle/`) reads the committed
+      # bindings snapshot (#488). Offline, `make test-scripts` checks only
+      # that it is for the baseline release and not empty
+      # (`tests/ci_coverage.rs` checks the version too). This checks the
+      # content against the real wheel: a hand edit, a dump-script change,
+      # or a baseline bump made without the refresh script leaves the oracle
+      # testing against surface the baseline release does not have. PR CI
+      # runs the same check when the dump script or the snapshot changes
+      # (`rust.yml`, shell-scripts).
+      #
+      # Last, and after `!cancelled()`, so a drifted snapshot turns the run
+      # red without stopping the detection above: the sweep's job is to
+      # report new surface, and it must keep doing that while the snapshot
+      # is being fixed. Runs every day, so a stale snapshot shows up within
+      # a day rather than at the next SDK release.
+      - name: Committed snapshot matches the baseline release
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
-          BASELINE=$(tr -d '[:space:]' < .github/last-swept-sdk-version)
-          pip download "google-genai==$BASELINE" --no-deps --only-binary=:all: -q -d snapshot-check
-          (cd snapshot-check && unzip -q ./*.whl -d x)
-          python3 .github/scripts/dump_bindings_schema.py snapshot-check/x/google/genai/_gaos > snapshot-check.schema
-          .github/scripts/check_bindings_snapshot.sh \
-            .github/bindings-schema.txt .github/last-swept-sdk-version snapshot-check.schema
+          if ! .github/scripts/refresh_api_snapshot.sh --check; then
+            echo "::error file=tests/fixtures/api_surface/bindings.json::The committed bindings snapshot does not match a fresh dump of the baseline release. Run .github/scripts/refresh_api_snapshot.sh and commit the result."
+            exit 1
+          fi

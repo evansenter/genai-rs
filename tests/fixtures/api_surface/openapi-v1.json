@@ -1,0 +1,3175 @@
+{
+ "endpoints": [
+  "DELETE /{api_version}/interactions/{id}",
+  "GET /{api_version}/interactions/{id}",
+  "POST /{api_version}/interactions",
+  "POST /{api_version}/interactions/{id}/cancel"
+ ],
+ "fetched": "2026-11-01",
+ "schemas": {
+  "AgentOption": {
+   "enum": [
+    "deep-research-preview-04-2026",
+    "deep-research-max-preview-04-2026",
+    "antigravity-preview-05-2026"
+   ],
+   "type": "string",
+   "x-speakeasy-enum-format": "union",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-unknown-values": "allow"
+  },
+  "AllowedTools": {
+   "properties": {
+    "mode": {
+     "enum": [
+      "auto",
+      "any",
+      "none",
+      "validated"
+     ],
+     "type": "string",
+     "x-speakeasy-model-namespace": "interactions"
+    },
+    "tools": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Annotation": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/FileCitation"
+    },
+    {
+     "$ref": "#/components/schemas/PlaceCitation"
+    },
+    {
+     "$ref": "#/components/schemas/UrlCitation"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ArgumentsDelta": {
+   "properties": {
+    "arguments": {
+     "type": "string"
+    },
+    "type": {
+     "const": "arguments_delta"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "AudioContent": {
+   "properties": {
+    "channels": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "audio/wav",
+      "audio/mp3",
+      "audio/aiff",
+      "audio/aac",
+      "audio/ogg",
+      "audio/flac",
+      "audio/mpeg",
+      "audio/m4a",
+      "audio/l16",
+      "audio/opus",
+      "audio/alaw",
+      "audio/mulaw",
+      "audio/webm"
+     ],
+     "type": "string"
+    },
+    "sample_rate": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "type": {
+     "const": "audio"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-exports": [
+    {
+     "group": "interactions",
+     "name": "audio_content_param",
+     "representation": "input"
+    }
+   ],
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "AudioDelta": {
+   "properties": {
+    "channels": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "audio/wav",
+      "audio/mp3",
+      "audio/aiff",
+      "audio/aac",
+      "audio/ogg",
+      "audio/flac",
+      "audio/mpeg",
+      "audio/m4a",
+      "audio/l16",
+      "audio/opus",
+      "audio/alaw",
+      "audio/mulaw",
+      "audio/webm"
+     ],
+     "type": "string"
+    },
+    "sample_rate": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "type": {
+     "const": "audio"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "AudioResponseFormat": {
+   "properties": {
+    "bit_rate": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "delivery": {
+     "enum": [
+      "inline",
+      "uri"
+     ],
+     "type": "string"
+    },
+    "mime_type": {
+     "enum": [
+      "audio/mp3",
+      "audio/ogg_opus",
+      "audio/l16",
+      "audio/wav",
+      "audio/alaw",
+      "audio/mulaw"
+     ],
+     "type": "string"
+    },
+    "sample_rate": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "type": {
+     "const": "audio"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "CodeExecution": {
+   "properties": {
+    "type": {
+     "const": "code_execution"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "CodeExecutionCallArguments": {
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "language": {
+     "enum": [
+      "python",
+      "bash"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "CodeExecutionCallDelta": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/CodeExecutionCallArguments"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "code_execution_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "CodeExecutionCallStep": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/CodeExecutionCallStepArguments"
+    },
+    "id": {
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "code_execution_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "CodeExecutionCallStepArguments": {
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "language": {
+     "enum": [
+      "python",
+      "bash"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "CodeExecutionCallArguments"
+  },
+  "CodeExecutionResultDelta": {
+   "properties": {
+    "is_error": {
+     "type": "boolean"
+    },
+    "result": {
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "code_execution_result"
+    }
+   },
+   "required": [
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "CodeExecutionResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "is_error": {
+     "type": "boolean"
+    },
+    "result": {
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "code_execution_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ComputerUse": {
+   "properties": {
+    "disabled_safety_policies": {
+     "items": {
+      "enum": [
+       "financial_transactions",
+       "sensitive_data_modification",
+       "communication_tool",
+       "account_creation",
+       "data_modification",
+       "user_consent_management",
+       "legal_terms_and_agreements"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "enable_prompt_injection_detection": {
+     "type": "boolean"
+    },
+    "environment": {
+     "enum": [
+      "browser",
+      "mobile",
+      "desktop"
+     ],
+     "type": "string"
+    },
+    "excluded_predefined_functions": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "type": {
+     "const": "computer_use"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Content": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/AudioContent"
+    },
+    {
+     "$ref": "#/components/schemas/DocumentContent"
+    },
+    {
+     "$ref": "#/components/schemas/ImageContent"
+    },
+    {
+     "$ref": "#/components/schemas/TextContent"
+    },
+    {
+     "$ref": "#/components/schemas/VideoContent"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "CreateAgentInteractionParams": {
+   "properties": {
+    "agent": {
+     "$ref": "#/components/schemas/AgentOption"
+    },
+    "agent_config": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/DynamicAgentConfig"
+      }
+     ]
+    },
+    "background": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "continuation_token": {
+     "format": "byte",
+     "type": "string"
+    },
+    "created": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "id": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "input": {
+     "$ref": "#/components/schemas/InteractionsInput"
+    },
+    "previous_interaction_id": {
+     "type": "string"
+    },
+    "response_format": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/ResponseFormat"
+      },
+      {
+       "items": {
+        "$ref": "#/components/schemas/ResponseFormat"
+       },
+       "type": "array"
+      }
+     ]
+    },
+    "safety_settings": {
+     "items": {
+      "$ref": "#/components/schemas/SafetySetting"
+     },
+     "type": "array"
+    },
+    "service_tier": {
+     "$ref": "#/components/schemas/ServiceTier"
+    },
+    "status": {
+     "enum": [
+      "in_progress",
+      "requires_action",
+      "completed",
+      "failed",
+      "cancelled",
+      "incomplete",
+      "requires_continuation"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "store": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "stream": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "system_instruction": {
+     "type": "string"
+    },
+    "tools": {
+     "items": {
+      "$ref": "#/components/schemas/Tool"
+     },
+     "type": "array"
+    },
+    "updated": {
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "required": [
+    "agent",
+    "input"
+   ],
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "CreateAgentInteraction"
+  },
+  "CreateModelInteractionParams": {
+   "properties": {
+    "background": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "continuation_token": {
+     "format": "byte",
+     "type": "string"
+    },
+    "created": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "generation_config": {
+     "$ref": "#/components/schemas/GenerationConfig",
+     "writeOnly": true
+    },
+    "id": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "input": {
+     "$ref": "#/components/schemas/InteractionsInput"
+    },
+    "model": {
+     "$ref": "#/components/schemas/ModelOption"
+    },
+    "previous_interaction_id": {
+     "type": "string"
+    },
+    "response_format": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/ResponseFormat"
+      },
+      {
+       "items": {
+        "$ref": "#/components/schemas/ResponseFormat"
+       },
+       "type": "array"
+      }
+     ]
+    },
+    "safety_settings": {
+     "items": {
+      "$ref": "#/components/schemas/SafetySetting"
+     },
+     "type": "array"
+    },
+    "service_tier": {
+     "$ref": "#/components/schemas/ServiceTier"
+    },
+    "status": {
+     "enum": [
+      "in_progress",
+      "requires_action",
+      "completed",
+      "failed",
+      "cancelled",
+      "incomplete",
+      "requires_continuation"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "store": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "stream": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "system_instruction": {
+     "type": "string"
+    },
+    "tools": {
+     "items": {
+      "$ref": "#/components/schemas/Tool"
+     },
+     "type": "array"
+    },
+    "updated": {
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "required": [
+    "input",
+    "model"
+   ],
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "CreateModelInteraction"
+  },
+  "DocumentContent": {
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "application/pdf",
+      "text/csv"
+     ],
+     "type": "string"
+    },
+    "type": {
+     "const": "document"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "DocumentDelta": {
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "application/pdf",
+      "text/csv"
+     ],
+     "type": "string"
+    },
+    "type": {
+     "const": "document"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "DynamicAgentConfig": {
+   "additionalProperties": {},
+   "properties": {
+    "type": {
+     "const": "dynamic"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Error": {
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ErrorEvent": {
+   "properties": {
+    "error": {
+     "$ref": "#/components/schemas/Error"
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "event_type": {
+     "const": "error"
+    }
+   },
+   "required": [
+    "event_type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FileCitation": {
+   "properties": {
+    "custom_metadata": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "document_uri": {
+     "type": "string"
+    },
+    "end_index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "file_name": {
+     "type": "string"
+    },
+    "media_id": {
+     "type": "string"
+    },
+    "page_number": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "source": {
+     "type": "string"
+    },
+    "start_index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "type": {
+     "const": "file_citation"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FileSearch": {
+   "properties": {
+    "file_search_store_names": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "metadata_filter": {
+     "type": "string"
+    },
+    "top_k": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "type": {
+     "const": "file_search"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FileSearchCallDelta": {
+   "properties": {
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "file_search_call"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FileSearchCallStep": {
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "file_search_call"
+    }
+   },
+   "required": [
+    "id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FileSearchResult": {
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FileSearchResultDelta": {
+   "properties": {
+    "result": {
+     "items": {
+      "$ref": "#/components/schemas/FileSearchResult"
+     },
+     "type": "array"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "file_search_result"
+    }
+   },
+   "required": [
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FileSearchResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "file_search_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Function": {
+   "properties": {
+    "description": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "parameters": {},
+    "type": {
+     "const": "function"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FunctionCallStep": {
+   "properties": {
+    "arguments": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "type": {
+     "const": "function_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "id",
+    "name",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FunctionResultDelta": {
+   "properties": {
+    "is_error": {
+     "type": "boolean"
+    },
+    "name": {
+     "type": "string"
+    },
+    "result": {
+     "oneOf": [
+      {
+       "items": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/ImageContent"
+         },
+         {
+          "$ref": "#/components/schemas/TextContent"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      {
+       "type": "object"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "type": {
+     "const": "function_result"
+    }
+   },
+   "required": [
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "FunctionResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "is_error": {
+     "type": "boolean"
+    },
+    "name": {
+     "type": "string"
+    },
+    "result": {
+     "oneOf": [
+      {
+       "items": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/ImageContent"
+         },
+         {
+          "$ref": "#/components/schemas/TextContent"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      {
+       "type": "object"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "type": {
+     "const": "function_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GenerationConfig": {
+   "properties": {
+    "max_output_tokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "seed": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "stop_sequences": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "thinking_level": {
+     "$ref": "#/components/schemas/ThinkingLevel"
+    },
+    "thinking_summaries": {
+     "$ref": "#/components/schemas/ThinkingSummaries"
+    },
+    "tool_choice": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/ToolChoiceConfig"
+      },
+      {
+       "enum": [
+        "auto",
+        "any",
+        "none",
+        "validated"
+       ],
+       "type": "string",
+       "x-speakeasy-model-namespace": "interactions"
+      }
+     ]
+    },
+    "video_config": {
+     "$ref": "#/components/schemas/VideoConfig"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMaps": {
+   "properties": {
+    "enable_widget": {
+     "type": "boolean"
+    },
+    "latitude": {
+     "format": "double",
+     "type": "number"
+    },
+    "longitude": {
+     "format": "double",
+     "type": "number"
+    },
+    "type": {
+     "const": "google_maps"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMapsCallArguments": {
+   "properties": {
+    "queries": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMapsCallDelta": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/GoogleMapsCallArguments"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_maps_call"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMapsCallStep": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/GoogleMapsCallStepArguments"
+    },
+    "id": {
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_maps_call"
+    }
+   },
+   "required": [
+    "id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMapsCallStepArguments": {
+   "properties": {
+    "queries": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "GoogleMapsCallArguments"
+  },
+  "GoogleMapsResult": {
+   "properties": {
+    "places": {
+     "items": {
+      "$ref": "#/components/schemas/Places"
+     },
+     "type": "array"
+    },
+    "widget_context_token": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMapsResultDelta": {
+   "properties": {
+    "result": {
+     "items": {
+      "$ref": "#/components/schemas/GoogleMapsResult"
+     },
+     "type": "array"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_maps_result"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMapsResultItem": {
+   "properties": {
+    "places": {
+     "items": {
+      "$ref": "#/components/schemas/GoogleMapsResultPlaces"
+     },
+     "type": "array"
+    },
+    "widget_context_token": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "GoogleMapsResult"
+  },
+  "GoogleMapsResultPlaces": {
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "place_id": {
+     "type": "string"
+    },
+    "review_snippets": {
+     "items": {
+      "$ref": "#/components/schemas/ReviewSnippet"
+     },
+     "type": "array"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleMapsResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "result": {
+     "items": {
+      "$ref": "#/components/schemas/GoogleMapsResultItem"
+     },
+     "type": "array"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_maps_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleSearch": {
+   "properties": {
+    "search_types": {
+     "items": {
+      "enum": [
+       "web_search",
+       "image_search"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "type": {
+     "const": "google_search"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleSearchCallArguments": {
+   "properties": {
+    "queries": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleSearchCallDelta": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/GoogleSearchCallArguments"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_search_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleSearchCallStep": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/GoogleSearchCallStepArguments"
+    },
+    "id": {
+     "type": "string"
+    },
+    "search_type": {
+     "enum": [
+      "web_search",
+      "image_search"
+     ],
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_search_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleSearchCallStepArguments": {
+   "properties": {
+    "queries": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "GoogleSearchCallArguments"
+  },
+  "GoogleSearchResult": {
+   "properties": {
+    "search_suggestions": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleSearchResultDelta": {
+   "properties": {
+    "is_error": {
+     "type": "boolean"
+    },
+    "result": {
+     "items": {
+      "$ref": "#/components/schemas/GoogleSearchResult"
+     },
+     "type": "array"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_search_result"
+    }
+   },
+   "required": [
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GoogleSearchResultItem": {
+   "properties": {
+    "search_suggestions": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "GoogleSearchResult"
+  },
+  "GoogleSearchResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "is_error": {
+     "type": "boolean"
+    },
+    "result": {
+     "items": {
+      "$ref": "#/components/schemas/GoogleSearchResultItem"
+     },
+     "type": "array"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "google_search_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "GroundingToolCount": {
+   "properties": {
+    "count": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "type": {
+     "enum": [
+      "google_search",
+      "google_maps"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "HarmCategory": {
+   "enum": [
+    "hate_speech",
+    "dangerous_content",
+    "harassment",
+    "sexually_explicit",
+    "jailbreak"
+   ],
+   "type": "string",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ImageContent": {
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/heic",
+      "image/heif",
+      "image/gif",
+      "image/bmp",
+      "image/tiff"
+     ],
+     "type": "string"
+    },
+    "resolution": {
+     "$ref": "#/components/schemas/MediaResolution"
+    },
+    "type": {
+     "const": "image"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ImageDelta": {
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/heic",
+      "image/heif",
+      "image/gif",
+      "image/bmp",
+      "image/tiff"
+     ],
+     "type": "string"
+    },
+    "resolution": {
+     "$ref": "#/components/schemas/MediaResolution"
+    },
+    "type": {
+     "const": "image"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ImageResponseFormat": {
+   "properties": {
+    "aspect_ratio": {
+     "enum": [
+      "1:1",
+      "2:3",
+      "3:2",
+      "3:4",
+      "4:3",
+      "4:5",
+      "5:4",
+      "9:16",
+      "16:9",
+      "21:9",
+      "1:8",
+      "8:1",
+      "1:4",
+      "4:1"
+     ],
+     "type": "string"
+    },
+    "delivery": {
+     "enum": [
+      "inline",
+      "uri"
+     ],
+     "type": "string"
+    },
+    "image_size": {
+     "enum": [
+      "512",
+      "1K",
+      "2K",
+      "4K"
+     ],
+     "type": "string"
+    },
+    "mime_type": {
+     "enum": [
+      "image/jpeg"
+     ],
+     "type": "string"
+    },
+    "type": {
+     "const": "image"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Interaction": {
+   "properties": {
+    "agent": {
+     "$ref": "#/components/schemas/AgentOption"
+    },
+    "agent_config": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/DynamicAgentConfig"
+      }
+     ]
+    },
+    "background": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "continuation_token": {
+     "format": "byte",
+     "type": "string"
+    },
+    "created": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "errors": {
+     "items": {
+      "$ref": "#/components/schemas/Error"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "generation_config": {
+     "$ref": "#/components/schemas/GenerationConfig",
+     "writeOnly": true
+    },
+    "id": {
+     "default": "",
+     "readOnly": true,
+     "type": "string"
+    },
+    "input": {
+     "$ref": "#/components/schemas/InteractionsInput"
+    },
+    "max_total_tokens": {
+     "format": "int64",
+     "type": "string"
+    },
+    "model": {
+     "$ref": "#/components/schemas/ModelOption"
+    },
+    "previous_interaction_id": {
+     "type": "string"
+    },
+    "response_format": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/ResponseFormat"
+      },
+      {
+       "items": {
+        "$ref": "#/components/schemas/ResponseFormat"
+       },
+       "type": "array"
+      }
+     ]
+    },
+    "safety_settings": {
+     "items": {
+      "$ref": "#/components/schemas/SafetySetting"
+     },
+     "type": "array"
+    },
+    "service_tier": {
+     "$ref": "#/components/schemas/ServiceTier"
+    },
+    "status": {
+     "enum": [
+      "in_progress",
+      "requires_action",
+      "completed",
+      "failed",
+      "cancelled",
+      "incomplete",
+      "requires_continuation"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "steps": {
+     "items": {
+      "$ref": "#/components/schemas/Step"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "store": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "stream": {
+     "type": "boolean",
+     "writeOnly": true
+    },
+    "system_instruction": {
+     "type": "string"
+    },
+    "tools": {
+     "items": {
+      "$ref": "#/components/schemas/Tool"
+     },
+     "type": "array"
+    },
+    "updated": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "usage": {
+     "$ref": "#/components/schemas/Usage",
+     "readOnly": true
+    }
+   },
+   "required": [
+    "status",
+    "created",
+    "id",
+    "steps",
+    "updated"
+   ],
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "InteractionCompletedEvent": {
+   "properties": {
+    "event_id": {
+     "type": "string"
+    },
+    "event_type": {
+     "const": "interaction.completed"
+    },
+    "interaction": {
+     "$ref": "#/components/schemas/InteractionSseEventInteraction"
+    }
+   },
+   "required": [
+    "event_type",
+    "interaction"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "InteractionCreatedEvent": {
+   "properties": {
+    "event_id": {
+     "type": "string"
+    },
+    "event_type": {
+     "const": "interaction.created"
+    },
+    "interaction": {
+     "$ref": "#/components/schemas/InteractionSseEventInteraction"
+    }
+   },
+   "required": [
+    "event_type",
+    "interaction"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "InteractionSseEvent": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/ErrorEvent"
+    },
+    {
+     "$ref": "#/components/schemas/InteractionCompletedEvent"
+    },
+    {
+     "$ref": "#/components/schemas/InteractionCreatedEvent"
+    },
+    {
+     "$ref": "#/components/schemas/InteractionStatusUpdate"
+    },
+    {
+     "$ref": "#/components/schemas/StepDelta"
+    },
+    {
+     "$ref": "#/components/schemas/StepStart"
+    },
+    {
+     "$ref": "#/components/schemas/StepStop"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "InteractionSSEEvent"
+  },
+  "InteractionSseEventInteraction": {
+   "properties": {
+    "agent": {
+     "type": "string"
+    },
+    "created": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "id": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "model": {
+     "type": "string"
+    },
+    "object": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "service_tier": {
+     "$ref": "#/components/schemas/ServiceTier"
+    },
+    "status": {
+     "enum": [
+      "in_progress",
+      "requires_action",
+      "completed",
+      "failed",
+      "cancelled",
+      "incomplete",
+      "requires_continuation"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "steps": {
+     "items": {
+      "$ref": "#/components/schemas/Step"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "updated": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "usage": {
+     "$ref": "#/components/schemas/Usage",
+     "readOnly": true
+    }
+   },
+   "required": [
+    "id",
+    "status"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "InteractionSseStreamEvent": {
+   "properties": {
+    "data": {
+     "$ref": "#/components/schemas/InteractionSseEvent"
+    }
+   },
+   "required": [
+    "data"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "InteractionSSEStreamEvent"
+  },
+  "InteractionStatusUpdate": {
+   "properties": {
+    "continuation_token": {
+     "format": "byte",
+     "type": "string"
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "event_type": {
+     "const": "interaction.status_update"
+    },
+    "interaction_id": {
+     "type": "string"
+    },
+    "status": {
+     "enum": [
+      "in_progress",
+      "requires_action",
+      "completed",
+      "failed",
+      "cancelled",
+      "incomplete",
+      "requires_continuation"
+     ],
+     "type": "string"
+    },
+    "usage": {
+     "$ref": "#/components/schemas/Usage"
+    }
+   },
+   "required": [
+    "event_type",
+    "interaction_id",
+    "status"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "InteractionsInput": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/Content"
+    },
+    {
+     "items": {
+      "$ref": "#/components/schemas/Step"
+     },
+     "type": "array"
+    },
+    {
+     "items": {
+      "$ref": "#/components/schemas/Content"
+     },
+     "type": "array"
+    },
+    {
+     "type": "string"
+    }
+   ],
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "McpServer": {
+   "properties": {
+    "allowed_tools": {
+     "items": {
+      "$ref": "#/components/schemas/AllowedTools"
+     },
+     "type": "array"
+    },
+    "headers": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "name": {
+     "type": "string"
+    },
+    "type": {
+     "const": "mcp_server"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "McpServerToolCallDelta": {
+   "properties": {
+    "arguments": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "name": {
+     "type": "string"
+    },
+    "server_name": {
+     "type": "string"
+    },
+    "type": {
+     "const": "mcp_server_tool_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "name",
+    "server_name",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "McpServerToolCallStep": {
+   "properties": {
+    "arguments": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "server_name": {
+     "type": "string"
+    },
+    "type": {
+     "const": "mcp_server_tool_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "id",
+    "name",
+    "server_name",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "McpServerToolResultDelta": {
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "result": {
+     "oneOf": [
+      {
+       "items": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/ImageContent"
+         },
+         {
+          "$ref": "#/components/schemas/TextContent"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      {
+       "type": "object"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "server_name": {
+     "type": "string"
+    },
+    "type": {
+     "const": "mcp_server_tool_result"
+    }
+   },
+   "required": [
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "McpServerToolResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "result": {
+     "oneOf": [
+      {
+       "items": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/ImageContent"
+         },
+         {
+          "$ref": "#/components/schemas/TextContent"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      {
+       "type": "object"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "server_name": {
+     "type": "string"
+    },
+    "type": {
+     "const": "mcp_server_tool_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "MediaProcessing": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/StaticMediaProcessing"
+    }
+   ],
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "MediaResolution": {
+   "enum": [
+    "low",
+    "medium",
+    "high",
+    "ultra_high"
+   ],
+   "type": "string",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ModalityTokens": {
+   "properties": {
+    "modality": {
+     "$ref": "#/components/schemas/ResponseModality"
+    },
+    "tokens": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ModelOption": {
+   "enum": [
+    "models/gemini-2.5-flash-lite",
+    "models/gemini-2.5-flash-image",
+    "models/gemini-3.1-flash-lite",
+    "models/gemini-3.1-flash-image",
+    "models/gemini-3.5-flash",
+    "models/gemini-3.6-flash",
+    "models/gemini-3.7-flash"
+   ],
+   "type": "string",
+   "x-speakeasy-enum-format": "union",
+   "x-speakeasy-exports": [
+    {
+     "group": "interactions",
+     "name": "model"
+    },
+    {
+     "group": "interactions",
+     "name": "model_param"
+    }
+   ],
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "Model",
+   "x-speakeasy-unknown-values": "allow"
+  },
+  "ModelOutputStep": {
+   "properties": {
+    "content": {
+     "items": {
+      "$ref": "#/components/schemas/Content"
+     },
+     "type": "array"
+    },
+    "type": {
+     "const": "model_output"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "PlaceCitation": {
+   "properties": {
+    "end_index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "name": {
+     "type": "string"
+    },
+    "place_id": {
+     "type": "string"
+    },
+    "review_snippets": {
+     "items": {
+      "$ref": "#/components/schemas/ReviewSnippet"
+     },
+     "type": "array"
+    },
+    "start_index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "type": {
+     "const": "place_citation"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Places": {
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "place_id": {
+     "type": "string"
+    },
+    "review_snippets": {
+     "items": {
+      "$ref": "#/components/schemas/ReviewSnippet"
+     },
+     "type": "array"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ProcessingCallStep": {
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "type": {
+     "const": "processing_call"
+    }
+   },
+   "required": [
+    "id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ProcessingResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "type": {
+     "const": "processing_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ResponseFormat": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/AudioResponseFormat"
+    },
+    {
+     "$ref": "#/components/schemas/ImageResponseFormat"
+    },
+    {
+     "$ref": "#/components/schemas/TextResponseFormat"
+    },
+    {
+     "$ref": "#/components/schemas/VideoResponseFormat"
+    },
+    {
+     "additionalProperties": true,
+     "type": "object"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ResponseModality": {
+   "enum": [
+    "text",
+    "image",
+    "audio",
+    "video",
+    "document"
+   ],
+   "type": "string",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ReviewSnippet": {
+   "properties": {
+    "review_id": {
+     "type": "string"
+    },
+    "title": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "SafetySetting": {
+   "properties": {
+    "method": {
+     "enum": [
+      "severity",
+      "probability"
+     ],
+     "type": "string"
+    },
+    "threshold": {
+     "enum": [
+      "block_low_and_above",
+      "block_medium_and_above",
+      "block_only_high",
+      "off"
+     ],
+     "type": "string"
+    },
+    "type": {
+     "$ref": "#/components/schemas/HarmCategory"
+    }
+   },
+   "required": [
+    "threshold",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ServiceTier": {
+   "enum": [
+    "flex",
+    "standard",
+    "priority"
+   ],
+   "type": "string",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "StaticMediaProcessing": {
+   "properties": {
+    "end_offset": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "fps": {
+     "format": "double",
+     "type": "number"
+    },
+    "start_offset": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "type": {
+     "const": "static"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Step": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/CodeExecutionCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/CodeExecutionResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/FileSearchCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/FileSearchResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/FunctionCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/FunctionResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleMapsCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleMapsResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleSearchCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleSearchResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/McpServerToolCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/McpServerToolResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/ModelOutputStep"
+    },
+    {
+     "$ref": "#/components/schemas/ProcessingCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/ProcessingResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/ThoughtStep"
+    },
+    {
+     "$ref": "#/components/schemas/UrlContextCallStep"
+    },
+    {
+     "$ref": "#/components/schemas/UrlContextResultStep"
+    },
+    {
+     "$ref": "#/components/schemas/UserInputStep"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "StepDelta": {
+   "properties": {
+    "delta": {
+     "$ref": "#/components/schemas/StepDeltaData"
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "event_type": {
+     "const": "step.delta"
+    },
+    "index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "metadata": {
+     "$ref": "#/components/schemas/StepDeltaMetadata"
+    }
+   },
+   "required": [
+    "delta",
+    "event_type",
+    "index"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "StepDeltaData": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/ArgumentsDelta"
+    },
+    {
+     "$ref": "#/components/schemas/AudioDelta"
+    },
+    {
+     "$ref": "#/components/schemas/CodeExecutionCallDelta"
+    },
+    {
+     "$ref": "#/components/schemas/CodeExecutionResultDelta"
+    },
+    {
+     "$ref": "#/components/schemas/DocumentDelta"
+    },
+    {
+     "$ref": "#/components/schemas/FileSearchCallDelta"
+    },
+    {
+     "$ref": "#/components/schemas/FileSearchResultDelta"
+    },
+    {
+     "$ref": "#/components/schemas/FunctionResultDelta"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleMapsCallDelta"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleMapsResultDelta"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleSearchCallDelta"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleSearchResultDelta"
+    },
+    {
+     "$ref": "#/components/schemas/ImageDelta"
+    },
+    {
+     "$ref": "#/components/schemas/McpServerToolCallDelta"
+    },
+    {
+     "$ref": "#/components/schemas/McpServerToolResultDelta"
+    },
+    {
+     "$ref": "#/components/schemas/TextAnnotationDelta"
+    },
+    {
+     "$ref": "#/components/schemas/TextDelta"
+    },
+    {
+     "$ref": "#/components/schemas/ThoughtSignatureDelta"
+    },
+    {
+     "$ref": "#/components/schemas/ThoughtSummaryDelta"
+    },
+    {
+     "$ref": "#/components/schemas/UrlContextCallDelta"
+    },
+    {
+     "$ref": "#/components/schemas/UrlContextResultDelta"
+    },
+    {
+     "$ref": "#/components/schemas/VideoDelta"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "StepDeltaMetadata": {
+   "properties": {
+    "total_usage": {
+     "$ref": "#/components/schemas/Usage"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "StepStart": {
+   "properties": {
+    "event_id": {
+     "type": "string"
+    },
+    "event_type": {
+     "const": "step.start"
+    },
+    "index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "step": {
+     "$ref": "#/components/schemas/Step"
+    }
+   },
+   "required": [
+    "event_type",
+    "index",
+    "step"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "StepStop": {
+   "properties": {
+    "event_id": {
+     "type": "string"
+    },
+    "event_type": {
+     "const": "step.stop"
+    },
+    "index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "step_usage": {
+     "$ref": "#/components/schemas/Usage"
+    },
+    "usage": {
+     "$ref": "#/components/schemas/Usage"
+    }
+   },
+   "required": [
+    "event_type",
+    "index"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "TextAnnotationDelta": {
+   "properties": {
+    "annotations": {
+     "items": {
+      "$ref": "#/components/schemas/Annotation"
+     },
+     "type": "array"
+    },
+    "type": {
+     "const": "text_annotation_delta"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "TextContent": {
+   "properties": {
+    "annotations": {
+     "items": {
+      "$ref": "#/components/schemas/Annotation"
+     },
+     "type": "array"
+    },
+    "text": {
+     "type": "string"
+    },
+    "type": {
+     "const": "text"
+    }
+   },
+   "required": [
+    "text",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "TextDelta": {
+   "properties": {
+    "text": {
+     "type": "string"
+    },
+    "type": {
+     "const": "text"
+    }
+   },
+   "required": [
+    "text",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "TextResponseFormat": {
+   "properties": {
+    "mime_type": {
+     "enum": [
+      "application/json",
+      "text/plain"
+     ],
+     "type": "string"
+    },
+    "schema": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "type": {
+     "const": "text"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ThinkingLevel": {
+   "enum": [
+    "minimal",
+    "low",
+    "medium",
+    "high"
+   ],
+   "type": "string",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ThinkingSummaries": {
+   "enum": [
+    "auto",
+    "none"
+   ],
+   "type": "string",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ThoughtSignatureDelta": {
+   "properties": {
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "thought_signature"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ThoughtStep": {
+   "properties": {
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "summary": {
+     "items": {
+      "$ref": "#/components/schemas/Content"
+     },
+     "type": "array"
+    },
+    "type": {
+     "const": "thought"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ThoughtSummaryContent": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/ImageContent"
+    },
+    {
+     "$ref": "#/components/schemas/TextContent"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ThoughtSummaryDelta": {
+   "properties": {
+    "content": {
+     "$ref": "#/components/schemas/Content"
+    },
+    "type": {
+     "const": "thought_summary"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "Tool": {
+   "oneOf": [
+    {
+     "$ref": "#/components/schemas/CodeExecution"
+    },
+    {
+     "$ref": "#/components/schemas/ComputerUse"
+    },
+    {
+     "$ref": "#/components/schemas/FileSearch"
+    },
+    {
+     "$ref": "#/components/schemas/Function"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleMaps"
+    },
+    {
+     "$ref": "#/components/schemas/GoogleSearch"
+    },
+    {
+     "$ref": "#/components/schemas/McpServer"
+    },
+    {
+     "$ref": "#/components/schemas/UrlContext"
+    }
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "ToolChoiceConfig": {
+   "properties": {
+    "allowed_tools": {
+     "$ref": "#/components/schemas/AllowedTools"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "UrlCitation": {
+   "properties": {
+    "end_index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "start_index": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "title": {
+     "type": "string"
+    },
+    "type": {
+     "const": "url_citation"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLCitation"
+  },
+  "UrlContext": {
+   "properties": {
+    "type": {
+     "const": "url_context"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLContext"
+  },
+  "UrlContextCallArguments": {
+   "properties": {
+    "urls": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLContextCallArguments"
+  },
+  "UrlContextCallDelta": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/UrlContextCallArguments"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "url_context_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLContextCallDelta"
+  },
+  "UrlContextCallStep": {
+   "properties": {
+    "arguments": {
+     "$ref": "#/components/schemas/UrlContextCallArguments"
+    },
+    "id": {
+     "type": "string"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "url_context_call"
+    }
+   },
+   "required": [
+    "arguments",
+    "id",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLContextCallStep"
+  },
+  "UrlContextResult": {
+   "properties": {
+    "status": {
+     "enum": [
+      "success",
+      "error",
+      "paywall",
+      "unsafe"
+     ],
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLContextResult"
+  },
+  "UrlContextResultDelta": {
+   "properties": {
+    "is_error": {
+     "type": "boolean"
+    },
+    "result": {
+     "items": {
+      "$ref": "#/components/schemas/UrlContextResult"
+     },
+     "type": "array"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "url_context_result"
+    }
+   },
+   "required": [
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLContextResultDelta"
+  },
+  "UrlContextResultStep": {
+   "properties": {
+    "call_id": {
+     "type": "string"
+    },
+    "is_error": {
+     "type": "boolean"
+    },
+    "result": {
+     "items": {
+      "$ref": "#/components/schemas/UrlContextResult"
+     },
+     "type": "array"
+    },
+    "signature": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "type": {
+     "const": "url_context_result"
+    }
+   },
+   "required": [
+    "call_id",
+    "result",
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions",
+   "x-speakeasy-name-override": "URLContextResultStep"
+  },
+  "Usage": {
+   "properties": {
+    "cached_tokens_by_modality": {
+     "items": {
+      "$ref": "#/components/schemas/ModalityTokens"
+     },
+     "type": "array"
+    },
+    "grounding_tool_count": {
+     "items": {
+      "$ref": "#/components/schemas/GroundingToolCount"
+     },
+     "type": "array"
+    },
+    "initial_input_tokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "input_tokens_by_modality": {
+     "items": {
+      "$ref": "#/components/schemas/ModalityTokens"
+     },
+     "type": "array"
+    },
+    "output_tokens_by_modality": {
+     "items": {
+      "$ref": "#/components/schemas/ModalityTokens"
+     },
+     "type": "array"
+    },
+    "tool_use_tokens_by_modality": {
+     "items": {
+      "$ref": "#/components/schemas/ModalityTokens"
+     },
+     "type": "array"
+    },
+    "total_cached_tokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "total_input_tokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "total_output_tokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "total_thought_tokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "total_tokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "total_tool_use_tokens": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "UserInputStep": {
+   "properties": {
+    "content": {
+     "items": {
+      "$ref": "#/components/schemas/Content"
+     },
+     "type": "array"
+    },
+    "type": {
+     "const": "user_input"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "VideoConfig": {
+   "properties": {
+    "task": {
+     "enum": [
+      "text_to_video",
+      "image_to_video",
+      "reference_to_video",
+      "edit",
+      "extend"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "VideoContent": {
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "video/mp4",
+      "video/mpeg",
+      "video/mpg",
+      "video/mov",
+      "video/avi",
+      "video/x-flv",
+      "video/webm",
+      "video/wmv",
+      "video/3gpp",
+      "video/jpeg2000"
+     ],
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "processing": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/MediaProcessing"
+      },
+      {
+       "enum": [
+        "static",
+        "agentic"
+       ],
+       "type": "string"
+      }
+     ]
+    },
+    "resolution": {
+     "$ref": "#/components/schemas/MediaResolution"
+    },
+    "type": {
+     "const": "video"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "VideoDelta": {
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string",
+     "x-speakeasy-base64-input-mode": "file"
+    },
+    "mime_type": {
+     "enum": [
+      "video/mp4",
+      "video/mpeg",
+      "video/mpg",
+      "video/mov",
+      "video/avi",
+      "video/x-flv",
+      "video/webm",
+      "video/wmv",
+      "video/3gpp",
+      "video/jpeg2000"
+     ],
+     "type": "string"
+    },
+    "resolution": {
+     "$ref": "#/components/schemas/MediaResolution"
+    },
+    "type": {
+     "const": "video"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  },
+  "VideoResponseFormat": {
+   "properties": {
+    "aspect_ratio": {
+     "enum": [
+      "16:9",
+      "9:16"
+     ],
+     "type": "string"
+    },
+    "delivery": {
+     "enum": [
+      "inline",
+      "uri"
+     ],
+     "type": "string"
+    },
+    "duration": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "resolution": {
+     "enum": [
+      "360p",
+      "720p",
+      "1080p",
+      "4k"
+     ],
+     "type": "string"
+    },
+    "type": {
+     "const": "video"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "type": "object",
+   "x-speakeasy-model-namespace": "interactions"
+  }
+ },
+ "source": "https://ai.google.dev/static/api/interactions-v1.openapi.json",
+ "version": "v1"
+}

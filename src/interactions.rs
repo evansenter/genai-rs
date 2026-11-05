@@ -79,10 +79,12 @@ impl Interactions<'_> {
     /// Like [`get`](Self::get), but sets the `include_input=true` query
     /// parameter so the response's `input` field is populated.
     ///
-    /// Live behavior note (2026-07): the parameter is accepted, but the
-    /// Gemini API was observed to return identical responses with and
-    /// without it — no `input` echo (and no `generation_config` echo) was
-    /// observed on completed interactions.
+    /// The input comes back as a step list, a single `user_input` step for a
+    /// text prompt (live 2026-11-04; it was not echoed in 2026-07). On this
+    /// read the API also repeats every entry of the stored request's lists
+    /// (`stop_sequences`, `response_modalities`, `safety_settings`, speech
+    /// speakers), which arrive unmodeled in
+    /// [`extra`](InteractionResponse::extra) (live 2026-11-04).
     ///
     /// # Errors
     ///
