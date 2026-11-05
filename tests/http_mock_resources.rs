@@ -2243,6 +2243,7 @@ fn assert_upload_requests(requests: Vec<Recorded>, size: usize) -> (Recorded, Re
         "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
     );
     assert_eq!(start.header("x-goog-api-key"), Some("test-key"));
+    assert_eq!(start.header("api-revision"), Some(API_REVISION));
     assert_eq!(start.header("x-goog-upload-protocol"), Some("resumable"));
     assert_eq!(start.header("x-goog-upload-command"), Some("start"));
     assert_eq!(
@@ -3683,6 +3684,7 @@ async fn files_upload_from_path_streams_the_file_from_disk_then_finalizes() {
     assert_eq!(start.method, "POST");
     assert_eq!(start.target, "/upload/v1beta/files");
     assert_eq!(start.header("x-goog-api-key"), Some("test-key"));
+    assert_eq!(start.header("api-revision"), Some(API_REVISION));
     assert_eq!(start.header("x-goog-upload-protocol"), Some("resumable"));
     assert_eq!(start.header("x-goog-upload-command"), Some("start"));
     assert_eq!(

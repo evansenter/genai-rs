@@ -1,7 +1,7 @@
 //! HTTP calls for the Files API; the types live in [`crate::files`].
 
 use super::common::{
-    API_KEY_HEADER, NO_BODY, file_body, mime_type_header, path_segment, require_id, send_and_read,
+    NO_BODY, api_request, file_body, mime_type_header, path_segment, require_id, send_and_read,
     send_checked, with_query,
 };
 use super::context::HttpContext;
@@ -56,10 +56,7 @@ impl<M: serde::Serialize> ResumableUpload<'_, M> {
         ctx: &HttpContext,
         request_id: u64,
     ) -> Result<String, GenaiError> {
-        let mut builder = ctx
-            .http_client
-            .post(&self.url)
-            .header(API_KEY_HEADER, &ctx.api_key)
+        let mut builder = api_request(ctx, reqwest::Method::POST, &self.url)
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
             .header(
