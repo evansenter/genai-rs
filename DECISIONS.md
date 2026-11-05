@@ -713,7 +713,10 @@ rules for the harness to evaluate, mark rules with a condition or handler
 Default-open would then need a catch-all allow rule of the bridge's own,
 since the harness fails closed on an unmatched call. It saves the round
 trip for static rules, at the cost of the harness's unnamed denials on the
-event stream.
+event stream. Neither approach reaches a subagent's own tool calls on
+0.1.23: a probe (2026-11-05) sent a harness-side deny rule for
+`view_file`, which denied the root agent's call and not the subagent's,
+and the pre-tool callback never sees the subagent's calls either.
 
 ---
 

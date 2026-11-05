@@ -259,3 +259,76 @@ async fn test_scripted_subagent_skills_choose_the_skills_a_subagent_sees() {
         agent.shutdown().await.expect("shutdown");
     }
 }
+
+/// Pins a harness 0.1.23 gap: a subagent's own tool calls reach neither the
+/// pre-tool callback (so neither policies nor the pre-tool hook judge them)
+/// nor the harness's policy evaluator, and workspace containment does not
+/// confine them. The probe that found it also sent a harness-side deny rule:
+/// it denied the root agent's call and not the subagent's. When this test
+/// fails, a harness release started gating subagent calls: update
+/// `docs/ANTIGRAVITY.md` (Subagents) and the `spawn()` warning.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_harness_does_not_gate_a_subagents_tool_calls() {
+    let workspace = scratch_dir("agy-scripted-subgate");
+    let outside = scratch_dir("agy-scripted-subgate-out");
+    let secret = write_file(&outside, "outside.txt", "SUBAGENT-READ-9913");
+    let main_calls = Arc::new(AtomicUsize::new(0));
+    let helper_calls = Arc::new(AtomicUsize::new(0));
+    let secret_path = secret.clone();
+    let fake = FakeGemini::routed(move |request, _| {
+        if request.target.contains(HELPER_MODEL) {
+            return match helper_calls.fetch_add(1, Ordering::SeqCst) {
+                0 => view_file(&secret_path),
+                _ => ModelTurn::text("helper-done"),
+            };
+        }
+        match main_calls.fetch_add(1, Ordering::SeqCst) {
+            0 => ModelTurn::call(
+                "invoke_subagent",
+                json!({"Subagents": [{
+                    "TypeName": "helper", "Prompt": "read it", "Role": "Helper"
+                }]}),
+            ),
+            _ => ModelTurn::text("delegated"),
+        }
+    })
+    .await;
+    let judged: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = Arc::clone(&judged);
+    // Every gate this client has: deny-by-default rules, a hook that denies
+    // the read, and containment to a workspace the file is outside.
+    let mut agent = delegating_agent(&fake, vec![helper()])
+        .add_workspace(workspace.path().to_string_lossy())
+        .add_policy(policy::deny_all())
+        .add_policy(policy::allow("invoke_subagent"))
+        .on_pre_tool(move |call| {
+            seen.lock().unwrap().push(call.name.clone());
+            if call.name == "view_file" {
+                PreToolDecision::deny("no reads")
+            } else {
+                PreToolDecision::Allow
+            }
+        })
+        .spawn()
+        .await
+        .expect("spawn");
+    agent.chat("delegate").await.expect("turn");
+    let n = fake
+        .requests()
+        .iter()
+        .rposition(|r| r.target.contains(HELPER_MODEL))
+        .expect("helper called its model");
+    let told = function_response_text(&fake, n);
+    assert!(
+        told.contains("SUBAGENT-READ-9913"),
+        "the harness now gates a subagent's calls; update the docs and the spawn() warning: \
+         {told}"
+    );
+    assert_eq!(
+        judged.lock().unwrap().as_slice(),
+        ["invoke_subagent"],
+        "only the root agent's call reached the pre-tool callback"
+    );
+    agent.shutdown().await.expect("shutdown");
+}

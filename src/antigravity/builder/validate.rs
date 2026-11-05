@@ -152,6 +152,16 @@ impl AgentBuilder {
                  with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))."
             );
         }
+        if invokes {
+            // Verified on 0.1.23 (2026-11-05), pinned by
+            // test_scripted_harness_does_not_gate_a_subagents_tool_calls.
+            tracing::warn!(
+                "invoke_subagent is enabled: harness 0.1.23 applies neither policies, the \
+                 pre-tool hook nor workspace containment to a subagent's own tool calls \
+                 (the built-in research subagent's included); only each subagent's \
+                 capabilities limit them. Give subagents only builtins they may use ungated."
+            );
+        }
         if !invokes
             && let Some(setter) = [
                 (

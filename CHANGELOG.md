@@ -135,6 +135,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GeminiModelOptions`, `McpServerConfig`, `CustomAgent`,
   `SystemInstructionPart`, `PolicyConfig` and `HarnessConfig` gained fields
   (build them with `..Default::default()`).
+- `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
+  harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
+  containment to a subagent's own tool calls, so a read-only subagent can
+  read any file the process can (verified 2026-11-05, with deny-all rules,
+  a denying hook and containment all set). The docs said the pre-tool
+  callback gated subagent calls. Give subagents only the builtins they may
+  use ungated.
 - Antigravity's pre-tool hook runs once per custom tool call; it ran twice,
   once when the harness asked and again on dispatch.
 - Harness discovery no longer starts `python3` when the explicit path or

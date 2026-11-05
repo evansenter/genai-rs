@@ -233,11 +233,17 @@ const WILDCARD: &str = "*";
 ///
 /// Policies are declarative allow/deny/ask rules over tool names, with
 /// optional conditions on the arguments. This client evaluates them in the
-/// harness's pre-tool callback, which gates every tool call (builtin,
-/// custom, MCP, subagent) before it runs; the harness enforces the verdict.
-/// The exception is [`policy::auto`], the harness's own model-judged
-/// assessment, which runs harness-side and asks this client only about the
-/// calls it flags (D-022).
+/// harness's pre-tool callback, which gates the agent's tool calls
+/// (builtin, custom, MCP, `invoke_subagent`) before they run; the harness
+/// enforces the verdict. The exception is [`policy::auto`], the harness's
+/// own model-judged assessment, which runs harness-side and asks this
+/// client only about the calls it flags (D-022).
+///
+/// **A subagent's own tool calls are not gated** on harness 0.1.23: they
+/// reach neither the pre-tool callback nor the harness's policy evaluator,
+/// and workspace containment does not confine them (verified 2026-11-05).
+/// Only the subagent's capabilities limit what it can do, so give a
+/// subagent only builtins it may use ungated.
 ///
 /// # Evaluation order
 ///

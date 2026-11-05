@@ -218,6 +218,8 @@ agent. The harness enforces containment only when the client sends a policy
 config; before `with_workspace_containment` (on by default), this crate
 didn't, and an agent could read any file the process could. Turn it off
 only to reach outside the workspaces, behind a pre-tool hook or policy.
+Containment does not reach a subagent's tool calls on 0.1.23 (see
+[Subagents](#subagents)).
 
 The harness's own prompt lists the workspaces ("Active Workspaces",
 verified on 0.1.23 for agents and subagents). [Custom
@@ -308,8 +310,9 @@ needs `Interactive`.
 
 Policies are declarative allow/deny/ask rules over tool names, with
 optional conditions on the arguments. They are evaluated **in Rust**, in the
-harness's pre-tool callback, which gates every tool call — builtin, custom,
-MCP, subagent — before it runs (D-022):
+harness's pre-tool callback, which gates the agent's tool calls — builtin,
+custom, MCP, `invoke_subagent` — before they run (D-022). A subagent's own
+calls bypass it on 0.1.23 (see [Subagents](#subagents)):
 
 ```rust,ignore
 use genai_rs::antigravity::policy;
@@ -686,6 +689,15 @@ let agent = AntigravityAgent::builder()
 
 Rules (matching the reference SDK):
 
+- **A subagent's own tool calls are not gated.** On harness 0.1.23 they
+  reach neither the pre-tool callback (so no policy or `on_pre_tool` hook
+  sees them) nor the harness's own policy evaluator, and workspace
+  containment does not confine them: a read-only subagent can read any
+  file the process can (verified 2026-11-05; pinned by a scripted test).
+  Only the subagent's capabilities limit it, so give a subagent only the
+  builtins it may use ungated. Enabling `invoke_subagent` also offers the
+  harness's built-in `research` subagent. `spawn()` warns whenever
+  `invoke_subagent` is on.
 - **Custom tools are referenced by name** and must also be registered on the
   parent agent (`add_tool` / `with_tool_service`) — subagent custom-tool
   calls dispatch through the parent's registry. `spawn()` validates the
@@ -1182,6 +1194,9 @@ The ones a user is likeliest to look for:
   single-worker runtime**: the turn deadline abandons a blocked synchronous
   tool only on a multi-thread runtime with two or more workers (see the turn
   deadline under [Streaming](#streaming)).
+- **Subagents are not gated**: on 0.1.23 a subagent's own tool calls skip
+  policies, the pre-tool hook and workspace containment (see
+  [Subagents](#subagents)).
 - **Only the bespoke `localharness` protocol**: the harness's
   Interactions-mode transport (`use_interactions_api`) is not used. On
   0.1.23 it rejects every `interaction.create` that carries an agent config,

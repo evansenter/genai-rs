@@ -11,7 +11,8 @@
 //!
 //! - Workspaces (`add_workspace`) and read-only built-in tools
 //! - `deny_all()` + selective `allow(...)` policies, evaluated in Rust
-//! - A pre-tool hook guarding secret files (defense in depth over policy)
+//! - A pre-tool hook guarding secret files (defense in depth over policy,
+//!   for the parent agent's calls)
 //! - A custom `#[tool]` function shared with a subagent
 //! - Subagent registration (`add_subagent` + `BuiltinTool::InvokeSubagent`)
 //! - Structured output via `with_response_schema` (the `finish` tool schema)
@@ -23,10 +24,15 @@
 //!   `deny_all()` also keeps tools added in later harness versions denied.
 //! - Severity policy lives in code (`classify_severity`), and `render()`
 //!   cross-checks the model's report against it rather than trusting it.
+//! - The policies and the pre-tool hook gate the parent agent's calls only.
+//!   On harness 0.1.23 the `file_auditor` subagent's own tool calls skip
+//!   them, and workspace containment: in the run below it read `.env`,
+//!   which the hook had just denied the parent. Its read-only capabilities
+//!   are what bound it.
 //! - Cost: a run makes ~35 model calls and uses roughly 300–650K prompt
 //!   tokens on harness 0.1.18, because every call resends the trajectory and
 //!   the harness's requests get almost no implicit cache hits (4K of 274K
-//!   cached, measured 2026-09-24).
+//!   cached, measured 2026-09-24). A 0.1.23 run used 125K (2026-11-05).
 //!
 //! ## Running
 //!
@@ -37,7 +43,7 @@
 //! LOUD_WIRE=1 cargo run --example repo_auditor --features antigravity  # wire trace
 //! ```
 //!
-//! ## Sample output (trimmed from a real run against harness 0.1.18)
+//! ## Sample output (trimmed from a real run against harness 0.1.23, 2026-11-05)
 //!
 //! ```text
 //! === Repo Auditor (Antigravity harness) ===
@@ -47,42 +53,46 @@
 //!
 //! --- Audit in progress ---
 //! [list_directory] file:///.../fixture
-//! [list_directory] file:///.../fixture/app
-//! [view_file] file:///.../fixture/README.md
+//! [tool] list_directory -> {"directory_path":"file:///.../fixture","results":[...]}
 //! [pre-tool hook] denied view_file on /.../fixture/.env
-//! [DENIED] Secret files are off-limits; report them as findings instead.
+//! [DENIED view_file] Secret files are off-limits; report them as findings instead.
 //! [harness noise] Secret files are off-limits; ... ("denied by pre-tool hook: ...")
+//! [view_file] file:///.../fixture/README.md
+//! [tool] view_file -> View README.md
+//! [list_directory] file:///.../fixture/app
+//! [tool] list_directory -> {...}
 //! [invoke_subagent] delegated (subagent runs its own trajectory)
+//! [tool] invoke_subagent -> Delegate review to file_auditor
+//! [list_directory] file:///.../fixture
+//! [find_file] query="*"
+//! [view_file] file:///.../fixture/.env
+//! [view_file] file:///.../fixture/README.md
 //! [view_file] file:///.../fixture/app/database.py
 //! [view_file] file:///.../fixture/app/backup.py
 //! [tool] classify_severity -> {"category":"sql_injection","severity":"critical"}
 //! [custom tool dispatched] classify_severity
-//! [tool] classify_severity -> {"category":"command_injection","severity":"critical"}
-//! [custom tool dispatched] classify_severity
 //! [tool] classify_severity -> {"category":"hardcoded_credentials","severity":"high"}
+//! [custom tool dispatched] classify_severity
+//! [tool] classify_severity -> {"category":"command_injection","severity":"critical"}
 //! [custom tool dispatched] classify_severity
 //! [finish] structured report received
 //!
 //! --- Audit report ---
-//! Repo summary: The audited project, notes-app, is a lightweight Python note-taking
-//! application providing database utilities ... alongside backup and restore helpers.
+//! Repo summary: The notes-app repository is a lightweight Python application providing
+//! note storage and user lookup backed by SQLite, along with backup and restore utilities ...
 //!
-//! Findings (5):
-//!   1. [CRITICAL] app/database.py — SQL Injection in User Query Construction
-//!      category: sql_injection | fix: Use parameterized queries with SQLite placeholders ...
-//!   2. [HIGH] app/database.py — Hardcoded Credential in Database Module
-//!      category: hardcoded_credentials | fix: Remove hardcoded credentials from source ...
-//!   3. [CRITICAL] app/backup.py — OS Command Injection in Notes Backup
-//!      category: command_injection | fix: Avoid passing shell command strings to os.system ...
-//!   4. [CRITICAL] app/backup.py — OS Command Injection in Notes Restore
-//!      category: command_injection | fix: Avoid shell invocation via os.system ...
-//!   5. [HIGH] .env — Committed Secrets in .env Configuration File
-//!      category: hardcoded_credentials | fix: Add .env to .gitignore, untrack the file ...
+//! Findings (3):
+//!   1. [CRITICAL] app/database.py — SQL Injection in User Lookup Query
+//!      category: sql_injection | fix: Use parameterized queries ...
+//!   2. [HIGH] app/database.py — Hardcoded Database Password in Source Code
+//!      category: hardcoded_credentials | fix: Remove hardcoded credentials from source code ...
+//!   3. [CRITICAL] app/backup.py — Command Injection in Backup and Restore Functions
+//!      category: command_injection | fix: Avoid invoking shell commands with concatenated ...
 //!
 //! Overall risk: CRITICAL
 //! Severity cross-check: all findings match the classifier table.
 //!
-//! Usage: prompt=Some(408606) total=Some(427009)
+//! Usage: prompt=Some(125240) total=Some(134775)
 //! ```
 
 mod report;
@@ -360,14 +370,8 @@ fn tool_path(args: &serde_json::Value) -> Option<&str> {
 /// they don't read like executed ones.
 fn print_action(action: &ToolAction, decision: &ToolDecision) {
     if let ToolDecision::Denied { reason } = decision {
-        // A denied call never ran, so there is no action record for it.
-        // The bridge reports this client's denials as ToolAction::Denied,
-        // named after the tool; a denial the harness reports only as an
-        // error step is the Error arm.
-        match action {
-            ToolAction::Error(_) => println!("[DENIED] {reason}"),
-            other => println!("[DENIED {}] {reason}", other.tool_name()),
-        }
+        // A denied call never ran; the bridge names the tool it denied.
+        println!("[DENIED {}] {reason}", action.tool_name());
         return;
     }
     match action {
