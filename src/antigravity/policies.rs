@@ -1,53 +1,5 @@
-//! Tool policies for Antigravity agents.
-//!
-//! Policies are declarative allow/deny/ask rules over tool names, with
-//! optional conditions on the arguments. This client evaluates them in the
-//! harness's pre-tool callback, which gates every tool call (builtin,
-//! custom, MCP, subagent) before it runs; the harness enforces the verdict.
-//! The exception is [`policy::auto`], the harness's own model-judged
-//! assessment, which runs harness-side and asks this client only about the
-//! calls it flags (D-022).
-//!
-//! # Evaluation order
-//!
-//! The harness's own evaluator's order, which the Python SDK documents and
-//! harness 0.1.23 follows (verified 2026-11-05):
-//!
-//! 1. **Specificity**: a rule naming the tool beats a server-wide MCP rule
-//!    (`mcp_<server>_*`), which beats the wildcard (`"*"`).
-//! 2. **Within a tier, safety**: deny beats ask (`confirm`, `ask_user`),
-//!    which beats allow — whatever the registration order.
-//! 3. Then registration order.
-//!
-//! A rule with a [`when`](Policy::when) condition applies only to calls the
-//! condition accepts; the others fall through to the next rule. So
-//! `[deny_all(), allow("get_weather")]` allows only `get_weather`, and
-//! `[allow("run_command"), deny("run_command").when(rm)]` denies the
-//! commands `rm` matches and allows the rest.
-//!
-//! When no rule matches, the call is **allowed** (default open), still
-//! subject to the pre-tool hook. [`AgentBuilder::spawn`](super::AgentBuilder)
-//! refuses to start an agent with write-capable builtins or MCP servers and
-//! no policy or pre-tool hook at all, so default-open only applies once you
-//! have opted into a policy set.
-//!
-//! # Targets
-//!
-//! - Custom tools and builtins are matched by name (builtins use their wire
-//!   names: `run_command`, `edit_file`, `create_file`, `view_file`,
-//!   `list_directory`, `search_directory`, `find_file`, `search_web`,
-//!   `read_url_content`, `generate_image`, `invoke_subagent`,
-//!   `ask_question`, `finish`). `start_subagent`, the subagent builtin's
-//!   name before harness 0.1.18, still targets `invoke_subagent`.
-//! - MCP tools are matched as `mcp_<server>_<tool>`, every tool of a
-//!   server as `mcp_<server>_*`, and every MCP tool as `mcp_*`.
-//! - `"*"` matches everything.
-//!
-//! `ask_question` is policy-gated like the rest on harness 0.1.18 and later:
-//! the call passes through the pre-tool hook before the question is posed,
-//! so a `deny_all()` set needs an explicit `allow("ask_question")`. The
-//! answers come from the
-//! [`on_questions`](crate::antigravity::AgentBuilder::on_questions) hook.
+//! Tool policies for Antigravity agents: the rule type, its constructors
+//! (the public `policy` module, which documents evaluation), and the engine.
 
 use std::sync::Arc;
 
@@ -266,7 +218,56 @@ impl Policy {
 
 const WILDCARD: &str = "*";
 
-/// Constructors for [`Policy`] rules.
+/// Constructors for [`Policy`] rules, and how policies are evaluated.
+///
+/// Policies are declarative allow/deny/ask rules over tool names, with
+/// optional conditions on the arguments. This client evaluates them in the
+/// harness's pre-tool callback, which gates every tool call (builtin,
+/// custom, MCP, subagent) before it runs; the harness enforces the verdict.
+/// The exception is [`policy::auto`], the harness's own model-judged
+/// assessment, which runs harness-side and asks this client only about the
+/// calls it flags (D-022).
+///
+/// # Evaluation order
+///
+/// The harness's own evaluator's order, which the Python SDK documents and
+/// harness 0.1.23 follows (verified 2026-11-05):
+///
+/// 1. **Specificity**: a rule naming the tool beats a server-wide MCP rule
+///    (`mcp_<server>_*`), which beats the wildcard (`"*"`).
+/// 2. **Within a tier, safety**: deny beats ask (`confirm`, `ask_user`),
+///    which beats allow — whatever the registration order.
+/// 3. Then registration order.
+///
+/// A rule with a [`when`](Policy::when) condition applies only to calls the
+/// condition accepts; the others fall through to the next rule. So
+/// `[deny_all(), allow("get_weather")]` allows only `get_weather`, and
+/// `[allow("run_command"), deny("run_command").when(rm)]` denies the
+/// commands `rm` matches and allows the rest.
+///
+/// When no rule matches, the call is **allowed** (default open), still
+/// subject to the pre-tool hook. [`AgentBuilder::spawn`](super::AgentBuilder)
+/// refuses to start an agent with write-capable builtins or MCP servers and
+/// no policy or pre-tool hook at all, so default-open only applies once you
+/// have opted into a policy set.
+///
+/// # Targets
+///
+/// - Custom tools and builtins are matched by name (builtins use their wire
+///   names: `run_command`, `edit_file`, `create_file`, `view_file`,
+///   `list_directory`, `search_directory`, `find_file`, `search_web`,
+///   `read_url_content`, `generate_image`, `invoke_subagent`,
+///   `ask_question`, `finish`). `start_subagent`, the subagent builtin's
+///   name before harness 0.1.18, still targets `invoke_subagent`.
+/// - MCP tools are matched as `mcp_<server>_<tool>`, every tool of a
+///   server as `mcp_<server>_*`, and every MCP tool as `mcp_*`.
+/// - `"*"` matches everything.
+///
+/// `ask_question` is policy-gated like the rest on harness 0.1.18 and later:
+/// the call passes through the pre-tool hook before the question is posed,
+/// so a `deny_all()` set needs an explicit `allow("ask_question")`. The
+/// answers come from the
+/// [`on_questions`](crate::antigravity::AgentBuilder::on_questions) hook.
 pub mod policy {
     use super::{Policy, PolicyDecision, WILDCARD};
     use crate::antigravity::ToolInvocation;

@@ -313,11 +313,12 @@ impl AgentBuilder {
 
     /// Adds a tool policy. See [`policy`] for constructors.
     ///
-    /// Exact-name rules beat wildcard rules; within the same specificity
-    /// tier the first registered matching rule wins, so
-    /// `[deny_all(), allow("get_weather")]` allows only `get_weather`.
-    /// When no rule matches, the call is allowed (default open), subject
-    /// to the pre-tool hook.
+    /// A rule naming the tool beats a server-wide MCP rule, which beats the
+    /// wildcard; within a tier deny beats ask beats allow, whatever the
+    /// order (the harness evaluator's precedence; see the [`policy`] module
+    /// docs). So `[deny_all(), allow("get_weather")]` allows only
+    /// `get_weather`. When no rule matches, the call is allowed (default
+    /// open), subject to the pre-tool hook.
     ///
     /// [`policy`]: super::policy
     #[must_use]
@@ -354,11 +355,11 @@ impl AgentBuilder {
     /// Sets how the harness frames the agent's task (default: the
     /// harness's, which is [`AgentBehavior::Autonomous`]).
     ///
-    /// [`BuiltinTool::AskQuestion`] needs [`AgentBehavior::Interactive`]:
-    /// the default autonomous prompt tells the model the user will not
-    /// answer, so it asks in prose rather than calling the tool, and an
-    /// [`on_questions`](Self::on_questions) hook never fires. `spawn()`
-    /// warns about that combination.
+    /// [`BuiltinTool::AskQuestion`](super::BuiltinTool::AskQuestion) needs
+    /// [`AgentBehavior::Interactive`]: the default autonomous prompt tells
+    /// the model the user will not answer, so it asks in prose rather than
+    /// calling the tool, and an [`on_questions`](Self::on_questions) hook
+    /// never fires. `spawn()` warns about that combination.
     #[must_use]
     pub fn with_agent_behavior(mut self, behavior: AgentBehavior) -> Self {
         self.agent_behavior = Some(behavior);
@@ -407,6 +408,11 @@ impl AgentBuilder {
     /// (`#[tokio::main]` on a one-CPU host), it holds the timer's thread
     /// until it returns. Make such a tool `async`, or call `spawn_blocking`
     /// inside it.
+    ///
+    /// An abandoned blocking body keeps its worker thread until it returns,
+    /// so the runtime has one worker fewer meanwhile, and dropping the
+    /// runtime (the end of `#[tokio::main]`) waits for it. A tool that may
+    /// block for long should bound itself.
     #[must_use]
     pub fn with_turn_timeout(mut self, timeout: Duration) -> Self {
         self.turn_timeout = TurnBudget::Explicit(timeout);
