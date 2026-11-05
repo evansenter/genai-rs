@@ -315,7 +315,10 @@ checks on it:
   body) is built fully populated as struct literals with no
   `..Default::default()`, so a new field does not compile until it is
   populated (the agent configs, whose fields are private, through every
-  builder), plus proptest samples for the union arms and enum values. Every
+  builder), plus proptest samples for the union arms and enum values. An
+  `extra` map (`InteractionRequest::extra` included) stays empty: its keys
+  are the caller's, not the crate's, and would count as sent in the reverse
+  test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). Every
   key it serializes to, at every depth, must exist on the binding class it
   is sent as, and every required key must be sent. A value carrying a
   union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s

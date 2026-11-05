@@ -68,7 +68,9 @@ const DEPRECATED: &str = "Deprecated, superseded by response_format (or rejected
      (live 2026-11-04).";
 const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares with \
      interactions; a trigger's stored interaction carries none of them (live \
-     2026-11-04: store, object, input, agent).";
+     2026-11-04: store, object, input, agent). One that did would land in \
+     `InteractionRequest::extra` and be sent back when the interaction is \
+     reused (before #500 it was dropped).";
 
 /// Fields and values the crate does not model yet.
 const GAPS: &[Allowed] = &[
