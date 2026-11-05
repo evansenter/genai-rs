@@ -106,8 +106,10 @@ and a serialize.
 The weekly `captured-fixtures` job in `rust.yml` re-captures them from the
 live API, replays the fresh copies, and uploads them as an artifact. A red
 run there means the API now sends something the crate does not parse the
-same way. To refresh the committed copies, download the artifact (or run
-the script with `GEMINI_API_KEY` set) and commit `tests/fixtures/captured/`.
+same way. The job cannot commit, so it also fails once a committed
+fixture is more than 90 days old (`capture_fixtures.py --check-age 90`). To
+refresh the committed copies, download the artifact (or run the script
+with `GEMINI_API_KEY` set) and commit `tests/fixtures/captured/`.
 
 ## Scripted harness tests
 
@@ -255,7 +257,7 @@ async fn test_feature_name() {
 | `assert_response_semantic(..)`, `validate_response_semantically(..)` | Semantic checks (below) |
 | `get_weather_function()`, `get_time_function()` | Shared declarations |
 | `test_resource_name(label)`, `test_source_content(text)`, `TEST_RESOURCE_PREFIX` | Names and fixture content the leaked-resource janitor recognizes |
-| `stored_echo(client, id, pointer)`, `assert_stored(what, sent, stored)` | Read a stored interaction back at a JSON pointer, and check it holds everything sent |
+| `stored_echo(client, id, pointer)`, `assert_stored(what, sent, stored)` | Read a stored interaction back at a JSON pointer, and check it holds everything sent. The read returns a `Result`, so cancel and delete before asserting |
 | `TINY_RED_PNG_BASE64`, `TINY_BLUE_PNG_BASE64`, `TINY_WAV_BASE64`, `TINY_MP4_BASE64`, `TINY_PDF_BASE64` | Minimal valid media. The MP4 is one second: shorter clips yield no sampled frame and are rejected |
 
 `is_transient_error` matches Spanner UTF-8 errors and two 400s (`invalid json
@@ -276,15 +278,19 @@ passes leaves its job green. The daily `ci-flakiness-report.yml` reads the
 retry jobs' logs from every finished run of the week, green ones included,
 and counts each test nextest marked `FLAKY` (`.github/scripts/count_retried_flakes.sh`).
 The rolling report lists retried tests beside failed ones and gives the
-week's rate: tests that passed only on a retry, over live test runs. The
-target is under 1%; the report calls out a week at or over it. No CI run
+week's rate: tests that passed only on a retry, over live test runs. Only
+the steps that run nextest with `--retries` count, so the antigravity job's
+offline suite, which shares its log, stays out of the rate. The target is
+under 1%; the report calls out a week at or over it. No CI run
 stops at its first failure: `.config/nextest.toml` turns fail-fast off for
 the default profile, which every job uses.
 
 ### Leaked test resources
 
-Nothing a live test creates expires on its own (environments from 2026-07
-were still there in November). `test-resource-janitor.yml` runs
+Uploaded files expire 48 hours after upload, and a test deletes the
+stored interactions it creates itself (they cannot be listed). Nothing else
+a live test creates expires on its own: environments from 2026-07 were
+still there in November. `test-resource-janitor.yml` runs
 `.github/scripts/cleanup_test_resources.py` daily and deletes resources
 that carry a live test's marker and are more than six hours old:
 credentials and agents whose id starts with `genai-rs-test`, triggers, file

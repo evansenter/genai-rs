@@ -197,8 +197,9 @@ reaches the wire must use a real id.
   interactions included. A request field with no observable effect is
   checked as stored with `stored_echo` and `assert_stored`, not just
   accepted (#492).
-- Offline timing tests run on a paused clock and assert virtual time,
-  never `std::time::Instant` (#501; `docs/TESTING.md`).
+- Timing tests against the HTTP stub run on a paused clock and assert
+  virtual time, never `std::time::Instant` (#501; `docs/TESTING.md`). The
+  Antigravity suites drive real processes, so their bounds stay wall-clock.
 - Don't assert `text.contains(..)` on non-deterministic model output; use
   `assert_response_semantic()` (see `docs/TESTING.md`). Exact computed values
   are fine.
@@ -258,8 +259,9 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   test-only file, and builds the packaged crates), test,
   test-strict-unknown, test-antigravity (pinned `localharness` wheel),
   test-integration (live, grouped), example-smoke (live), captured-fixtures
-  (live, schedule and dispatch only: re-captures `tests/fixtures/captured/`
-  and replays the fresh copies), fmt, shell-scripts (the script harnesses,
+  (live, schedule and dispatch only: re-captures `tests/fixtures/captured/`,
+  replays the fresh copies, and fails once the committed ones are over 90
+  days old), fmt, shell-scripts (the script harnesses,
   shellcheck, the workflow parse check and actionlint over every workflow),
   clippy, doc, msrv, cross-platform (stable and beta; trybuild's `ui_tests`
   are skipped on beta), coverage, build-metrics, scheduled-run-status. Live
