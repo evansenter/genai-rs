@@ -10,7 +10,8 @@
 # miss, so it is the one pinned hardest here.
 #
 # Each case runs under every awk on the machine: CI's Ubuntu runner has
-# mawk, a Mac has BSD awk.
+# mawk, a Mac has BSD awk. The script is run directly, as the workflow
+# runs it, so a commit that drops its executable bit fails here too.
 
 set -euo pipefail
 
@@ -48,7 +49,7 @@ for awk_impl in "${awks[@]}"; do
     export AWK="$awk_impl"
 
     # --- A green job: nothing failed, three tests passed on a retry.
-    out=$(bash "$SCRIPT" "$FIXTURES/green_integration_job.txt")
+    out=$("$SCRIPT" "$FIXTURES/green_integration_job.txt")
     expect_json "green job: sums both runs' Summary lines" .tests_run 5
     expect_json "green job: counts every retried flake" .flaky 3
     expect_json "green job: one entry per test, by binary" \
@@ -63,14 +64,46 @@ for awk_impl in "${awks[@]}"; do
     # --- A red run from `gh run view --log`, read on stdin: job and step
     #     before the timestamp. A test that failed every try is a failure,
     #     not a flake.
-    out=$(bash "$SCRIPT" < "$FIXTURES/red_run_view.txt")
+    out=$("$SCRIPT" < "$FIXTURES/red_run_view.txt")
     expect_json "red run: tests run" .tests_run 3
     expect_json "red run: only the test that recovered is a flake" \
         '[.tests[] | .name]' '["test_stateful_conversation"]'
 
     # --- Two logs at once, as the workflow passes a run's jobs.
-    out=$(bash "$SCRIPT" "$FIXTURES/green_integration_job.txt" "$FIXTURES/red_run_view.txt")
+    out=$("$SCRIPT" "$FIXTURES/green_integration_job.txt" "$FIXTURES/red_run_view.txt")
     expect_json "two logs: totals add up" '[.tests_run, .flaky]' '[8,4]'
+
+    # --- The antigravity job, trimmed from a real `gh run view --log`
+    #     (2026-11-05) with one retry added: the offline suite (1676 tests)
+    #     and the scripted suite (15) run without retries in the same log,
+    #     and only the harness step's 24 tests count toward the rate.
+    out=$("$SCRIPT" "$FIXTURES/antigravity_job_run_view.txt")
+    expect_json "antigravity job: only the retried step's tests count" .tests_run 24
+    expect_json "antigravity job: its flake counts" \
+        '[.tests[] | "\(.binary) \(.name) \(.flaky)"]' \
+        '["antigravity_harness test_antigravity_chat_basic 1"]'
+
+    # --- A raw job log: a retried step (by NEXTEST_RETRIES) then one
+    #     without retries. The step state resets per log, so the plain log
+    #     after it counts whole.
+    cat > "$WORK/steps.log" <<'LOG'
+2026-11-05T10:00:00.0000000Z ##[group]Run cargo nextest run --test voices_tests
+2026-11-05T10:00:00.1000000Z env:
+2026-11-05T10:00:00.2000000Z   NEXTEST_RETRIES: 2
+2026-11-05T10:00:00.3000000Z ##[endgroup]
+2026-11-05T10:00:01.0000000Z     Starting 3 tests across 1 binary
+2026-11-05T10:00:02.0000000Z    FLAKY 2/3 [   0.010s] genai-rs::voices_tests test_voice_list
+2026-11-05T10:00:03.0000000Z      Summary [   0.020s] 3 tests run: 3 passed (1 flaky), 0 skipped
+2026-11-05T10:00:04.0000000Z ##[group]Run cargo nextest run --workspace
+2026-11-05T10:00:04.1000000Z cargo nextest run --workspace   # no --retries here
+2026-11-05T10:00:04.2000000Z ##[endgroup]
+2026-11-05T10:00:05.0000000Z     Starting 900 tests across 30 binaries
+2026-11-05T10:00:06.0000000Z      Summary [   9.000s] 900 tests run: 900 passed, 0 skipped
+LOG
+    printf '     Summary [   1.000s] 7 tests run: 7 passed, 0 skipped\n' > "$WORK/clean.log"
+    out=$("$SCRIPT" "$WORK/steps.log" "$WORK/clean.log")
+    expect_json "steps: a step without retries is left out, a later plain log is not" \
+        '[.tests_run, .flaky]' '[10,1]'
 
     # --- One test flaky in two runs counts twice; a library unit test is
     #     reported under `lib`; a `TRY n PASS` with no FLAKY line still
@@ -87,7 +120,7 @@ for awk_impl in "${awks[@]}"; do
    FLAKY 2/3 [   0.010s] genai-rs request::tests::builds_the_body
      Summary [   0.020s] 2 tests run: 2 passed (2 flaky), 0 skipped
 LOG
-    out=$(bash "$SCRIPT" "$WORK/twice.log")
+    out=$("$SCRIPT" "$WORK/twice.log")
     expect_json "two runs: the same test counts once per run" \
         '[.tests[] | select(.name == "test_voice_list") | .flaky]' '[2]'
     expect_json "two runs: a lib unit test is under lib" \
@@ -96,9 +129,9 @@ LOG
 
     # --- Nothing to count: a clean run, and no input at all.
     printf '     Summary [   1.000s] 7 tests run: 7 passed, 0 skipped\n' > "$WORK/clean.log"
-    out=$(bash "$SCRIPT" "$WORK/clean.log")
+    out=$("$SCRIPT" "$WORK/clean.log")
     expect_json "clean run: no flakes" '[.tests_run, .flaky, (.tests | length)]' '[7,0,0]'
-    out=$(bash "$SCRIPT" < /dev/null)
+    out=$("$SCRIPT" < /dev/null)
     expect_json "empty input: zeros, not an error" '[.tests_run, .flaky, (.tests | length)]' '[0,0,0]'
 done
 
@@ -141,7 +174,7 @@ refute_report() {
     fi
 }
 
-render_report "$(bash "$SCRIPT" "$FIXTURES/green_integration_job.txt")"
+render_report "$("$SCRIPT" "$FIXTURES/green_integration_job.txt")"
 expect_report "report: a green week's retried flake is listed" \
     '| `test_pdf_from_temp_file` | 0 | 1 | passed on retry | tests/temp_file_tests.rs |'
 expect_report "report: the rate row counts flakes over live test runs" \

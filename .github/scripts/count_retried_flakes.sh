@@ -4,9 +4,9 @@
 # A live test that fails and then passes under `--retries` leaves its job
 # green, so the flakiness report, which used to read only failed runs, never
 # saw it. nextest marks such a test `FLAKY n/m` in its final status list,
-# and `TRY n PASS` (n > 1) as it happens; this reads both, and every run's
-# `Summary` line for the number of tests run, so the report can give a
-# rate.
+# and `TRY n PASS` (n > 1) as it happens; this reads both, and each retried
+# run's `Summary` line for the number of tests run, so the report can give
+# a rate.
 #
 # Usage: count_retried_flakes.sh [log...]    (reads stdin with no argument)
 #
@@ -16,13 +16,21 @@
 # several nextest runs (the integration job runs one per binary); a test
 # counts once per run it was flaky in.
 #
+# Only runs under retries count, flakes and tests run alike: in a job log,
+# a run counts when its step's command, which the log echoes between
+# `##[group]Run ...` and `##[endgroup]`, has `nextest run ... --retries` on
+# one line or sets NEXTEST_RETRIES. The antigravity job also runs the
+# offline suite, ~1,700 tests with no retries, in the same log; counting
+# them would dilute the rate about eightfold. Output with no step header
+# (plain nextest output) counts whole: the caller chose what to pass.
+#
 # Output (JSON on stdout):
 #   {"tests_run": N, "flaky": F,
 #    "tests": [{"binary": "temp_file_tests", "name": "test_x",
 #               "flaky": 1, "failed_tries": 1}, ...]}
-# `tests_run` sums the runs' `Summary` lines; `flaky` is the number of
-# (run, test) pairs that passed on a retry. `binary` is the test binary
-# without the crate prefix (`lib` for the library's unit tests).
+# `tests_run` sums the counted runs' `Summary` lines; `flaky` is the
+# number of (run, test) pairs that passed on a retry. `binary` is the test
+# binary without the crate prefix (`lib` for the library's unit tests).
 
 set -euo pipefail
 
@@ -31,10 +39,12 @@ command -v jq >/dev/null 2>&1 || {
   exit 2
 }
 
-# `cat --` with no files reads stdin. `AWK` lets the harness try each awk
-# (Ubuntu runners have mawk). ESC is passed in rather than written
-# as `\x1b`, which mawk (Ubuntu's awk) does not understand in a regex.
-cat -- "$@" | "${AWK:-awk}" -v esc=$'\033' '
+# awk reads the logs one by one (stdin with none), so the step state
+# resets per log. `AWK` lets the harness try each awk (Ubuntu runners have
+# mawk). ESC is passed in rather than written as `\x1b`, which mawk does
+# not understand in a regex.
+"${AWK:-awk}" -v esc=$'\033' '
+  FNR == 1 { header_seen = 0; in_header = 0; retried_step = 0 }
   {
     line = $0
     sub(/\r$/, "", line)
@@ -47,6 +57,22 @@ cat -- "$@" | "${AWK:-awk}" -v esc=$'\033' '
     sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z /, "", line)
     gsub(esc "\\[[0-9;]*m", "", line)
     gsub(/\^\[\[[0-9;]*m/, "", line)
+
+    # A step header: GitHub echoes the script of the step, then its env,
+    # up to `##[endgroup]`. (`##[group]Running x` is a group the
+    # integration loop opens, not a step.) The first line may carry a
+    # byte-order mark, so the markers are found anywhere in the line.
+    if (index(line, "##[group]Run ") > 0) {
+      header_seen = 1; in_header = 1; retried_step = 0
+      next
+    }
+    if (in_header) {
+      if (index(line, "##[endgroup]") > 0) in_header = 0
+      else if ((index(line, "nextest run") > 0 && line ~ /--retries[ =]*[1-9]/) \
+               || line ~ /NEXTEST_RETRIES: *[1-9]/) retried_step = 1
+      next
+    }
+    if (header_seen && !retried_step) next
 
     # One nextest run starts each section; flakes are counted per run.
     if (line ~ /^ *Starting [0-9]+ tests? across /) { run++ }
@@ -86,7 +112,7 @@ cat -- "$@" | "${AWK:-awk}" -v esc=$'\033' '
       printf "flaky\t%s\t%s\t%d\n", k[2], k[3], failed[key]
     }
   }
-' | jq -R -s '
+' "$@" | jq -R -s '
   split("\n") | map(select(length > 0) | split("\t")) as $rows
   | {
       tests_run: ([$rows[] | select(.[0] == "run") | .[1] | tonumber] | add // 0),
