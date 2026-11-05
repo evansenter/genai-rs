@@ -735,13 +735,15 @@ one entry for a single voice, one per `speaker` for multi-speaker TTS.
   docs returns 400 (`no such field: 'voiceConfig'`, 2026-01-10).
 - A stored interaction read back serves `generation_config`, with
   `speech_config` in the `{"speakers": [...]}` form whichever form was sent
-  (live 2026-11-04, `gemini-3.8-flash-tts`, sent as the list form). The
-  crate does not model it on `InteractionResponse` yet, so it lands in
-  `extra` (#504, WP2). With `include_input=true` the input comes back as a
-  `user_input` step, and every list in the stored config comes back twice
-  over: each `speakers` entry, `stop_sequences` value, `response_modalities`
-  value and `safety_settings` entry appears twice (live 2026-11-04, on the
-  TTS model and on `gemini-3.8-flash`). Neither was echoed in 2026-07.
+  (live 2026-11-04 and 2026-11-05, `gemini-3.8-flash-tts`, sent as the list
+  form). `InteractionResponse::generation_config` reads it into the same
+  list, and serializes it back as the list. With `include_input=true` the
+  input comes back as a `user_input` step, and every list in the stored
+  config comes back twice over: each `speakers` entry, `stop_sequences`
+  value, `response_modalities` value and `safety_settings` entry appears
+  twice (live 2026-11-04 and 2026-11-05, on the TTS model and on
+  `gemini-3.8-flash`). The crate keeps what is served and does not
+  deduplicate. Neither was echoed in 2026-07.
 
 #### speech_config wire forms
 

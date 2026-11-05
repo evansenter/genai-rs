@@ -57,6 +57,8 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             language: Some("en-US".into()),
             speaker: Some("Joe".into()),
         }]),
+        // The caller's keys, not the crate's (see `cases`).
+        extra: serde_json::Map::new(),
         image_config: Some(ImageConfig {
             aspect_ratio: Some(ImageAspectRatio::Square),
             image_size: Some(ImageSize::Hd1k),

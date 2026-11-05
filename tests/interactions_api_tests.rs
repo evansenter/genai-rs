@@ -147,6 +147,84 @@ mod basic {
         }
     }
 
+    /// A stored interaction read back serves the request's generation
+    /// config, response format, modalities and safety settings, and each is
+    /// modeled on `InteractionResponse` (live 2026-11-05; they used to land
+    /// in `extra`). With `include_input=true` the lists repeat their entries
+    /// (live 2026-11-04 and 2026-11-05), which this checks only loosely, so a
+    /// server fix does not fail it.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_stored_read_serves_the_request_config() {
+        use genai_rs::{
+            HarmCategory, ResponseFormat, ResponseFormatSpec, SafetySetting, SafetyThreshold,
+        };
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+        let setting = SafetySetting::new(HarmCategory::HateSpeech, SafetyThreshold::BlockOnlyHigh);
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"answer": {"type": "integer"}}
+        });
+
+        let response = retry_request!([client, setting, schema] => {
+            stateful_builder(&client)
+                .with_text("Reply with a JSON object whose answer is 4.")
+                .with_stop_sequences(vec!["HALT".to_string()])
+                .with_response_format(ResponseFormat::json_schema(schema))
+                .with_response_modalities(vec!["text".to_string()])
+                .add_safety_setting(setting)
+                .create()
+                .await
+        })
+        .expect("Interaction failed");
+        let id = response.id.clone().expect("id should exist");
+        let stored = client.interactions().get(&id).await;
+        let with_input = client.interactions().get_with_input(&id).await;
+        let _ = client.interactions().delete(&id).await;
+        let stored = stored.expect("Get interaction failed");
+        let with_input = with_input.expect("Get interaction with input failed");
+
+        for key in [
+            "generation_config",
+            "response_format",
+            "response_modalities",
+            "safety_settings",
+        ] {
+            assert!(
+                !stored.extra.contains_key(key),
+                "{key} landed in extra: {:?}",
+                stored.extra
+            );
+        }
+        let config = stored
+            .generation_config
+            .as_ref()
+            .expect("generation_config");
+        assert_eq!(config.stop_sequences, Some(vec!["HALT".to_string()]));
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+        match &stored.response_format {
+            Some(ResponseFormatSpec::Single(ResponseFormat::Text { mime_type, .. })) => {
+                assert_eq!(mime_type.as_deref(), Some("application/json"));
+            }
+            other => panic!("expected the JSON text format, got {other:?}"),
+        }
+        assert_eq!(stored.response_modalities, Some(vec!["text".to_string()]));
+        assert_eq!(stored.safety_settings, Some(vec![setting]));
+
+        let repeated = with_input
+            .generation_config
+            .and_then(|c| c.stop_sequences)
+            .expect("stop_sequences on the include_input read");
+        assert!(
+            !repeated.is_empty() && repeated.iter().all(|s| s == "HALT"),
+            "{repeated:?}"
+        );
+        println!("include_input stop_sequences: {repeated:?}");
+    }
+
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_interactions_delete() {

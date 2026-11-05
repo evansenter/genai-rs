@@ -2660,8 +2660,20 @@ fn interaction_echoes_labels_system_instruction_and_extras() {
     let response: InteractionResponse = serde_json::from_value(wire.clone()).unwrap();
     assert_eq!(response.system_instruction.as_deref(), Some("Be brief."));
     assert_eq!(response.labels.as_ref().unwrap()["team"], "audit");
-    assert_eq!(response.extra["environment"], wire["environment"]);
-    assert_eq!(serde_json::to_value(&response).unwrap(), wire);
+    assert!(
+        matches!(
+            response.environment,
+            Some(crate::EnvironmentSpec::Remote(_))
+        ),
+        "{:?}",
+        response.environment
+    );
+    assert!(response.extra.is_empty(), "{:?}", response.extra);
+    // The echo spells `env` as a list of single-key maps; it goes back out
+    // as the map a request sends (`RemoteEnvironment::env`).
+    let mut sent = wire.clone();
+    sent["environment"]["env"] = serde_json::json!({"A": {"value": "1"}});
+    assert_eq!(serde_json::to_value(&response).unwrap(), sent);
 }
 
 #[test]
@@ -2722,4 +2734,67 @@ fn continuation_token_and_errors_are_typed() {
     let status: InteractionStatus =
         serde_json::from_value(serde_json::json!("requires_continuation")).unwrap();
     assert_eq!(status, InteractionStatus::RequiresContinuation);
+}
+
+#[test]
+fn stored_read_request_config_is_modeled() {
+    // A stored TTS interaction read back (live 2026-11-05): the speakers
+    // object form, and the modalities.
+    let tts: InteractionResponse = serde_json::from_value(serde_json::json!({
+        "id": "i1",
+        "status": "completed",
+        "response_modalities": ["audio"],
+        "generation_config": {"speech_config": {"speakers": [{"voice": "Kore"}]}}
+    }))
+    .unwrap();
+    assert!(tts.extra.is_empty(), "{:?}", tts.extra);
+    assert_eq!(tts.response_modalities, Some(vec!["audio".to_string()]));
+    let speakers = tts
+        .generation_config
+        .as_ref()
+        .and_then(|c| c.speech_config.as_ref())
+        .unwrap();
+    assert_eq!(speakers[0].voice.as_deref(), Some("Kore"));
+
+    // A stored model interaction with a JSON response format and safety
+    // settings (live 2026-11-05).
+    let json: InteractionResponse = serde_json::from_value(serde_json::json!({
+        "id": "i2",
+        "status": "completed",
+        "generation_config": {"stop_sequences": ["STOP"], "max_output_tokens": 2000, "thinking_level": "low", "future_knob": 1},
+        "response_format": {"type": "text", "mime_type": "application/json", "schema": {"type": "object"}},
+        "safety_settings": [{"type": "hate_speech", "threshold": "block_only_high"}]
+    }))
+    .unwrap();
+    assert!(json.extra.is_empty(), "{:?}", json.extra);
+    let config = json.generation_config.as_ref().unwrap();
+    assert_eq!(config.max_output_tokens, Some(2000));
+    assert_eq!(config.extra["future_knob"], 1);
+    assert!(json.response_format.is_some());
+    assert_eq!(json.safety_settings.as_ref().map(Vec::len), Some(1));
+
+    // A stored agent interaction (live 2026-11-05).
+    let agent: InteractionResponse = serde_json::from_value(serde_json::json!({
+        "id": "i3",
+        "status": "completed",
+        "agent": crate::DEFAULT_ANTIGRAVITY_AGENT,
+        "agent_config": {"type": "antigravity"},
+        "environment": "835e59966a2fa3c2d4541ce46ebc26d6",
+        "environment_id": "835e59966a2fa3c2d4541ce46ebc26d6"
+    }))
+    .unwrap();
+    assert!(agent.extra.is_empty(), "{:?}", agent.extra);
+    assert_eq!(
+        agent.agent_config.as_ref().and_then(|c| c.config_type()),
+        Some("antigravity")
+    );
+    assert_eq!(
+        agent.environment,
+        Some(crate::EnvironmentSpec::Id(
+            "835e59966a2fa3c2d4541ce46ebc26d6".to_string()
+        ))
+    );
+    let back = serde_json::to_value(&agent).unwrap();
+    assert_eq!(back["agent_config"]["type"], "antigravity");
+    assert_eq!(back["environment"], "835e59966a2fa3c2d4541ce46ebc26d6");
 }

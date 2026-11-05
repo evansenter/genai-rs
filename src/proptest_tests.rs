@@ -1483,6 +1483,7 @@ pub(crate) fn arb_generation_config() -> impl Strategy<Value = GenerationConfig>
                 image_config,
                 video_config,
                 transcription_config,
+                extra: serde_json::Map::new(),
             }
         },
     )

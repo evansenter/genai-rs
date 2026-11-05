@@ -51,6 +51,7 @@ fn test_generation_config_serialization() {
         image_config: None,
         video_config: None,
         transcription_config: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -76,6 +77,7 @@ fn test_generation_config_new_fields_serialization() {
         image_config: None,
         video_config: None,
         transcription_config: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -103,6 +105,7 @@ fn test_generation_config_roundtrip() {
         image_config: None,
         video_config: None,
         transcription_config: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");

@@ -623,17 +623,8 @@ async fn test_safety_settings_accepted_and_stored() {
     let _ = client.interactions().delete(&id).await;
     assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
     let stored = stored.expect("get_interaction");
-    // Parsing the echo, rather than comparing raw JSON, also exercises the
-    // `type` key on the deserialize side.
-    let echoed: Vec<SafetySetting> = serde_json::from_value(
-        stored
-            .extra
-            .get("safety_settings")
-            .cloned()
-            .expect("safety_settings were not stored"),
-    )
-    .expect("stored safety_settings parse as SafetySetting");
-    assert_eq!(echoed, vec![setting]);
+    // The modeled field, read through the `type` key on the deserialize side.
+    assert_eq!(stored.safety_settings, Some(vec![setting]));
 }
 
 /// `civic_integrity`, the `image_*` categories and `block_none` are

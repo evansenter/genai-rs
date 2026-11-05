@@ -68,6 +68,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updates all list it (#501). It used to read as `Unknown`. Not observed
   live: on 2026-11-05 background agent and model interactions reported
   `in_progress` from their create response on.
+- `InteractionResponse` models the request fields a stored interaction
+  serves, which used to land in `extra`: `generation_config`,
+  `response_format`, `response_modalities` and `safety_settings` (a stored
+  read carries all four, and the create response echoes
+  `safety_settings`), and on an agent interaction `agent_config` and
+  `environment` (the create response and the stored read echo
+  `agent_config`, the stored read `environment`; all verified live
+  2026-11-05). `generation_config.speech_config` reads the
+  `{"speakers": [...]}` form the read serves into the same list as the
+  request's form. With `get_with_input` every list in them repeats each
+  entry (live 2026-11-04 and 2026-11-05); the crate keeps what is served.
+- `GenerationConfig::extra` keeps the generation-config fields the crate
+  does not model, from a stored read or a deserialized config, and sends
+  them flat beside the modeled ones.
 
 ### Changed
 
@@ -222,14 +236,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   echoed. With `include_input=true` the API returns the input as a list
   holding one `user_input` step, and on that read it repeats every entry of
   the stored request's lists (`stop_sequences`, `response_modalities`,
-  `safety_settings`, speech speakers), which arrive unmodeled in `extra`
-  (verified live 2026-11-04).
+  `safety_settings`, speech speakers; verified live 2026-11-04).
 - `docs/ENUM_WIRE_FORMATS.md` no longer says reads echo no
   `generation_config`. A stored interaction read back carries it, with
   `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
-  and `response_format`, `response_modalities` and `safety_settings` too;
-  `InteractionResponse` does not model them yet, so they arrive in `extra`
-  (verified live 2026-11-04).
+  and `response_format`, `response_modalities` and `safety_settings` too
+  (verified live 2026-11-04); see Added for the fields that model them.
 - `wait_until_active` (files and file-search documents):
   - It honors the `Retry-After` of a 429 it polls through, and gives up at
     once when that falls past the deadline.
@@ -285,6 +297,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so read it there (`item.extra.get("title")`). For file search, read the
   `file_citation` annotations on the answer (`all_annotations()`);
   `has_file_search_results()` still says whether a search ran.
+- **Breaking: `GenerationConfig` has a new public field, `extra`.**
+  Migration: a struct literal needs `extra: Default::default()`, or
+  `..Default::default()`.
+- **Breaking: `generation_config`, `response_format`,
+  `response_modalities`, `safety_settings`, `agent_config` and
+  `environment` no longer land in `InteractionResponse::extra`.**
+  Migration: read the new fields (`response.safety_settings` instead of
+  `response.extra["safety_settings"]`). The environment echo's `env`, a
+  list of single-key maps on the wire, serializes back as the map a request
+  sends.
 
 ### Fixed
 

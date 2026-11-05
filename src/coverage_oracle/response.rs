@@ -66,7 +66,49 @@ const ALLOWED: &[Allowed] = &[
     ("CreateAgentInteractionParams.id", TRIGGER_OUTPUT_ONLY),
     ("CreateAgentInteractionParams.status", TRIGGER_OUTPUT_ONLY),
     ("CreateAgentInteractionParams.updated", TRIGGER_OUTPUT_ONLY),
+    (
+        "interactions.Interaction.continuation_ids",
+        "Never served: not on the stored reads, plain or include_input, of a \
+         decode continued twice on CONTINUATION_MODEL (live 2026-11-05), and \
+         rejected as a request field (`400 Unknown parameter`, 2026-11-01). \
+         It lands in `extra` if it ever comes.",
+    ),
+    ("interactions.Interaction.output_audio", OUTPUT_CONVENIENCE),
+    ("interactions.Interaction.output_image", OUTPUT_CONVENIENCE),
+    ("interactions.Interaction.output_video", OUTPUT_CONVENIENCE),
+    (
+        "interactions.SpeakerConfig.speakers",
+        "`speech_config` reads both arms of its union, the list and the \
+         `{speakers: [...]}` object a stored read serves (live 2026-11-05), \
+         into one list, and serializes it back as the list, which every TTS \
+         model accepts (live 2026-09-24): the object arm's key is not kept.",
+    ),
+    (
+        "interactions.TranscriptionConfig.language_hints",
+        "Deprecated, and rejected on create with 400 Unknown parameter (2.25.0 \
+         sweep, D-005), so a stored interaction never carries it.",
+    ),
+    (
+        "interactions.VideoConfig.task=upscale",
+        "Rejected on create: `400 ... Supported values: text_to_video, \
+         image_to_video, reference_to_video, edit, extend` (2.34.0 sweep, \
+         2026-11-01), so a stored interaction never carries it.",
+    ),
+    (
+        "Interaction.max_total_tokens",
+        "Spec only, and rejected on create with `400 Unknown parameter \
+         'max_total_tokens'` on model and agent interactions alike (live \
+         2026-11-05), so never served (D-005). The agent budget it names is \
+         `agent_config.max_total_tokens` (`AntigravityConfig`).",
+    ),
 ];
+
+const OUTPUT_CONVENIENCE: &str = "A convenience copy of the output in the \
+     bindings, never served: not on a create response or stored read of a TTS \
+     or image interaction, nor on a stream's completed event (live \
+     2026-11-05; `output_text` is not served either). The output is in \
+     `steps`, read by `images()` and `audios()`; no model outputs video. \
+     It lands in `extra` if it ever comes.";
 
 const DEPRECATED: &str = "Deprecated, superseded by response_format (or rejected live, \
      D-005), and not served: a stored interaction read back carries neither \
@@ -79,25 +121,6 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
 
 /// Fields and values the crate does not model yet.
 const GAPS: &[Allowed] = &[
-    // Served on a stored interaction read back (live 2026-11-04), landing in
-    // `extra`.
-    ("interactions.Interaction.generation_config", SERVED),
-    ("interactions.Interaction.response_format", SERVED),
-    ("interactions.Interaction.response_modalities", SERVED),
-    ("interactions.Interaction.safety_settings", SERVED),
-    ("Interaction.response_format", SERVED),
-    ("Interaction.response_modalities", SERVED),
-    ("Interaction.safety_settings", SERVED),
-    // In the snapshot; not seen live on a model interaction (2026-11-04).
-    ("interactions.Interaction.agent_config", UNSEEN),
-    ("interactions.Interaction.continuation_ids", UNSEEN),
-    ("interactions.Interaction.environment", UNSEEN),
-    ("interactions.Interaction.output_audio", UNSEEN),
-    ("interactions.Interaction.output_image", UNSEEN),
-    ("interactions.Interaction.output_video", UNSEEN),
-    ("Interaction.agent_config", UNSEEN),
-    ("Interaction.environment", UNSEEN),
-    ("Interaction.max_total_tokens", UNSEEN),
     (
         "interactions.StepDelta.metadata",
         "`StreamChunk::StepDelta` drops the event's `metadata.total_usage` (only \
@@ -139,8 +162,6 @@ const GAPS: &[Allowed] = &[
     ),
 ];
 
-const SERVED: &str = "Served on a stored interaction read back (live 2026-11-04) \
-     and kept only in `extra`; WP2.";
 const UNSEEN: &str = "In the snapshot, not modeled, and not seen live yet \
      (2026-11-04); probe before modeling (D-010); WP2.";
 
