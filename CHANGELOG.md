@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
   with no timer at all, for tests on a paused tokio clock. A `Client`'s
   `Debug` output shows its connect timeout, which reqwest's does not.
+- `InteractionStatus::Queued` (`"queued"`), from the google-genai 2.34.0
+  bindings, where the interaction, the stream's interaction and its status
+  updates all list it (#501). It used to read as `Unknown`. Not observed
+  live: on 2026-11-05 background agent and model interactions reported
+  `in_progress` from their create response on.
 
 ### Changed
 

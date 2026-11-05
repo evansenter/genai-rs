@@ -485,6 +485,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::Incomplete),
         Just(InteractionStatus::BudgetExceeded),
         Just(InteractionStatus::RequiresContinuation),
+        Just(InteractionStatus::Queued),
         // Unknown variant with preserved data
         unknown_or(InteractionStatus::Completed, |status_type| {
             InteractionStatus::Unknown {

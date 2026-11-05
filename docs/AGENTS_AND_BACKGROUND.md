@@ -430,6 +430,7 @@ async fn poll_until_done(
 | `Incomplete` | Ended before completion (for example a token limit); inspect partial results. On `CONTINUATION_MODEL` it carries a `continuation_token` to resume the decode |
 | `RequiresContinuation` | In the spec, never observed: continuable responses report `Incomplete` |
 | `BudgetExceeded` | The configured budget ran out; inspect partial results |
+| `Queued` | Accepted, not started. In the bindings, never observed: background interactions report `InProgress` from their create response on (2026-11-05) |
 
 Persist the interaction id as soon as `create()` returns, so a restart can
 resume with `client.interactions().get(&id)`. `response.steps` can be non-empty while

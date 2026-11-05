@@ -156,7 +156,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `"active"` verified live 2026-08-08 |
 | `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `active`/`paused` verified live 2026-11-01; `error` is output-only (sending it is a 400) |
 | `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | `completed` verified live 2026-11-01; the rest from the SDK spec |
-| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"`, `"requires_continuation"` | `budget_exceeded` pending live verification; `requires_continuation` spec only. `Default` is `InProgress` |
+| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"`, `"requires_continuation"`, `"queued"` | `budget_exceeded` pending live verification; `requires_continuation` spec only; `queued` bindings only. `Default` is `InProgress` |
 | `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` pending live verification |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
@@ -513,6 +513,7 @@ field does not disable thinking (see [Thinking Mode](THINKING_MODE.md)).
 | `Incomplete` | `incomplete` | Live 2026-11-01: `max_output_tokens` reached; carries a `continuation_token` on the continuation model |
 | `BudgetExceeded` | `budget_exceeded` | Pending live verification |
 | `RequiresContinuation` | `requires_continuation` | google-genai 2.34.0; never observed live |
+| `Queued` | `queued` | google-genai 2.34.0 bindings, not the spec (#501); never observed live: background interactions report `in_progress` from their create response on (2026-11-05) |
 
 ### Resolution
 

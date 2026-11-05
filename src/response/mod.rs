@@ -61,6 +61,14 @@ wire_enum! {
         /// `max_output_tokens`) reported [`Incomplete`](Self::Incomplete)
         /// with a token instead.
         RequiresContinuation = "requires_continuation",
+        /// Accepted but not started yet.
+        ///
+        /// In the google-genai 2.34.0 bindings (on the interaction, the
+        /// stream's interaction and its status updates) but not in the
+        /// spec, and never observed live: on 2026-11-05 background agent
+        /// and model interactions reported
+        /// [`InProgress`](Self::InProgress) from their create response on.
+        Queued = "queued",
     }
     unknown(status_type, unknown_status_type)
 }

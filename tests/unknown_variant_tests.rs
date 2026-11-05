@@ -529,10 +529,18 @@ mod interaction_status {
 
     #[test]
     fn unknown_status_roundtrips() {
-        let json = json!("queued");
+        let json = json!("pending_review");
         let value: InteractionStatus = serde_json::from_value(json.clone()).unwrap();
         let back = serde_json::to_value(&value).unwrap();
-        assert_eq!(back, "queued");
+        assert_eq!(back, "pending_review");
+    }
+
+    #[test]
+    fn queued_is_a_known_status() {
+        // In the google-genai 2.34.0 bindings (#501).
+        let value: InteractionStatus = serde_json::from_value(json!("queued")).unwrap();
+        assert_eq!(value, InteractionStatus::Queued);
+        assert_eq!(serde_json::to_value(&value).unwrap(), "queued");
     }
 
     #[test]

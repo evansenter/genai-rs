@@ -99,18 +99,6 @@ const GAPS: &[Allowed] = &[
     ("Interaction.environment", UNSEEN),
     ("Interaction.max_total_tokens", UNSEEN),
     (
-        "interactions.Interaction.status=queued",
-        "Not an InteractionStatus variant yet (#501); WP2.",
-    ),
-    (
-        "interactions.InteractionSseEventInteraction.status=queued",
-        "Not an InteractionStatus variant yet (#501); WP2.",
-    ),
-    (
-        "interactions.InteractionStatusUpdate.status=queued",
-        "Not an InteractionStatus variant yet (#501); WP2.",
-    ),
-    (
         "interactions.StepDelta.metadata",
         "`StreamChunk::StepDelta` drops the event's `metadata.total_usage` (only \
          `interaction.completed` reads it); WP2.",
