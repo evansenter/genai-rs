@@ -592,7 +592,7 @@ async fn test_transcription_config_accepted() {
     assert_stored(
         "transcription_config",
         &serde_json::to_value(&config).unwrap(),
-        stored.as_ref(),
+        stored,
     );
 }
 
@@ -773,7 +773,7 @@ async fn test_antigravity_config_accepted() {
     })
     .expect("AntigravityConfig should be accepted (verified live 2026-10-01)");
     println!("AntigravityConfig accepted: status={:?}", response.status);
-    let mut stored = None;
+    let mut stored = Ok(None);
     if let Some(id) = &response.id {
         // Print both arms: a failed cancel leaves a background agent
         // running against the account's budget — the larger of this
@@ -797,7 +797,7 @@ async fn test_antigravity_config_accepted() {
             Err(e) => println!("environments.delete({bare_id}) failed (tolerated): {e}"),
         }
     }
-    assert_stored("AntigravityConfig", &sent, stored.as_ref());
+    assert_stored("AntigravityConfig", &sent, stored);
 }
 
 // =============================================================================
@@ -847,12 +847,18 @@ async fn test_deep_research_config_knobs_accepted() {
         response.status
     );
     let id = response.id.expect("stored interaction id");
-    // Accepted is not applied: read the stored agent_config back (#492),
-    // then cancel and delete the run.
+    // Cancel first, so nothing below can leave the run going (a background
+    // Deep Research run is the costliest leak), then read the stored
+    // agent_config back (#492) and delete the run. The read is after the
+    // cancel as in the Antigravity probe: while a run starts, its record
+    // can lack agent_config (seen there, 2026-11-05).
+    match client.interactions().cancel(&id).await {
+        Ok(_) => println!("Cancelled interaction {id}"),
+        Err(e) => println!("interactions().cancel({id}) failed (tolerated): {e}"),
+    }
     let stored = stored_echo(&client, &id, "/agent_config").await;
-    let _ = client.interactions().cancel(&id).await;
     let _ = client.interactions().delete(&id).await;
-    assert_stored("DeepResearchConfig", &sent, stored.as_ref());
+    assert_stored("DeepResearchConfig", &sent, stored);
 }
 
 // =============================================================================

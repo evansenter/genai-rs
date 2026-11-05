@@ -280,7 +280,9 @@ pub async fn poll_until_done(
 /// Reads a stored interaction back and returns the value at `pointer`, a
 /// JSON pointer into the interaction as the API stored it
 /// (`/generation_config/transcription_config`), or `None` when nothing is
-/// there. Panics when the read fails.
+/// there. Transient errors are retried; a read that still fails is an
+/// `Err`, not a panic, so the test cleans up before [`assert_stored`]
+/// reports it.
 ///
 /// A 200 on create shows a field was accepted, not that it was applied:
 /// create responses drop fields the stored record keeps (#476), so a live
@@ -294,16 +296,18 @@ pub async fn stored_echo(
     client: &Client,
     interaction_id: &str,
     pointer: &str,
-) -> Option<serde_json::Value> {
-    let interactions = client.interactions();
-    let stored = if pointer.starts_with("/input") {
-        interactions.get_with_input(interaction_id).await
-    } else {
-        interactions.get(interaction_id).await
-    }
-    .unwrap_or_else(|e| panic!("reading back {interaction_id} failed: {e:?}"));
+) -> Result<Option<serde_json::Value>, GenaiError> {
+    let stored = retry_on_transient(DEFAULT_MAX_RETRIES, || async move {
+        let interactions = client.interactions();
+        if pointer.starts_with("/input") {
+            interactions.get_with_input(interaction_id).await
+        } else {
+            interactions.get(interaction_id).await
+        }
+    })
+    .await?;
     let record = serde_json::to_value(&stored).expect("an interaction serializes");
-    record.pointer(pointer).cloned()
+    Ok(record.pointer(pointer).cloned())
 }
 
 /// Asserts that a stored read-back holds everything that was sent: every
@@ -311,10 +315,14 @@ pub async fn stored_echo(
 /// hold more (defaults the server fills in), which is not a mismatch. An
 /// integer comes back as its decimal string where the API stores an int64
 /// (protobuf JSON: `max_total_tokens: "200000"`, 2026-11-05), which counts
-/// as equal.
+/// as equal. `stored` is [`stored_echo`]'s result; a failed read fails here.
 #[allow(dead_code)]
 #[track_caller]
-pub fn assert_stored(what: &str, sent: &serde_json::Value, stored: Option<&serde_json::Value>) {
+pub fn assert_stored(
+    what: &str,
+    sent: &serde_json::Value,
+    stored: Result<Option<serde_json::Value>, GenaiError>,
+) {
     fn missing(
         sent: &serde_json::Value,
         stored: &serde_json::Value,
@@ -336,9 +344,11 @@ pub fn assert_stored(what: &str, sent: &serde_json::Value, stored: Option<&serde
             _ => out.push(format!("{at}: sent {sent}, stored {stored}")),
         }
     }
-    let stored = stored.unwrap_or_else(|| panic!("{what}: nothing stored; sent {sent}"));
+    let stored = stored
+        .unwrap_or_else(|e| panic!("{what}: reading the interaction back failed: {e:?}"))
+        .unwrap_or_else(|| panic!("{what}: nothing stored; sent {sent}"));
     let mut problems = Vec::new();
-    missing(sent, stored, "", &mut problems);
+    missing(sent, &stored, "", &mut problems);
     assert!(
         problems.is_empty(),
         "{what}: the stored record differs from what was sent:\n  {}\nstored: {stored}",

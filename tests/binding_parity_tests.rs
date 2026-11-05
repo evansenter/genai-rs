@@ -56,7 +56,9 @@ async fn test_video_name_is_accepted() {
     let _ = client.interactions().delete(&id).await;
     assert!(response.as_text().is_some());
 
-    let input = input.expect("the stored interaction has no input");
+    let input = input
+        .unwrap_or_else(|e| panic!("reading {id} back failed: {e:?}"))
+        .expect("the stored interaction has no input");
     let mut videos = Vec::new();
     objects_of_type(&input, "video", &mut videos);
     let names: Vec<_> = videos.iter().map(|v| v.get("name")).collect();
@@ -100,7 +102,7 @@ async fn test_transcription_modes_are_accepted() {
         assert_stored(
             &format!("transcription mode {mode:?}"),
             &serde_json::to_value(&mode).unwrap(),
-            stored.as_ref(),
+            stored,
         );
     }
 }
