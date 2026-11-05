@@ -243,8 +243,10 @@ fn test_pre_tool_hook_names_mcp_tools_by_policy_target() {
     // same shape `ToolAction::args` reports for the MCP step.
     assert_eq!(invocation.args, serde_json::json!({"name": "flange"}));
     assert_eq!(invocation.id.as_deref(), Some("call_1"));
+    // The server rides along, for server-wide rules.
+    assert_eq!(invocation.server.as_deref(), Some("widgets"));
 
-    let denied = hooks::decide(
+    let denied = policies::decide(
         &engine(vec![
             policy::allow_all(),
             policy::deny("mcp_widgets_lookup_widget_code"),
@@ -256,14 +258,17 @@ fn test_pre_tool_hook_names_mcp_tools_by_policy_target() {
 }
 
 #[test]
-fn test_pre_tool_hook_maps_the_subagent_builtin_to_its_public_name() {
-    // Regression: the subagent builtin arrives as its step field name.
+fn test_pre_tool_hook_keeps_the_subagent_builtins_wire_name() {
+    // The subagent builtin arrives as `invoke_subagent`, its public name
+    // since #493's rename; `start_subagent` survives only as a policy
+    // alias (`policies_tests.rs`).
     let invocation = pre_tool_invocation(&pre_tool_args(
         "invoke_subagent",
         "",
         r#"{"Subagents":[{"TypeName":"haiku-writer"}]}"#,
     ));
-    assert_eq!(invocation.name, "start_subagent");
+    assert_eq!(invocation.name, "invoke_subagent");
+    assert_eq!(invocation.server, None);
     // Not an MCP call (blank server), so args are left as sent.
     assert_eq!(invocation.args["Subagents"][0]["TypeName"], "haiku-writer");
 
@@ -314,7 +319,7 @@ fn test_pre_tool_gate_leaves_name_policies_alone_without_a_hook() {
     let args = pre_tool_args("view_file", "", "not json");
     let invocation = pre_tool_gate(&args, false).expect("policies decide by name");
     assert_eq!(invocation.name, "view_file");
-    let denied = hooks::decide(&engine(vec![policy::deny("view_file")]), None, &invocation);
+    let denied = policies::decide(&engine(vec![policy::deny("view_file")]), None, &invocation);
     assert!(matches!(denied, PreToolDecision::Deny { .. }));
 }
 
@@ -470,6 +475,55 @@ fn test_confirmation_allowed_for_allowed_known_tool() {
         &engine(vec![policy::deny_all(), policy::allow("run_command")]),
         None
     ));
+}
+
+/// A waiting step carrying an MCP tool confirmation for `server`.
+fn mcp_confirmation_step(server: &str, tool: &str) -> StepUpdate {
+    StepUpdate {
+        state: Some(StepState::WaitingForUser),
+        tool_confirmation_request: Some(protocol::ToolConfirmationRequest::default()),
+        mcp_tool: Some(protocol::ActionMcpTool {
+            server_name: Some(server.to_string()),
+            tool_name: Some(tool.to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_confirmation_matches_server_wide_rules_on_the_server() {
+    let rules = engine(vec![policy::deny_all(), policy::allow("mcp_git_*")]);
+    assert!(confirmation_accepted(
+        &mcp_confirmation_step("git", "status"),
+        &rules,
+        None
+    ));
+    // `git_admin`'s tools share the `mcp_git_` name prefix, not the server.
+    assert!(!confirmation_accepted(
+        &mcp_confirmation_step("git_admin", "delete_repo"),
+        &rules,
+        None
+    ));
+}
+
+#[test]
+fn test_confirmation_denies_a_hook_that_modifies_arguments() {
+    // A confirmation answers yes or no; it cannot run the call on the
+    // hook's replacement, so the call is denied (with a reason the stream
+    // announces), not accepted on the model's arguments or dropped.
+    let hook: PreToolHook =
+        Arc::new(|_| PreToolDecision::modify(serde_json::json!({"CommandLine": "ls -a"})));
+    for step in [
+        run_command_confirmation_step(),
+        unknown_action_confirmation_step(),
+    ] {
+        let decision = confirmation_decision(&step, &engine(vec![]), Some(&hook));
+        let PreToolDecision::Deny { reason } = decision else {
+            panic!("a modified confirmation must be denied, got {decision:?}");
+        };
+        assert!(reason.contains("cannot apply"), "{reason}");
+    }
 }
 
 #[test]

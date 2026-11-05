@@ -24,10 +24,12 @@
 //! | `OutputConfig`| `port`             | 1      | int32   |
 //! | `OutputConfig`| `api_key`          | 2      | string  |
 //!
-//! Unchanged through harness 0.1.18. The descriptor also defines fields
-//! this client never sends — `InputConfig.env` (5), `InputConfig.
-//! use_interactions_api` (6), `ClientInfo.os` (4), `ClientInfo.os_version`
-//! (5) — which are all optional to the harness.
+//! | `InputConfig`| `env`               | 5      | map<string, string> |
+//!
+//! Unchanged through harness 0.1.23. The descriptor also defines fields
+//! this client never sends — `InputConfig.use_interactions_api` (6),
+//! `ClientInfo.os` (4), `ClientInfo.os_version` (5) — which are all
+//! optional to the harness.
 
 /// Protobuf wire type for varint-encoded scalars.
 const WIRE_VARINT: u32 = 0;
@@ -53,6 +55,9 @@ pub struct InputConfig {
     pub bind_address: String,
     /// Identifies this client to the harness.
     pub client_info: Option<ClientInfo>,
+    /// Extra environment variables for the harness (the Python SDK's
+    /// `env`; also set on the process itself).
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// Client identification sent in the handshake.
@@ -253,6 +258,15 @@ impl InputConfig {
         if let Some(client_info) = &self.client_info {
             encode_message_field(4, &client_info.encode(), &mut buf);
         }
+        // A map field is a repeated entry message: key = 1, value = 2.
+        for (key, value) in &self.env {
+            let mut entry = Vec::new();
+            encode_string_field(1, key, &mut entry);
+            encode_string_field(2, value, &mut entry);
+            encode_tag(5, WIRE_LEN, &mut buf);
+            encode_varint(entry.len() as u64, &mut buf);
+            buf.extend_from_slice(&entry);
+        }
         buf
     }
 
@@ -315,11 +329,30 @@ mod tests {
                 version: "0.7.2".to_string(),
                 language_version: "1.88".to_string(),
             }),
+            ..Default::default()
         };
         let golden: &[u8] = &[
             10, 12, 47, 116, 109, 112, 47, 115, 116, 111, 114, 97, 103, 101, 16, 144, 63, 26, 9,
             49, 50, 55, 46, 48, 46, 48, 46, 49, 34, 19, 10, 4, 114, 117, 115, 116, 18, 5, 48, 46,
             55, 46, 50, 26, 4, 49, 46, 56, 56,
+        ];
+        assert_eq!(config.encode(), golden);
+    }
+
+    #[test]
+    fn test_encode_env_as_map_entries_golden() {
+        // Golden bytes from google-antigravity 0.1.23's localharness_pb2:
+        // InputConfig(storage_directory="/s", env={"A": "1", "BB": "two"}).
+        let config = InputConfig {
+            storage_directory: "/s".to_string(),
+            env: [("A", "1"), ("BB", "two")]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..Default::default()
+        };
+        let golden: &[u8] = &[
+            10, 2, 47, 115, 42, 6, 10, 1, 65, 18, 1, 49, 42, 9, 10, 2, 66, 66, 18, 3, 116, 119, 111,
         ];
         assert_eq!(config.encode(), golden);
     }
