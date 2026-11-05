@@ -29,8 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `StepDelta`, expose the wire fields the crate does not model, for
   reading or editing before replay (#491).
 - `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
-  `FileSearchResultItem`, `ReviewSnippet` and `StepError` have a public
-  `extra` map for unmodeled fields, like `Place`. As on the unions, an
+  `ReviewSnippet` and `StepError` have a public `extra` map for unmodeled
+  fields, like `Place`. As on the unions, an
   entry named after a modeled field is never serialized.
 - `AgentBuilder::with_gemini_base_url(url)` points the Antigravity harness's
   model calls at another Gemini API host: a gateway, a recording proxy, or a
