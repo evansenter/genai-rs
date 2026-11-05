@@ -262,7 +262,7 @@ use genai_rs::{
 # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let interaction = InteractionRequest {
     agent: Some("my-custom-agent".to_string()),
-    input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
+    input: Some(InteractionInput::Text("Summarize yesterday's alerts".to_string())),
     ..Default::default()
 };
 

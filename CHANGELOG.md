@@ -82,6 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GenerationConfig::extra` keeps the generation-config fields the crate
   does not model, from a stored read or a deserialized config, and sends
   them flat beside the modeled ones.
+- `InteractionBuilder::continue_decode(&response)` continues a decode that
+  stopped early without resending the input: it sets the response's model,
+  its id as the previous interaction and its `continuation_token`. The API
+  continues a stored interaction from those alone, and with no
+  `max_output_tokens` the continuation ran to the end (verified live
+  2026-11-05 on `CONTINUATION_MODEL`). `build()` names the problem when the
+  response has no token, or no id (a `store: false` interaction, whose
+  continuation must resend its input with `with_continuation_token`) (#489).
 
 ### Changed
 
@@ -316,6 +324,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialized chunk writes it as `data.total_usage`. Migration: add `..` to
   a pattern that lists every field (`StreamChunk::StepDelta { index, delta,
   .. }`), and `total_usage: None` to a hand-built chunk.
+- **Breaking: `InteractionRequest::input` is an `Option<InteractionInput>`,
+  and `InteractionInput` no longer implements `Default`.** The bindings make
+  `input` optional, and a decoding continuation of a stored interaction
+  sends none (#489). `None` is left out of the body. A deserialized request
+  without `input` (a `TriggerCreateParams` config file, say) now reads as
+  `None` instead of failing, so a misspelled `inputs` lands in `extra` and
+  the trigger's empty-prompt warning names the missing input; a malformed
+  `input` value is still a parse error. A stored trigger's interaction
+  without an input, or with one that does not parse, reads as `None`
+  where it read as empty text. `build()` still requires input, except for
+  a continuation. Migration: write `input: Some(InteractionInput::Text(..))`
+  in a struct literal, match `Some(InteractionInput::Steps(..))` where you
+  read it, and replace `InteractionInput::default()` with the input you
+  mean (or `None`).
 
 ### Fixed
 

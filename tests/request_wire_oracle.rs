@@ -122,7 +122,9 @@ fn interaction(agent: bool) -> InteractionRequest {
                 .with_thinking_summaries(genai_rs::ThinkingSummaries::Auto)
                 .into()
         }),
-        input: InteractionInput::Content(vec![genai_rs::Content::text("hi")]),
+        input: Some(InteractionInput::Content(vec![genai_rs::Content::text(
+            "hi",
+        )])),
         previous_interaction_id: Some("prev".into()),
         tools: Some(vec![
             Tool::CodeExecution,

@@ -1007,7 +1007,7 @@ async fn test_trigger_lifecycle() {
 
     let interaction = || InteractionRequest {
         agent: Some(agent_id.clone()),
-        input: InteractionInput::Text("Say OK.".to_string()),
+        input: Some(InteractionInput::Text("Say OK.".to_string())),
         ..Default::default()
     };
     // Once a year, so the schedule never fires during a run.

@@ -507,7 +507,7 @@ mod streaming {
         with_timeout(test_timeout(), async {
             let request = InteractionRequest {
                 model: Some(genai_rs::DEFAULT_MODEL.to_string()),
-                input: InteractionInput::Text("Count from 1 to 5.".to_string()),
+                input: Some(InteractionInput::Text("Count from 1 to 5.".to_string())),
                 stream: Some(true),
                 store: Some(true),
                 ..Default::default()
@@ -665,6 +665,59 @@ mod generation_config {
             );
             assert!(
                 !rest_text.starts_with(first_text.trim()),
+                "the continuation restarted the answer instead of continuing it"
+            );
+        })
+        .await;
+    }
+
+    /// A stored decode continues from its id and token alone, with no input
+    /// (live 2026-11-05): `continue_decode` sends exactly that, with no
+    /// `max_output_tokens`, and the decode runs on from where it stopped.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_continue_decode_without_input() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        with_timeout(extended_test_timeout(), async {
+            let first = client
+                .interaction()
+                .with_model(genai_rs::CONTINUATION_MODEL)
+                .with_text("Write three sentences about the moon.")
+                .with_generation_config(GenerationConfig {
+                    max_output_tokens: Some(20),
+                    ..Default::default()
+                })
+                .create()
+                .await
+                .expect("first request");
+            let first_id = first.id.clone().expect("a stored interaction has an id");
+            assert_eq!(first.status, InteractionStatus::Incomplete);
+            assert!(first.continuation_token.is_some(), "{first:?}");
+
+            let request = client
+                .interaction()
+                .continue_decode(&first)
+                .build()
+                .expect("continuation request");
+            assert!(request.input.is_none());
+            let rest = client.execute(request).await;
+            let _ = client.interactions().delete(&first_id).await;
+            let rest = rest.expect("the continuation without input was rejected");
+            if let Some(id) = rest.id.as_deref() {
+                let _ = client.interactions().delete(id).await;
+            }
+            let rest_text = rest.all_text();
+            println!("first: {:?}\nrest: {rest_text:?}", first.all_text());
+            assert!(
+                !rest_text.trim().is_empty(),
+                "the continuation produced no text"
+            );
+            assert!(
+                !rest_text.starts_with(first.all_text().trim()),
                 "the continuation restarted the answer instead of continuing it"
             );
         })

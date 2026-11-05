@@ -54,9 +54,10 @@ if response.has_google_search_calls() {
         println!("Searched: {}", query);
     }
 
-    // Get source URLs
-    for result in response.google_search_results() {
-        println!("Source: {} - {}", result.title, result.url);
+    // Sources arrive as citations on the answer; the result items carry
+    // only a rendering of the search suggestions.
+    for annotation in response.all_annotations() {
+        println!("Source: {}", annotation.source().unwrap_or("<none>"));
     }
 }
 ```

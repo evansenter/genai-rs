@@ -4,7 +4,7 @@ use crate::request::InteractionInput;
 fn probe_interaction() -> InteractionRequest {
     InteractionRequest {
         agent: Some("my-agent".to_string()),
-        input: InteractionInput::Text("Say OK".to_string()),
+        input: Some(InteractionInput::Text("Say OK".to_string())),
         ..Default::default()
     }
 }
@@ -241,7 +241,7 @@ fn missing_agent_warn_fires_on_model_only_interactions() {
     let messages = crate::test_subscriber::capture_messages(|| {
         let interaction = crate::request::InteractionRequest {
             model: Some("test-model".to_string()),
-            input: InteractionInput::Text("Daily audit".to_string()),
+            input: Some(InteractionInput::Text("Daily audit".to_string())),
             ..Default::default()
         };
         let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
@@ -262,15 +262,14 @@ fn missing_agent_warn_fires_on_model_only_interactions() {
 
 #[test]
 fn empty_input_warn_fires_on_the_struct_literal_shape() {
-    // The strict `input` deserialize can't catch a struct literal that
-    // rides `..Default::default()` — the field is present and
-    // well-formed, just the empty zero value — nor the explicit
-    // empty-vector spellings of the same mistake. Pin that the funnel
-    // warns on all three, and that real input stays quiet.
+    // A struct literal that rides `..Default::default()` has no input at
+    // all, and the empty spellings of the same mistake are well-formed.
+    // Pin that the funnel warns on each, and that real input stays quiet.
     let empty_inputs = [
-        InteractionInput::default(),
-        InteractionInput::Content(Vec::new()),
-        InteractionInput::Steps(Vec::new()),
+        None,
+        Some(InteractionInput::Text(String::new())),
+        Some(InteractionInput::Content(Vec::new())),
+        Some(InteractionInput::Steps(Vec::new())),
     ];
     for input in empty_inputs {
         let variant = format!("{input:?}");
@@ -302,7 +301,7 @@ fn empty_input_warn_fires_on_the_struct_literal_shape() {
         .unwrap();
         assert!(matches!(
             &params.interaction.input,
-            InteractionInput::Steps(steps) if steps.is_empty()
+            Some(InteractionInput::Steps(steps)) if steps.is_empty()
         ));
     });
     assert!(
@@ -341,7 +340,7 @@ fn trigger_interaction_reshapes_a_bare_content_input() {
     // Read back as `Content` — the shape the server sent.
     assert!(
         matches!(
-            trigger.interaction.as_ref().map(|i| &i.input),
+            trigger.interaction.as_ref().and_then(|i| i.input.as_ref()),
             Some(InteractionInput::Content(c)) if c.len() == 1
         ),
         "expected a Content input, got {:?}",
@@ -434,7 +433,7 @@ fn live_trigger_body_parses_every_field() {
     );
     assert_eq!(interaction.store, Some(true));
     assert!(
-        matches!(&interaction.input, InteractionInput::Steps(steps) if steps.len() == 1),
+        matches!(&interaction.input, Some(InteractionInput::Steps(steps)) if steps.len() == 1),
         "{:?}",
         interaction.input
     );
@@ -639,17 +638,12 @@ fn sparse_trigger_projection_degrades_per_field() {
     .unwrap();
     let interaction = trigger.interaction.expect("interaction present");
     assert_eq!(interaction.agent.as_deref(), Some("my-agent"));
-    // An absent input reads as empty text on this path (documented on
-    // the field): indistinguishable from a genuinely empty prompt.
-    assert_eq!(
-        interaction.input,
-        crate::request::InteractionInput::Text(String::new())
-    );
+    // An absent input reads as no input.
+    assert_eq!(interaction.input, None);
 
     // An interaction carrying an undeserializable `input` — explicit
-    // null (serde defaults only cover the key-absent case) or a stray
-    // scalar — degrades to empty text too, instead of failing the
-    // whole list response. (A malformed steps *array* is deliberately
+    // null or a stray scalar — degrades to no input too, instead of
+    // failing the whole list response. (A malformed steps *array* is deliberately
     // not in this list: under default features the Evergreen Step
     // deserializer absorbs unrecognized elements as Unknown steps, so
     // only scalar shapes are rejectable in every feature mode.)
@@ -660,10 +654,7 @@ fn sparse_trigger_projection_degrades_per_field() {
         }))
         .unwrap();
         let interaction = trigger.interaction.expect("interaction present");
-        assert_eq!(
-            interaction.input,
-            crate::request::InteractionInput::Text(String::new())
-        );
+        assert_eq!(interaction.input, None);
     }
 
     // A non-object `interaction` (stray scalar, array) or one with a
@@ -693,15 +684,23 @@ fn sparse_trigger_projection_degrades_per_field() {
         "interaction": {"agent": "my-agent", "input": 0}
     }));
     assert!(result.is_err(), "send-side input must stay strict");
-    // Absent (or typo'd, e.g. "inputs") is equally a clean parse
-    // error on the send side — `input` is a required field there, so
-    // a config mistake cannot silently schedule an empty prompt.
-    let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
-        "schedule": "0 9 * * *",
-        "time_zone": "UTC",
-        "interaction": {"agent": "my-agent", "inputs": "typo"}
-    }));
-    assert!(result.is_err(), "send-side absent input must stay strict");
+    // `input` is optional (a decoding continuation goes without one), so
+    // an absent or typo'd one ("inputs") parses: the typo lands in
+    // `extra`, and the empty-prompt warn names the missing input.
+    let messages = crate::test_subscriber::capture_messages(|| {
+        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+            "schedule": "0 9 * * *",
+            "time_zone": "UTC",
+            "interaction": {"agent": "my-agent", "inputs": "typo"}
+        }))
+        .unwrap();
+        assert_eq!(params.interaction.input, None);
+        assert_eq!(params.interaction.extra["inputs"], "typo");
+    });
+    assert!(
+        messages.iter().any(|m| m.contains("input is missing")),
+        "{messages:?}"
+    );
 }
 
 #[test]

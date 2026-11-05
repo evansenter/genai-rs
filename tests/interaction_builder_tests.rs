@@ -47,7 +47,7 @@ mod basic {
             .expect("Builder should create valid request");
 
         // Verify the input is a Content variant with 3 items
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 3, "Should have 3 content items");
             }
@@ -74,7 +74,7 @@ mod basic {
     }
 
     fn text_input(request: &genai_rs::InteractionRequest) -> &str {
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Text(text) => text,
             other => panic!("expected text input, got {other:?}"),
         }
@@ -764,7 +764,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 1, "Should have 1 content item");
                 // Verify it's an Image with data
@@ -795,7 +795,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 2, "Should have 2 content items");
                 // First should be text
@@ -833,7 +833,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 3, "Should have 3 content items");
             }
@@ -857,7 +857,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 2, "Should have 2 content items");
                 // Second should be an Image with URI
@@ -884,7 +884,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 1);
                 assert!(matches!(
@@ -910,7 +910,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 1);
                 assert!(matches!(
@@ -936,7 +936,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 1);
                 assert!(matches!(
@@ -965,7 +965,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 2);
                 assert!(matches!(
@@ -994,7 +994,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 2, "Should have 2 content items");
                 // Second should be an Audio with URI
@@ -1024,7 +1024,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 2, "Should have 2 content items");
                 // Second should be a Video with URI
@@ -1073,7 +1073,7 @@ mod multimodal {
         let request = result.unwrap();
 
         // Verify input has both text and image
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 2);
             }
@@ -1113,7 +1113,7 @@ mod multimodal {
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 4);
 
@@ -1161,7 +1161,7 @@ mod multimodal {
 
         let request = builder.build().expect("Should build valid request");
 
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert_eq!(items.len(), 1);
                 assert!(matches!(
@@ -1184,7 +1184,7 @@ mod multimodal {
             )]);
 
         let request = builder.build().unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert!(matches!(
                     &items[0],
@@ -1206,7 +1206,7 @@ mod multimodal {
             )]);
 
         let request = builder.build().unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert!(matches!(
                     &items[0],
@@ -1228,7 +1228,7 @@ mod multimodal {
             )]);
 
         let request = builder.build().unwrap();
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Content(items) => {
                 assert!(matches!(
                     &items[0],
@@ -1373,7 +1373,7 @@ mod new_request_options {
             .build()
             .expect("Should build successfully");
 
-        match &request.input {
+        match request.input.as_ref().expect("input") {
             InteractionInput::Steps(steps) => {
                 assert_eq!(steps.len(), 3, "history + current message");
                 assert!(matches!(steps[0], Step::UserInput { .. }));

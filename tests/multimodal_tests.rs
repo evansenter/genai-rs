@@ -914,7 +914,9 @@ mod text_to_speech {
             model: Some(tts_model.to_string()),
             agent: None,
             agent_config: None,
-            input: InteractionInput::Text("Hello from nested config test.".to_string()),
+            input: Some(InteractionInput::Text(
+                "Hello from nested config test.".to_string(),
+            )),
             previous_interaction_id: None,
             tools: None,
             response_modalities: Some(vec!["audio".to_string()]),
@@ -976,7 +978,9 @@ mod text_to_speech {
             model: Some(tts_model.to_string()),
             agent: None,
             agent_config: None,
-            input: InteractionInput::Text("Hello from flat config test.".to_string()),
+            input: Some(InteractionInput::Text(
+                "Hello from flat config test.".to_string(),
+            )),
             previous_interaction_id: None,
             tools: None,
             response_modalities: Some(vec!["audio".to_string()]),

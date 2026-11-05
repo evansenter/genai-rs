@@ -393,7 +393,10 @@ fn test_interaction_builder_build_success() {
 
     let request = result.unwrap();
     assert_eq!(request.model.as_deref(), Some(crate::DEFAULT_MODEL));
-    assert!(matches!(request.input, crate::InteractionInput::Text(_)));
+    assert!(matches!(
+        request.input,
+        Some(crate::InteractionInput::Text(_))
+    ));
 }
 
 #[test]
@@ -752,7 +755,10 @@ fn test_interaction_builder_build_with_history() {
 
     let request = result.unwrap();
     assert_eq!(request.model.as_deref(), Some(crate::DEFAULT_MODEL));
-    assert!(matches!(request.input, crate::InteractionInput::Steps(_)));
+    assert!(matches!(
+        request.input,
+        Some(crate::InteractionInput::Steps(_))
+    ));
 }
 
 #[test]
@@ -790,7 +796,7 @@ fn test_with_history_then_with_text_composes_correctly() {
     let request = builder.build().expect("Build should succeed");
 
     // Verify the input is Steps with 3 items
-    match &request.input {
+    match request.input.as_ref().expect("input") {
         InteractionInput::Steps(steps) => {
             assert_eq!(steps.len(), 3, "Should have 3 steps");
             assert!(matches!(steps[0], Step::UserInput { .. }));
@@ -818,7 +824,7 @@ fn test_with_text_then_with_history_composes_correctly() {
     let request = builder.build().expect("Build should succeed");
 
     // Verify the input is Steps with 3 items (history + current)
-    match &request.input {
+    match request.input.as_ref().expect("input") {
         InteractionInput::Steps(steps) => {
             assert_eq!(steps.len(), 3, "Should have 3 steps");
             assert!(matches!(steps[0], Step::UserInput { .. }));
@@ -878,7 +884,7 @@ fn test_conversation_builder_then_with_text() {
     let request = builder.build().expect("Build should succeed");
 
     // Should have 3 steps: original 2 + appended current message
-    match &request.input {
+    match request.input.as_ref().expect("input") {
         InteractionInput::Steps(steps) => {
             assert_eq!(steps.len(), 3, "Should have 3 steps");
             assert!(matches!(steps[0], Step::UserInput { .. }));
@@ -904,7 +910,7 @@ fn test_with_text_only_produces_text_input() {
 
     // Should produce Text input when no history
     assert!(
-        matches!(request.input, InteractionInput::Text(_)),
+        matches!(request.input, Some(InteractionInput::Text(_))),
         "Expected Text input, got {:?}",
         request.input
     );
@@ -925,7 +931,7 @@ fn test_with_history_only_produces_steps_input() {
         .expect("Build should succeed");
 
     // Should produce Steps input
-    match &request.input {
+    match request.input.as_ref().expect("input") {
         InteractionInput::Steps(steps) => {
             assert_eq!(steps.len(), 2);
         }
@@ -1023,7 +1029,7 @@ fn test_with_content_and_text_merge() {
         .build()
         .expect("Should succeed");
 
-    match &request.input {
+    match request.input.as_ref().expect("input") {
         InteractionInput::Content(items) => {
             assert_eq!(items.len(), 2, "Should have 2 items (text + image)");
             // Text should be first (prepended)
@@ -1048,7 +1054,7 @@ fn test_with_content_and_text_merge() {
         .build()
         .expect("Should succeed");
 
-    match &request2.input {
+    match request2.input.as_ref().expect("input") {
         InteractionInput::Content(items) => {
             assert_eq!(items.len(), 2, "Should have 2 items (text + image)");
             // Text should still be first (prepended at build time)
@@ -1085,7 +1091,7 @@ fn test_with_content_alone_works() {
 
     assert!(result.is_ok());
     let request = result.unwrap();
-    assert!(matches!(request.input, InteractionInput::Content(_)));
+    assert!(matches!(request.input, Some(InteractionInput::Content(_))));
 }
 
 #[test]
@@ -1897,4 +1903,102 @@ fn test_with_continuation_token_serializes_top_level() {
             .get("continuation_token")
             .is_none()
     );
+}
+
+/// The response a decode stopped in, as the API returns it.
+fn cut_off_response() -> crate::InteractionResponse {
+    serde_json::from_value(json!({
+        "id": "v1_stored",
+        "model": crate::CONTINUATION_MODEL,
+        "status": "incomplete",
+        "continuation_token": "CtYBCtEB"
+    }))
+    .unwrap()
+}
+
+/// A stored decode continues from its id and token, with no `input` key
+/// (live 2026-11-05).
+#[test]
+fn test_continue_decode_sends_no_input() {
+    let request = create_test_client()
+        .interaction()
+        .continue_decode(&cut_off_response())
+        .build()
+        .unwrap();
+    assert_eq!(request.input, None);
+    assert_eq!(
+        serde_json::to_value(&request).unwrap(),
+        json!({
+            "model": crate::CONTINUATION_MODEL,
+            "previous_interaction_id": "v1_stored",
+            "continuation_token": "CtYBCtEB"
+        })
+    );
+}
+
+#[test]
+fn test_continue_decode_replaces_the_model_and_keeps_other_settings() {
+    let request = create_test_client()
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_generation_config(crate::GenerationConfig {
+            max_output_tokens: Some(500),
+            ..Default::default()
+        })
+        .continue_decode(&cut_off_response())
+        .build()
+        .unwrap();
+    assert_eq!(request.model.as_deref(), Some(crate::CONTINUATION_MODEL));
+    assert_eq!(
+        request
+            .generation_config
+            .as_ref()
+            .and_then(|c| c.max_output_tokens),
+        Some(500)
+    );
+}
+
+#[test]
+fn test_no_input_without_a_continuation_is_an_error() {
+    let err = create_test_client()
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .build()
+        .unwrap_err();
+    assert!(err.to_string().contains("Input is required"), "{err}");
+}
+
+#[test]
+fn test_continuation_without_input_needs_the_stored_id() {
+    // A response from a `store: false` request has no id.
+    let mut response = cut_off_response();
+    response.id = None;
+    let err = create_test_client()
+        .interaction()
+        .continue_decode(&response)
+        .build()
+        .unwrap_err();
+    assert!(err.to_string().contains("previous_interaction"), "{err}");
+
+    // Resending the original input is the store-disabled form.
+    let request = create_test_client()
+        .interaction()
+        .continue_decode(&response)
+        .with_text("Write a sonnet about the sea.")
+        .with_store_disabled()
+        .build()
+        .unwrap();
+    assert!(request.input.is_some() && request.continuation_token.is_some());
+}
+
+#[test]
+fn test_continue_decode_on_a_response_without_a_token_needs_input() {
+    let mut response = cut_off_response();
+    response.continuation_token = None;
+    let err = create_test_client()
+        .interaction()
+        .continue_decode(&response)
+        .build()
+        .unwrap_err();
+    assert!(err.to_string().contains("Input is required"), "{err}");
 }

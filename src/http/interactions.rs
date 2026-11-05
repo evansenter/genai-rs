@@ -450,7 +450,7 @@ mod tests {
             model: Some("test-model".to_string()),
             agent: None,
             agent_config: None,
-            input: InteractionInput::Text("Hello".to_string()),
+            input: Some(InteractionInput::Text("Hello".to_string())),
             previous_interaction_id: None,
             tools: None,
             response_modalities: None,

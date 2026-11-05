@@ -2894,7 +2894,7 @@ proptest! {
     fn request_wraps_content_input(contents in prop::collection::vec(arb_content(), 0..3)) {
         let request = crate::InteractionRequest {
             model: Some("test-model".to_string()),
-            input: InteractionInput::Content(contents.clone()),
+            input: Some(InteractionInput::Content(contents.clone())),
             ..Default::default()
         };
         let json = serde_json::to_value(&request).expect("Serialization should succeed");
@@ -2910,7 +2910,7 @@ proptest! {
 
         let by_hand = crate::InteractionRequest {
             model: Some("test-model".to_string()),
-            input: InteractionInput::Steps(vec![Step::user_input(contents)]),
+            input: Some(InteractionInput::Steps(vec![Step::user_input(contents)])),
             ..Default::default()
         };
         let by_hand_json = serde_json::to_value(&by_hand).expect("Serialization should succeed");

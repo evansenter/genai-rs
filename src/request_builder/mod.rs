@@ -388,7 +388,11 @@ impl<'a> InteractionBuilder<'a> {
     /// # Errors
     ///
     /// Returns [`GenaiError::InvalidInput`] if:
-    /// - No input was provided (via `with_text()`, `with_history()`, `with_content()`, etc.)
+    /// - No input was provided (via `with_text()`, `with_history()`, `with_content()`, etc.),
+    ///   unless this is a decoding continuation of a stored interaction
+    ///   ([`continue_decode`](Self::continue_decode))
+    /// - A continuation token is set without input and without a previous
+    ///   interaction id
     /// - `with_content()` was combined with `with_history()` (mutually exclusive)
     /// - Neither model nor agent was specified
     /// - Both model and agent were specified (mutually exclusive)
@@ -426,25 +430,45 @@ impl<'a> InteractionBuilder<'a> {
             if let Some(text) = self.current_message {
                 content.insert(0, Content::text(text));
             }
-            InteractionInput::Content(content)
+            Some(InteractionInput::Content(content))
         } else {
             // Text/history mode
             match (self.history.is_empty(), self.current_message) {
-                (true, None) => {
-                    return Err(GenaiError::InvalidInput(
-                        "Input is required for interaction".to_string(),
-                    ));
-                }
-                (true, Some(msg)) => InteractionInput::Text(msg),
-                (false, None) => InteractionInput::Steps(self.history),
+                (true, None) => None,
+                (true, Some(msg)) => Some(InteractionInput::Text(msg)),
+                (false, None) => Some(InteractionInput::Steps(self.history)),
                 (false, Some(msg)) => {
                     // Compose: history + current message as final user_input step
                     let mut steps = self.history;
                     steps.push(Step::user_text(msg));
-                    InteractionInput::Steps(steps)
+                    Some(InteractionInput::Steps(steps))
                 }
             }
         };
+        // Only a continuation of a stored interaction goes without input
+        // (live 2026-11-05). Without one, the API answers with a misleading
+        // `404 Model '...' not found` rather than naming the missing input.
+        if input.is_none() {
+            match (&self.continuation_token, &self.previous_interaction_id) {
+                (None, _) => {
+                    return Err(GenaiError::InvalidInput(
+                        "Input is required for interaction (only a decoding continuation, \
+                         with_continuation_token() or continue_decode(), may leave it out)"
+                            .to_string(),
+                    ));
+                }
+                (Some(_), None) => {
+                    return Err(GenaiError::InvalidInput(
+                        "A continuation without input continues a stored interaction, so it \
+                         needs that interaction's id: call with_previous_interaction(), or \
+                         continue_decode() with a stored response. A store-disabled \
+                         interaction has no id; resend its original input instead."
+                            .to_string(),
+                    ));
+                }
+                (Some(_), Some(_)) => {}
+            }
+        }
 
         // Validate that we have either model or agent (but not both)
         match (&self.model, &self.agent) {
