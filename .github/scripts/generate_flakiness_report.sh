@@ -56,12 +56,25 @@ RATE_LIMIT=$(echo "$TRENDS" | jq -r '.current.rate_limit')
 ASSERTION_FAILURES=$(echo "$TRENDS" | jq -r '.current.assertion_failures')
 PANIC=$(echo "$TRENDS" | jq -r '.current.panic')
 UNKNOWN=$(echo "$TRENDS" | jq -r '.current.unknown')
+# Tests nextest retried to a pass, from every run's live jobs, green ones
+# included (#492), and the test runs they are a share of.
+RETRIED=$(echo "$TRENDS" | jq -r '.current.retried_flakes // 0')
+LIVE_RUNS=$(echo "$TRENDS" | jq -r '.current.live_test_runs // 0')
+# The weekly flake rate the Tests/CI bar holds under 1% (#504).
+FLAKE_TARGET_PCT=1
 
 if [ "$TOTAL_RUNS" -gt 0 ]; then
   FAILURE_RATE=$(awk "BEGIN {printf \"%.1f\", ($FAILED_RUNS / $TOTAL_RUNS) * 100}")
 else
   FAILURE_RATE="0.0"
 fi
+
+if [ "$LIVE_RUNS" -gt 0 ]; then
+  FLAKE_RATE=$(awk "BEGIN {printf \"%.2f\", ($RETRIED / $LIVE_RUNS) * 100}")
+else
+  FLAKE_RATE="0.00"
+fi
+OVER_TARGET=$(awk "BEGIN {print ($FLAKE_RATE >= $FLAKE_TARGET_PCT) ? 1 : 0}")
 
 HAS_24H=$(echo "$TRENDS" | jq -r '.trends_24h.available')
 HAS_7D=$(echo "$TRENDS" | jq -r '.trends_7d.available')
@@ -103,27 +116,42 @@ TREND_7D_FLAKY=$(echo "$TRENDS" | jq -r '.trends_7d.unique_flaky')
 DELTA_24H_FLAKY=$(echo "$TRENDS" | jq -r '.deltas_24h.unique_flaky')
 DELTA_7D_FLAKY=$(echo "$TRENDS" | jq -r '.deltas_7d.unique_flaky')
 
+TREND_24H_RETRIED=$(echo "$TRENDS" | jq -r '.trends_24h.retried_flakes // "new"')
+TREND_7D_RETRIED=$(echo "$TRENDS" | jq -r '.trends_7d.retried_flakes // "new"')
+DELTA_24H_RETRIED=$(echo "$TRENDS" | jq -r '.deltas_24h.retried_flakes // null')
+DELTA_7D_RETRIED=$(echo "$TRENDS" | jq -r '.deltas_7d.retried_flakes // null')
+
 if [ "$HAS_24H" = "true" ]; then
   COL_24H_FAILED=$(format_trend "" "$TREND_24H_FAILED" "$DELTA_24H_FAILED")
   COL_24H_FLAKY=$(format_trend "" "$TREND_24H_FLAKY" "$DELTA_24H_FLAKY")
+  COL_24H_RETRIED=$(format_trend "" "$TREND_24H_RETRIED" "$DELTA_24H_RETRIED")
 else
   COL_24H_FAILED="—"
   COL_24H_FLAKY="—"
+  COL_24H_RETRIED="—"
 fi
 
 if [ "$HAS_7D" = "true" ]; then
   COL_7D_FAILED=$(format_trend "" "$TREND_7D_FAILED" "$DELTA_7D_FAILED")
   COL_7D_FLAKY=$(format_trend "" "$TREND_7D_FLAKY" "$DELTA_7D_FLAKY")
+  COL_7D_RETRIED=$(format_trend "" "$TREND_7D_RETRIED" "$DELTA_7D_RETRIED")
 else
   COL_7D_FAILED="—"
   COL_7D_FLAKY="—"
+  COL_7D_RETRIED="—"
 fi
 
 cat <<EOF
 | Total runs | $TOTAL_RUNS | — | — |
 | Failed runs | $FAILED_RUNS ($FAILURE_RATE%) | $COL_24H_FAILED | $COL_7D_FAILED |
 | Unique flaky tests | $UNIQUE_FLAKY | $COL_24H_FLAKY | $COL_7D_FLAKY |
+| Passed on retry | $RETRIED of $LIVE_RUNS live test runs ($FLAKE_RATE%) | $COL_24H_RETRIED | $COL_7D_RETRIED |
 EOF
+
+if [ "$OVER_TARGET" -eq 1 ]; then
+  echo
+  echo "**The flake rate is $FLAKE_RATE%, at or over the ${FLAKE_TARGET_PCT}% weekly target.**"
+fi
 
 TOTAL_CATEGORIZED=$((API_ERRORS + RATE_LIMIT + ASSERTION_FAILURES + PANIC + UNKNOWN))
 if [ "$TOTAL_CATEGORIZED" -gt 0 ]; then
@@ -180,21 +208,22 @@ if [ "$TEST_COUNT" -gt 0 ]; then
 
 ### Top Flaky Tests
 
-| Test | Failures | Category | File |
-|------|----------|----------|------|
+| Test | Failures | Passed on retry | Category | File |
+|------|----------|-----------------|----------|------|
 EOF
 
+  # `// 0`: tests.json from before #492 has no `retried`.
   echo "$TESTS" | jq -r '
-    sort_by(-.failures) |
+    sort_by(-(.failures + (.retried // 0)), .name) |
     .[:10][] |
-    "| `\(.name)` | \(.failures) | \(.category) | \(.file) |"
+    "| `\(.name)` | \(.failures) | \(.retried // 0) | \(.category) | \(.file) |"
   '
 else
   cat <<EOF
 
 ### Top Flaky Tests
 
-No test failures detected in the reporting period.
+No test failures or retried flakes detected in the reporting period.
 EOF
 fi
 
@@ -222,6 +251,11 @@ fi
 if [ "$PANIC" -gt 0 ]; then
   RECOMMENDATIONS=$((RECOMMENDATIONS + 1))
   echo "$RECOMMENDATIONS. **Investigate panics** — $PANIC tests crashed unexpectedly"
+fi
+
+if [ "$OVER_TARGET" -eq 1 ]; then
+  RECOMMENDATIONS=$((RECOMMENDATIONS + 1))
+  echo "$RECOMMENDATIONS. **Fix the retried flakes** — $RETRIED of $LIVE_RUNS live test runs ($FLAKE_RATE%) passed only on a retry, over the ${FLAKE_TARGET_PCT}% target"
 fi
 
 if [ "$RECOMMENDATIONS" -eq 0 ]; then

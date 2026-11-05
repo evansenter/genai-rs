@@ -1,0 +1,126 @@
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.0000000Z ────────────
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.1000000Z ^[[32;1m Nextest run^[[0m ID ^[[1mbc430346-b3f5-4138-babd-61ec2e631b6d^[[0m with nextest profile: ^[[1mdefault^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.2000000Z ^[[32;1m    Starting^[[0m ^[[1m3^[[0m tests across ^[[1m2^[[0m binaries
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.3000000Z ^[[35;1m  TRY 1 FAIL^[[0m [   0.006s] (───) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_system_instruction_inheritance^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.4000000Z ^[[35;1m ^[[0m ^[[35;1mstdout^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.5000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.6000000Z     running 1 test
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.7000000Z     test test_system_instruction_inheritance ... FAILED
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.8000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:30.9000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.0000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.1000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.2000000Z         test_system_instruction_inheritance
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.3000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.4000000Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.5000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.6000000Z ^[[35;1m ^[[0m ^[[35;1mstderr^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.7000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.8000000Z     ^[[0m^[[31;1mthread 'test_system_instruction_inheritance' (12616829) panicked at tests/live_demo.rs:26:5:^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:31.9000000Z     ^[[31;1malways fails^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.0000000Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.1000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.2000000Z ^[[35;1m  TRY 1 FAIL^[[0m [   0.006s] (───) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_stateful_conversation^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.3000000Z ^[[35;1m ^[[0m ^[[35;1mstdout^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.4000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.5000000Z     running 1 test
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.6000000Z     test test_stateful_conversation ... FAILED
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.7000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.8000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:32.9000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.0000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.1000000Z         test_stateful_conversation
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.2000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.3000000Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.4000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.5000000Z ^[[35;1m ^[[0m ^[[35;1mstderr^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.6000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.7000000Z     ^[[0m^[[31;1mthread 'test_stateful_conversation' (12616828) panicked at tests/live_demo.rs:16:5:^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.8000000Z     ^[[31;1mfirst try fails^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:33.9000000Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.0000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.1000000Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.2000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.3000000Z ^[[35;1m ^[[0m ^[[35;1mstderr^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.4000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.5000000Z     ^[[0m^[[31;1mthread 'passes_on_third_try' (12616827) panicked at tests/live_demo.rs:21:5:^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.6000000Z     ^[[31;1mfirst two tries fail^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.7000000Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.8000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:34.9000000Z ^[[32;1m        PASS^[[0m [   0.006s] (1/4) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_basic_multiturn^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.0000000Z ^[[35;1m  TRY 2 FAIL^[[0m [   0.015s] (───) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_system_instruction_inheritance^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.1000000Z ^[[35;1m ^[[0m ^[[35;1mstdout^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.2000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.3000000Z     running 1 test
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.4000000Z     test test_system_instruction_inheritance ... FAILED
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.5000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.6000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.7000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.8000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:35.9000000Z         test_system_instruction_inheritance
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.0000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.1000000Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.2000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.3000000Z ^[[35;1m ^[[0m ^[[35;1mstderr^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.4000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.5000000Z     ^[[0m^[[31;1mthread 'test_system_instruction_inheritance' (12616837) panicked at tests/live_demo.rs:26:5:^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.6000000Z     ^[[31;1malways fails^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.7000000Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.8000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:36.9000000Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.0000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.1000000Z ^[[35;1m ^[[0m ^[[35;1mstderr^[[0m ^[[35;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.2000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.3000000Z     ^[[0m^[[31;1mthread 'passes_on_third_try' (12616839) panicked at tests/live_demo.rs:21:5:^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.4000000Z     ^[[31;1mfirst two tries fail^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.5000000Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.6000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.7000000Z ^[[33;1m  TRY 2 PASS^[[0m [   0.015s] (2/4) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_stateful_conversation^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.8000000Z ^[[31;1m  TRY 3 FAIL^[[0m [   0.009s] (3/4) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_system_instruction_inheritance^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:37.9000000Z ^[[31;1m ^[[0m ^[[31;1mstdout^[[0m ^[[31;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.0000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.1000000Z     running 1 test
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.2000000Z     test test_system_instruction_inheritance ... FAILED
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.3000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.4000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.5000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.6000000Z     failures:
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.7000000Z         test_system_instruction_inheritance
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.8000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:38.9000000Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.0000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.1000000Z ^[[31;1m ^[[0m ^[[31;1mstderr^[[0m ^[[31;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.2000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.3000000Z     ^[[0m^[[31;1mthread 'test_system_instruction_inheritance' (12616845) panicked at tests/live_demo.rs:26:5:^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.4000000Z     ^[[31;1malways fails^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.5000000Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.6000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.7000000Z ^[[31;1m     Summary^[[0m [   0.032s] ^[[1m3^[[0m tests run: ^[[1m2^[[0m ^[[32;1mpassed^[[0m (^[[1m1^[[0m ^[[33;1mflaky^[[0m), ^[[1m1^[[0m ^[[31;1mfailed^[[0m, ^[[1m0^[[0m ^[[33;1mskipped^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.8000000Z ^[[32;1m        PASS^[[0m [   0.006s] (1/4) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_basic_multiturn^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:39.9000000Z ^[[32;1m ^[[0m ^[[32;1mstdout^[[0m ^[[32;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.0000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.1000000Z     running 1 test
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.2000000Z     test test_basic_multiturn ... ok
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.3000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.4000000Z     test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.5000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.6000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.7000000Z ^[[33;1m   FLAKY 2/3^[[0m [   0.015s] (2/4) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_stateful_conversation^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.8000000Z ^[[32;1m ^[[0m ^[[32;1mstdout^[[0m ^[[32;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:40.9000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.0000000Z     running 1 test
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.1000000Z     test test_stateful_conversation ... ok
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.2000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.3000000Z     test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.4000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.5000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.6000000Z ^[[32;1m ^[[0m ^[[32;1mstdout^[[0m ^[[32;1m───^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.7000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.8000000Z     running 1 test
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:41.9000000Z     test passes_on_third_try ... ok
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:42.0000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:42.1000000Z     test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:42.2000000Z     ^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:42.3000000Z 
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:42.4000000Z ^[[31;1m  TRY 3 FAIL^[[0m [   0.009s] (3/4) ^[[35;1mgenai-rs::multiturn_tests^[[0m ^[[34;1mtest_system_instruction_inheritance^[[0m
+Integration Tests (core)	Run integration tests (core)	2026-11-04T13:10:42.5000000Z ^[[31;1merror^[[0m: test run failed

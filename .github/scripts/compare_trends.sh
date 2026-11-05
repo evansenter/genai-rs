@@ -119,6 +119,10 @@ fi
 CURRENT_TOTAL=$(echo "$CURRENT_JSON" | jq -r '.total_runs // 0')
 CURRENT_FAILED=$(echo "$CURRENT_JSON" | jq -r '.failed_runs // 0')
 CURRENT_FLAKY=$(echo "$CURRENT_JSON" | jq -r '.unique_flaky // 0')
+# Tests nextest retried to a pass, and the live test runs they came from
+# (#492). Absent from summaries written before #492, hence `// 0`.
+CURRENT_RETRIED=$(echo "$CURRENT_JSON" | jq -r '.retried_flakes // 0')
+CURRENT_LIVE=$(echo "$CURRENT_JSON" | jq -r '.live_test_runs // 0')
 CURRENT_API=$(echo "$CURRENT_JSON" | jq -r '.api_errors // 0')
 CURRENT_RATE=$(echo "$CURRENT_JSON" | jq -r '.rate_limit // 0')
 CURRENT_ASSERT=$(echo "$CURRENT_JSON" | jq -r '.assertion_failures // 0')
@@ -129,13 +133,14 @@ if [ "$HAS_24H" = true ]; then
   PREV_24H_TOTAL=$(jq -r '.total_runs // 0' "$PREV_24H_FILE")
   PREV_24H_FAILED=$(jq -r '.failed_runs // 0' "$PREV_24H_FILE")
   PREV_24H_FLAKY=$(jq -r '.unique_flaky // 0' "$PREV_24H_FILE")
+  PREV_24H_RETRIED=$(jq -r '.retried_flakes // empty' "$PREV_24H_FILE")
   PREV_24H_API=$(jq -r '.api_errors // 0' "$PREV_24H_FILE")
   PREV_24H_RATE=$(jq -r '.rate_limit // 0' "$PREV_24H_FILE")
   PREV_24H_ASSERT=$(jq -r '.assertion_failures // 0' "$PREV_24H_FILE")
   PREV_24H_PANIC=$(jq -r '.panic // 0' "$PREV_24H_FILE")
   PREV_24H_UNKNOWN=$(jq -r '.unknown // 0' "$PREV_24H_FILE")
 else
-  PREV_24H_TOTAL="" PREV_24H_FAILED="" PREV_24H_FLAKY=""
+  PREV_24H_TOTAL="" PREV_24H_FAILED="" PREV_24H_FLAKY="" PREV_24H_RETRIED=""
   PREV_24H_API="" PREV_24H_RATE="" PREV_24H_ASSERT="" PREV_24H_PANIC="" PREV_24H_UNKNOWN=""
 fi
 
@@ -143,13 +148,14 @@ if [ "$HAS_7D" = true ]; then
   PREV_7D_TOTAL=$(jq -r '.total_runs // 0' "$PREV_7D_FILE")
   PREV_7D_FAILED=$(jq -r '.failed_runs // 0' "$PREV_7D_FILE")
   PREV_7D_FLAKY=$(jq -r '.unique_flaky // 0' "$PREV_7D_FILE")
+  PREV_7D_RETRIED=$(jq -r '.retried_flakes // empty' "$PREV_7D_FILE")
   PREV_7D_API=$(jq -r '.api_errors // 0' "$PREV_7D_FILE")
   PREV_7D_RATE=$(jq -r '.rate_limit // 0' "$PREV_7D_FILE")
   PREV_7D_ASSERT=$(jq -r '.assertion_failures // 0' "$PREV_7D_FILE")
   PREV_7D_PANIC=$(jq -r '.panic // 0' "$PREV_7D_FILE")
   PREV_7D_UNKNOWN=$(jq -r '.unknown // 0' "$PREV_7D_FILE")
 else
-  PREV_7D_TOTAL="" PREV_7D_FAILED="" PREV_7D_FLAKY=""
+  PREV_7D_TOTAL="" PREV_7D_FAILED="" PREV_7D_FLAKY="" PREV_7D_RETRIED=""
   PREV_7D_API="" PREV_7D_RATE="" PREV_7D_ASSERT="" PREV_7D_PANIC="" PREV_7D_UNKNOWN=""
 fi
 
@@ -159,6 +165,8 @@ cat <<EOF
     "total_runs": $CURRENT_TOTAL,
     "failed_runs": $CURRENT_FAILED,
     "unique_flaky": $CURRENT_FLAKY,
+    "retried_flakes": $CURRENT_RETRIED,
+    "live_test_runs": $CURRENT_LIVE,
     "api_errors": $CURRENT_API,
     "rate_limit": $CURRENT_RATE,
     "assertion_failures": $CURRENT_ASSERT,
@@ -170,6 +178,7 @@ cat <<EOF
     "total_runs": "$(calculate_trend "$CURRENT_TOTAL" "$PREV_24H_TOTAL")",
     "failed_runs": "$(calculate_trend "$CURRENT_FAILED" "$PREV_24H_FAILED")",
     "unique_flaky": "$(calculate_trend "$CURRENT_FLAKY" "$PREV_24H_FLAKY")",
+    "retried_flakes": "$(calculate_trend "$CURRENT_RETRIED" "$PREV_24H_RETRIED")",
     "api_errors": "$(calculate_trend "$CURRENT_API" "$PREV_24H_API")",
     "rate_limit": "$(calculate_trend "$CURRENT_RATE" "$PREV_24H_RATE")",
     "assertion_failures": "$(calculate_trend "$CURRENT_ASSERT" "$PREV_24H_ASSERT")",
@@ -179,6 +188,7 @@ cat <<EOF
   "deltas_24h": {
     "failed_runs": $(calculate_delta "$CURRENT_FAILED" "$PREV_24H_FAILED"),
     "unique_flaky": $(calculate_delta "$CURRENT_FLAKY" "$PREV_24H_FLAKY"),
+    "retried_flakes": $(calculate_delta "$CURRENT_RETRIED" "$PREV_24H_RETRIED"),
     "api_errors": $(calculate_delta "$CURRENT_API" "$PREV_24H_API"),
     "rate_limit": $(calculate_delta "$CURRENT_RATE" "$PREV_24H_RATE"),
     "assertion_failures": $(calculate_delta "$CURRENT_ASSERT" "$PREV_24H_ASSERT"),
@@ -190,6 +200,7 @@ cat <<EOF
     "total_runs": "$(calculate_trend "$CURRENT_TOTAL" "$PREV_7D_TOTAL")",
     "failed_runs": "$(calculate_trend "$CURRENT_FAILED" "$PREV_7D_FAILED")",
     "unique_flaky": "$(calculate_trend "$CURRENT_FLAKY" "$PREV_7D_FLAKY")",
+    "retried_flakes": "$(calculate_trend "$CURRENT_RETRIED" "$PREV_7D_RETRIED")",
     "api_errors": "$(calculate_trend "$CURRENT_API" "$PREV_7D_API")",
     "rate_limit": "$(calculate_trend "$CURRENT_RATE" "$PREV_7D_RATE")",
     "assertion_failures": "$(calculate_trend "$CURRENT_ASSERT" "$PREV_7D_ASSERT")",
@@ -199,6 +210,7 @@ cat <<EOF
   "deltas_7d": {
     "failed_runs": $(calculate_delta "$CURRENT_FAILED" "$PREV_7D_FAILED"),
     "unique_flaky": $(calculate_delta "$CURRENT_FLAKY" "$PREV_7D_FLAKY"),
+    "retried_flakes": $(calculate_delta "$CURRENT_RETRIED" "$PREV_7D_RETRIED"),
     "api_errors": $(calculate_delta "$CURRENT_API" "$PREV_7D_API"),
     "rate_limit": $(calculate_delta "$CURRENT_RATE" "$PREV_7D_RATE"),
     "assertion_failures": $(calculate_delta "$CURRENT_ASSERT" "$PREV_7D_ASSERT"),
