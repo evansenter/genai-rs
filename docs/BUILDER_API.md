@@ -16,6 +16,9 @@ rules. For every method and its arguments, see the
 | `with_*` | **Configures** a setting (replaces if called twice) | `with_model()`, `with_text()`, `with_content()` |
 | `add_*` | **Accumulates** items to a collection | `add_function()`, `add_tool()` |
 
+`add_label(key, value)` and `add_extra(key, value)` add one entry to a keyed
+map: entries added earlier are kept, and a repeated key replaces its value.
+
 The option-free built-in tool setters (`with_google_search()`,
 `with_google_maps()`, `with_code_execution()`, `with_url_context()`) follow the
 `with_*` rule: each replaces any earlier tool of its kind, so calling one

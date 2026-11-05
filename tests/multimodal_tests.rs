@@ -870,6 +870,7 @@ mod text_to_speech {
             safety_settings: None,
             labels: None,
             continuation_token: None,
+            extra: serde_json::Map::new(),
         };
 
         let mut request_json = serde_json::to_value(&request).expect("Serialize request");
@@ -931,6 +932,7 @@ mod text_to_speech {
             safety_settings: None,
             labels: None,
             continuation_token: None,
+            extra: serde_json::Map::new(),
         };
 
         let flat_json = serde_json::to_value(&flat_request).expect("Serialize flat request");

@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use genai_rs::Client;
+use genai_rs::wire::{WireEvent, WireInspector};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -154,8 +155,56 @@ impl Stub {
             .unwrap()
     }
 
+    /// A client whose requests each hold a paused clock while in flight
+    /// (see [`ClockHold`]), with every timeout at its default: for
+    /// `start_paused` tests of code that sends several requests, such as a
+    /// poll. The replies must not be `delayed`, since no time passes while a
+    /// request holds the clock.
+    pub fn paused_clock_client(&self) -> Client {
+        Client::builder("test-key".to_string())
+            .with_base_url(&self.base_url)
+            .add_wire_inspector(Arc::new(ClockHold::default()))
+            .build()
+            .unwrap()
+    }
+
     pub fn requests(&self) -> Vec<Recorded> {
         self.requests.lock().unwrap().clone()
+    }
+}
+
+/// Holds a paused tokio clock still while each request is in flight.
+///
+/// Tokio advances a paused clock to the next timer whenever the runtime is
+/// idle, even with localhost I/O in flight, so a timer armed around a
+/// request (the 30 s connect timeout, a poll's deadline) can fire before the
+/// stub answers. A running `spawn_blocking` task stops the auto-advance, so
+/// this starts one when a request is sent and ends it once the response
+/// body is read. Between requests the clock advances as usual: a poll's
+/// sleeps take no real time, and a request takes no paused time.
+#[derive(Default)]
+pub struct ClockHold {
+    /// Dropping the sender ends the current hold's blocking task.
+    current: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+}
+
+impl WireInspector for ClockHold {
+    fn on_event(&self, event: &WireEvent) {
+        match event {
+            WireEvent::Request { .. } => {
+                let (tx, rx) = std::sync::mpsc::channel::<()>();
+                tokio::task::spawn_blocking(move || {
+                    let _ = rx.recv();
+                });
+                // Replacing an unfinished hold (a request that failed
+                // without a body) ends it.
+                *self.current.lock().unwrap() = Some(tx);
+            }
+            WireEvent::ResponseBody { .. } | WireEvent::ErrorBody { .. } => {
+                self.current.lock().unwrap().take();
+            }
+            _ => {}
+        }
     }
 }
 

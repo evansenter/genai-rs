@@ -451,10 +451,9 @@ while let Some(event) = stream.next().await {
     if let Some(text) = event.chunk.delta_text() {
         print!("{text}");
     }
-    if event.is_terminal() {
-        break;
-    }
 }
+// The stream ends after its terminal event and the server's tail, once
+// the interaction is stored (see STREAMING_API.md#read-to-the-end).
 ```
 
 ### Cancellation

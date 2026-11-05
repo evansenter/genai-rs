@@ -105,6 +105,8 @@ pub struct InteractionBuilder<'a> {
     safety_settings: Option<Vec<SafetySetting>>,
     labels: Option<std::collections::BTreeMap<String, String>>,
     continuation_token: Option<String>,
+    /// Unmodeled request fields (set by `add_extra()`)
+    extra: serde_json::Map<String, serde_json::Value>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,
     /// Tool service for dependency-injected functions
@@ -137,6 +139,7 @@ impl std::fmt::Debug for InteractionBuilder<'_> {
             .field("safety_settings", &self.safety_settings)
             .field("labels", &self.labels)
             .field("continuation_token", &self.continuation_token)
+            .field("extra", &self.extra)
             .field("max_function_call_loops", &self.max_function_call_loops)
             .field("tool_service", &self.tool_service.as_ref().map(|_| "..."))
             .field("timeout", &self.timeout)
@@ -174,6 +177,7 @@ impl<'a> InteractionBuilder<'a> {
             safety_settings: None,
             labels: None,
             continuation_token: None,
+            extra: serde_json::Map::new(),
             max_function_call_loops: DEFAULT_MAX_FUNCTION_CALL_LOOPS,
             tool_service: None,
             timeout: None,
@@ -262,7 +266,10 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// If `with_timeout()` was set, the timeout applies **per-chunk**, not to
     /// the total stream duration. Each `stream.next().await` call must complete
-    /// within the timeout, or a [`GenaiError::Timeout`] error is yielded.
+    /// within the timeout, or a [`GenaiError::Timeout`] error is yielded. The
+    /// poll after the terminal event, which reads the body's tail so the
+    /// stored interaction is readable once the stream ends, is not bounded by
+    /// it (the crate bounds that read itself).
     ///
     /// This is useful for detecting stalled connections (e.g., model stops
     /// responding mid-stream), but does **not** limit the total time to
@@ -338,12 +345,23 @@ impl<'a> InteractionBuilder<'a> {
         Box::pin(async_stream::try_stream! {
             let request = self.build()?;
             let mut stream = client.execute_stream(request);
+            let mut finished = false;
 
             loop {
-                let result = within(timeout, "Stream chunk", stream.next()).await?;
+                // After the terminal event the stream only reads the body's
+                // tail, under its own bound: the per-chunk timeout must not
+                // fail a finished stream.
+                let result = if finished {
+                    stream.next().await
+                } else {
+                    within(timeout, "Stream chunk", stream.next()).await?
+                };
 
                 match result {
-                    Some(Ok(event)) => yield event,
+                    Some(Ok(event)) => {
+                        finished = event.is_terminal();
+                        yield event;
+                    }
                     Some(Err(e)) => Err(e)?,
                     None => break,
                 }
@@ -491,6 +509,7 @@ impl<'a> InteractionBuilder<'a> {
             safety_settings: self.safety_settings,
             labels: self.labels,
             continuation_token: self.continuation_token,
+            extra: self.extra,
         })
     }
 }

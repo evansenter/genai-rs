@@ -69,8 +69,9 @@
 
 use crate::client::Client;
 use crate::errors::GenaiError;
-use crate::files::{FileUpload, PollOptions, PollStep};
+use crate::files::FileUpload;
 use crate::paging;
+use crate::poll::{PollOptions, PollStep};
 use crate::serde_util::{ForFileSearchDocument, deserialize_string_i64, serialize_string_i64};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
