@@ -103,7 +103,10 @@ policies, triggers). `parity.rs` holds the guard on the parity table in
 `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`: `.github/scripts/dump_sdk_options.py`
 reads the installed wheel's sources with `ast` (never importing them), and
 the test fails when the wheel exposes an option the table lacks or the
-table names one the wheel does not have.
+table names one the wheel does not have. The script itself fails on a
+public class in the modules it reads that it neither reads nor skips with
+a reason (its `CLASS_SKIP`), so a new config model or content type cannot
+slip past the table.
 
 The suite needs no API key and takes a few seconds, so CI runs it on every
 PR, forks included, as a step of the required `Test Suite (antigravity)`
