@@ -181,9 +181,10 @@ pub use environments::{
 // `Tool::FileSearch` retrieves over
 pub mod file_search_stores;
 pub use file_search_stores::{
-    CreateFileSearchStoreRequest, DocumentListResponse, DocumentState, FileSearchDocument,
-    FileSearchDocuments, FileSearchStore, FileSearchStoreListResponse, FileSearchStores,
-    ListFileSearchDocuments, ListFileSearchStores,
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentImport,
+    DocumentListResponse, DocumentState, DocumentUpload, FileSearchDocument, FileSearchDocuments,
+    FileSearchStore, FileSearchStoreListResponse, FileSearchStores, ListFileSearchDocuments,
+    ListFileSearchStores, StringList, WhiteSpaceConfig,
 };
 
 // Safety settings (request safety_settings field)
