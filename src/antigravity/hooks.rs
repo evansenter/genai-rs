@@ -1,6 +1,5 @@
-//! Hook types for Antigravity agents: what the pre-tool, post-tool and
-//! questions hooks are handed and what they return. Tool policies live in
-//! `policies.rs`.
+//! Hook types for Antigravity agents: what each hook is handed and what it
+//! returns. Tool policies live in `policies.rs`.
 
 use serde_json::Value;
 use std::sync::Arc;
@@ -15,6 +14,26 @@ pub struct ToolInvocation {
     pub args: Value,
     /// The harness's correlation id for custom tool calls, when available.
     pub id: Option<String>,
+}
+
+impl ToolInvocation {
+    /// A call to `name` with `args`, so policy conditions and handlers can
+    /// be unit-tested without a harness (the struct is `#[non_exhaustive]`).
+    ///
+    /// ```
+    /// use genai_rs::antigravity::ToolInvocation;
+    ///
+    /// let call = ToolInvocation::new("run_command", serde_json::json!({"CommandLine": "ls"}));
+    /// assert_eq!(call.args["CommandLine"], "ls");
+    /// ```
+    #[must_use]
+    pub fn new(name: impl Into<String>, args: Value) -> Self {
+        Self {
+            name: name.into(),
+            args,
+            id: None,
+        }
+    }
 }
 
 /// The outcome of a completed tool call, passed to post-tool hooks.
@@ -40,6 +59,14 @@ pub enum PreToolDecision {
         /// Why the call was blocked.
         reason: String,
     },
+    /// Let the tool run with these arguments in place of the model's (the
+    /// Python SDK's `HookResult(modified_args=...)`). The harness runs a
+    /// builtin, MCP or custom tool on the replacement.
+    Modify {
+        /// The arguments the tool runs with: a JSON object in the tool's
+        /// own schema (`AbsolutePath`, `CommandLine`, …).
+        args: Value,
+    },
 }
 
 impl PreToolDecision {
@@ -50,6 +77,18 @@ impl PreToolDecision {
             reason: reason.into(),
         }
     }
+
+    /// An allow decision that replaces the call's arguments.
+    #[must_use]
+    pub fn modify(args: Value) -> Self {
+        Self::Modify { args }
+    }
+
+    /// Whether the call may run (as it is, or modified).
+    #[must_use]
+    pub fn allows(&self) -> bool {
+        !matches!(self, Self::Deny { .. })
+    }
 }
 
 /// A synchronous pre-tool hook: inspect the call, return a verdict.
@@ -57,6 +96,177 @@ pub type PreToolHook = Arc<dyn Fn(&ToolInvocation) -> PreToolDecision + Send + S
 
 /// A synchronous post-tool hook: observe completed tool calls.
 pub type PostToolHook = Arc<dyn Fn(&ToolOutcome) + Send + Sync>;
+
+// =============================================================================
+// Lifecycle hooks
+// =============================================================================
+
+/// A turn about to start, handed to an
+/// [`on_pre_turn`](crate::antigravity::AgentBuilder::on_pre_turn) hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TurnStart {
+    /// The user's message (its text parts, joined).
+    pub text: String,
+    /// The trajectory the turn runs on.
+    pub trajectory_id: Option<String>,
+}
+
+/// A pre-turn hook's verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TurnDecision {
+    /// Run the turn.
+    Allow,
+    /// Refuse it: the turn fails with
+    /// [`AntigravityError::Turn`](crate::antigravity::AntigravityError::Turn)
+    /// carrying the reason, and the agent stays usable.
+    Deny {
+        /// Why the turn was refused.
+        reason: String,
+    },
+}
+
+impl TurnDecision {
+    /// A deny decision with the given reason.
+    #[must_use]
+    pub fn deny(reason: impl Into<String>) -> Self {
+        Self::Deny {
+            reason: reason.into(),
+        }
+    }
+}
+
+/// A finished turn, handed to an
+/// [`on_post_turn`](crate::antigravity::AgentBuilder::on_post_turn) hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TurnEnd {
+    /// The turn's final response text.
+    pub response_text: String,
+    /// The trajectory the turn ran on.
+    pub trajectory_id: Option<String>,
+}
+
+/// A failed tool call, handed to an
+/// [`on_tool_error`](crate::antigravity::AgentBuilder::on_tool_error) hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ToolFailure {
+    /// The tool, named as policies name it (`view_file`,
+    /// `mcp_<server>_<tool>`, a custom tool's name).
+    pub name: String,
+    /// The harness's error text.
+    pub error: String,
+    /// The harness's correlation id for the call.
+    pub call_id: Option<String>,
+    /// The trajectory that made the call.
+    pub trajectory_id: Option<String>,
+}
+
+/// A history compaction, handed to an
+/// [`on_compaction`](crate::antigravity::AgentBuilder::on_compaction) hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CompactionEvent {
+    /// The summary that replaced the compacted history.
+    pub summary: String,
+    /// The compacted trajectory.
+    pub trajectory_id: Option<String>,
+    /// The compaction step's index.
+    pub step_index: Option<u32>,
+}
+
+/// The root trajectory about to go idle, handed to an
+/// [`on_stop`](crate::antigravity::AgentBuilder::on_stop) hook.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct StopRequest {
+    /// The turn's response text so far.
+    pub response_text: String,
+    /// The stopping trajectory.
+    pub trajectory_id: Option<String>,
+    /// How many times a stop hook has already kept this turn going. Return
+    /// [`StopDecision::Stop`] past a limit of your own, or the turn never
+    /// ends.
+    pub continuation_count: u32,
+    /// Why the harness is stopping the turn early, when it is (a budget
+    /// cap, quota exhaustion).
+    pub stop_reason: Option<crate::antigravity::protocol::StopReason>,
+    /// The error that is ending the turn, when one is.
+    pub error: Option<String>,
+}
+
+/// A stop hook's verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StopDecision {
+    /// Let the turn end.
+    Stop,
+    /// Keep going: the harness adds `reason` as an instruction and calls
+    /// the model again, in the same turn.
+    Continue {
+        /// The instruction for the next model call.
+        reason: String,
+    },
+}
+
+impl StopDecision {
+    /// A continue decision with the given instruction.
+    #[must_use]
+    pub fn continue_with(reason: impl Into<String>) -> Self {
+        Self::Continue {
+            reason: reason.into(),
+        }
+    }
+}
+
+type SessionHook = Arc<dyn Fn() + Send + Sync>;
+type PreTurnHook = Arc<dyn Fn(&TurnStart) -> TurnDecision + Send + Sync>;
+type PostTurnHook = Arc<dyn Fn(&TurnEnd) + Send + Sync>;
+type ToolErrorHook = Arc<dyn Fn(&ToolFailure) -> Option<String> + Send + Sync>;
+type CompactionHook = Arc<dyn Fn(&CompactionEvent) + Send + Sync>;
+type StopHook = Arc<dyn Fn(&StopRequest) -> StopDecision + Send + Sync>;
+
+/// The lifecycle hooks beyond the tool and question hooks, as set on the
+/// builder. Each runs on a thread of its own, like every hook.
+#[derive(Clone, Default)]
+pub(crate) struct LifecycleHooks {
+    pub(crate) session_start: Option<SessionHook>,
+    pub(crate) session_end: Option<SessionHook>,
+    pub(crate) pre_turn: Option<PreTurnHook>,
+    pub(crate) post_turn: Option<PostTurnHook>,
+    pub(crate) tool_error: Option<ToolErrorHook>,
+    pub(crate) compaction: Option<CompactionHook>,
+    pub(crate) stop: Option<StopHook>,
+}
+
+impl LifecycleHooks {
+    /// The harness lifecycle points these hooks need callbacks for.
+    pub(crate) fn enabled(&self) -> Vec<crate::antigravity::protocol::LifecycleHook> {
+        use crate::antigravity::protocol::LifecycleHook as Hook;
+        [
+            (self.session_start.is_some(), Hook::OnSessionStart),
+            (self.session_end.is_some(), Hook::OnSessionEnd),
+            (self.pre_turn.is_some(), Hook::PreTurn),
+            (self.post_turn.is_some(), Hook::PostTurn),
+            (self.tool_error.is_some(), Hook::OnToolError),
+            (self.compaction.is_some(), Hook::OnCompaction),
+            (self.stop.is_some(), Hook::Stop),
+        ]
+        .into_iter()
+        .filter_map(|(set, hook)| set.then_some(hook))
+        .collect()
+    }
+}
+
+impl std::fmt::Debug for LifecycleHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LifecycleHooks")
+            .field("enabled", &self.enabled())
+            .finish()
+    }
+}
 
 /// A question the agent asked via the `ask_question` builtin.
 ///

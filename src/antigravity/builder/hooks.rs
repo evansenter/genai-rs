@@ -1,15 +1,22 @@
 //! Hook setters on [`AgentBuilder`].
+//!
+//! Every hook is a synchronous closure that runs on a thread of its own,
+//! bounded by the turn deadline (see [`AgentBuilder::on_pre_tool`]). A hook
+//! that has async work to do can block on it there:
+//! `tokio::runtime::Handle::current().block_on(..)` works inside any hook.
 
 use std::sync::Arc;
 
 use super::AgentBuilder;
 use crate::antigravity::{
-    AgentQuestion, PreToolDecision, QuestionReply, ToolInvocation, ToolOutcome,
+    AgentQuestion, CompactionEvent, PreToolDecision, QuestionReply, StopDecision, StopRequest,
+    ToolFailure, ToolInvocation, ToolOutcome, TurnDecision, TurnEnd, TurnStart,
 };
 
 impl AgentBuilder {
-    /// Sets a pre-tool hook, consulted before every tool dispatch and for
-    /// `confirm(...)` policies.
+    /// Sets a pre-tool hook, consulted before every tool call (builtin,
+    /// custom, MCP, subagent) and for `confirm(...)` policies. It may allow,
+    /// deny, or [modify](PreToolDecision::modify) the call's arguments.
     ///
     /// Like every hook, it runs on a thread of its own and is bounded by the
     /// turn deadline. A hook still running at the deadline is abandoned,
@@ -17,6 +24,17 @@ impl AgentBuilder {
     /// neither runtime shutdown nor process exit. A call whose arguments the
     /// harness sent as invalid JSON is denied without consulting the hook,
     /// which would otherwise judge a placeholder.
+    ///
+    /// The hook is a plain closure; async work inside it can block on the
+    /// runtime, which the hook's thread has entered:
+    ///
+    /// ```rust,ignore
+    /// .on_pre_tool(|call| {
+    ///     let allowed = tokio::runtime::Handle::current()
+    ///         .block_on(audit_service.check(&call.name));
+    ///     if allowed { PreToolDecision::Allow } else { PreToolDecision::deny("audit") }
+    /// })
+    /// ```
     #[must_use]
     pub fn on_pre_tool(
         mut self,
@@ -78,6 +96,80 @@ impl AgentBuilder {
     #[must_use]
     pub fn on_post_tool(mut self, hook: impl Fn(&ToolOutcome) + Send + Sync + 'static) -> Self {
         self.post_tool = Some(Arc::new(hook));
+        self
+    }
+
+    /// Runs `hook` once the session starts, before `spawn()` returns.
+    #[must_use]
+    pub fn on_session_start(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.lifecycle.session_start = Some(Arc::new(hook));
+        self
+    }
+
+    /// Runs `hook` when the session ends gracefully, during
+    /// [`shutdown`](crate::antigravity::AntigravityAgent::shutdown) (not on
+    /// drop).
+    #[must_use]
+    pub fn on_session_end(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.lifecycle.session_end = Some(Arc::new(hook));
+        self
+    }
+
+    /// Consulted before each turn starts, with the user's message. A
+    /// [`TurnDecision::Deny`] refuses the turn: `chat` fails with
+    /// [`AntigravityError::Turn`](crate::antigravity::AntigravityError::Turn)
+    /// carrying the reason, and the agent stays usable.
+    #[must_use]
+    pub fn on_pre_turn(
+        mut self,
+        hook: impl Fn(&TurnStart) -> TurnDecision + Send + Sync + 'static,
+    ) -> Self {
+        self.lifecycle.pre_turn = Some(Arc::new(hook));
+        self
+    }
+
+    /// Runs `hook` after each turn with its final response text.
+    #[must_use]
+    pub fn on_post_turn(mut self, hook: impl Fn(&TurnEnd) + Send + Sync + 'static) -> Self {
+        self.lifecycle.post_turn = Some(Arc::new(hook));
+        self
+    }
+
+    /// Consulted when a tool call fails (a builtin, MCP or custom tool).
+    /// Returning `Some(text)` replaces the error the model sees with
+    /// `text`, to steer it toward a fix; `None` keeps the harness's.
+    #[must_use]
+    pub fn on_tool_error(
+        mut self,
+        hook: impl Fn(&ToolFailure) -> Option<String> + Send + Sync + 'static,
+    ) -> Self {
+        self.lifecycle.tool_error = Some(Arc::new(hook));
+        self
+    }
+
+    /// Runs `hook` when the harness compacts the history (see
+    /// [`with_compaction_threshold`](Self::with_compaction_threshold)),
+    /// with the summary that replaced it.
+    #[must_use]
+    pub fn on_compaction(
+        mut self,
+        hook: impl Fn(&CompactionEvent) + Send + Sync + 'static,
+    ) -> Self {
+        self.lifecycle.compaction = Some(Arc::new(hook));
+        self
+    }
+
+    /// Consulted when a turn is about to end. [`StopDecision::Continue`]
+    /// keeps it going: the harness adds the reason as an instruction and
+    /// calls the model again, within the same turn (and the same turn
+    /// deadline). Check [`StopRequest::continuation_count`] and stop past a
+    /// limit of your own, or the turn runs until its deadline.
+    #[must_use]
+    pub fn on_stop(
+        mut self,
+        hook: impl Fn(&StopRequest) -> StopDecision + Send + Sync + 'static,
+    ) -> Self {
+        self.lifecycle.stop = Some(Arc::new(hook));
         self
     }
 }

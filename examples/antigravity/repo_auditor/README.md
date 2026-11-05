@@ -28,7 +28,7 @@ correctness check that doesn't depend on LLM phrasing.
 
 | Layer | Configuration |
 |-------|---------------|
-| Capabilities | `Capabilities::read_only().enable(BuiltinTool::StartSubagent)` |
+| Capabilities | `Capabilities::read_only().enable(BuiltinTool::InvokeSubagent)` |
 | Policies | `deny_all()` + explicit `allow(...)` for each tool the audit needs |
 | Pre-tool hook | Confines file tools to the workspace and denies `view_file` on `.env` paths, even though `view_file` is allowed; denies a file tool whose path it cannot read (fail closed) |
 | Post-tool hook | Logs every completed tool call, custom and harness-side (audit trail) |
@@ -73,7 +73,7 @@ Harness up. conversation_id=Some("...")
 [pre-tool hook] denied view_file on /.../fixture/.env
 [DENIED] Secret files are off-limits; report them as findings instead.
 [harness noise] Secret files are off-limits; ... ("denied by pre-tool hook: ...")
-[start_subagent] delegated (subagent runs its own trajectory)
+[invoke_subagent] delegated (subagent runs its own trajectory)
 [view_file] file:///.../fixture/app/database.py
 [view_file] file:///.../fixture/app/backup.py
 [tool] classify_severity -> {"category":"sql_injection","severity":"critical"}

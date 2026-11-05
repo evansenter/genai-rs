@@ -1,68 +1,72 @@
 //! Turns an [`AgentBuilder`] into the harness's `HarnessConfig`.
 
 use super::AgentBuilder;
+use crate::antigravity::policies::PolicyEngine;
 use crate::antigravity::protocol;
+use crate::antigravity::subagent::SubagentWireContext;
 use crate::antigravity::tools::ToolDispatcher;
-use crate::antigravity::{AgentBehavior, McpServer};
+use crate::antigravity::{AgentBehavior, BuiltinTool, InlineSkill, McpServer};
 
 impl AgentBuilder {
     pub(super) fn build_harness_config(
         &self,
         dispatcher: &ToolDispatcher,
     ) -> protocol::HarnessConfig {
+        let engine = &PolicyEngine::new(self.policies.clone());
+        let options = &self.options;
         let mut enabled_hooks = Vec::new();
-        if !self.policies.is_empty() || self.pre_tool.is_some() {
+        // Client-evaluated policies and the pre-tool hook both answer the
+        // harness's pre-tool callback; the auto policy is harness-side.
+        if engine.has_rules() || self.pre_tool.is_some() {
             enabled_hooks.push(protocol::LifecycleHook::PreTool);
         }
         if self.post_tool.is_some() {
             enabled_hooks.push(protocol::LifecycleHook::PostTool);
         }
-
-        let models = self
-            .api_key()
-            .map(|api_key| {
-                vec![protocol::ModelConfig {
-                    // A real model id, not a placeholder: this is the id the
-                    // harness is actually asked to run when the caller never
-                    // called `with_model`.
-                    name: Some(
-                        self.model
-                            .clone()
-                            .unwrap_or_else(|| crate::DEFAULT_MODEL.to_string()),
-                    ),
-                    types: vec![protocol::ModelType::Text],
-                    gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
-                        api_key: Some(api_key.to_string()),
-                        base_url: self.gemini_base_url.clone(),
-                        ..Default::default()
-                    }),
-                    vertex_endpoint: None,
-                }]
-            })
-            .unwrap_or_default();
+        enabled_hooks.extend(self.lifecycle.enabled());
 
         let tools = dispatcher.harness_declarations();
-        // Announce the workspace roots to the model (opt-outable). The note
-        // is composed here at send time; the stored `system_instructions`
-        // string is never mutated. Subagents get the same note appended
-        // (their trajectories don't inherit the parent's context).
+        // Custom instructions replace the harness's prompt, and with it the
+        // workspace list, so they get the roots back as a note (opt-outable).
         let workspace_note = (self.announce_workspaces() && !self.workspaces.is_empty())
             .then(|| workspace_announcement(&self.workspaces));
+        let subagent_context = SubagentWireContext {
+            workspace_note: workspace_note.as_deref(),
+            nesting: options.max_subagent_depth.is_some_and(|depth| depth >= 2),
+            disable_define_subagent_tool: !options.define_subagent_tool,
+        };
         let custom_subagents = self
             .subagents
             .iter()
-            .map(|subagent| subagent.to_wire(&tools, workspace_note.as_deref()))
+            .map(|subagent| subagent.to_wire(&tools, subagent_context))
             .collect();
+        let system_instructions = self.system_instructions.as_ref().map(|instructions| {
+            let note = instructions
+                .is_custom()
+                .then_some(workspace_note.as_deref())
+                .flatten();
+            instructions.to_wire(note)
+        });
 
+        let mut harness_side_tools = self.capabilities.to_harness_side_tools();
+        harness_side_tools.subagents = Some(protocol::SubagentsConfig {
+            enabled: self.capabilities.is_enabled(BuiltinTool::InvokeSubagent),
+            max_nesting_depth: options
+                .max_subagent_depth
+                .map(|depth| i32::try_from(depth).unwrap_or(i32::MAX)),
+            allowed_subagents: options.allowed_subagents.clone().unwrap_or_default(),
+            disable_define_subagent_tool: !options.define_subagent_tool,
+        });
+
+        let compaction_threshold = options.compaction_threshold;
         protocol::HarnessConfig {
             cascade_id: self.conversation_id.clone(),
-            system_instructions: build_system_instructions(
-                self.system_instructions.as_deref(),
-                workspace_note.as_deref(),
-            ),
+            system_instructions,
             tools,
-            harness_side_tools: Some(self.capabilities.to_harness_side_tools()),
-            compaction_threshold: None,
+            harness_side_tools: Some(harness_side_tools),
+            // The legacy spelling, written beside `compaction_config` as the
+            // Python SDK does.
+            compaction_threshold,
             workspaces: self
                 .workspaces
                 .iter()
@@ -73,15 +77,115 @@ impl AgentBuilder {
             initial_trajectory: None,
             app_data_dir: self.app_data_dir.clone(),
             mcp_servers: self.mcp_servers.iter().map(McpServer::to_wire).collect(),
-            models,
+            models: self.models(),
             enabled_hooks,
             custom_subagents,
             agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
-            // spawn() rejects an explicit opt-in with no workspace.
-            policy_config: (self.workspace_containment.unwrap_or(true)
-                && !self.workspaces.is_empty())
-            .then(protocol::PolicyConfig::default),
+            policy_config: self.policy_config(engine),
+            tool_output_truncation: options.tool_output_truncation.map(|max_tokens| {
+                protocol::ToolOutputTruncation {
+                    truncate: Some(protocol::TruncateStrategy {
+                        max_tokens: i32::try_from(max_tokens).unwrap_or(i32::MAX),
+                    }),
+                }
+            }),
+            session_continuation_mode: options.session_continuation.map(|mode| mode.to_wire()),
+            retry_config: options.retry.and_then(|retry| retry.to_wire()),
+            budget_config: options.budget.and_then(|budget| budget.to_wire()),
+            compaction_config: compaction_threshold.map(|tokens| protocol::CompactionConfig {
+                token_threshold: Some(tokens),
+            }),
+            skills_config: (!options.inline_skills.is_empty()).then(|| protocol::SkillsConfig {
+                enabled: true,
+                skills: options
+                    .inline_skills
+                    .iter()
+                    .map(InlineSkill::to_wire)
+                    .collect(),
+            }),
+            mcp_max_output_bytes: options
+                .mcp_max_output_bytes
+                .map(|bytes| i32::try_from(bytes).unwrap_or(i32::MAX)),
         }
+    }
+
+    /// The model configs: the text model (with its options), and the image
+    /// model `generate_image` calls when that builtin is on. Empty without
+    /// an API key: the harness then uses its environment's key and its own
+    /// default model, and `spawn()` has refused any model option.
+    fn models(&self) -> Vec<protocol::ModelConfig> {
+        let Some(api_key) = self.api_key() else {
+            return Vec::new();
+        };
+        let options = &self.options;
+        let endpoint = |model_options| protocol::GeminiApiEndpoint {
+            api_key: Some(api_key.to_string()),
+            base_url: self.gemini_base_url.clone(),
+            http_headers: options.model_headers.clone(),
+            options: model_options,
+        };
+        let text_options = (options.thinking_level.is_some()
+            || options.service_tier.is_some()
+            || options.max_output_tokens.is_some())
+        .then(|| protocol::GeminiModelOptions {
+            thinking_level: options.thinking_level.as_ref().map(ToString::to_string),
+            service_tier: options.service_tier.as_ref().map(ToString::to_string),
+            max_output_tokens: options
+                .max_output_tokens
+                .map(|tokens| i32::try_from(tokens).unwrap_or(i32::MAX)),
+        });
+        let mut models = vec![protocol::ModelConfig {
+            // A real model id, not a placeholder: this is the id the
+            // harness is actually asked to run when the caller never
+            // called `with_model`.
+            name: Some(
+                self.model
+                    .clone()
+                    .unwrap_or_else(|| crate::DEFAULT_MODEL.to_string()),
+            ),
+            types: vec![protocol::ModelType::Text],
+            gemini_api_endpoint: Some(endpoint(text_options)),
+            vertex_endpoint: None,
+        }];
+        // Without an image model the harness fails every generate_image
+        // call ("model is empty", verified on 0.1.23); the Python SDK
+        // always configures one.
+        if options.image_model.is_some() || self.capabilities.is_enabled(BuiltinTool::GenerateImage)
+        {
+            models.push(protocol::ModelConfig {
+                name: Some(
+                    options
+                        .image_model
+                        .clone()
+                        .unwrap_or_else(|| crate::DEFAULT_IMAGE_MODEL.to_string()),
+                ),
+                types: vec![protocol::ModelType::Image],
+                gemini_api_endpoint: Some(endpoint(None)),
+                vertex_endpoint: None,
+            });
+        }
+        models
+    }
+
+    /// The harness-side policy config, when there is anything for it to
+    /// do: workspace containment, or the auto policy. Sending one turns
+    /// containment on unless it says otherwise, so a config sent for the
+    /// auto policy alone writes containment off explicitly.
+    fn policy_config(&self, engine: &PolicyEngine) -> Option<protocol::PolicyConfig> {
+        // spawn() rejects an explicit opt-in with no workspace.
+        let contain = self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty();
+        let auto_config = engine.auto().map(|_| protocol::AutoPolicyConfig {
+            enabled: true,
+            model: None,
+        });
+        if !contain && auto_config.is_none() {
+            return None;
+        }
+        Some(protocol::PolicyConfig {
+            rules: Vec::new(),
+            workspace_containment: (!contain).then_some(protocol::WorkspaceContainment::Disabled),
+            auto_config,
+        })
     }
 }
 
@@ -104,45 +208,4 @@ pub(super) fn workspace_announcement(workspaces: &[String]) -> String {
          workspace paths, and stay within these root(s):\n{roots}\n\
          === End Workspace ==="
     )
-}
-
-/// Composes the effective parent system instructions from the user's
-/// instructions (never mutated) and an optional workspace-announcement note.
-///
-/// - With a note and user instructions: the note is a second `custom` part
-///   (keeps the user's text intact, still fully custom).
-/// - With a note and no user instructions: the note is an *appended* section
-///   so the harness's default instructions are preserved (not replaced).
-/// - With no note: the user's instructions as fully-custom text, or `None`.
-pub(super) fn build_system_instructions(
-    user_instructions: Option<&str>,
-    workspace_note: Option<&str>,
-) -> Option<protocol::SystemInstructions> {
-    match (user_instructions, workspace_note) {
-        (Some(text), Some(note)) => Some(protocol::SystemInstructions {
-            custom: Some(protocol::CustomSystemInstructions {
-                part: vec![
-                    protocol::SystemInstructionPart {
-                        text: Some(text.to_string()),
-                    },
-                    protocol::SystemInstructionPart {
-                        text: Some(note.to_string()),
-                    },
-                ],
-            }),
-            appended: None,
-        }),
-        (Some(text), None) => Some(protocol::SystemInstructions::custom_text(text.to_string())),
-        (None, Some(note)) => Some(protocol::SystemInstructions {
-            custom: None,
-            appended: Some(protocol::AppendedSystemInstructions {
-                custom_identity: None,
-                appended_sections: vec![protocol::InstructionSection {
-                    title: Some("Workspace".to_string()),
-                    content: Some(note.to_string()),
-                }],
-            }),
-        }),
-        (None, None) => None,
-    }
 }

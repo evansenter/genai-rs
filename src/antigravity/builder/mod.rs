@@ -1,15 +1,19 @@
 //! [`AgentBuilder`]: configuration setters and `spawn()`. Hook setters live
-//! in `hooks.rs`, spawn-time checks in `validate.rs`, and the translation to
-//! the harness's `HarnessConfig` in `wire.rs`.
+//! in `hooks.rs`, harness option setters in `options.rs`, spawn-time checks
+//! in `validate.rs`, and the translation to the harness's `HarnessConfig` in
+//! `wire.rs`.
 
+use super::hooks::LifecycleHooks;
 use super::policies::PolicyEngine;
 use super::process::{self, HarnessProcess};
-use super::protocol::{self, InputEvent};
+use super::protocol;
 use super::session::{Session, WireContext};
 use super::tools::ToolDispatcher;
+use super::triggers::CustomTrigger;
 use super::{
     AgentBehavior, AntigravityAgent, AntigravityError, Capabilities, McpServer, Policy,
-    PostToolHook, PreToolHook, QuestionHook, Subagent, TriggerConfig, handshake, triggers,
+    PostToolHook, PreToolHook, QuestionHook, Subagent, SystemInstructions, TriggerConfig,
+    handshake, triggers,
 };
 use crate::wire::WireInspector;
 use crate::{FunctionDeclaration, ToolService};
@@ -19,8 +23,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod hooks;
+mod options;
 mod validate;
 mod wire;
+
+use options::HarnessOptions;
 
 // =============================================================================
 // Builder
@@ -69,7 +76,7 @@ pub struct AgentBuilder {
     api_key: Option<String>,
     gemini_base_url: Option<String>,
     model: Option<String>,
-    system_instructions: Option<String>,
+    system_instructions: Option<SystemInstructions>,
     workspaces: Vec<String>,
     tools: Vec<FunctionDeclaration>,
     tool_services: Vec<Arc<dyn ToolService>>,
@@ -78,6 +85,7 @@ pub struct AgentBuilder {
     pre_tool: Option<PreToolHook>,
     pub(super) questions: Option<QuestionHook>,
     post_tool: Option<PostToolHook>,
+    lifecycle: LifecycleHooks,
     save_dir: Option<String>,
     conversation_id: Option<String>,
     capabilities: Capabilities,
@@ -87,6 +95,7 @@ pub struct AgentBuilder {
     turn_timeout: TurnBudget,
     inspectors: Vec<Arc<dyn WireInspector>>,
     triggers: Vec<TriggerConfig>,
+    custom_triggers: Vec<CustomTrigger>,
     subagents: Vec<Subagent>,
     /// Whether to announce workspace roots in the effective system
     /// instructions. `None` means the default (on); see
@@ -97,6 +106,8 @@ pub struct AgentBuilder {
     /// Whether to confine file tools to the workspaces. `None` means the
     /// default (on); see [`Self::with_workspace_containment`].
     workspace_containment: Option<bool>,
+    /// Model, subagent and harness options (`options.rs`).
+    options: HarnessOptions,
 }
 
 impl std::fmt::Debug for AgentBuilder {
@@ -111,8 +122,13 @@ impl std::fmt::Debug for AgentBuilder {
             .field("mcp_servers", &self.mcp_servers.len())
             .field("policies", &self.policies.len())
             .field("capabilities", &self.capabilities)
-            .field("triggers", &self.triggers.len())
+            .field(
+                "triggers",
+                &(self.triggers.len() + self.custom_triggers.len()),
+            )
             .field("subagents", &self.subagents.len())
+            .field("lifecycle", &self.lifecycle)
+            .field("options", &self.options)
             .finish_non_exhaustive()
     }
 }
@@ -166,9 +182,26 @@ impl AgentBuilder {
         self
     }
 
-    /// Sets custom system instructions for the agent.
+    /// Sets the agent's system instructions.
+    ///
+    /// A string is **added to** the harness's own prompt, under a
+    /// `<user_system_instructions>` section, as in the Python SDK: the
+    /// harness keeps its tool guidance, safety rules, workspace list,
+    /// skills list and built-in subagents.
+    /// [`SystemInstructions::custom`] replaces that prompt instead, and
+    /// [`SystemInstructions::harness_default`] lets you replace its
+    /// identity line and add sections of your own.
+    ///
+    /// ```rust,ignore
+    /// use genai_rs::antigravity::SystemInstructions;
+    ///
+    /// let added = AntigravityAgent::builder()
+    ///     .with_system_instructions("Review for security issues only.");
+    /// let replaced = AntigravityAgent::builder()
+    ///     .with_system_instructions(SystemInstructions::custom("You are a linter."));
+    /// ```
     #[must_use]
-    pub fn with_system_instructions(mut self, instructions: impl Into<String>) -> Self {
+    pub fn with_system_instructions(mut self, instructions: impl Into<SystemInstructions>) -> Self {
         self.system_instructions = Some(instructions.into());
         self
     }
@@ -189,18 +222,18 @@ impl AgentBuilder {
     }
 
     /// Controls whether the agent's configured workspace root(s) are
-    /// announced to the model. **On by default.**
+    /// announced to the model when its prompt is
+    /// [custom](SystemInstructions::custom). **On by default.**
     ///
-    /// The harness's own prompt lists the workspaces, but
-    /// [`Self::with_system_instructions`] replaces that prompt, and agents
-    /// that don't know the paths guess (`/workdir`, `/workspace`, …) and
-    /// wander. When on and at least one
-    /// workspace is configured, `spawn()` appends a short, clearly
-    /// delimited note listing the configured root(s) to the effective system
-    /// instructions (composed at send time — the string passed to
-    /// [`Self::with_system_instructions`] is never mutated). The same note
-    /// is appended to each subagent's instructions, since subagent
-    /// trajectories do not inherit the parent's context.
+    /// The harness's own prompt lists the workspaces ("Active Workspaces",
+    /// verified on 0.1.23 for agents and subagents), so instructions added
+    /// to it need no note. Custom instructions replace that prompt, and
+    /// agents that don't know the paths guess (`/workdir`, `/workspace`, …)
+    /// and wander. With custom instructions and at least one workspace,
+    /// `spawn()` adds a short, clearly delimited note listing the
+    /// configured root(s) as a final part (composed at send time — your
+    /// instructions are never mutated), and the same note to each subagent
+    /// with custom instructions.
     ///
     /// Turn it off to manage workspace grounding yourself:
     ///
@@ -349,7 +382,11 @@ impl AgentBuilder {
         self
     }
 
-    /// Adds a path to search for agent skills.
+    /// Adds a directory to search for agent skills (`SKILL.md` files). The
+    /// harness lists them in its own prompt, so custom
+    /// [`SystemInstructions`] hide them from the model; they cannot be
+    /// combined with [`Self::add_inline_skill`] (`spawn()` refuses, as the
+    /// harness does not support both).
     #[must_use]
     pub fn add_skills_path(mut self, path: impl Into<String>) -> Self {
         self.skills_paths.push(path.into());
@@ -418,10 +455,43 @@ impl AgentBuilder {
         self
     }
 
+    /// Adds a custom trigger (the Python SDK's `@trigger`): an async
+    /// function, started after `spawn()`, that sends the agent messages
+    /// through its [`TriggerContext`](triggers::TriggerContext) whenever it
+    /// decides to. [`triggers::on_file_change`] builds one that watches a
+    /// path. Deliveries wait while a turn runs; see [`triggers`].
+    ///
+    /// ```rust,ignore
+    /// let agent = AntigravityAgent::builder()
+    ///     .add_custom_trigger(|ctx| async move {
+    ///         while let Some(job) = queue.recv().await {
+    ///             ctx.send(format!("Process job {job}.")).await?;
+    ///         }
+    ///         Ok(())
+    ///     })
+    ///     // ...
+    ///     ;
+    /// ```
+    ///
+    /// An error the trigger returns is logged and ends that trigger only.
+    #[must_use]
+    pub fn add_custom_trigger<F, Fut>(mut self, trigger: F) -> Self
+    where
+        F: FnOnce(triggers::TriggerContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<(), AntigravityError>> + Send + 'static,
+    {
+        self.custom_triggers
+            .push(Box::new(move |context| Box::pin(trigger(context))));
+        self
+    }
+
     /// Adds a static subagent the parent agent can delegate to via the
-    /// `start_subagent` builtin (enable it with [`Self::with_capabilities`];
+    /// `invoke_subagent` builtin (enable it with [`Self::with_capabilities`];
     /// it is write-capable, so the safety gate requires a policy or
-    /// pre-tool hook).
+    /// pre-tool hook). Nesting, the allow-list and `define_subagent` are set
+    /// with [`Self::with_max_subagent_depth`],
+    /// [`Self::with_allowed_subagents`] and
+    /// [`Self::with_define_subagent_tool`].
     ///
     /// Custom tools listed on the subagent (by name) must also be
     /// registered on this builder (`add_tool` / `with_tool_service`);
@@ -448,6 +518,7 @@ impl AgentBuilder {
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
         let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
         self.validate(&dispatcher)?;
+        let policy_engine = PolicyEngine::new(self.policies.clone());
 
         let binary = process::discover_harness(self.harness_path.as_deref())?;
 
@@ -467,6 +538,7 @@ impl AgentBuilder {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 language_version: env!("CARGO_PKG_RUST_VERSION").to_string(),
             }),
+            env: self.options.harness_env.clone(),
         };
         // With a custom host, the harness gets no key to fall back on: the
         // configured one is the only key it can send there.
@@ -490,6 +562,8 @@ impl AgentBuilder {
 
         // Conversation init.
         let config = self.build_harness_config(&dispatcher);
+        let sandbox_requested = self.capabilities.run_command().sandbox()
+            && self.capabilities.is_enabled(super::BuiltinTool::RunCommand);
         let init = protocol::InitializeConversationEvent {
             config: Some(config),
         };
@@ -498,12 +572,14 @@ impl AgentBuilder {
             harness,
             session,
             dispatcher,
-            policy_engine: Arc::new(PolicyEngine::new(self.policies)),
+            policy_engine: Arc::new(policy_engine),
             pre_tool: self.pre_tool,
             questions: self.questions,
             post_tool: self.post_tool,
+            lifecycle: self.lifecycle,
             conversation_id: None,
             initial_history: Vec::new(),
+            sandbox_status: None,
             turn_timeout: self.turn_timeout.resolve(),
             idle: Arc::new(tokio::sync::watch::channel(true).0),
             trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -511,32 +587,47 @@ impl AgentBuilder {
             trigger_tasks: triggers::TriggerTasks::default(),
         };
 
-        match agent.initialize(init).await {
+        let started = match agent.initialize(init).await {
+            Ok(()) => agent.start_session().await,
+            Err(e) => Err(e),
+        };
+        match started {
             Ok(()) => {
-                // Start trigger timers only once the conversation is live.
-                // Each task writes through the shared sink handle (the same
+                if sandbox_requested
+                    && let Some(status) = &agent.sandbox_status
+                    && status.available == Some(false)
+                {
+                    tracing::warn!(
+                        "run_command asked for the OS sandbox, which is unavailable ({}); \
+                         commands run unsandboxed",
+                        status
+                            .unavailable_reason
+                            .as_deref()
+                            .unwrap_or("no reason given")
+                    );
+                }
+                // Start triggers only once the conversation is live. Each
+                // task writes through the shared sink handle (the same
                 // out-of-band path CancelHandle uses) and watches the
                 // agent's idle flag.
                 for trigger in self.triggers {
-                    let sink = agent.session.sink_handle();
-                    let fired = Arc::clone(&agent.trigger_fired);
+                    let deliver = agent.trigger_delivery();
                     agent.trigger_tasks.push(triggers::spawn_trigger_task(
                         trigger,
                         agent.idle.subscribe(),
                         Arc::clone(&agent.turn_sync),
-                        move |message| {
-                            let sink = sink.clone();
-                            let fired = Arc::clone(&fired);
-                            async move {
-                                // Flag before sending so the next chat can
-                                // never miss an in-flight delivery (a false
-                                // positive on send failure only costs a
-                                // no-op drain).
-                                fired.store(true, std::sync::atomic::Ordering::SeqCst);
-                                sink.send(&InputEvent::AutomatedTrigger(message)).await
-                            }
-                        },
+                        move |message| deliver(message),
                     ));
+                }
+                for trigger in self.custom_triggers {
+                    let context = triggers::TriggerContext::new(
+                        agent.idle.subscribe(),
+                        Arc::clone(&agent.turn_sync),
+                        agent.trigger_delivery(),
+                    );
+                    agent
+                        .trigger_tasks
+                        .push(triggers::spawn_custom_trigger(trigger, context));
                 }
                 Ok(agent)
             }

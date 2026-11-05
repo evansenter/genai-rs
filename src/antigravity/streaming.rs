@@ -189,7 +189,7 @@ pub enum ToolAction {
     ReadUrlContent(ActionReadUrlContent),
     /// `generate_image`.
     GenerateImage(ActionGenerateImage),
-    /// `start_subagent`.
+    /// `invoke_subagent`.
     InvokeSubagent(ActionInvokeSubagent),
     /// History compaction.
     Compaction(ActionCompaction),
@@ -197,6 +197,16 @@ pub enum ToolAction {
     Finish(ActionFinish),
     /// An error step.
     Error(ActionError),
+    /// A call this client's policies, pre-tool hook or auto-policy verdict
+    /// denied. The harness reports such a call as an error step with no
+    /// action, so this carries the name and arguments the hook was handed;
+    /// the event's decision carries the reason.
+    Denied {
+        /// The tool, named as policies name it.
+        name: String,
+        /// Its arguments, in the tool's own schema.
+        args: Value,
+    },
 }
 
 impl ToolAction {
@@ -269,10 +279,11 @@ impl ToolAction {
             Self::SearchWeb(_) => "search_web".to_string(),
             Self::ReadUrlContent(_) => "read_url_content".to_string(),
             Self::GenerateImage(_) => "generate_image".to_string(),
-            Self::InvokeSubagent(_) => "start_subagent".to_string(),
+            Self::InvokeSubagent(_) => "invoke_subagent".to_string(),
             Self::Compaction(_) => "compaction".to_string(),
             Self::Finish(_) => "finish".to_string(),
             Self::Error(_) => "error".to_string(),
+            Self::Denied { name, .. } => name.clone(),
         }
     }
 
@@ -311,6 +322,7 @@ impl ToolAction {
             Self::Compaction(a) => serde_json::to_value(a),
             Self::Finish(a) => serde_json::to_value(a),
             Self::Error(a) => serde_json::to_value(a),
+            Self::Denied { args, .. } => Ok(args.clone()),
         };
         result.unwrap_or_else(|_| Value::Object(serde_json::Map::new()))
     }

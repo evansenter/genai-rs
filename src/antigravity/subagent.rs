@@ -1,14 +1,14 @@
 //! [`Subagent`]: a static subagent the parent agent can delegate to.
 
 use super::protocol;
-use super::{AgentBehavior, BuiltinTool, Capabilities};
+use super::{AgentBehavior, BuiltinTool, Capabilities, SubagentSkills, SystemInstructions};
 
 /// A static subagent the parent agent can delegate to.
 ///
 /// Subagents run in their own trajectory with their own instructions and
-/// tool set. The parent model invokes them through the `start_subagent`
+/// tool set. The parent model invokes them through the `invoke_subagent`
 /// builtin — enable it with
-/// `Capabilities::read_only().enable(BuiltinTool::StartSubagent)` (it is
+/// `Capabilities::read_only().enable(BuiltinTool::InvokeSubagent)` (it is
 /// write-capable, so the spawn-time safety gate requires a policy or
 /// pre-tool hook).
 ///
@@ -23,7 +23,7 @@ use super::{AgentBehavior, BuiltinTool, Capabilities};
 ///             .with_system_instructions("Focus on injection vectors.")
 ///             .add_tool("severity_classifier"),      // reference by name
 ///     )
-///     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+///     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
 ///     .add_policy(policy::allow_all())
 ///     // ...
 ///     ;
@@ -39,10 +39,27 @@ use super::{AgentBehavior, BuiltinTool, Capabilities};
 pub struct Subagent {
     name: String,
     description: Option<String>,
-    system_instructions: Option<String>,
+    system_instructions: Option<SystemInstructions>,
     capabilities: Capabilities,
     tool_names: Vec<String>,
     agent_behavior: Option<AgentBehavior>,
+    model: Option<String>,
+    allowed_subagents: Option<Vec<String>>,
+    skills: Option<SubagentSkills>,
+}
+
+/// What the parent agent's configuration decides for every subagent's wire
+/// form.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SubagentWireContext<'a> {
+    /// The workspace announcement, added to custom instructions only (the
+    /// harness's own subagent prompt lists the workspaces).
+    pub(crate) workspace_note: Option<&'a str>,
+    /// Whether nesting is configured (a maximum depth of two or more), so a
+    /// subagent may invoke subagents itself.
+    pub(crate) nesting: bool,
+    /// Hides `define_subagent` from subagents that may invoke subagents.
+    pub(crate) disable_define_subagent_tool: bool,
 }
 
 impl Subagent {
@@ -57,6 +74,9 @@ impl Subagent {
             capabilities: Capabilities::read_only(),
             tool_names: Vec::new(),
             agent_behavior: None,
+            model: None,
+            allowed_subagents: None,
+            skills: None,
         }
     }
 
@@ -68,20 +88,21 @@ impl Subagent {
         self
     }
 
-    /// Sets system instructions for the subagent. These are **appended** to
-    /// the harness's default subagent instructions (reference SDK
-    /// semantics), not a full replacement.
+    /// Sets system instructions for the subagent. A string is **added to**
+    /// the harness's own subagent prompt (which lists the workspaces);
+    /// [`SystemInstructions::custom`] replaces it, as for the parent.
     #[must_use]
-    pub fn with_system_instructions(mut self, instructions: impl Into<String>) -> Self {
+    pub fn with_system_instructions(mut self, instructions: impl Into<SystemInstructions>) -> Self {
         self.system_instructions = Some(instructions.into());
         self
     }
 
     /// Configures which built-in harness tools the subagent may use
-    /// (default: the read-only set). `start_subagent` is force-disabled:
-    /// harness 0.1.18 can nest subagents, but only up to a
-    /// `max_nesting_depth` this crate does not configure yet, and the
-    /// harness default is flat (depth 1).
+    /// (default: the read-only set). [`BuiltinTool::InvokeSubagent`] takes
+    /// effect only when the agent allows nesting
+    /// ([`AgentBuilder::with_max_subagent_depth`](super::AgentBuilder::with_max_subagent_depth)
+    /// of 2 or more); otherwise it is turned off, since the harness default
+    /// is one level.
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: Capabilities) -> Self {
         self.capabilities = capabilities;
@@ -93,6 +114,34 @@ impl Subagent {
     #[must_use]
     pub fn with_agent_behavior(mut self, behavior: AgentBehavior) -> Self {
         self.agent_behavior = Some(behavior);
+        self
+    }
+
+    /// Runs the subagent on another model than the parent's, by name. It
+    /// uses the parent's endpoint (key, base URL, headers): only the name
+    /// differs.
+    #[must_use]
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    /// Limits which subagents this subagent may invoke, when nesting is
+    /// configured. Every name must be a subagent added to the agent;
+    /// `spawn()` validates this.
+    #[must_use]
+    pub fn with_allowed_subagents(
+        mut self,
+        names: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.allowed_subagents = Some(names.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Sets which skills the subagent sees (default: all of the parent's).
+    #[must_use]
+    pub fn with_skills(mut self, skills: SubagentSkills) -> Self {
+        self.skills = Some(skills);
         self
     }
 
@@ -116,29 +165,35 @@ impl Subagent {
         &self.tool_names
     }
 
+    /// The subagents this one may invoke, when set.
+    #[must_use]
+    pub fn allowed_subagents(&self) -> Option<&[String]> {
+        self.allowed_subagents.as_deref()
+    }
+
     /// Builds the wire `CustomAgent`, resolving custom tool names against
     /// the parent's declarations. Callers must have validated the names
     /// beforehand (`spawn()` does); unresolved names are skipped here.
-    ///
-    /// `workspace_note`, when present, is appended as an extra instruction
-    /// section so the subagent learns the workspace root(s) — its trajectory
-    /// does not inherit the parent's context.
     pub(crate) fn to_wire(
         &self,
         parent_tools: &[protocol::Tool],
-        workspace_note: Option<&str>,
+        context: SubagentWireContext<'_>,
     ) -> protocol::CustomAgent {
-        if self.capabilities.is_enabled(BuiltinTool::StartSubagent) {
+        let invokes = self.capabilities.is_enabled(BuiltinTool::InvokeSubagent);
+        if invokes && !context.nesting {
             tracing::warn!(
-                "Subagent '{}' enables start_subagent, but this crate does not configure \
-                 subagent nesting depth (harness default: flat); disabling it.",
+                "Subagent '{}' enables invoke_subagent, but the agent allows one level of \
+                 subagents (set with_max_subagent_depth(2) or more to nest); disabling it.",
                 self.name
             );
         }
         let mut harness_side_tools = self.capabilities.to_harness_side_tools();
-        // Nesting needs `SubagentsConfig.max_nesting_depth`, which is not
-        // modeled; the harness default depth is 1 (flat).
-        harness_side_tools.subagents = Some(protocol::ToolToggle::new(false));
+        harness_side_tools.subagents = Some(protocol::SubagentsConfig {
+            enabled: invokes && context.nesting,
+            allowed_subagents: self.allowed_subagents.clone().unwrap_or_default(),
+            disable_define_subagent_tool: context.disable_define_subagent_tool,
+            ..Default::default()
+        });
 
         let tools = self
             .tool_names
@@ -151,30 +206,14 @@ impl Subagent {
             })
             .collect();
 
-        // Reference SDK semantics: subagent instructions are appended
-        // sections (title "System"), never a full replacement. The
-        // workspace note (when present) is appended as its own section.
-        let mut appended_sections = Vec::new();
-        if let Some(text) = &self.system_instructions {
-            appended_sections.push(protocol::InstructionSection {
-                title: Some("System".to_string()),
-                content: Some(text.clone()),
-            });
-        }
-        if let Some(note) = workspace_note {
-            appended_sections.push(protocol::InstructionSection {
-                title: Some("Workspace".to_string()),
-                content: Some(note.to_string()),
-            });
-        }
-        let system_instructions =
-            (!appended_sections.is_empty()).then_some(protocol::SystemInstructions {
-                custom: None,
-                appended: Some(protocol::AppendedSystemInstructions {
-                    custom_identity: None,
-                    appended_sections,
-                }),
-            });
+        // A custom prompt has no workspace list; the harness's own one does.
+        let system_instructions = self.system_instructions.as_ref().map(|instructions| {
+            let note = instructions
+                .is_custom()
+                .then_some(context.workspace_note)
+                .flatten();
+            instructions.to_wire(note)
+        });
 
         protocol::CustomAgent {
             name: Some(self.name.clone()),
@@ -183,6 +222,11 @@ impl Subagent {
             harness_side_tools: Some(harness_side_tools),
             tools,
             agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
+            model: self.model.as_ref().map(|name| protocol::ModelConfig {
+                name: Some(name.clone()),
+                ..Default::default()
+            }),
+            skills_config: self.skills.as_ref().map(SubagentSkills::to_wire),
         }
     }
 }

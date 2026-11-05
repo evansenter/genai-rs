@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use super::RunCommandOptions;
 use super::protocol;
 
 /// The `google-antigravity` wheel version this crate's protocol support is
@@ -88,8 +89,9 @@ pub enum BuiltinTool {
     RunCommand,
     /// Ask the user a clarifying question (`ask_question`). Write-capable.
     AskQuestion,
-    /// Invoke a subagent (`start_subagent`). Write-capable.
-    StartSubagent,
+    /// Invoke a subagent (`invoke_subagent`). Write-capable. Policies may
+    /// still target it by its pre-0.1.18 name, `start_subagent`.
+    InvokeSubagent,
     /// Generate or edit images (`generate_image`). Write-capable.
     GenerateImage,
     /// Search the web (`search_web`). Write-capable (network egress).
@@ -116,7 +118,7 @@ impl BuiltinTool {
             Self::EditFile => "edit_file",
             Self::RunCommand => "run_command",
             Self::AskQuestion => "ask_question",
-            Self::StartSubagent => "start_subagent",
+            Self::InvokeSubagent => "invoke_subagent",
             Self::GenerateImage => "generate_image",
             Self::SearchWeb => "search_web",
             Self::ReadUrlContent => "read_url_content",
@@ -136,7 +138,7 @@ impl BuiltinTool {
             Self::EditFile,
             Self::RunCommand,
             Self::AskQuestion,
-            Self::StartSubagent,
+            Self::InvokeSubagent,
             Self::GenerateImage,
             Self::SearchWeb,
             Self::ReadUrlContent,
@@ -189,6 +191,7 @@ impl BuiltinTool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capabilities {
     enabled: HashSet<BuiltinTool>,
+    run_command: RunCommandOptions,
 }
 
 impl Default for Capabilities {
@@ -203,6 +206,7 @@ impl Capabilities {
     pub fn read_only() -> Self {
         Self {
             enabled: BuiltinTool::read_only().into_iter().collect(),
+            run_command: RunCommandOptions::default(),
         }
     }
 
@@ -211,6 +215,7 @@ impl Capabilities {
     pub fn all() -> Self {
         Self {
             enabled: BuiltinTool::all().into_iter().collect(),
+            run_command: RunCommandOptions::default(),
         }
     }
 
@@ -219,6 +224,7 @@ impl Capabilities {
     pub fn none() -> Self {
         Self {
             enabled: HashSet::new(),
+            run_command: RunCommandOptions::default(),
         }
     }
 
@@ -248,6 +254,21 @@ impl Capabilities {
         self.enabled.iter().any(|t| t.is_write_capable())
     }
 
+    /// Sets the `run_command` builtin's timeout, daemon and sandbox options
+    /// (the Python SDK's `run_command_config`). They apply only while
+    /// [`BuiltinTool::RunCommand`] is enabled.
+    #[must_use]
+    pub fn with_run_command(mut self, options: RunCommandOptions) -> Self {
+        self.run_command = options;
+        self
+    }
+
+    /// The `run_command` options.
+    #[must_use]
+    pub fn run_command(&self) -> &RunCommandOptions {
+        &self.run_command
+    }
+
     /// Builds the harness `HarnessSideTools` flags. Every flag is written
     /// explicitly, disabled ones included: what an omitted flag means is
     /// the harness's call and has changed between revisions. Harness
@@ -258,8 +279,16 @@ impl Capabilities {
         let on = |tool: BuiltinTool| Some(protocol::ToolToggle::new(self.is_enabled(tool)));
         protocol::HarnessSideTools {
             find: on(BuiltinTool::FindFile),
-            run_command: on(BuiltinTool::RunCommand),
-            subagents: on(BuiltinTool::StartSubagent),
+            run_command: Some(
+                self.run_command
+                    .to_wire(self.is_enabled(BuiltinTool::RunCommand)),
+            ),
+            // Depth, allow-list and `define_subagent` are the agent's or
+            // the subagent's to fill in.
+            subagents: Some(protocol::SubagentsConfig {
+                enabled: self.is_enabled(BuiltinTool::InvokeSubagent),
+                ..Default::default()
+            }),
             user_questions: on(BuiltinTool::AskQuestion),
             file_edit: on(BuiltinTool::EditFile),
             view_file: on(BuiltinTool::ViewFile),
@@ -293,7 +322,7 @@ mod tests {
         assert!(caps.is_enabled(BuiltinTool::Finish));
         assert!(!caps.is_enabled(BuiltinTool::RunCommand));
         assert!(!caps.is_enabled(BuiltinTool::EditFile));
-        assert!(!caps.is_enabled(BuiltinTool::StartSubagent));
+        assert!(!caps.is_enabled(BuiltinTool::InvokeSubagent));
         assert!(!caps.has_write_tools());
     }
 
@@ -392,7 +421,7 @@ mod tests {
             (BuiltinTool::EditFile, "edit_file"),
             (BuiltinTool::RunCommand, "run_command"),
             (BuiltinTool::AskQuestion, "ask_question"),
-            (BuiltinTool::StartSubagent, "start_subagent"),
+            (BuiltinTool::InvokeSubagent, "invoke_subagent"),
             (BuiltinTool::GenerateImage, "generate_image"),
             (BuiltinTool::SearchWeb, "search_web"),
             (BuiltinTool::ReadUrlContent, "read_url_content"),

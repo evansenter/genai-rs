@@ -289,7 +289,7 @@ async fn test_antigravity_subagent_config_accepted_at_init() {
                 .with_system_instructions("Always use the weather tool.")
                 .add_tool("antigravity_test_weather"),
         )
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
         .add_policy(policy::allow_all())
         .spawn()
         .await
@@ -1097,7 +1097,7 @@ async fn test_antigravity_subagent_is_actually_invoked() {
         .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You have a subagent named `haiku-writer`. For any request to write \
-             a haiku you MUST delegate to it with the start_subagent tool rather \
+             a haiku you MUST delegate to it with the invoke_subagent tool rather \
              than writing one yourself.",
         )
         .add_subagent(
@@ -1105,7 +1105,7 @@ async fn test_antigravity_subagent_is_actually_invoked() {
                 .with_description("Writes a haiku on any topic.")
                 .with_system_instructions("Reply with a haiku and nothing else."),
         )
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
         .add_policy(policy::allow_all())
         .spawn()
         .await
@@ -1133,11 +1133,11 @@ async fn test_antigravity_subagent_is_actually_invoked() {
 
     let invocations: Vec<&(String, Option<String>)> = actions
         .iter()
-        .filter(|(name, _)| name == "start_subagent")
+        .filter(|(name, _)| name == "invoke_subagent")
         .collect();
     assert!(
         !invocations.is_empty(),
-        "the model never delegated to the subagent — no start_subagent action \
+        "the model never delegated to the subagent — no invoke_subagent action \
          in the turn. Saw: {actions:?}"
     );
 

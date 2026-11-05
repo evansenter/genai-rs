@@ -13,7 +13,7 @@
 //! - `deny_all()` + selective `allow(...)` policies, evaluated in Rust
 //! - A pre-tool hook guarding secret files (defense in depth over policy)
 //! - A custom `#[tool]` function shared with a subagent
-//! - Subagent registration (`add_subagent` + `BuiltinTool::StartSubagent`)
+//! - Subagent registration (`add_subagent` + `BuiltinTool::InvokeSubagent`)
 //! - Structured output via `with_response_schema` (the `finish` tool schema)
 //! - Live step streaming (`send_streaming` + `AgentEvent`)
 //!
@@ -52,7 +52,7 @@
 //! [pre-tool hook] denied view_file on /.../fixture/.env
 //! [DENIED] Secret files are off-limits; report them as findings instead.
 //! [harness noise] Secret files are off-limits; ... ("denied by pre-tool hook: ...")
-//! [start_subagent] delegated (subagent runs its own trajectory)
+//! [invoke_subagent] delegated (subagent runs its own trajectory)
 //! [view_file] file:///.../fixture/app/database.py
 //! [view_file] file:///.../fixture/app/backup.py
 //! [tool] classify_severity -> {"category":"sql_injection","severity":"critical"}
@@ -190,9 +190,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(AUDITOR_INSTRUCTIONS)
         .add_workspace(&workspace)
-        // Read-only built-ins plus subagent delegation. start_subagent is
+        // Read-only built-ins plus subagent delegation. invoke_subagent is
         // write-capable, so spawn() requires a policy below (safety gate).
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
         .add_tool(ClassifySeverityCallable.declaration())
         .add_subagent(file_auditor)
         // Deny by default; allow exactly the tools this audit needs.
@@ -202,7 +202,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .add_policy(policy::allow("search_directory"))
         .add_policy(policy::allow("find_file"))
         .add_policy(policy::allow("view_file"))
-        .add_policy(policy::allow("start_subagent"))
+        .add_policy(policy::allow("invoke_subagent"))
         .add_policy(policy::allow("classify_severity"))
         .add_policy(policy::allow("finish"))
         // Defense in depth on top of the allow rules: even allowed read
@@ -389,7 +389,7 @@ fn print_action(action: &ToolAction, decision: &ToolDecision) {
             println!("[find_file] query={:?}", a.query.as_deref().unwrap_or(""));
         }
         ToolAction::InvokeSubagent(_) => {
-            println!("[start_subagent] delegated (subagent runs its own trajectory)");
+            println!("[invoke_subagent] delegated (subagent runs its own trajectory)");
         }
         ToolAction::Finish(_) => println!("[finish] structured report received"),
         ToolAction::Error(a) => {

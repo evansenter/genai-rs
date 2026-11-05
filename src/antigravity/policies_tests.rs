@@ -3,11 +3,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 fn invocation(name: &str) -> ToolInvocation {
-    ToolInvocation {
-        name: name.to_string(),
-        args: json!({}),
-        id: None,
-    }
+    ToolInvocation::new(name, json!({}))
 }
 
 fn engine(policies: Vec<Policy>) -> PolicyEngine {
@@ -50,12 +46,19 @@ fn test_policy_decision_table() {
             "view_file",
             Some(Allow),
         ),
-        // First match wins within a tier.
+        // Within a tier deny beats ask beats allow, whatever the order
+        // (the harness evaluator's order, verified on 0.1.23).
         (vec![policy::deny("t"), policy::allow("t")], "t", Some(Deny)),
+        (vec![policy::allow("t"), policy::deny("t")], "t", Some(Deny)),
         (
-            vec![policy::allow("t"), policy::deny("t")],
+            vec![policy::allow("t"), policy::confirm("t")],
             "t",
-            Some(Allow),
+            Some(Confirm),
+        ),
+        (
+            vec![policy::allow_all(), policy::deny_all()],
+            "t",
+            Some(Deny),
         ),
         (
             vec![policy::deny_all(), policy::allow_all()],
@@ -220,4 +223,176 @@ fn test_decide_with_default_deny_applies_only_when_unmatched() {
 #[test]
 fn test_mcp_tool_name_format() {
     assert_eq!(mcp_tool_name("git", "status"), "mcp_git_status");
+}
+
+fn call(name: &str, args: serde_json::Value) -> ToolInvocation {
+    ToolInvocation::new(name, args)
+}
+
+#[test]
+fn test_when_condition_falls_through_to_the_next_rule() {
+    // Deny `rm` commands, allow the rest: the conditional deny outranks the
+    // allow, and a call it rejects falls through to it.
+    let engine = engine(vec![
+        policy::allow("run_command"),
+        policy::deny("run_command")
+            .when(|c| {
+                c.args["CommandLine"]
+                    .as_str()
+                    .is_none_or(|cmd| cmd.contains("rm "))
+            })
+            .with_reason("no deletions"),
+    ]);
+    assert_eq!(
+        decide(
+            &engine,
+            None,
+            &call("run_command", json!({"CommandLine": "rm -rf /"}))
+        ),
+        PreToolDecision::deny("no deletions")
+    );
+    assert_eq!(
+        decide(
+            &engine,
+            None,
+            &call("run_command", json!({"CommandLine": "ls"}))
+        ),
+        PreToolDecision::Allow
+    );
+    // No condition matched and nothing else applies: default open.
+    let only_conditional = PolicyEngine::new(vec![policy::deny("run_command").when(|_| false)]);
+    assert!(
+        only_conditional
+            .verdict(&invocation("run_command"))
+            .is_none()
+    );
+    assert!(only_conditional.has_callbacks());
+}
+
+#[test]
+fn test_a_panicking_condition_fails_closed() {
+    let engine = engine(vec![
+        policy::allow_all(),
+        policy::allow("view_file")
+            .with_name("fragile")
+            .when(|_| panic!("condition bug")),
+    ]);
+    let PreToolDecision::Deny { reason } = decide(&engine, None, &invocation("view_file")) else {
+        panic!("a panicking condition must deny");
+    };
+    assert!(reason.contains("'fragile' panicked"), "{reason}");
+}
+
+#[test]
+fn test_ask_user_handler_decides_with_the_rule_reason() {
+    let engine = engine(vec![
+        policy::ask_user("run_command", |c, reason| {
+            assert_eq!(reason, Some("shell needs approval"));
+            c.args["CommandLine"] == "ls"
+        })
+        .with_reason("shell needs approval"),
+    ]);
+    assert_eq!(
+        decide(
+            &engine,
+            None,
+            &call("run_command", json!({"CommandLine": "ls"}))
+        ),
+        PreToolDecision::Allow
+    );
+    assert_eq!(
+        decide(
+            &engine,
+            None,
+            &call("run_command", json!({"CommandLine": "rm"}))
+        ),
+        PreToolDecision::deny("shell needs approval")
+    );
+    // An approval still lets the pre-tool hook veto (defense in depth).
+    let veto: PreToolHook = Arc::new(|_| PreToolDecision::deny("hook veto"));
+    assert_eq!(
+        decide(
+            &engine,
+            Some(&veto),
+            &call("run_command", json!({"CommandLine": "ls"}))
+        ),
+        PreToolDecision::deny("hook veto")
+    );
+}
+
+#[test]
+fn test_rule_name_and_reason_shape_the_denial() {
+    let named = engine(vec![policy::deny("t").with_name("no-t")]);
+    assert_eq!(
+        decide(&named, None, &invocation("t")),
+        PreToolDecision::deny("Denied by policy 'no-t' for tool 't'.")
+    );
+    let reasoned = engine(vec![policy::deny_all().with_reason("read-only agent")]);
+    assert_eq!(
+        decide(&reasoned, None, &invocation("anything")),
+        PreToolDecision::deny("read-only agent")
+    );
+}
+
+#[test]
+fn test_server_wide_mcp_rules_sit_between_named_and_wildcard() {
+    use PolicyDecision::{Allow, Deny};
+    let rules = || {
+        vec![
+            policy::allow_all(),
+            policy::deny("mcp_git_*"),
+            policy::allow(mcp_tool_name("git", "status")),
+        ]
+    };
+    assert_eq!(engine(rules()).evaluate("mcp_git_status"), Some(Allow));
+    assert_eq!(engine(rules()).evaluate("mcp_git_push"), Some(Deny));
+    assert_eq!(engine(rules()).evaluate("mcp_github_push"), Some(Allow));
+    assert_eq!(engine(rules()).evaluate("view_file"), Some(Allow));
+    // `mcp_*` covers every MCP tool, at the server-rule tier.
+    let all_mcp = || vec![policy::allow_all(), policy::deny("mcp_*")];
+    assert_eq!(engine(all_mcp()).evaluate("mcp_git_x"), Some(Deny));
+    assert_eq!(engine(all_mcp()).evaluate("view_file"), Some(Allow));
+    // Any other `*` suffix is a literal name.
+    assert_eq!(
+        engine(vec![policy::deny("view_*")]).evaluate("view_file"),
+        None
+    );
+}
+
+#[test]
+fn test_start_subagent_targets_invoke_subagent() {
+    let rule = policy::deny("start_subagent");
+    assert_eq!(rule.target(), "invoke_subagent");
+    assert_eq!(
+        engine(vec![rule]).evaluate("invoke_subagent"),
+        Some(PolicyDecision::Deny)
+    );
+}
+
+#[test]
+fn test_auto_policy_is_kept_out_of_client_evaluation() {
+    let engine = engine(vec![policy::auto(), policy::allow("view_file")]);
+    assert!(engine.auto().is_some_and(Policy::is_auto));
+    assert_eq!(engine.evaluate("run_command"), None, "auto is harness-side");
+    // A flagged call is denied with the assessment unless a handler approves.
+    let flagged = call("run_command", json!({"CommandLine": "rm -rf build"}));
+    let PreToolDecision::Deny { reason } =
+        decide_flagged(&engine, &flagged, Some("deletes a directory"))
+    else {
+        panic!("a flagged call without a handler must be denied");
+    };
+    assert!(reason.contains("deletes a directory"), "{reason}");
+    let approving = PolicyEngine::new(vec![policy::auto().with_handler(|c, reason| {
+        reason == Some("deletes a directory") && c.name == "run_command"
+    })]);
+    assert_eq!(
+        decide_flagged(&approving, &flagged, Some("deletes a directory")),
+        PreToolDecision::Allow
+    );
+}
+
+#[test]
+fn test_policy_debug_omits_closures() {
+    let rendered = format!("{:?}", policy::deny("t").when(|_| true));
+    assert!(rendered.contains("when: true"), "{rendered}");
 }

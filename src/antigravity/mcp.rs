@@ -19,6 +19,7 @@ pub struct McpServer {
     enabled_tools: Vec<String>,
     disabled_tools: Vec<String>,
     timeout_seconds: Option<i32>,
+    force_all_tools_eager: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,7 @@ impl McpServer {
             enabled_tools: Vec::new(),
             disabled_tools: Vec::new(),
             timeout_seconds: None,
+            force_all_tools_eager: false,
         }
     }
 
@@ -84,6 +86,7 @@ impl McpServer {
             enabled_tools: Vec::new(),
             disabled_tools: Vec::new(),
             timeout_seconds: None,
+            force_all_tools_eager: false,
         }
     }
 
@@ -140,6 +143,17 @@ impl McpServer {
         self
     }
 
+    /// Declares every tool of this server to the model up front, by name
+    /// (`mcp_<server>_<tool>`), instead of listing it in the system prompt
+    /// for the model to reach through the harness's `call_mcp_tool`
+    /// (the default, which keeps a large server's schemas out of the
+    /// context).
+    #[must_use]
+    pub fn with_force_all_tools_eager(mut self, eager: bool) -> Self {
+        self.force_all_tools_eager = eager;
+        self
+    }
+
     /// The server name (the `<server>` part of `mcp_<server>_<tool>`
     /// policy targets).
     #[must_use]
@@ -153,6 +167,7 @@ impl McpServer {
             enabled_tools: self.enabled_tools.clone(),
             disabled_tools: self.disabled_tools.clone(),
             timeout_seconds: self.timeout_seconds,
+            force_all_tools_eager: self.force_all_tools_eager,
             ..Default::default()
         };
         match &self.transport {

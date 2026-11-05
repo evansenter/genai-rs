@@ -9,16 +9,23 @@ fn parent_tool(name: &str) -> protocol::Tool {
     }
 }
 
+fn flat() -> SubagentWireContext<'static> {
+    SubagentWireContext::default()
+}
+
 #[test]
 fn test_subagent_defaults() {
     let subagent = Subagent::new("auditor");
     assert_eq!(subagent.name(), "auditor");
     assert!(subagent.tool_names().is_empty());
-    let wire = subagent.to_wire(&[], None);
+    assert!(subagent.allowed_subagents().is_none());
+    let wire = subagent.to_wire(&[], flat());
     assert_eq!(wire.name.as_deref(), Some("auditor"));
     assert!(wire.description.is_none());
     assert!(wire.system_instructions.is_none());
     assert!(wire.tools.is_empty());
+    assert!(wire.model.is_none());
+    assert!(wire.skills_config.is_none());
     // Default capabilities: read-only builtins, explicit flags.
     let side_tools = wire.harness_side_tools.unwrap();
     assert!(side_tools.view_file.unwrap().enabled);
@@ -35,17 +42,17 @@ fn test_subagent_to_wire_resolves_parent_tools() {
     assert_eq!(subagent.tool_names(), ["severity_classifier"]);
 
     let parent_tools = [parent_tool("other"), parent_tool("severity_classifier")];
-    let wire = subagent.to_wire(&parent_tools, None);
+    let wire = subagent.to_wire(&parent_tools, flat());
     assert_eq!(wire.description.as_deref(), Some("Audits files."));
-    // Instructions are appended sections (reference SDK semantics),
-    // never a custom replacement.
+    // A string is appended to the harness's subagent prompt (Python SDK
+    // semantics), never a custom replacement.
     let instructions = wire.system_instructions.unwrap();
     assert!(instructions.custom.is_none());
     let appended = instructions.appended.unwrap();
     assert_eq!(appended.appended_sections.len(), 1);
     assert_eq!(
         appended.appended_sections[0].title.as_deref(),
-        Some("System")
+        Some("user_system_instructions")
     );
     assert_eq!(
         appended.appended_sections[0].content.as_deref(),
@@ -61,41 +68,82 @@ fn test_subagent_to_wire_resolves_parent_tools() {
 }
 
 #[test]
-fn test_subagent_to_wire_appends_workspace_note() {
-    // With both user instructions and a workspace note, the subagent
-    // gets two appended sections; with only the note, just the note.
-    let with_both = Subagent::new("auditor")
-        .with_system_instructions("Focus on injection vectors.")
-        .to_wire(&[], Some("ROOTS: /repo"));
-    let sections = with_both
-        .system_instructions
-        .unwrap()
-        .appended
-        .unwrap()
-        .appended_sections;
-    assert_eq!(sections.len(), 2);
-    assert_eq!(sections[0].title.as_deref(), Some("System"));
-    assert_eq!(sections[1].title.as_deref(), Some("Workspace"));
-    assert_eq!(sections[1].content.as_deref(), Some("ROOTS: /repo"));
-
-    let note_only = Subagent::new("auditor").to_wire(&[], Some("ROOTS: /repo"));
-    let sections = note_only
+fn test_subagent_workspace_note_goes_to_custom_instructions_only() {
+    let context = SubagentWireContext {
+        workspace_note: Some("ROOTS: /repo"),
+        ..SubagentWireContext::default()
+    };
+    // Appended: the harness's subagent prompt already lists the workspaces
+    // (verified on 0.1.23), so no note.
+    let appended = Subagent::new("auditor")
+        .with_system_instructions("Focus.")
+        .to_wire(&[], context);
+    let sections = appended
         .system_instructions
         .unwrap()
         .appended
         .unwrap()
         .appended_sections;
     assert_eq!(sections.len(), 1);
-    assert_eq!(sections[0].title.as_deref(), Some("Workspace"));
+
+    // Custom: the prompt is replaced, so the roots come back as a part.
+    let custom = Subagent::new("auditor")
+        .with_system_instructions(SystemInstructions::custom("Focus."))
+        .to_wire(&[], context);
+    let parts = custom.system_instructions.unwrap().custom.unwrap().part;
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1].text.as_deref(), Some("ROOTS: /repo"));
+
+    // No instructions: nothing to add a note to.
+    assert!(
+        Subagent::new("a")
+            .to_wire(&[], context)
+            .system_instructions
+            .is_none()
+    );
 }
 
 #[test]
-fn test_subagent_start_subagent_forced_off() {
-    // Nesting depth is not configurable yet: even when explicitly
-    // enabled, the wire config disables the builtin.
+fn test_subagent_controls_reach_harness_config() {
+    // #493 item 3: per-subagent model, allow-list, skills, and nesting.
+    let subagent = Subagent::new("lead")
+        .with_model("subagent-model-x")
+        .with_allowed_subagents(["helper"])
+        .with_skills(SubagentSkills::none())
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent));
+    assert_eq!(
+        subagent.allowed_subagents(),
+        Some(&["helper".to_string()][..])
+    );
+    let nesting = SubagentWireContext {
+        nesting: true,
+        disable_define_subagent_tool: true,
+        ..SubagentWireContext::default()
+    };
+    let wire = subagent.to_wire(&[], nesting);
+    assert_eq!(
+        wire.model.as_ref().and_then(|m| m.name.as_deref()),
+        Some("subagent-model-x")
+    );
+    assert!(wire.skills_config.unwrap().none_config.is_some());
+    let subagents = wire.harness_side_tools.unwrap().subagents.unwrap();
+    assert!(subagents.enabled, "nesting allows invoke_subagent");
+    assert_eq!(subagents.allowed_subagents, ["helper"]);
+    assert!(subagents.disable_define_subagent_tool);
+    assert_eq!(
+        serde_json::to_value(&wire.model).unwrap(),
+        serde_json::json!({"name": "subagent-model-x"}),
+        "a subagent model carries only its name"
+    );
+}
+
+#[test]
+fn test_subagent_invoke_subagent_off_without_nesting() {
+    // The harness default depth is 1 (flat): without nesting configured,
+    // an explicit enable is turned off.
     let subagent = Subagent::new("nested")
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent));
-    let wire = subagent.to_wire(&[], None);
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent));
+    let wire = subagent.to_wire(&[], flat());
     assert!(!wire.harness_side_tools.unwrap().subagents.unwrap().enabled);
 }
 
@@ -105,7 +153,7 @@ fn test_subagent_wire_serialization_fixture() {
         .with_description("Audits files.")
         .with_system_instructions("Be thorough.")
         .add_tool("severity_classifier");
-    let wire = subagent.to_wire(&[parent_tool("severity_classifier")], None);
+    let wire = subagent.to_wire(&[parent_tool("severity_classifier")], flat());
     let value = serde_json::to_value(&wire).unwrap();
     // Proto-JSON: camelCase fields, JSON-string schema.
     assert_eq!(
@@ -127,13 +175,13 @@ fn test_agent_behavior_reaches_the_wire_only_when_set() {
     // Autonomous, so sending it would change nothing but the golden.
     assert!(
         Subagent::new("a")
-            .to_wire(&[], None)
+            .to_wire(&[], flat())
             .agent_behavior
             .is_none()
     );
     let wire = Subagent::new("a")
         .with_agent_behavior(AgentBehavior::Interactive)
-        .to_wire(&[], None);
+        .to_wire(&[], flat());
     assert_eq!(
         serde_json::to_value(&wire).unwrap()["agentBehavior"],
         "AGENT_BEHAVIOR_INTERACTIVE"

@@ -1,14 +1,17 @@
 //! The harness's requests within a turn, and this client's answers: custom
-//! tool calls, lifecycle hook callbacks, tool confirmations and user
-//! questions. Every user hook runs through [`run_hook`], so the turn
-//! deadline bounds it.
+//! tool calls, the tool hooks (pre-tool and post-tool), the auto policy's
+//! decision requests, tool confirmations and user questions. The other
+//! lifecycle hooks are in `lifecycle.rs`. Every user hook runs through
+//! [`run_hook`], so the turn deadline bounds it.
 
 use super::hook_mapping::{
     confirmation_decision, map_question_reply, map_questions, normalize_tool_error, pre_tool_gate,
     tool_call_arguments, unwrap_result_string, unwrap_result_value,
 };
 use super::policies::{self, PolicyDecision};
-use super::protocol::{self, HookDecision, HookVerdict, InputEvent, StepUpdate};
+use super::protocol::{
+    self, HookDecision, HookVerdict, InputEvent, PolicyEvaluationOutcome, StepUpdate,
+};
 use super::turn::{HookDenial, TurnState};
 use super::{
     AgentEvent, AntigravityAgent, AntigravityError, PreToolDecision, ToolDecision, ToolInvocation,
@@ -106,10 +109,14 @@ impl AntigravityAgent {
             .await
     }
 
-    /// Dispatches a custom (client-executed) tool call: policy check first
-    /// (defense in depth), then execution through the crate's function
-    /// registry / tool services, then a `tool_response` back to the
-    /// harness.
+    /// Dispatches a custom (client-executed) tool call through the crate's
+    /// function registry / tool services, then sends a `tool_response` back
+    /// to the harness.
+    ///
+    /// Policies and the pre-tool hook already judged the call: the harness
+    /// asks the pre-tool callback before it dispatches a custom tool
+    /// (verified on 0.1.18 and 0.1.23), and sends its arguments as the hook
+    /// left them. Judging it again here called the hook twice per call.
     pub(super) async fn process_tool_call(
         &mut self,
         call: protocol::ToolCall,
@@ -142,50 +149,34 @@ impl AntigravityAgent {
             }
         };
 
-        let invocation = ToolInvocation {
-            name: name.clone(),
-            args: args.clone(),
-            id: Some(id.clone()),
-        };
-        let result = match self.decide(invocation, turn).await? {
-            PreToolDecision::Deny { reason } => {
-                tracing::info!("Denying custom tool '{name}': {reason}");
-                serde_json::json!({
-                    "error": format!("Tool execution denied by policy: {reason}")
-                })
-            }
-            PreToolDecision::Allow => {
-                turn.running = Some(format!("custom tool '{name}'"));
-                let result = self.dispatcher.execute(&name, args).await;
-                turn.running = None;
-                if let Some(post_tool) = self.post_tool.clone() {
-                    // Hand the hook the inner value, not the `{"result": ...}`
-                    // wire envelope the harness expects (Item: unwrap
-                    // ToolOutcome.result). The error branch keeps the
-                    // envelope's error string.
-                    let error = normalize_tool_error(
-                        result
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                    );
-                    let outcome = ToolOutcome {
-                        name: name.clone(),
-                        result: error.is_none().then(|| unwrap_result_value(&result)),
-                        error,
-                    };
-                    turn.running = Some(format!("the post-tool hook for '{name}'"));
-                    run_hook(move || post_tool(&outcome)).await?;
-                    turn.running = None;
-                    turn.reported_calls.insert(id.clone());
-                }
-                turn.queue.push_back(AgentEvent::ToolCallDispatched {
-                    name: name.clone(),
-                    id: id.clone(),
-                });
+        turn.running = Some(format!("custom tool '{name}'"));
+        let result = self.dispatcher.execute(&name, args).await;
+        turn.running = None;
+        if let Some(post_tool) = self.post_tool.clone() {
+            // Hand the hook the inner value, not the `{"result": ...}`
+            // wire envelope the harness expects (Item: unwrap
+            // ToolOutcome.result). The error branch keeps the
+            // envelope's error string.
+            let error = normalize_tool_error(
                 result
-            }
-        };
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
+            let outcome = ToolOutcome {
+                name: name.clone(),
+                result: error.is_none().then(|| unwrap_result_value(&result)),
+                error,
+            };
+            turn.running = Some(format!("the post-tool hook for '{name}'"));
+            run_hook(move || post_tool(&outcome)).await?;
+            turn.running = None;
+            turn.reported_calls.insert(id.clone());
+        }
+        turn.queue.push_back(AgentEvent::ToolCallDispatched {
+            name: name.clone(),
+            id: id.clone(),
+        });
         self.session
             .send(&InputEvent::ToolResponse(protocol::ToolResponse {
                 id,
@@ -208,27 +199,38 @@ impl AntigravityAgent {
             ..Default::default()
         };
         if let Some(pre_tool_args) = &request.pre_tool_args {
-            let decision = match pre_tool_gate(pre_tool_args, self.pre_tool.is_some()) {
-                Ok(invocation) => self.decide(invocation, turn).await?,
-                Err(denial) => denial,
+            let (invocation, decision) = match pre_tool_gate(pre_tool_args, self.pre_tool.is_some())
+            {
+                Ok(invocation) => {
+                    let decision = self.decide(invocation.clone(), turn).await?;
+                    (invocation, decision)
+                }
+                Err(denial) => (protocol_invocation(pre_tool_args), denial),
             };
-            let verdict = match decision {
+            response.pre_tool_result = Some(match decision {
                 PreToolDecision::Allow => HookVerdict {
                     decision: Some(HookDecision::Allow),
-                    reason: None,
+                    ..Default::default()
+                },
+                PreToolDecision::Modify { args } => HookVerdict {
+                    decision: Some(HookDecision::Allow),
+                    modified_args: Some(protocol::encode_genai_struct(&args)),
+                    ..Default::default()
                 },
                 PreToolDecision::Deny { reason } => {
                     turn.hook_denials.push(HookDenial {
                         trajectory_id: pre_tool_args.trajectory_id.clone(),
                         reason: reason.clone(),
+                        name: invocation.name,
+                        args: invocation.args,
                     });
                     HookVerdict {
                         decision: Some(HookDecision::Deny),
                         reason: Some(reason),
+                        ..Default::default()
                     }
                 }
-            };
-            response.pre_tool_result = Some(verdict);
+            });
         } else if let Some(post_tool_args) = &request.post_tool_args {
             // Harness 0.1.18 also fires its post-tool callback for custom
             // tools, which the dispatch path has already reported — once
@@ -253,42 +255,102 @@ impl AntigravityAgent {
             }
             response.empty_result = Some(protocol::EmptyResult {});
         } else {
-            response.empty_result = Some(protocol::EmptyResult {});
+            self.answer_lifecycle_hook(&request, &mut response, turn)
+                .await?;
         }
         self.session
-            .send(&InputEvent::CallHookResponse(response))
+            .send(&InputEvent::CallHookResponse(Box::new(response)))
             .await
     }
 
-    /// The policy-then-hook verdict for a tool call. The pre-tool hook, when
-    /// it gets a say, runs through [`run_hook`] so the turn deadline bounds
-    /// it; a policy denial needs no hook and stays on this thread.
+    /// Answers a `policyDecisionRequest`: the auto policy flagged a call
+    /// (rule id `"auto"`), and its handler, or a denial, decides. This
+    /// client sends no dynamic rules of its own, so any other rule id is
+    /// denied (fail closed).
+    pub(super) async fn process_policy_decision(
+        &mut self,
+        request: protocol::PolicyDecisionRequest,
+        turn: &mut TurnState,
+    ) -> Result<(), AntigravityError> {
+        let args = request.tool_args.clone().unwrap_or_default();
+        let invocation = super::hook_mapping::pre_tool_invocation(&args);
+        let rule = request.rule_id.as_deref().unwrap_or_default();
+        let decision = if rule == "auto" && self.policy_engine.auto().is_some() {
+            let engine = Arc::clone(&self.policy_engine);
+            let (owned, reason) = (invocation.clone(), request.reason.clone());
+            turn.running = Some(format!("the auto policy handler for '{}'", invocation.name));
+            let decision =
+                run_hook(move || policies::decide_flagged(&engine, &owned, reason.as_deref()))
+                    .await?;
+            turn.running = None;
+            decision
+        } else {
+            tracing::warn!(
+                "Harness asked about policy rule '{rule}', which this client did not send; \
+                 denying '{}'.",
+                invocation.name
+            );
+            PreToolDecision::deny(format!(
+                "Tool '{}' denied: unknown policy rule '{rule}' (failing closed).",
+                invocation.name
+            ))
+        };
+        let (outcome, deny_reason) = match decision {
+            PreToolDecision::Deny { reason } => {
+                turn.hook_denials.push(HookDenial {
+                    trajectory_id: args.trajectory_id.clone(),
+                    reason: reason.clone(),
+                    name: invocation.name,
+                    args: invocation.args,
+                });
+                (PolicyEvaluationOutcome::Deny, Some(reason))
+            }
+            PreToolDecision::Allow | PreToolDecision::Modify { .. } => {
+                (PolicyEvaluationOutcome::Allow, None)
+            }
+        };
+        self.session
+            .send(&InputEvent::PolicyDecisionResponse(
+                protocol::PolicyDecisionResponse {
+                    request_id: request.request_id.unwrap_or_default(),
+                    outcome: Some(outcome),
+                    deny_reason,
+                },
+            ))
+            .await
+    }
+
+    /// The policy-then-hook verdict for a tool call. User code (the
+    /// pre-tool hook, a policy's condition or handler) runs through
+    /// [`run_hook`] so the turn deadline bounds it; a verdict that needs
+    /// none — no callbacks, or a plain deny — stays on this thread.
     async fn decide(
         &self,
         invocation: ToolInvocation,
         turn: &mut TurnState,
     ) -> Result<PreToolDecision, AntigravityError> {
-        let hook = match &self.pre_tool {
-            Some(hook)
-                if self.policy_engine.evaluate(&invocation.name) != Some(PolicyDecision::Deny) =>
-            {
-                Arc::clone(hook)
-            }
-            _ => {
-                return Ok(policies::decide(
-                    &self.policy_engine,
-                    self.pre_tool.as_ref(),
-                    &invocation,
-                ));
-            }
-        };
+        let plain_deny = !self.policy_engine.has_callbacks()
+            && self.policy_engine.evaluate(&invocation.name) == Some(PolicyDecision::Deny);
+        if plain_deny || (self.pre_tool.is_none() && !self.policy_engine.has_callbacks()) {
+            return Ok(policies::decide(
+                &self.policy_engine,
+                self.pre_tool.as_ref(),
+                &invocation,
+            ));
+        }
         let engine = Arc::clone(&self.policy_engine);
+        let hook = self.pre_tool.clone();
         turn.running = Some(format!("the pre-tool hook for '{}'", invocation.name));
         let decision =
-            run_hook(move || policies::decide(&engine, Some(&hook), &invocation)).await?;
+            run_hook(move || policies::decide(&engine, hook.as_ref(), &invocation)).await?;
         turn.running = None;
         Ok(decision)
     }
+}
+
+/// The invocation a denial names when the arguments did not parse.
+fn protocol_invocation(args: &protocol::PreToolArgs) -> ToolInvocation {
+    super::hook_mapping::pre_tool_invocation(args)
 }
 
 /// Runs a user hook on a thread of its own.
@@ -308,7 +370,7 @@ impl AntigravityAgent {
 ///
 /// A panicking hook re-raises its panic here, exactly as an inline call
 /// would.
-async fn run_hook<T, F>(hook: F) -> Result<T, AntigravityError>
+pub(super) async fn run_hook<T, F>(hook: F) -> Result<T, AntigravityError>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,

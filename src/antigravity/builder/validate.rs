@@ -3,8 +3,14 @@
 use std::collections::HashSet;
 
 use super::AgentBuilder;
+use crate::antigravity::process::API_KEY_ENV_VARS;
 use crate::antigravity::tools::ToolDispatcher;
-use crate::antigravity::{AgentBehavior, AntigravityError, BuiltinTool};
+use crate::antigravity::{AgentBehavior, AntigravityError, BuiltinTool, SessionContinuation};
+
+/// A configuration error.
+fn config(message: impl Into<String>) -> AntigravityError {
+    AntigravityError::Config(message.into())
+}
 
 impl AgentBuilder {
     /// Everything `spawn()` checks before it starts a harness: errors for
@@ -50,6 +56,30 @@ impl AgentBuilder {
                     .to_string(),
             ));
         }
+        if let Some(setter) = self.options.needs_model_config()
+            && self.api_key().is_none()
+        {
+            return Err(config(format!(
+                "{setter}(..) needs with_api_key(..) with a non-empty key: model options \
+                 travel in the model config, which is sent only with a key"
+            )));
+        }
+        if self
+            .gemini_base_url
+            .as_ref()
+            .and(
+                API_KEY_ENV_VARS
+                    .iter()
+                    .find(|var| self.options.harness_env.contains_key(**var)),
+            )
+            .is_some()
+        {
+            return Err(config(
+                "add_harness_env(..) sets an API key variable while with_gemini_base_url(..) \
+                 is set; the harness would send it to the custom host",
+            ));
+        }
+        self.validate_options()?;
         if let Some(trigger) = self.triggers.iter().find(|t| t.interval.is_zero()) {
             return Err(AntigravityError::Config(format!(
                 "trigger '{}' has a zero interval; trigger intervals must be non-zero",
@@ -114,12 +144,112 @@ impl AgentBuilder {
                 )));
             }
         }
-        if !self.subagents.is_empty() && !self.capabilities.is_enabled(BuiltinTool::StartSubagent) {
+        let invokes = self.capabilities.is_enabled(BuiltinTool::InvokeSubagent);
+        if !self.subagents.is_empty() && !invokes {
             tracing::warn!(
-                "Subagents are configured but the start_subagent builtin is disabled; \
+                "Subagents are configured but the invoke_subagent builtin is disabled; \
                  the parent agent cannot invoke them. Enable it with \
-                 with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))."
+                 with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))."
             );
+        }
+        if !invokes
+            && let Some(setter) = [
+                (
+                    self.options.max_subagent_depth.is_some(),
+                    "with_max_subagent_depth",
+                ),
+                (
+                    self.options.allowed_subagents.is_some(),
+                    "with_allowed_subagents",
+                ),
+            ]
+            .into_iter()
+            .find_map(|(set, setter)| set.then_some(setter))
+        {
+            return Err(config(format!(
+                "{setter}(..) needs the invoke_subagent builtin: enable \
+                 BuiltinTool::InvokeSubagent in with_capabilities(..)"
+            )));
+        }
+        if self.options.max_subagent_depth == Some(0) {
+            return Err(config("with_max_subagent_depth(..) must be at least 1"));
+        }
+        let lists = std::iter::once(("the agent", self.options.allowed_subagents.as_deref()))
+            .chain(
+                self.subagents
+                    .iter()
+                    .map(|s| (s.name(), s.allowed_subagents())),
+            );
+        for (owner, allowed) in lists {
+            if let Some(unknown) = allowed
+                .unwrap_or_default()
+                .iter()
+                .find(|name| !subagent_names.contains(name.as_str()))
+            {
+                return Err(config(format!(
+                    "allowed subagents of {owner} name '{unknown}', which is not a subagent \
+                     added with add_subagent(..)"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Range and combination checks on the harness options (the Python
+    /// SDK's pydantic validators, where the harness has the same limits).
+    fn validate_options(&self) -> Result<(), AntigravityError> {
+        let options = &self.options;
+        if let Some(cap) = options.budget.as_ref().and_then(|b| b.zero_cap()) {
+            return Err(config(format!("Budget {cap} must be at least 1")));
+        }
+        if options.max_output_tokens == Some(0) {
+            return Err(config("with_max_output_tokens(..) must be at least 1"));
+        }
+        if options.compaction_threshold == Some(0) {
+            return Err(config("with_compaction_threshold(..) must be at least 1"));
+        }
+        if options
+            .mcp_max_output_bytes
+            .is_some_and(|bytes| bytes == 0 || i32::try_from(bytes).is_err())
+        {
+            return Err(config(
+                "with_mcp_max_output_bytes(..) must be between 1 and i32::MAX",
+            ));
+        }
+        if options
+            .tool_output_truncation
+            .is_some_and(|tokens| i32::try_from(tokens).is_err())
+        {
+            return Err(config(
+                "with_tool_output_truncation(..) must be at most i32::MAX",
+            ));
+        }
+        if !options.inline_skills.is_empty() && !self.skills_paths.is_empty() {
+            return Err(config(
+                "add_inline_skill(..) and add_skills_path(..) cannot be combined: the harness \
+                 takes skills from one source or the other",
+            ));
+        }
+        let mut skill_names = HashSet::new();
+        if let Some(duplicate) = options
+            .inline_skills
+            .iter()
+            .find(|skill| !skill_names.insert(skill.name()))
+        {
+            return Err(config(format!(
+                "duplicate inline skill name '{}'; skill names must be unique",
+                duplicate.name()
+            )));
+        }
+        if self.policies.iter().filter(|p| p.is_auto()).count() > 1 {
+            return Err(config("at most one policy::auto() rule may be added"));
+        }
+        if options.session_continuation == Some(SessionContinuation::Resume)
+            && self.conversation_id.is_none()
+        {
+            return Err(config(
+                "SessionContinuation::Resume needs with_conversation_id(..)",
+            ));
         }
         Ok(())
     }

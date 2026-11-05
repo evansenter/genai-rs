@@ -256,14 +256,16 @@ fn test_pre_tool_hook_names_mcp_tools_by_policy_target() {
 }
 
 #[test]
-fn test_pre_tool_hook_maps_the_subagent_builtin_to_its_public_name() {
-    // Regression: the subagent builtin arrives as its step field name.
+fn test_pre_tool_hook_keeps_the_subagent_builtins_wire_name() {
+    // The subagent builtin arrives as `invoke_subagent`, its public name
+    // since #493's rename; `start_subagent` survives only as a policy
+    // alias (`policies_tests.rs`).
     let invocation = pre_tool_invocation(&pre_tool_args(
         "invoke_subagent",
         "",
         r#"{"Subagents":[{"TypeName":"haiku-writer"}]}"#,
     ));
-    assert_eq!(invocation.name, "start_subagent");
+    assert_eq!(invocation.name, "invoke_subagent");
     // Not an MCP call (blank server), so args are left as sent.
     assert_eq!(invocation.args["Subagents"][0]["TypeName"], "haiku-writer");
 

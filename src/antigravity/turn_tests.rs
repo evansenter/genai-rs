@@ -299,55 +299,95 @@ fn test_post_tool_callback_for_a_dispatched_call_is_not_reported_twice() {
     assert!(!turn.take_reported_call(None));
 }
 
-#[test]
-fn test_hook_denial_marks_its_error_step_denied() {
-    let mut turn = TurnState::new(None, None);
-    turn.hook_denials.push(HookDenial {
+fn widget_denial() -> HookDenial {
+    HookDenial {
         trajectory_id: Some("root".to_string()),
         reason: "no widgets".to_string(),
-    });
-
-    // A different trajectory's error with the same text is not ours.
-    assert_eq!(
-        turn.take_hook_denial(&hook_denied_step("sub", 1, "no widgets")),
-        None
-    );
-    // An unrelated error in the right trajectory is not ours either.
-    assert_eq!(
-        turn.take_hook_denial(&hook_denied_step("root", 1, "quota")),
-        None
-    );
-    // The matching step claims it, exactly once.
-    let step = hook_denied_step("root", 1, "no widgets");
-    assert_eq!(turn.take_hook_denial(&step).as_deref(), Some("no widgets"));
-    assert_eq!(turn.take_hook_denial(&step), None, "claimed once");
+        name: "mcp_widgets_lookup".to_string(),
+        args: serde_json::json!({"widget": "flange"}),
+    }
 }
 
 #[test]
-fn test_hook_denied_step_surfaces_as_a_denied_tool_action() {
-    // End to end through process_step's announce logic, minus the
-    // socket: without the denial marker, a blocked call reads as an
-    // executed one (`decision: Allowed`).
+fn test_hook_denial_marks_its_error_step_denied() {
     let mut turn = TurnState::new(None, None);
-    turn.hook_denials.push(HookDenial {
-        trajectory_id: Some("root".to_string()),
-        reason: "no widgets".to_string(),
-    });
+    turn.hook_denials.push(widget_denial());
+
+    // A different trajectory's error with the same text is not ours.
+    assert!(
+        turn.take_hook_denial(&hook_denied_step("sub", 1, "no widgets"))
+            .is_none()
+    );
+    // An unrelated error in the right trajectory is not ours either.
+    assert!(
+        turn.take_hook_denial(&hook_denied_step("root", 1, "quota"))
+            .is_none()
+    );
+    // The matching step claims it, exactly once.
     let step = hook_denied_step("root", 1, "no widgets");
-    let decision = match turn.take_hook_denial(&step) {
-        Some(reason) => ToolDecision::Denied { reason },
-        None => ToolDecision::Allowed,
-    };
-    let action = streaming::ToolAction::from_step(&step).expect("error action");
-    assert!(turn.announce_tool_action(&("root".to_string(), 1), action, decision, None));
+    let denial = turn.take_hook_denial(&step).expect("our denial");
+    assert_eq!(denial.reason, "no widgets");
+    assert_eq!(denial.name, "mcp_widgets_lookup");
+    assert!(turn.take_hook_denial(&step).is_none(), "claimed once");
+}
+
+#[tokio::test]
+async fn test_hook_denied_step_surfaces_as_a_named_denied_tool_action() {
+    // Through process_step: the harness's error step for a denied call
+    // carries no action, so the stream names the call from the denial
+    // (WP5 follow-up: it used to read "error").
+    let mut turn = TurnState::new(None, None);
+    turn.hook_denials.push(widget_denial());
+    let step = hook_denied_step("root", 1, "no widgets");
+    let mut announced = None;
+    if let Some(denial) = turn.take_hook_denial(&step) {
+        announced = Some(turn.announce_tool_action(
+            &("root".to_string(), 1),
+            streaming::ToolAction::Denied {
+                name: denial.name,
+                args: denial.args,
+            },
+            ToolDecision::Denied {
+                reason: denial.reason,
+            },
+            step.trajectory_id.clone(),
+        ));
+    }
+    assert_eq!(announced, Some(true));
     let Some(AgentEvent::ToolAction {
         action, decision, ..
     }) = turn.queue.pop_front()
     else {
         panic!("expected a ToolAction");
     };
-    assert_eq!(action.tool_name(), "error");
+    assert_eq!(action.tool_name(), "mcp_widgets_lookup");
+    assert_eq!(action.args()["widget"], "flange");
     assert_eq!(decision.denial_reason(), Some("no widgets"));
+}
+
+#[test]
+fn test_error_state_step_drops_text_and_thought_deltas() {
+    // #493 item 8: harness 0.1.23 streams a denial's text as the delta of
+    // a SOURCE_MODEL / TARGET_USER error step (captured 2026-11-05).
+    let step: StepUpdate = serde_json::from_value(serde_json::json!({
+        "trajectoryId": "root", "stepIndex": 1, "state": "STATE_ERROR",
+        "source": "SOURCE_MODEL", "target": "TARGET_USER",
+        "errorMessage": "static-deny-reason-55",
+        "textDelta": "static-deny-reason-55 (\"denied by pre-tool hook: static-deny-reason-55\")",
+        "thinkingDelta": "partial thought"
+    }))
+    .unwrap();
+    assert_eq!(stream_deltas(&step), (None, None));
+    // The same step done streams as before.
+    let mut done = step.clone();
+    done.state = Some(StepState::Done);
+    assert_eq!(
+        stream_deltas(&done),
+        (
+            Some("partial thought"),
+            Some("static-deny-reason-55 (\"denied by pre-tool hook: static-deny-reason-55\")")
+        )
+    );
 }
 
 // -------------------------------------------------------------------

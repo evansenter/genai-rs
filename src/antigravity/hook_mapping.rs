@@ -16,10 +16,9 @@ use serde_json::Value;
 /// Two normalizations, both observed on the 0.1.18 wire, so that one
 /// policy rule matches the same call on every path it can arrive by:
 ///
-/// - **Name**: the harness sends a builtin's `StepUpdate` field name
-///   (`invoke_subagent`) and an MCP tool's bare name beside its
-///   `server_name`; policies target `start_subagent` and
-///   `mcp_<server>_<tool>` (see [`protocol::PreToolArgs`]).
+/// - **Name**: the harness sends an MCP tool's bare name beside its
+///   `server_name`; policies target `mcp_<server>_<tool>` (see
+///   [`protocol::PreToolArgs`]). Builtins arrive by their wire names.
 /// - **MCP arguments**: the harness wraps them as
 ///   `{"Arguments": {..}, "ServerName": .., "ToolName": ..}`. The inner
 ///   object is what the model passed, and what [`ToolAction::args`]
