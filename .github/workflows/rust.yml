@@ -470,8 +470,15 @@ jobs:
       - name: Build
         run: cargo build --workspace --release
       - name: Run tests
-        # Use release mode on Windows to avoid linker resource exhaustion (error 1318)
-        run: cargo nextest run --workspace --cargo-profile release
+        # Use release mode on Windows to avoid linker resource exhaustion (error 1318).
+        # bash on every OS, so `$NEXTEST_FILTER` expands the same on Windows.
+        shell: bash
+        env:
+          # trybuild's ui_tests compare rustc's exact diagnostics, which beta
+          # rewords, so their .stderr snapshots only hold on stable (#501;
+          # tests/ci_coverage.rs, `ui_tests_do_not_run_on_beta`).
+          NEXTEST_FILTER: ${{ matrix.rust == 'beta' && 'not binary(ui_tests)' || 'all()' }}
+        run: cargo nextest run --workspace --cargo-profile release -E "$NEXTEST_FILTER"
       - name: Run doctests
         run: cargo test --workspace --release --doc
 

@@ -28,6 +28,10 @@ jobs:
   documented-requirements:
     name: README requirements compile
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The escalation steps open and close a `ci-health-escalation` issue.
+      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -183,3 +187,33 @@ jobs:
           echo "This is the failure class that cannot reproduce inside the workspace."
           echo "Check genai-rs-macros/src/codegen.rs emitted paths against README.md's"
           echo "promise: the Installation snippet's dependencies, and no trait import."
+
+      # Scheduled failures otherwise only email the last committer (#431).
+      # From the checkout in genai-rs/, where the scripts and the git remote
+      # `gh` reads live.
+      - name: Escalate a failing scheduled run
+        if: failure() && github.event_name == 'schedule'
+        working-directory: genai-rs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: it is the join key between reporter
+          # and resolver.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "The weekly run builds a fresh crate outside the workspace with
+          README.md's documented dependency set. A red build step means
+          \`#[tool]\` no longer compiles from that set (see the run's
+          \"Explain a failure\" annotation); a red scaffold step means the
+          README's Installation snippet moved or changed shape."
+
+      - name: Clear the failure issue once the run recovers
+        if: success() && github.event_name == 'schedule'
+        working-directory: genai-rs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"

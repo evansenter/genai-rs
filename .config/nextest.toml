@@ -2,5 +2,11 @@
 # live test stuck on a silent connection held its runner until the job's
 # 6-hour default. 120s x 5 is well above the longest legitimate test (the
 # live suite's own budgets top out at 300s), so only a hang is killed.
+#
+# fail-fast off: the first failure used to cancel the rest of a run, which
+# hid how far one break reached (the Windows CRLF break, #486, showed as one
+# failure in `cross-platform`). Every CI job reads this profile, so none can
+# stop early (#501; tests/ci_coverage.rs, `nextest_runs_do_not_fail_fast`).
 [profile.default]
 slow-timeout = { period = "120s", terminate-after = 5 }
+fail-fast = false
