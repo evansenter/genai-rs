@@ -185,30 +185,30 @@ async fn test_pdf_from_temp_file() {
 // Document File Tests (Text Formats)
 // =============================================================================
 
-/// Tests that document_from_file sends TXT and Markdown files as documents.
+/// Tests that document_from_file sends TXT and Markdown files as text content.
 ///
-/// The Interactions API accepts `text/plain` and `text/markdown` document
-/// content (verified live 2026-09-24).
+/// The Interactions API accepted `text/plain` and `text/markdown` document
+/// content until 2026-11-04, when it started rejecting both with a 400 (#514).
 #[tokio::test]
-async fn test_document_from_file_accepts_txt_and_markdown() {
+async fn test_document_from_file_sends_txt_and_markdown_as_text() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    for (name, mime) in [("test.txt", "text/plain"), ("README.md", "text/markdown")] {
+    for name in ["test.txt", "README.md"] {
         let path = temp_dir.path().join(name);
         std::fs::write(&path, "# Test content").expect("Failed to write file");
 
         let content = document_from_file(&path)
             .await
-            .unwrap_or_else(|e| panic!("{name} should load as a document: {e}"));
+            .unwrap_or_else(|e| panic!("{name} should load: {e}"));
         match content {
-            Content::Document { mime_type, .. } => {
-                assert_eq!(mime_type.as_deref(), Some(mime), "{name}");
+            Content::Text { text, .. } => {
+                assert_eq!(text.as_deref(), Some("# Test content"), "{name}");
             }
-            other => panic!("{name}: expected Content::Document, got {other:?}"),
+            other => panic!("{name}: expected Content::Text, got {other:?}"),
         }
     }
 }
 
-/// Tests that the API reads a Markdown document from document_from_file().
+/// Tests that the API reads a Markdown file loaded with document_from_file().
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_markdown_document_from_temp_file() {
@@ -265,7 +265,7 @@ async fn test_document_from_file_rejects_csv() {
     );
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("text/csv") && err.contains("text/plain"),
+        err.contains("text/csv") && err.contains("application/pdf"),
         "Error should mention text/csv and the supported types: {}",
         err
     );
