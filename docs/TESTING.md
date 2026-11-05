@@ -10,8 +10,10 @@ follow.
 | Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
 | Property (proptest) | `src/proptest_tests.rs` | No | `make test` (or `cargo test proptest`) |
 | Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs`, `tests/reliability_tests.rs` | No | `make test` |
+| Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
-| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
+| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
+| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
@@ -73,11 +75,39 @@ paused-clock requests to the stub. This applies to your own tests of code
 built on `genai-rs` too. Either build the test client with
 `with_connect_timeout(Duration::MAX)`, which arms no connect timer, and set
 no other timeout; or hold the clock with a running `spawn_blocking` task
-until the stub has the request, as `reliability_tests.rs`'s `hold_clock`
-does when a test needs the real defaults. For a test that sends several
-requests (a poll), `Stub::paused_clock_client()` holds the clock for each
-request until its response is read, with every default in place. See
-[Reliability](RELIABILITY.md#tests-on-a-paused-clock).
+until the stub has the request, as `common::http_stub::hold_clock` does
+when a test needs the real defaults or a timeout of its own. For a test
+that sends several requests (a poll), `Stub::paused_clock_client()` holds
+the clock for each request until its response is read, with every default
+in place. See [Reliability](RELIABILITY.md#tests-on-a-paused-clock).
+
+A timing test asserts virtual time, never wall-clock time: a bound on
+`std::time::Instant` holds on a quiet machine and flakes on a loaded runner
+(#501). Hold the clock until the stub has the request, so that only the
+timeout under test and the stub's delays are left as timers, and release
+it from the stub's handler. When the test needs data to arrive before the
+timeout can fire (a stream that stalls after its first event), keep the
+clock held until that data is in hand: auto-advance can otherwise fire the
+timeout while the bytes travel over localhost
+(`read_timeout_ends_a_stalled_stream`).
+
+### Captured fixtures
+
+`tests/captured_fixtures.rs` replays real API responses through the client
+against the stub. `.github/scripts/capture_fixtures.py` records them into
+`tests/fixtures/captured/`, one file per exchange with its capture date:
+a streamed create, a retrieval stream, a stored create and its read-back,
+an environment, a voice listing, and a 400 and a 404 envelope. The checks
+are on shape, not wording: every stream event parses and none is unknown,
+the streamed text reassembles into the completed interaction, an envelope
+maps to its status and message, and no captured key is dropped by a parse
+and a serialize.
+
+The weekly `captured-fixtures` job in `rust.yml` re-captures them from the
+live API, replays the fresh copies, and uploads them as an artifact. A red
+run there means the API now sends something the crate does not parse the
+same way. To refresh the committed copies, download the artifact (or run
+the script with `GEMINI_API_KEY` set) and commit `tests/fixtures/captured/`.
 
 ## Scripted harness tests
 
@@ -158,6 +188,17 @@ must not flake.
   skip never turns a CI run green.
 - **Assert the effect.** A structural check pins the wire shape, not that a
   feature works. Where the feature has an observable effect, assert that too.
+  Where it has none (a config knob), read the stored interaction back with
+  `stored_echo` and check it holds what was sent with `assert_stored`: a 200
+  on create shows a field was accepted, not applied, and create responses
+  drop fields the stored record keeps (#476, #492).
+- **Mark what you create.** Every id, display name or inline environment
+  source a live test chooses comes from `test_resource_name(label)` or
+  `test_source_content(text)`, which carry the `genai-rs-test` prefix (and,
+  in the name, the creation time). Clean up in the test, including on a
+  panic, and cancel and delete background interactions. What a dead test
+  leaves behind, the daily [janitor](#leaked-test-resources) deletes, but
+  only if it carries the marker.
 
 | Group | Binaries |
 |-------|----------|
@@ -213,6 +254,8 @@ async fn test_feature_name() {
 | `poll_until_done(..)` | Poll a background interaction |
 | `assert_response_semantic(..)`, `validate_response_semantically(..)` | Semantic checks (below) |
 | `get_weather_function()`, `get_time_function()` | Shared declarations |
+| `test_resource_name(label)`, `test_source_content(text)`, `TEST_RESOURCE_PREFIX` | Names and fixture content the leaked-resource janitor recognizes |
+| `stored_echo(client, id, pointer)`, `assert_stored(what, sent, stored)` | Read a stored interaction back at a JSON pointer, and check it holds everything sent |
 | `TINY_RED_PNG_BASE64`, `TINY_BLUE_PNG_BASE64`, `TINY_WAV_BASE64`, `TINY_MP4_BASE64`, `TINY_PDF_BASE64` | Minimal valid media. The MP4 is one second: shorter clips yield no sampled frame and are rejected |
 
 `is_transient_error` matches Spanner UTF-8 errors and two 400s (`invalid json
@@ -225,6 +268,38 @@ that they happened: `result.all_executions_succeeded()`, with
 `result.failed_executions()` in the message. A declared function with no
 implementation is answered with an error result, not a failure, so a
 "was it called" assertion passes on that bug.
+
+### Flakes and retries
+
+The live jobs run nextest with `--retries 2`, so a test that fails and then
+passes leaves its job green. The daily `ci-flakiness-report.yml` reads the
+retry jobs' logs from every finished run of the week, green ones included,
+and counts each test nextest marked `FLAKY` (`.github/scripts/count_retried_flakes.sh`).
+The rolling report lists retried tests beside failed ones and gives the
+week's rate: tests that passed only on a retry, over live test runs. The
+target is under 1%; the report calls out a week at or over it. No CI run
+stops at its first failure: `.config/nextest.toml` turns fail-fast off for
+the default profile, which every job uses.
+
+### Leaked test resources
+
+Nothing a live test creates expires on its own (environments from 2026-07
+were still there in November). `test-resource-janitor.yml` runs
+`.github/scripts/cleanup_test_resources.py` daily and deletes resources
+that carry a live test's marker and are more than six hours old:
+credentials and agents whose id starts with `genai-rs-test`, triggers, file
+search stores and prompted voices whose display name does, webhooks on the
+test endpoint, and environments with no sources or only fixture sources.
+Anything else on the key is left alone. To see what it would delete:
+
+```bash
+python3 .github/scripts/cleanup_test_resources.py --dry-run
+```
+
+A manual run of the workflow is a dry run unless `mode` is `delete`. Its
+harness, `.github/scripts/tests/test_cleanup_test_resources.sh`, replays
+recorded listings through a local fake API and asserts the exact set of
+deletes.
 
 ## Assertions on model output
 

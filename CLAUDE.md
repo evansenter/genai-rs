@@ -56,7 +56,7 @@ is gitignored).
 make check        # pre-push gate: fmt + clippy + test + test-scripts
 make test         # unit/offline tests (no doctests)
 make test-all     # + live integration tests (needs GEMINI_API_KEY)
-make test-scripts # shell-script harnesses (needs bash, jq, python3)
+make test-scripts # shell-script harnesses (needs bash, jq, python3; PyYAML for one)
 make docs         # rustdoc -D warnings, all-features and docs.rs feature set
 
 cargo nextest run -E 'test(/name/)'            # one test
@@ -184,12 +184,21 @@ reaches the wire must use a real id.
   `tests/http_mock_tests.rs`, resource endpoints in
   `tests/http_mock_resources.rs`, and timeouts, cut-off streams and poll
   retries in `tests/reliability_tests.rs` (paused clock; see
-  `docs/TESTING.md`).
+  `docs/TESTING.md`). Real responses, captured with their dates, replay in
+  `tests/captured_fixtures.rs`.
 - A crash a fuzz target finds becomes a regression test in
   `src/fuzzing_tests.rs` (`fuzz/README.md`).
 - Live tests are `#[ignore = "Requires API key"]` (exact string) and must
   **fail**, not skip, when the request fails. Every live test file belongs to
   a `test-integration` matrix group in `.github/workflows/rust.yml`.
+- A live test names what it creates with `test_resource_name` /
+  `test_source_content` (`tests/common/mod.rs`), the marker the daily
+  test-resource janitor deletes by, and cleans up itself, background
+  interactions included. A request field with no observable effect is
+  checked as stored with `stored_echo` and `assert_stored`, not just
+  accepted (#492).
+- Offline timing tests run on a paused clock and assert virtual time,
+  never `std::time::Instant` (#501; `docs/TESTING.md`).
 - Don't assert `text.contains(..)` on non-deterministic model output; use
   `assert_response_semantic()` (see `docs/TESTING.md`). Exact computed values
   are fine.
@@ -245,26 +254,38 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
 
 ## CI notes
 
-- `rust.yml` jobs: check, test, test-strict-unknown, test-antigravity (pinned
-  `localharness` wheel), test-integration (live, grouped), example-smoke
-  (live), fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage,
-  build-metrics, scheduled-run-status. Live jobs run for pushes, same-repo
-  PRs, the weekly schedule (Wednesday) and `workflow_dispatch`, and fail on
-  an empty `GEMINI_API_KEY`. Each integration group runs every binary and
-  lists the failures; `.config/nextest.toml` kills a test hung past 10
-  minutes. A red scheduled run opens a `ci-health-escalation` issue
-  (`scheduled-run-status`).
+- `rust.yml` jobs: check (also fails when `cargo package` would ship a
+  test-only file, and builds the packaged crates), test,
+  test-strict-unknown, test-antigravity (pinned `localharness` wheel),
+  test-integration (live, grouped), example-smoke (live), captured-fixtures
+  (live, schedule and dispatch only: re-captures `tests/fixtures/captured/`
+  and replays the fresh copies), fmt, shell-scripts (the script harnesses,
+  shellcheck, the workflow parse check and actionlint over every workflow),
+  clippy, doc, msrv, cross-platform (stable and beta; trybuild's `ui_tests`
+  are skipped on beta), coverage, build-metrics, scheduled-run-status. Live
+  jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
+  `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each
+  integration group runs every binary and lists the failures;
+  `.config/nextest.toml` turns fail-fast off for every run and kills a test
+  hung past 10 minutes. A red scheduled run opens a `ci-health-escalation`
+  issue (`scheduled-run-status`); every scheduled workflow does the same,
+  which `tests/ci_workflows/` checks along with fail-fast and beta.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the
   five Integration Tests groups. A live group skipped on a fork PR counts as
   passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
-  `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`,
-  `claude.yml`, `claude-code-review.yml`, `antigravity-release-watch.yml`
-  (daily; an `antigravity-release` issue when PyPI's `google-antigravity`
-  differs from `SUPPORTED_HARNESS_VERSION`), and `fuzz.yml` (the `fuzz/`
-  cargo-fuzz targets, a minute each on nightly: weekly, and on PRs touching
-  what the targets build; `fuzz/README.md`).
+  `ci-flakiness-report.yml` (daily; counts failures and the tests nextest
+  retried to a pass, and the week's flake rate against a 1% target),
+  `release.yml`, `release-drafter.yml`, `claude.yml`,
+  `claude-code-review.yml`, `antigravity-release-watch.yml` (daily; an
+  `antigravity-release` issue when PyPI's `google-antigravity` differs from
+  `SUPPORTED_HARNESS_VERSION`), `fuzz.yml` (the `fuzz/` cargo-fuzz targets,
+  a minute each on nightly: weekly, and on PRs touching what the targets
+  build, keeping the grown corpus between scheduled runs; `fuzz/README.md`),
+  and `test-resource-janitor.yml` (daily; deletes the marked resources live
+  tests leaked once they are six hours old, a dry run when dispatched by
+  hand; `docs/TESTING.md`).
 - **Example size gate:** `build-metrics` fails when an example binary grows
   more than 15% against the last main build. For intended growth, add the
   `size-growth-ok` label **and push a commit** (a re-run replays the old event
@@ -274,5 +295,7 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
 
 ## Technical notes
 
-Rust edition 2024, MSRV 1.88. `reqwest` with `rustls` (OS trust store).
-Tokio runtime.
+Rust edition 2024, MSRV 1.88. `reqwest` with `rustls` (OS trust store),
+without its default features: `http2`, `system-proxy` and `charset` are
+genai-rs default features that turn them on. Tokio runtime. `Cargo.toml`'s
+`include` list decides what the published crate ships.
