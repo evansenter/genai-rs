@@ -94,7 +94,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Subagent::with_system_instructions`, whose sections are now titled
   `user_system_instructions` instead of `System`. The workspace note this
   crate adds now goes only with custom instructions; the harness's prompt
-  lists the workspaces itself (verified on 0.1.23).
+  lists the workspaces itself (verified on 0.1.23). Both setters take
+  `impl Into<SystemInstructions>`: a `&str`, `String`, `&String`,
+  `Cow<str>` or `Box<str>` compiles unchanged, while a value of a generic
+  `T: Into<String>` needs `.into()` to a `String` first.
 - **Breaking: Antigravity's `chat` and `send_streaming` take
   `impl Into<Prompt>` instead of `impl Into<String>`.** A `&str`, `String`,
   `&String`, `Cow<str>` or `Box<str>` argument compiles unchanged. A value

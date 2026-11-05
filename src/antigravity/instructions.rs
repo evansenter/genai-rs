@@ -191,6 +191,24 @@ impl From<String> for SystemInstructions {
     }
 }
 
+impl From<&String> for SystemInstructions {
+    fn from(text: &String) -> Self {
+        Self::appended(text.as_str())
+    }
+}
+
+impl From<std::borrow::Cow<'_, str>> for SystemInstructions {
+    fn from(text: std::borrow::Cow<'_, str>) -> Self {
+        Self::appended(text)
+    }
+}
+
+impl From<Box<str>> for SystemInstructions {
+    fn from(text: Box<str>) -> Self {
+        Self::appended(text)
+    }
+}
+
 #[cfg(test)]
 #[path = "instructions_tests.rs"]
 mod tests;

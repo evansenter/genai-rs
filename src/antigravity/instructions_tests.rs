@@ -18,10 +18,17 @@ fn test_plain_text_is_appended_under_the_python_sdk_title() {
         appended.appended_sections[0].content.as_deref(),
         Some("Be brief.")
     );
-    assert_eq!(
-        SystemInstructions::from(String::from("Be brief.")),
-        SystemInstructions::appended("Be brief.")
-    );
+    // Every string type `with_system_instructions` took as `Into<String>`
+    // still converts.
+    let owned = String::from("Be brief.");
+    for converted in [
+        SystemInstructions::from(owned.clone()),
+        SystemInstructions::from(&owned),
+        SystemInstructions::from(std::borrow::Cow::Borrowed("Be brief.")),
+        SystemInstructions::from(Box::<str>::from("Be brief.")),
+    ] {
+        assert_eq!(converted, SystemInstructions::appended("Be brief."));
+    }
 }
 
 #[test]

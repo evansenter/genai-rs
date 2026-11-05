@@ -453,8 +453,8 @@ after a timeout holds up neither runtime shutdown (the end of
 captured alive, until it returns, so keep hooks bounded. The thread enters
 the turn's runtime, so `tokio::runtime::Handle::current()` works inside a
 hook, and a hook with async work can block on it there:
-`Handle::current().block_on(check(&call))`. Custom tools are bounded too, with one limit; see the turn deadline
-under [Streaming](#streaming).
+`Handle::current().block_on(check(&call))`. Custom tools are bounded too,
+with one limit; see the turn deadline under [Streaming](#streaming).
 
 Arguments can also change meaning. 0.1.23 added `Append` to `create_file`:
 `{Overwrite: false, Append: true}` now appends to an existing file, where
@@ -1188,7 +1188,13 @@ The ones a user is likeliest to look for:
   the Python SDK's own included (see the #494 decision in
   `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 - **Trigger turns are surfaced on request**: `next_trigger_turn` drives
-  them; nothing reads them in the background.
+  them; nothing reads them in the background, so call it between user
+  turns, and a trigger turn nobody consumes is halted by the next `chat`.
+  A background consumer (#493 item 7) would read the harness while the
+  agent is idle, which means moving turn processing (hooks, policies,
+  custom tools) out of `&mut self` into a task of its own: a redesign of
+  `AntigravityAgent`, left for its own change. The `schedule` builtin
+  waits on it.
 - **No `schedule` builtin**: a turn the agent schedules for itself could
   start while a `chat` turn does, and its events would land in that turn.
 - **Not modeled (product decisions)**: Vertex AI endpoints (wire types

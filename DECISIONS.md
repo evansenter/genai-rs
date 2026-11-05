@@ -674,6 +674,11 @@ log under the new module path (`genai_rs::antigravity::policies`), which an
 
 ## D-022 — Antigravity policies are evaluated client-side; the auto policy runs in the harness (2026-11-05)
 
+**Status: proposed, awaiting the owner's review.** #493 item 6 asked for
+harness-side `PolicyConfig` rules; this departs from it and was decided
+during the work, not discussed first. The alternative, the Python SDK's
+split, is below under Consequences.
+
 **Context.** Since 0.1.23 the Python SDK sends its policies to the harness
 as `PolicyConfig` rules: static rules run in the harness's evaluator, and
 rules with a `when` condition or an `ask_user` handler come back to the
@@ -702,6 +707,14 @@ round trip per tool call that the pre-tool callback already made; static
 harness rules would have saved it. Revisit if the harness gains a policy
 feature its pre-tool callback cannot express.
 
+The alternative is the Python SDK's: send static rules as `PolicyConfig`
+rules for the harness to evaluate, mark rules with a condition or handler
+`is_dynamic` so the harness asks about them over `policyDecisionRequest`.
+Default-open would then need a catch-all allow rule of the bridge's own,
+since the harness fails closed on an unmatched call. It saves the round
+trip for static rules, at the cost of the harness's unnamed denials on the
+event stream.
+
 ---
 
 ## D-023 — Two Antigravity defaults: appended instructions, no `define_subagent` (2026-11-05)
@@ -722,8 +735,11 @@ instructions only, since the harness's own prompt lists the workspaces
 unless `with_define_subagent_tool(true)`, matching this crate's other
 safety defaults (read-only builtins, containment on, `schedule` off).
 
-**Consequences.** Both are behavior changes that compile unchanged: code
-that relied on replacing the prompt must say `SystemInstructions::custom`,
-and an agent that relied on the model defining subagents must opt in. Skills
+**Consequences.** Both are behavior changes. Calls with a `&str`,
+`String`, `&String`, `Cow<str>` or `Box<str>` compile unchanged (the types
+`SystemInstructions` converts from); a generic `T: Into<String>` argument
+needs `.into()` to a `String` first. Code that relied on replacing the
+prompt must say `SystemInstructions::custom`, and an agent that relied on
+the model defining subagents must opt in. Skills
 from `add_skills_path` become visible to the model under appended
 instructions, which they were not under custom ones.
