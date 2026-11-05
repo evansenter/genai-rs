@@ -43,7 +43,7 @@ fn stall_diagnosis_names_unrecognized_main_trajectory_states() {
     AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
 
     assert!(!turn.finished, "an unknown state must not end the turn");
-    let diagnosis = turn.stall_diagnosis("");
+    let diagnosis = turn.stall_diagnosis("", None);
     assert!(
         diagnosis.contains("STATE_SUPER_IDLE"),
         "diagnosis must name the state, got: {diagnosis}"
@@ -58,7 +58,7 @@ fn stall_diagnosis_names_unrecognized_main_trajectory_states() {
 fn stall_diagnosis_ignores_subagent_states_and_clean_turns() {
     // A clean turn keeps the plain operation name...
     let turn = TurnState::new(None, None);
-    assert_eq!(turn.stall_diagnosis(""), "agent turn");
+    assert_eq!(turn.stall_diagnosis("", None), "agent turn");
 
     // ...and a *subagent* trajectory going somewhere unrecognized is
     // not the parent's problem, so it must not pollute the parent's
@@ -69,7 +69,7 @@ fn stall_diagnosis_ignores_subagent_states_and_clean_turns() {
     turn.main_trajectory = Some("main".to_string());
     let update = trajectory_update(Some("subagent-1"), unknown, None);
     AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
-    assert_eq!(turn.stall_diagnosis(""), "agent turn");
+    assert_eq!(turn.stall_diagnosis("", None), "agent turn");
 }
 
 #[test]
@@ -82,14 +82,43 @@ fn stall_diagnosis_names_a_harness_side_input_rejection() {
          error (line 1:14): unexpected token \"hello\"\n\
          another line";
     let turn = TurnState::new(None, None);
-    let diagnosis = turn.stall_diagnosis(stderr);
+    let diagnosis = turn.stall_diagnosis(stderr, None);
     assert!(
         diagnosis.contains("failed to unmarshal InputEvent"),
         "diagnosis must quote the harness's own line, got: {diagnosis}"
     );
     assert!(diagnosis.contains("version mismatch"), "got: {diagnosis}");
     // Unrelated stderr noise does not produce a diagnosis.
-    assert_eq!(turn.stall_diagnosis("Stdin closed"), "agent turn");
+    assert_eq!(turn.stall_diagnosis("Stdin closed", None), "agent turn");
+}
+
+#[test]
+fn stall_diagnosis_names_client_work_still_running_at_the_deadline() {
+    // A hung custom tool or hook is this side's stall, not the harness's:
+    // name it, and don't point at a version mismatch.
+    let mut turn = TurnState::new(None, None);
+    turn.running = Some("custom tool 'slow_lookup'".to_string());
+    let diagnosis = turn.stall_diagnosis("", Some("0.1.18"));
+    assert_eq!(
+        diagnosis,
+        "agent turn (custom tool 'slow_lookup' was still running at the deadline)"
+    );
+}
+
+#[test]
+fn stall_diagnosis_names_a_known_harness_version_mismatch() {
+    let turn = TurnState::new(None, None);
+    // The supported version, or an unknown one, adds nothing.
+    assert_eq!(
+        turn.stall_diagnosis("", Some(crate::antigravity::SUPPORTED_HARNESS_VERSION)),
+        "agent turn"
+    );
+    let diagnosis = turn.stall_diagnosis("", Some("0.0.1"));
+    assert!(
+        diagnosis.contains("google-antigravity 0.0.1")
+            && diagnosis.contains(crate::antigravity::SUPPORTED_HARNESS_VERSION),
+        "got: {diagnosis}"
+    );
 }
 
 #[test]

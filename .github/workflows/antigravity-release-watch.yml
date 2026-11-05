@@ -1,0 +1,65 @@
+name: Antigravity Release Watch
+
+# Notices google-antigravity releases past the pinned harness (#499).
+#
+# The bridge drives one harness revision, SUPPORTED_HARNESS_VERSION, and
+# every harness test in CI runs against that pin, so a new release changes
+# nothing CI can see until someone bumps it. This compares PyPI's latest with
+# the pin daily; when they differ it diffs the two wheels' protobuf
+# descriptors and opens or updates one rolling `antigravity-release` issue,
+# then closes it once the pin catches up. See
+# .github/scripts/antigravity_release_watch.sh.
+
+on:
+  schedule:
+    - cron: '41 7 * * *' # Daily, after the API surface sweep's hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: Compare the latest google-antigravity with the pin
+    runs-on: ubuntu-latest
+    # Bounds every network call: a stalled download would otherwise hold the
+    # job to the 360-minute default. A normal run takes well under a minute.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Diff the latest release against the pin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/antigravity_release_watch.sh
+
+      # Scheduled failures otherwise only email the last committer (#431). A
+      # red run here means the watch itself broke (PyPI, the download, or a
+      # wheel the descriptor dump cannot read), not that a release is out.
+      - name: Escalate a failing scheduled run
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: it is the join key between reporter
+          # and resolver.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "**This is not a release notice.** A new google-antigravity release is
+          reported on its own \`antigravity-release\` issue and leaves this run
+          green. A red run means the watch could not complete: PyPI or the wheel
+          download failed, or the descriptor dump could not read a wheel (the
+          \`_pb2\` layout moved). Check the run log."
+
+      - name: Clear the failure issue once the run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"
