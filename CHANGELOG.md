@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because a mismatch's failures are already loud and running a newer wheel
   on purpose is how a bump is tested. An `InitFailed` message and a turn's
   `Timeout` diagnosis name a known mismatch.
+- `document_from_file()` sends `.csv` (`text/csv`) and the Office/OpenDocument
+  formats (`.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, and the legacy
+  `.doc`, `.xls`, `.ppt`) as document content; it rejected them before. With
+  PDF, these are the inline document types the API accepts (verified live
+  2026-11-05 by reading back a real file of each type; the legacy `.doc`,
+  `.xls` and `.ppt` only passed the API's MIME check with plain-text bytes,
+  so parsing a real legacy file is unverified). `detect_mime_type()`, and so
+  `FileUpload::from_path()`, now recognizes the nine Office/OpenDocument
+  extensions (#516).
 
 ### Changed
 
