@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because a mismatch's failures are already loud and running a newer wheel
   on purpose is how a bump is tested. An `InitFailed` message and a turn's
   `Timeout` diagnosis name a known mismatch.
+- `document_from_file()` sends `.csv` (`text/csv`) and the Office/OpenDocument
+  formats (`.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, and the legacy
+  `.doc`, `.xls`, `.ppt`) as document content; it rejected them before. With
+  PDF, these are the inline document types the API accepts (verified live
+  2026-11-05 by reading back a real file of each type; the legacy `.doc`,
+  `.xls` and `.ppt` only passed the API's MIME check with plain-text bytes,
+  so parsing a real legacy file is unverified). `detect_mime_type()`, and so
+  `FileUpload::from_path()`, now recognizes the nine Office/OpenDocument
+  extensions (#516).
 - `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
   send a request field the crate doesn't model yet, flat beside the modeled
   ones, as `TriggerCreateParams::extra` already allowed. A repeated key
@@ -285,6 +294,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2026-11-04). The forced paths now signal the harness's process group and
   the group of each of its children. A command that detaches itself
   (`setsid`) is still out of reach.
+- `document_from_file()` sends `.txt` and `.md` files as text content
+  (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
+  `text/markdown` document content, which the API rejects with a 400 since
+  2026-11-04. A file that isn't valid UTF-8 returns `GenaiError::InvalidInput`.
+  If you match on the returned `Content`, expect `Content::Text` for these
+  extensions. `document_from_file_with_mime()` is unchanged and still sends
+  any MIME type as a document (#514).
 - `Webhooks::create` sent a `Webhook`'s output-only fields (`id`, `state`,
   `signing_secrets`, `new_signing_secret`, `create_time`, `update_time`)
   whenever they were set, as on a webhook read back from the API. The
