@@ -1,0 +1,59 @@
+{
+  "captured": "2026-11-05",
+  "note": "The stored interaction above, read back.",
+  "request": {
+    "method": "GET",
+    "path": "/v1beta/interactions/v1_ChdTRkRzYXVYZElKN3p2ZElQdHRhN29BVRIXU0ZEc2F1WGRJSjd6dmRJUHR0YTdvQVU"
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json",
+    "json": {
+      "id": "v1_ChdTRkRzYXVYZElKN3p2ZElQdHRhN29BVRIXU0ZEc2F1WGRJSjd6dmRJUHR0YTdvQVU",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 207,
+        "total_input_tokens": 10,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 10
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 5,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 192,
+        "initial_input_tokens": 9
+      },
+      "created": "2026-11-05T09:45:48Z",
+      "updated": "2026-11-05T09:45:48Z",
+      "steps": [
+        {
+          "type": "user_input",
+          "content": [
+            {
+              "text": "Name three primary colors, comma-separated.",
+              "type": "text"
+            }
+          ]
+        },
+        {
+          "signature": "EswGCskGAWkUfRMUIojCK6SD2rwqw9Hbk/n8pGY9fDKS+QzI3TbU1LO8ibcAE9TQDh+jp7SkgIXXYzsj03SZWdZ8lhz4CfiWSDny/8BRdCdY9n+QmVzIFWvd4ghDkqs4HoarY0sNfMlgXTyjjK9xjN2qDabwXv7QqOswY6NyPK8/+5nOuvvTr/Gel80Z0dj3HZjebsorJ2AUY7kYaFgVA85AtgxL0asLgwOaBnAMLJPdH6Yd94hvwuckdzls+euvjqojBx3OSoO1hM0g8QA/5hFztr/i5dfYeHe+QCsc4OOMOc+Qn2HWW55sAc5454IPBghnsTLxR0rBcP2uu5xyLTB+KTHJ6ezM4A7Y47s5hBVXU2dyauWH6Mov7ASatf88SRYhHfVF8+qMIkt+tH0hI5Uv45R5nWMBbAciSWgamOEntCWteUUZO/5C+eFbtYJB7RBjTkuqulMcr1NwaKblyfv2JazPu5t07IcguJzkyb+mS+x28NmNnh3zbm5L3U/KTCx7mIJvsQV5XjbK6KoXmGjJYKqqvG0OsYL78Xhja70+iippyHjqGvspn6M999iYSztoX42NLeoQ3HPqfQUTTEYZA50PHY72sFro3BIdbWJxlHWVAfyKpSF6wESZhANutSNdXUvDqqOwakyVm7bYLiAP6JZAKBv2K/Foqow+e/KRMHOGqPzo3eZhkUGgy80R9eMPMlrt0Ui+VPrJidmSirF1MgrrGYzatB2F+8S0Stu0J0ZWL9j2uWqa21gwky1zvSVc4rgjLpHSUKX8AnnRKBL5gECu8ME71rdfYHYdL/B3hC11ZO8VsBc5T0gQ+0XW5C0pZzyI8JyrfjoQuFr+00hFJnVjEvCvDvIrZVSJTeSeF4Mym0AFmei3TRXYWsvn8clQ+2cKPzanFpdaqzUISYbpC0heoONc73RPewjxxOqSxx5/Ee7AiViNTjVAKLPVIN7nG4o+xQd77bo1ZA8lhpGnxeybqS9bTUedGSDWizxqmjUWfredEXaOD3qczfWjYcbb29bPdJIPy8CwhbDAGWh/Y4WD3NCXIHWBd5qn8tB9OrE0iZFagR05JPcnq4SYiGD1dIiIrigdYSXfmOO/XRLswXqXiOJFIMSwSgIVNA==",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "Red, Yellow, Blue",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  }
+}

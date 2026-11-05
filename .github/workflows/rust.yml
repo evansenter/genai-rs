@@ -281,6 +281,46 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
+  # tests/captured_fixtures.rs replays real API responses captured into
+  # tests/fixtures/captured/. Weekly (and on demand) this re-captures them
+  # from the live API and replays the fresh copies, so a change in what the
+  # API sends goes red here instead of drifting past the offline suite. The
+  # fresh captures are uploaded either way; commit them to refresh the
+  # fixtures (#492).
+  captured-fixtures:
+    name: Captured Fixtures Refresh
+    needs: check
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.repository_owner == 'evansenter'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-mold
+      - name: Re-capture the fixtures from the live API
+        id: capture
+        run: |
+          set -euo pipefail
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset, so nothing can be captured"
+            exit 1
+          fi
+          python3 .github/scripts/capture_fixtures.py
+          git diff --stat -- tests/fixtures/captured
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Replay the fresh captures
+        run: cargo nextest run --test captured_fixtures
+      - name: Keep the fresh captures
+        if: ${{ !cancelled() && steps.capture.conclusion == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: captured-fixtures-${{ github.run_id }}
+          path: tests/fixtures/captured
+          retention-days: 30
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -654,7 +694,7 @@ jobs:
     # Every other job, so a job added later can't go red unreported.
     # tests/ci_coverage.rs enforces it. Push- or PR-only jobs report
     # `skipped` here, which neither escalates nor blocks the resolve.
-    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics]
+    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics]
     if: always() && github.event_name == 'schedule' && github.repository_owner == 'evansenter'
     runs-on: ubuntu-latest
     permissions:
