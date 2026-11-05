@@ -28,9 +28,10 @@ use crate::proptest_tests as strategies;
 use crate::steps::Step;
 use bodies::{
     agent_configs, agent_requests, agents, credential_requests, credential_updates,
-    environment_requests, environment_specs, file_search_store_requests, generation_configs,
-    inputs, model_requests, response_formats, safety_settings, samples, to_value, trigger_params,
-    trigger_updates, values, voice_requests, webhook_config, webhook_updates, webhooks,
+    document_imports, document_uploads, environment_requests, environment_specs,
+    file_search_store_requests, generation_configs, inputs, model_requests, response_formats,
+    safety_settings, samples, to_value, trigger_params, trigger_updates, values, voice_requests,
+    webhook_config, webhook_updates, webhooks,
 };
 use content::{contents, steps, tools};
 
@@ -85,6 +86,12 @@ const ALLOWED: &[Allowed] = &[
     ),
     ("interactions.GoogleSearchResult.title", NOT_SERVED_SEARCH),
     ("interactions.GoogleSearchResult.url", NOT_SERVED_SEARCH),
+    (
+        "legacy.ImportFileConfig.fileName",
+        "google-genai's `import_file` takes `file_name` as its own argument and \
+         sends it in the body beside the config's fields; the API requires it \
+         there (live 2026-11-05).",
+    ),
 ];
 
 /// `Place` fields beyond the bindings', echoed back only if served.
@@ -123,30 +130,20 @@ const NOT_SENT: &[Allowed] = &[
         "The crate sends speech_config as the list arm, accepted on every TTS model \
          (live 2026-09-24); the {speakers} object arm is read, never sent.",
     ),
+    (
+        "voices.VoiceInput.sample_audio",
+        "Output only: a sample sent on create is ignored, and the response carries \
+         one the API generated (live 2026-11-05). Read on `Voice::sample_audio`.",
+    ),
     // Not modeled yet: WP2 (#504).
-    ("agents.Agent.agent_config", GAP),
-    ("interactions.Environment.environment_id", GAP),
     ("interactions.CodeMenderAgentConfig.*", GAP_CODEMENDER),
     ("interactions.FindRequest.*", GAP_CODEMENDER),
     ("interactions.FixRequest.*", GAP_CODEMENDER),
     ("interactions.FileContent.*", GAP_CODEMENDER),
     ("interactions.SessionConfig.*", GAP_CODEMENDER),
-    ("legacy.CreateFileSearchStoreConfig.embeddingModel", GAP),
-    ("voices.VoiceInput.accent", GAP_VOICE),
-    ("voices.VoiceInput.context", GAP_VOICE),
-    ("voices.VoiceInput.description", GAP_VOICE),
-    ("voices.VoiceInput.gender", GAP_VOICE),
-    ("voices.VoiceInput.language_code", GAP_VOICE),
-    ("voices.VoiceInput.persona", GAP_VOICE),
-    ("voices.VoiceInput.pitch", GAP_VOICE),
-    ("voices.VoiceInput.region_code", GAP_VOICE),
-    ("voices.VoiceInput.sample_audio", GAP_VOICE),
 ];
 
-const GAP: &str = "Not modeled yet; WP2 of #504 (probe live before modeling, D-010).";
 const GAP_CODEMENDER: &str = "The CodeMender agent config is not modeled (#501); WP2.";
-const GAP_VOICE: &str = "Not on `VoiceSpec` yet; the API may treat some as output only. \
-     Probe live before modeling (D-010); WP2.";
 
 // =============================================================================
 // The table
@@ -291,6 +288,16 @@ fn cases() -> Vec<Case> {
             "CreateFileSearchStoreRequest",
             "legacy.CreateFileSearchStoreConfig",
             file_search_store_requests(),
+        ),
+        case(
+            "DocumentUpload",
+            "legacy.UploadToFileSearchStoreConfig",
+            document_uploads(),
+        ),
+        case(
+            "DocumentImport",
+            "legacy.ImportFileConfig",
+            document_imports(),
         ),
     ]
 }

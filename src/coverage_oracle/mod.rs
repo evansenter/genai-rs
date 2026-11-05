@@ -124,14 +124,6 @@ const UNMAPPED: &[Allowed] = &[
          `data:` line itself (src/http/sse_parser.rs), and the response side \
          checks InteractionSSEEvent.",
     ),
-    ("legacy.UploadToFileSearchStoreConfig", UPLOAD_CONFIG),
-    ("legacy.ChunkingConfig", UPLOAD_CONFIG),
-    ("legacy.WhiteSpaceConfig", UPLOAD_CONFIG),
-    (
-        "legacy.ImportFileConfig",
-        "The config of `file_search_stores.import_file`, which the crate does not \
-         model (docs/RESOURCES.md); WP2.",
-    ),
     (
         "types.Security",
         "The SDK's client credentials (api key, access token), not API surface.",
@@ -159,14 +151,6 @@ const UNMAPPED: &[Allowed] = &[
          `rotate_signing_secret` builds the body itself from its arguments.",
     ),
 ];
-
-#[cfg(not(feature = "strict-unknown"))]
-const UPLOAD_CONFIG: &str = "The document upload config of \
-     `file_search_stores.upload_to_file_search_store`. The crate's raw-protocol \
-     upload sends `displayName` as a query parameter and `mimeType` as the \
-     Content-Type, with no JSON body; `customMetadata` and `chunkingConfig` \
-     (with ChunkingConfig and WhiteSpaceConfig) are not modeled \
-     (docs/RESOURCES.md); WP2.";
 
 /// Every binding class is reached from a request case or a response target,
 /// or listed in [`UNMAPPED`] with its reason. The checks only see classes

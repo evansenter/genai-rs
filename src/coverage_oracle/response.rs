@@ -58,6 +58,10 @@ const ALLOWED: &[Allowed] = &[
         "legacy.Document.state=STATE_UNSPECIFIED",
         "The protobuf default; never served.",
     ),
+    (
+        "legacy.File.source=SOURCE_UNSPECIFIED",
+        "The protobuf default; never served.",
+    ),
     ("CreateAgentInteractionParams.created", TRIGGER_OUTPUT_ONLY),
     (
         "CreateAgentInteractionParams.environment_id",
@@ -120,10 +124,6 @@ const GAPS: &[Allowed] = &[
         "`StreamChunk::StepDelta` drops the event's `metadata.total_usage` (only \
          `interaction.completed` reads it); WP2.",
     ),
-    ("agents.Agent.agent_config", UNSEEN),
-    ("Agent.agent_config", UNSEEN),
-    ("interactions.Environment.environment_id", UNSEEN),
-    ("EnvironmentConfig.environment_id", UNSEEN),
     (
         "FileSearchResultDelta.result",
         "Opaque objects in the spec (`FileSearchResult` has no properties; the \
@@ -132,30 +132,13 @@ const GAPS: &[Allowed] = &[
          keeps any other key in its `extra` (#491; before, it was dropped). \
          Not seen filled live (src/content/results.rs, #429); WP2.",
     ),
-    // Files and File Search Stores.
+    // Files.
     (
-        "legacy.FileSearchStore.activeDocumentsCount",
-        "Served (live 2026-11-04, as a string int64); WP2.",
-    ),
-    (
-        "legacy.FileSearchStore.sizeBytes",
-        "Served (live 2026-11-04, as a string int64); WP2.",
-    ),
-    ("legacy.FileSearchStore.pendingDocumentsCount", UNSEEN),
-    ("legacy.FileSearchStore.failedDocumentsCount", UNSEEN),
-    ("legacy.Document.customMetadata", UNSEEN),
-    (
-        "legacy.File.updateTime",
-        "Served on every file (live 2026-11-04); WP2.",
-    ),
-    (
-        "legacy.File.source",
-        "Served on every file (live 2026-11-04: UPLOADED); WP2.",
-    ),
-    ("legacy.File.downloadUri", UNSEEN),
-    (
-        "legacy.FileStatus.details",
-        "`FileError` has no `details` and no `extra`, so the key is dropped; WP2.",
+        "legacy.File.downloadUri",
+        "Not served on an uploaded file, nor on one that failed processing (live \
+         2026-11-05). The bindings' `files.download` reads it on a generated \
+         file (`source` GENERATED), which only a video generation makes, so it \
+         is unprobed; it lands in `FileMetadata::extra` until it is seen.",
     ),
 ];
 
@@ -189,11 +172,9 @@ fn values() -> BTreeMap<&'static str, Value> {
             "EnvironmentConfig.env",
             json!({"PLAIN": {"value": "v"}, "SECRET": {"credential": "credentials/c"}}),
         ),
-        // A protobuf int64: the Files API sends it as a JSON string. The
-        // bindings type it `int` because google-genai converts it.
-        ("legacy.File.sizeBytes", json!("7")),
         // `dict[str, Any]` in the bindings; the API serves `videoDuration`,
-        // the one key `VideoMetadata` models (it keeps no others).
+        // the one key `VideoMetadata` models (any other lands in its
+        // `extra`).
         ("legacy.File.videoMetadata", json!({"videoDuration": "12s"})),
         // The spec types these as plain strings; the bindings enumerate
         // them, and each enumerated value is checked from there.
