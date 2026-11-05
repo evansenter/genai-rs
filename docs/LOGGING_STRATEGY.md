@@ -84,8 +84,9 @@ frame.
   from 1 per `Client`.
 - **Colors** (with the default-on `wire-color` feature): odd requests are
   yellow `[REQ#N]` / cyan `[RES#N]`, even ones green / magenta; SSE frames are
-  blue. Build with `default-features = false` for plain text and no
-  `colored` / `colored_json` dependencies.
+  blue. For plain text and no `colored` / `colored_json` dependencies, turn
+  the default features off and keep the HTTP ones:
+  `default-features = false, features = ["http2", "system-proxy", "charset"]`.
 - **Error responses** print a `<<< <status> ERROR` line, then `Error (<status>)`
   with the body (JSON pretty-printed; a non-JSON body is cut at 1,000 bytes).
 - **Base64 fields** (`data`, `signature`) are truncated to about 100 bytes.

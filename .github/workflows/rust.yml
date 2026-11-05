@@ -31,6 +31,21 @@ jobs:
       # tokio features are now named per use, so a missing one only shows here.
       - name: Check library without default features
         run: cargo check --lib --no-default-features
+      # What a release would ship (#501). Cargo.toml's `include` keeps the
+      # tests and their fixtures, CI, scripts and the library's unit-test
+      # sources out of the crate; this fails if one ships again, then builds
+      # the packaged crates the way crates.io would, so an include list that
+      # leaves out a file the library needs fails here, not at publish time.
+      - name: Package contents
+        run: |
+          set -euo pipefail
+          cargo package --list -p genai-rs > package-files.txt
+          if grep -nE '^(\.github|tests|scripts|fuzz|\.config|\.cargo|proptest-regressions)/|^(Makefile|CLAUDE\.md|examples/CLAUDE\.md)$|_tests\.rs$|(^|/)tests\.rs$|^src/(proptest_|test_subscriber\.rs|coverage_oracle/)' package-files.txt; then
+            echo "::error::cargo package would ship the test-only files above; exclude them in Cargo.toml's include list"
+            exit 1
+          fi
+          echo "$(wc -l < package-files.txt) files would ship"
+          cargo package --workspace
 
   test:
     name: Test Suite

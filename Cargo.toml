@@ -17,7 +17,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)"] 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.13", features = ["json", "rustls", "stream"] }
+# No default features either: reqwest's optional defaults (`http2`,
+# `system-proxy`, `charset`) are genai-rs features a consumer can turn off,
+# rather than forced on (#501). TLS stays rustls with the OS trust store.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 # No default features: each member names what it uses, so a consumer isn't
 # handed tokio's full feature set (rt-multi-thread, signal, process, ...).
 tokio = { version = "1.52", default-features = false }
@@ -45,6 +48,31 @@ documentation = "https://docs.rs/genai-rs"
 readme = "README.md"
 keywords = ["gemini", "google", "ai", "llm", "genai"]
 categories = ["api-bindings", "asynchronous"]
+# What `cargo package` ships: the library, its examples, and the Markdown
+# that src/lib.rs's cfg(doctest) module includes, so a downloaded crate's
+# doctests still build. Not the integration tests and their fixtures
+# (tests/fixtures/api_surface/ alone is ~280 KB), CI, scripts, or the
+# library's unit-test sources, which build only under cfg(test) (#501).
+# The `check` job fails if a test-only path ships again.
+include = [
+    "/Cargo.toml",
+    "/LICENSE",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/DECISIONS.md",
+    "/SECURITY.md",
+    "/TROUBLESHOOTING.md",
+    "/docs/*.md",
+    "/examples/**",
+    "!/examples/CLAUDE.md",
+    "/src/**/*.rs",
+    "!/src/**/*_tests.rs",
+    "!/src/**/tests.rs",
+    "!/src/proptest_*.rs",
+    "!/src/test_subscriber.rs",
+    "!/src/coverage_oracle/**",
+]
 
 # docs.rs builds with the antigravity feature (not all-features: that would
 # pull in strict-unknown, compiling the docs build with the crate's documented
@@ -106,7 +134,7 @@ sha2 = "0.11"
 syn = { workspace = true, features = ["full", "visit"] }
 
 [features]
-default = ["wire-color"]
+default = ["wire-color", "http2", "system-proxy", "charset"]
 
 ## Colored output for the LoudWirePrinter wire inspector (LOUD_WIRE=1).
 ##
@@ -114,6 +142,27 @@ default = ["wire-color"]
 ## `colored` and `colored_json` dependencies; wire output falls back to
 ## plain pretty-printed text.
 wire-color = ["dep:colored", "dep:colored_json"]
+
+## HTTP/2 to the API, negotiated over TLS (reqwest's `http2`).
+##
+## Enabled by default. Without it every request uses HTTP/1.1, which the
+## API also serves, and the `h2` crate is not built.
+http2 = ["reqwest/http2"]
+
+## Honor the system's proxy settings: the `HTTP_PROXY` / `HTTPS_PROXY` /
+## `NO_PROXY` environment variables, and the OS configuration on macOS and
+## Windows (reqwest's `system-proxy`).
+##
+## Enabled by default. Without it requests go direct unless a proxy is set
+## on the client.
+system-proxy = ["reqwest/system-proxy"]
+
+## Decode a response body in the charset its `Content-Type` names
+## (reqwest's `charset`, which builds `encoding_rs`).
+##
+## Enabled by default. Without it bodies are read as UTF-8, which is what
+## the API sends.
+charset = ["reqwest/charset"]
 
 ## Strict mode for unknown API values.
 ##

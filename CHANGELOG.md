@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
   with no timer at all, for tests on a paused tokio clock. A `Client`'s
   `Debug` output shows its connect timeout, which reqwest's does not.
+- Three crate features, `http2`, `system-proxy` and `charset`, each turning
+  on reqwest's feature of the same name. All three are on by default; see
+  Changed.
 
 ### Changed
 
@@ -246,6 +249,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without bound. The largest real events, measured live 2026-11-04 on
   `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
   and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
+- **Breaking: genai-rs no longer forces reqwest's default features on.**
+  It depends on reqwest with `default-features = false`, and reqwest's
+  `http2`, `system-proxy` and `charset` come through genai-rs's own default
+  features of the same names, so a consumer can turn them off. TLS is
+  rustls with the OS trust store, as before. With genai-rs's default
+  features nothing changes. A crate that sets `default-features = false` on
+  genai-rs (to drop `wire-color`) now also drops HTTP/2, the system proxy
+  settings (`HTTPS_PROXY` and the OS configuration) and charset decoding.
+  Migration: add `features = ["http2", "system-proxy", "charset"]` to keep
+  them.
+- The published crate holds the library, its examples and the guides its
+  doctests include, and no longer the integration tests, their fixtures, CI
+  files, scripts or the library's unit-test sources: 182 files and about
+  2.5 MB unpacked, down from 337 files and 5.0 MB.
 
 ### Fixed
 
