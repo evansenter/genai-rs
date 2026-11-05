@@ -943,8 +943,10 @@ let agent = AntigravityAgent::builder()
 - **`run_command`**: `RunCommandOptions::with_timeout` kills a command
   that runs longer; `with_daemons(true)` offers the model `IsDaemon` for
   dev servers and watchers; `with_sandbox(true)` runs commands in the OS
-  sandbox where there is one (`AntigravityAgent::sandbox_status()` says
-  whether there is, and `spawn()` warns when there is not).
+  sandbox (`AntigravityAgent::sandbox_status()` says whether there is one,
+  and `spawn()` warns when there is not). Where there is none, as on
+  GitHub's Ubuntu 24.04 runners, a sandboxed command fails rather than
+  running unsandboxed (harness 0.1.23, CI 2026-11-05).
 - **`with_session_continuation`**: `SessionContinuation::Resume` makes
   `spawn()` fail when the conversation id is not saved; `CreateOnly` when
   it is.

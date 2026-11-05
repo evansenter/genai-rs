@@ -299,9 +299,11 @@ impl RunCommandOptions {
         self
     }
 
-    /// Runs commands inside the OS sandbox where the platform has one. When
-    /// it has none, commands run unsandboxed; check
-    /// [`AntigravityAgent::sandbox_status`](super::AntigravityAgent::sandbox_status).
+    /// Runs commands inside the OS sandbox. Where the harness reports none
+    /// available ([`AntigravityAgent::sandbox_status`](super::AntigravityAgent::sandbox_status)
+    /// `available: Some(false)`, as on GitHub's Ubuntu 24.04 runners), a
+    /// command fails instead of running unsandboxed (harness 0.1.23, CI
+    /// 2026-11-05).
     #[must_use]
     pub fn with_sandbox(mut self, sandbox: bool) -> Self {
         self.sandbox = sandbox;

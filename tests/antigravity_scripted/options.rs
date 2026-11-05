@@ -531,12 +531,21 @@ async fn test_scripted_sandbox_confines_what_commands_write() {
             .expect("0.1.23 reports a sandbox status")
             .available;
         let told = function_response_text(&fake, 1);
+        println!("sandbox={sandbox}, available={available:?}");
         if sandbox && available == Some(true) {
             assert!(!file.exists(), "the sandbox let the write through: {told}");
             assert!(!told.contains("WROTE-6620"), "{told}");
+        } else if sandbox {
+            // Sandbox asked for on a host where the harness has none (GitHub's
+            // Ubuntu 24.04 runners report `available: false`): the command
+            // fails instead of running unsandboxed (CI, 2026-11-05).
+            assert!(
+                !file.exists(),
+                "an unavailable sandbox ran the write: {told}"
+            );
+            assert!(told.contains("\"error\""), "expected a tool error: {told}");
         } else {
-            // Unsandboxed, or no sandbox on this platform: the write runs.
-            println!("sandbox={sandbox}, available={available:?}");
+            // Unsandboxed: the write runs.
             assert!(file.exists(), "{told}");
             assert!(told.contains("WROTE-6620"), "{told}");
         }

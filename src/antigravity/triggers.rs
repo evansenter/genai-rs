@@ -332,6 +332,11 @@ const IGNORED_DIRS: &[&str] = &[
 /// `on_change` runs when the batch is about to be delivered, on the
 /// trigger's task: keep it quick.
 ///
+/// Edits the agent itself makes under `path` are reported too, so a trigger
+/// turn that writes there starts the next one: filter such changes in
+/// `on_change`, or watch a path the agent does not write. (The Python SDK's
+/// `watchfiles` behaves the same way.)
+///
 /// The baseline is the state of `path` when `on_file_change` is called, so
 /// a change made during `spawn()` or just after it is reported, with no
 /// wait for the watch to start. Taking it reads the tree once, on the
