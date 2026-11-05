@@ -150,15 +150,17 @@ let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clip
 use genai_rs::{Content, document_from_file};
 
 let pdf = document_from_file("report.pdf").await?;
-let notes = document_from_file("notes.md").await?; // text/markdown
+let notes = document_from_file("notes.md").await?; // sent as Content::text
 let inline_pdf = Content::document_data(base64_pdf, "application/pdf");
-let plain = Content::document_data(base64_text, "text/plain");
 ```
 
-The API accepts `application/pdf`, `text/plain` and `text/markdown` document
-content, and `document_from_file` sends those three (`.pdf`, `.txt`, `.md`).
-It rejects other text formats (CSV, JSON, HTML, XML) with a pointer to
-`Content::text()`; `document_from_file_with_mime` sends any MIME type as-is.
+`document_from_file` sends `.pdf` files as `application/pdf` document
+content, and `.txt` / `.md` files as text content with the file's UTF-8
+contents. Since 2026-11-04 the API rejects `text/plain` and `text/markdown`
+document content with a 400 ("Only application/pdf, text/csv, and supported
+Office/OpenDocument MIME types are supported", #514). It rejects other text
+formats (CSV, JSON, HTML, XML) with a pointer to `Content::text()`;
+`document_from_file_with_mime` sends any MIME type as-is.
 
 `examples/pdf_input.rs` is a runnable demo.
 

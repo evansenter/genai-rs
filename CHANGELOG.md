@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `document_from_file()` sends `.txt` and `.md` files as text content
+  (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
+  `text/markdown` document content, which the API rejects with a 400 since
+  2026-11-04. A file that isn't valid UTF-8 returns `GenaiError::InvalidInput`.
+  If you match on the returned `Content`, expect `Content::Text` for these
+  extensions. `document_from_file_with_mime()` is unchanged and still sends
+  any MIME type as a document (#514).
+
 ## [0.13.0] - 2026-11-03
 
 Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
