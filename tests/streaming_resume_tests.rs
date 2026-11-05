@@ -9,6 +9,10 @@
 //! Observed 2026-11-04: thought deltas carry an `event_id` too (the first id
 //! decoded to `0_thought_4:0`), so an id can come before any text.
 //!
+//! Every interaction a test starts is cancelled and deleted when it ends,
+//! pass, fail or timeout ([`cleaning_up`]): a background story left running
+//! keeps generating against the shared key (#501).
+//!
 //! ```bash
 //! cargo nextest run --test streaming_resume_tests --run-ignored all
 //! ```
@@ -16,16 +20,65 @@
 mod common;
 
 use common::{consume_stream, get_client, stateful_builder, with_timeout};
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use genai_rs::{Client, GenaiError, InteractionStatus};
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const STREAM_BUDGET: Duration = Duration::from_secs(300);
 
+/// The interactions a test started, for [`cleaning_up`] to remove.
+#[derive(Clone, Default)]
+struct Started(Arc<Mutex<Vec<String>>>);
+
+impl Started {
+    fn push(&self, id: &str) {
+        self.0
+            .lock()
+            .expect("id list poisoned")
+            .push(id.to_string());
+    }
+
+    fn ids(&self) -> Vec<String> {
+        self.0.lock().expect("id list poisoned").clone()
+    }
+}
+
+/// Runs `body` under the stream budget, then cancels and deletes every
+/// interaction it recorded in `Started`, including when it panics or runs
+/// out of time.
+async fn cleaning_up<F, Fut>(client: &Client, body: F)
+where
+    F: FnOnce(Started) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let started = Started::default();
+    let outcome = AssertUnwindSafe(with_timeout(STREAM_BUDGET, body(started.clone())))
+        .catch_unwind()
+        .await;
+    for id in started.ids() {
+        // A finished interaction answers the cancel with an error, which
+        // is fine: the delete is what matters.
+        let _ = client.interactions().cancel(&id).await;
+        match client.interactions().delete(&id).await {
+            Ok(_)
+            | Err(GenaiError::Api {
+                status_code: 404, ..
+            }) => {}
+            Err(e) => eprintln!("cleanup failed for interaction {id}: {e:?}"),
+        }
+    }
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 /// Starts a background interaction long enough to still be generating text
-/// when retrieval connects, returning its id. Only deltas streamed live carry
-/// an `event_id`, so a short answer finished before the connection yields one.
-async fn start_background(client: &Client) -> String {
+/// when retrieval connects, recording it in `started` and returning its id.
+/// Only deltas streamed live carry an `event_id`, so a short answer finished
+/// before the connection yields one.
+async fn start_background(client: &Client, started: &Started) -> String {
     let response = retry_request!([client] => {
         stateful_builder(&client)
             .with_text("Write a 2000-word story about a lighthouse keeper, in many short paragraphs.")
@@ -35,9 +88,11 @@ async fn start_background(client: &Client) -> String {
             .await
     })
     .expect("background create failed");
-    response
+    let id = response
         .id
-        .expect("background interaction should have an id")
+        .expect("background interaction should have an id");
+    started.push(&id);
+    id
 }
 
 #[tokio::test]
@@ -48,8 +103,10 @@ async fn test_interactions_stream_follows_background_interaction() {
         return;
     };
 
-    with_timeout(STREAM_BUDGET, async {
-        let id = start_background(&client).await;
+    let owned = client.clone();
+    cleaning_up(&client, |started| async move {
+        let client = owned;
+        let id = start_background(&client, &started).await;
         let result = consume_stream(client.interactions().stream(&id)).await;
 
         assert!(
@@ -80,10 +137,12 @@ async fn test_stream_resume_with_last_event_id() {
         return;
     };
 
-    with_timeout(STREAM_BUDGET, async {
+    let owned = client.clone();
+    cleaning_up(&client, |started| async move {
+        let client = owned;
         let mut seen = Vec::new();
         let (id, full, at) = loop {
-            let id = start_background(&client).await;
+            let id = start_background(&client, &started).await;
             let full = consume_stream(client.interactions().stream(&id)).await;
             let len = full.collected_text.len();
             let at = full
@@ -142,27 +201,33 @@ async fn test_interactions_stream_rejects_foreground_interaction() {
         return;
     };
 
-    let response = retry_request!([client] => {
-        stateful_builder(&client)
-            .with_text("Say hello.")
-            .create()
-            .await
-    })
-    .expect("create failed");
-    let id = response.id.expect("stored interaction should have an id");
+    let owned = client.clone();
+    cleaning_up(&client, |started| async move {
+        let client = owned;
+        let response = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Say hello.")
+                .create()
+                .await
+        })
+        .expect("create failed");
+        let id = response.id.expect("stored interaction should have an id");
+        started.push(&id);
 
-    let mut stream = client.interactions().stream(&id);
-    let first = stream.next().await;
-    println!("streaming a foreground interaction: {first:?}");
-    assert!(
-        matches!(
-            &first,
-            Some(Err(GenaiError::Api {
-                status_code: 400,
-                message,
-                ..
-            })) if message.contains("Streaming retrieval of interactions is not supported")
-        ),
-        "expected the API's 400 for streaming a foreground interaction, got: {first:?}"
-    );
+        let mut stream = client.interactions().stream(&id);
+        let first = stream.next().await;
+        println!("streaming a foreground interaction: {first:?}");
+        assert!(
+            matches!(
+                &first,
+                Some(Err(GenaiError::Api {
+                    status_code: 400,
+                    message,
+                    ..
+                })) if message.contains("Streaming retrieval of interactions is not supported")
+            ),
+            "expected the API's 400 for streaming a foreground interaction, got: {first:?}"
+        );
+    })
+    .await;
 }
