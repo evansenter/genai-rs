@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use common::http_stub::{Reply, Stub};
+use common::http_stub::{Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, CallableFunction, FunctionDeclaration, FunctionError, GenaiError,
@@ -69,25 +69,6 @@ async fn stream(stub: &Stub) -> Vec<Result<StreamEvent, GenaiError>> {
         .build()
         .unwrap();
     client.execute_stream(request).collect().await
-}
-
-/// Holds the paused clock still until `release` is called (from the stub's
-/// handler, once the request is in). Spawn it before sending.
-fn hold_clock() -> (
-    tokio::task::JoinHandle<()>,
-    impl Fn() + Send + Sync + 'static,
-) {
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let gate = tokio::task::spawn_blocking(move || {
-        let _ = rx.recv();
-    });
-    let tx = Mutex::new(Some(tx));
-    let release = move || {
-        if let Some(tx) = tx.lock().unwrap().take() {
-            let _ = tx.send(());
-        }
-    };
-    (gate, release)
 }
 
 // =============================================================================
