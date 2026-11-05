@@ -38,7 +38,9 @@ pub struct AntigravityAgent {
     pub(super) harness: HarnessProcess,
     pub(super) session: Session,
     pub(super) dispatcher: ToolDispatcher,
-    pub(super) policy_engine: PolicyEngine,
+    /// Shared with hook calls on their own threads (see
+    /// `turn_requests::run_hook`).
+    pub(super) policy_engine: Arc<PolicyEngine>,
     pub(super) pre_tool: Option<PreToolHook>,
     pub(super) questions: Option<QuestionHook>,
     pub(super) post_tool: Option<PostToolHook>,
@@ -123,6 +125,27 @@ impl AntigravityAgent {
     #[must_use]
     pub fn initial_history(&self) -> &[StepUpdate] {
         &self.initial_history
+    }
+
+    /// The `google-antigravity` version of the running harness, read from
+    /// the wheel install the binary sits in. `None` when the binary is not
+    /// inside one (a hand-placed copy).
+    ///
+    /// `spawn()` only warns when this differs from
+    /// [`SUPPORTED_HARNESS_VERSION`](super::SUPPORTED_HARNESS_VERSION). To
+    /// refuse a mismatch, compare the two and shut the agent down:
+    ///
+    /// ```rust,ignore
+    /// use genai_rs::antigravity::SUPPORTED_HARNESS_VERSION;
+    ///
+    /// if agent.harness_version() != Some(SUPPORTED_HARNESS_VERSION) {
+    ///     agent.shutdown().await?;
+    ///     return Err("unsupported localharness version".into());
+    /// }
+    /// ```
+    #[must_use]
+    pub fn harness_version(&self) -> Option<&str> {
+        self.harness.version()
     }
 
     /// Returns a handle that can cancel an in-flight turn.
@@ -288,9 +311,13 @@ impl AntigravityAgent {
             if turn.finished {
                 return Ok(None);
             }
-            let next = self.session.next_event();
-            let event = match turn.deadline {
-                Some(deadline) => match tokio::time::timeout_at(deadline, next).await {
+            // The deadline covers handling the event as well as waiting for
+            // it: custom tools and hooks run inside `process_event`, and a
+            // hung one would otherwise hold the turn past its budget.
+            let deadline = turn.deadline;
+            let step = self.receive_and_process(turn);
+            match deadline {
+                Some(deadline) => match tokio::time::timeout_at(deadline, step).await {
                     Ok(result) => result?,
                     Err(_) => {
                         // The harness is still driving this turn. Without a
@@ -300,22 +327,26 @@ impl AntigravityAgent {
                         self.halt_and_drain("recovering from a turn timeout").await;
                         let stderr = self.harness.stderr_tail().await;
                         return Err(AntigravityError::Timeout {
-                            operation: turn.stall_diagnosis(&stderr),
+                            operation: turn.stall_diagnosis(&stderr, self.harness.version()),
                             timeout: turn.timeout.unwrap_or_default(),
                         });
                     }
                 },
-                None => next.await?,
-            };
-            let Some(event) = event else {
-                let stderr = self.harness.stderr_tail().await;
-                return Err(AntigravityError::ConnectionClosed {
-                    message: "harness closed the WebSocket mid-turn".to_string(),
-                    stderr,
-                });
-            };
-            self.process_event(event, turn).await?;
+                None => step.await?,
+            }
         }
+    }
+
+    /// Waits for the next harness event and handles it.
+    async fn receive_and_process(&mut self, turn: &mut TurnState) -> Result<(), AntigravityError> {
+        let Some(event) = self.session.next_event().await? else {
+            let stderr = self.harness.stderr_tail().await;
+            return Err(AntigravityError::ConnectionClosed {
+                message: "harness closed the WebSocket mid-turn".to_string(),
+                stderr,
+            });
+        };
+        self.process_event(event, turn).await
     }
 
     /// Marks the agent busy and, when a trigger delivered since the last
@@ -382,7 +413,19 @@ impl AntigravityAgent {
                     return;
                 }
                 Ok(Ok(Some(event))) => {
-                    match self.process_event(event, &mut state).await {
+                    // Bounded like the wait: answering a request can run a
+                    // hook, and a hung one must not hold the drain open.
+                    let processed =
+                        tokio::time::timeout_at(deadline, self.process_event(event, &mut state))
+                            .await;
+                    let Ok(processed) = processed else {
+                        tracing::warn!(
+                            "Drain budget exhausted while answering a harness request ({why}); \
+                             the next turn may still observe stale events."
+                        );
+                        return;
+                    };
+                    match processed {
                         Ok(()) => state.queue.clear(),
                         Err(AntigravityError::Turn(message)) => {
                             // The stale turn's cancellation or its own

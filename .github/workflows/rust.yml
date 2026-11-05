@@ -76,7 +76,16 @@ jobs:
         run: pip install google-antigravity==0.1.23
       - name: Run unit tests with antigravity feature
         run: cargo nextest run --workspace --features antigravity
-      # The only end-to-end guard against a harness protocol change. Key-gated
+      # The real harness against a scripted local model
+      # (tests/common/fake_gemini.rs): builtins, hooks, containment,
+      # cancellation, triggers. Deterministic and key-free, so it runs on
+      # every PR, forks included, as part of this required check. The key is
+      # blanked on purpose: nothing here may reach the real API.
+      - name: Run scripted harness tests (no API key)
+        run: cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_scripted)'
+        env:
+          GEMINI_API_KEY: ""
+      # The only live end-to-end guard against a harness protocol change. Key-gated
       # per step, not per job, so forks still run the unit tests. Only a fork's
       # pull_request lacks the secret; owner check: push, schedule and
       # workflow_dispatch also fire on a fork's own main, where it is absent.
