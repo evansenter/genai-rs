@@ -108,8 +108,14 @@ Each streamed image arrives whole in one `image` delta that names its
 `gemini-3.1-flash-image`, three streams, one with four images). An image
 delta that names a `mime_type` or `uri` starts a new `Content::Image` block,
 so two images in one step would also stay two blocks; that shape has not
-been observed. Audio, video and document data deltas concatenate into the
-last block of their kind. Fields a delta carries that the crate does not
+been observed. Streamed TTS is the opposite case: one recording arrives as
+many raw PCM `audio` deltas in one step, each naming the same `mime_type`,
+`sample_rate` and `channels` (verified 2026-11-05, `DEFAULT_TTS_MODEL`:
+`audio/l16`, 24000 Hz, mono, about 240 deltas for a sentence; the
+non-streamed answer is `audio/wav`). An audio delta continues the last
+audio block unless it names a `uri` or a different format, so the
+`Completed` response holds the one recording. Video and document deltas,
+which no model streams yet, follow the image rule. Fields a delta carries that the crate does not
 model land in the `extra` map of the block or step it builds, so the
 assembled steps replay as history exactly as a non-streamed response's
 would.

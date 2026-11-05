@@ -789,6 +789,65 @@ mod text_to_speech {
         .await;
     }
 
+    /// Streamed TTS arrives as many raw PCM deltas in one step, each naming
+    /// the same format (live 2026-11-05: `audio/l16`, 24000 Hz, mono), and
+    /// the completed response assembles them into one audio block whose
+    /// bytes are every chunk's, in order.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_streamed_text_to_speech_is_one_audio_block() {
+        use base64::Engine;
+        use futures_util::StreamExt;
+        use genai_rs::{StepDelta, StreamChunk};
+
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        with_timeout(extended_test_timeout(), async {
+            let mut stream = client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_TTS_MODEL)
+                .with_text("Say slowly: the quick brown fox jumps over the lazy dog.")
+                .with_audio_output()
+                .with_voice("Kore")
+                .with_store_disabled()
+                .create_stream();
+            let engine = base64::engine::general_purpose::STANDARD;
+            let mut streamed = Vec::new();
+            let mut chunks = 0;
+            let mut completed = None;
+            while let Some(event) = stream.next().await {
+                match event.expect("stream failed").chunk {
+                    StreamChunk::StepDelta {
+                        delta:
+                            StepDelta::Audio {
+                                data: Some(data), ..
+                            },
+                        ..
+                    } => {
+                        chunks += 1;
+                        streamed.extend(engine.decode(data).expect("chunk decodes"));
+                    }
+                    StreamChunk::Completed(response) => completed = Some(response),
+                    _ => {}
+                }
+            }
+            let response = completed.expect("no completed event");
+            assert!(chunks > 1, "expected several audio deltas, got {chunks}");
+            let audios: Vec<_> = response.audios().collect();
+            assert_eq!(
+                audios.len(),
+                1,
+                "{chunks} chunks became {} blocks",
+                audios.len()
+            );
+            assert_eq!(audios[0].bytes().expect("audio decodes"), streamed);
+        })
+        .await;
+    }
+
     /// An explicit `SpeechConfig` (voice + language) is accepted.
     #[tokio::test]
     #[ignore = "Requires API key"]

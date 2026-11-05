@@ -391,6 +391,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A per-modality usage entry (`ModalityTokens`) without a `tokens` count
   reads as 0 (protobuf JSON leaves out a zero), and one without a
   `modality` as an empty one. Either used to fail the whole response.
+- Streaming: the assembled `Completed` response keeps media deltas apart
+  by what they are. Streamed TTS sends one recording as hundreds of raw PCM
+  deltas in one step, each naming the same format (live 2026-11-05,
+  `DEFAULT_TTS_MODEL`: `audio/l16`, 24000 Hz, mono), so an audio delta
+  continues the last audio block unless it names a `uri` or a different
+  `mime_type`, `sample_rate` or `channels`; before, every audio delta joined
+  the last audio block whatever its format. A video or document delta now
+  follows the image rule: one that names a `mime_type` or `uri` starts a
+  block, so two whole files in one step no longer merge into one corrupt
+  string (no model streams either to observe, 2026-11-05). A base64 chunk
+  that ends in padding is joined to the next as bytes, so the result stays
+  valid base64; no live chunk has carried padding.
 
 ## [0.13.0] - 2026-11-03
 

@@ -188,66 +188,6 @@ fn test_accumulator_code_execution_delta_with_an_unknown_language() {
 }
 
 #[test]
-fn test_accumulator_video_and_document_deltas_accumulate() {
-    let mut acc = StepAccumulator::new();
-    acc.start(0, Step::model_output(vec![]));
-    acc.apply_delta(
-        0,
-        &StepDelta::Video {
-            data: Some("VV".into()),
-            uri: None,
-            mime_type: Some("video/mp4".into()),
-            resolution: None,
-            extra: Default::default(),
-        },
-    );
-    acc.apply_delta(
-        0,
-        &StepDelta::Video {
-            data: Some("WW".into()),
-            uri: None,
-            mime_type: Some("video/mp4".into()),
-            resolution: None,
-            extra: Default::default(),
-        },
-    );
-    acc.apply_delta(
-        0,
-        &StepDelta::Document {
-            data: Some("DD".into()),
-            uri: None,
-            mime_type: Some("application/pdf".into()),
-            extra: Default::default(),
-        },
-    );
-    acc.apply_delta(
-        0,
-        &StepDelta::Document {
-            data: Some("EE".into()),
-            uri: None,
-            mime_type: Some("application/pdf".into()),
-            extra: Default::default(),
-        },
-    );
-    acc.stop(0);
-    let steps = acc.finish();
-    match &steps[0] {
-        Step::ModelOutput { content, .. } => {
-            assert_eq!(content.len(), 2);
-            match &content[0] {
-                Content::Video { data, .. } => assert_eq!(data.as_deref(), Some("VVWW")),
-                other => panic!("Expected Video, got {other:?}"),
-            }
-            match &content[1] {
-                Content::Document { data, .. } => assert_eq!(data.as_deref(), Some("DDEE")),
-                other => panic!("Expected Document, got {other:?}"),
-            }
-        }
-        other => panic!("Expected ModelOutput, got {other:?}"),
-    }
-}
-
-#[test]
 fn test_accumulator_image_uri_delta_pushes_new_block() {
     // Deltas without inline data (e.g. URI references) must not merge
     // into the previous block.
@@ -608,4 +548,79 @@ fn test_accumulator_file_search_delta_without_results_adds_nothing() {
         serde_json::to_value(&acc.finish()[0]).unwrap(),
         json!({"type": "file_search_result", "call_id": "c1", "signature": "c2ln"})
     );
+}
+
+/// Feeds `deltas` (wire JSON) into one `model_output` step and returns its
+/// content blocks, serialized.
+fn stream_blocks(deltas: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut acc = StepAccumulator::new();
+    acc.start(0, Step::model_output(vec![]));
+    for delta in deltas {
+        acc.apply_delta(0, &serde_json::from_value(delta.clone()).unwrap());
+    }
+    acc.stop(0);
+    let steps = acc.finish();
+    steps[0]
+        .content()
+        .unwrap()
+        .iter()
+        .map(|c| serde_json::to_value(c).unwrap())
+        .collect()
+}
+
+#[test]
+fn test_accumulator_streamed_tts_audio_is_one_block() {
+    // The live shape (2026-11-05, gemini-3.8-flash-tts): every chunk names
+    // the same format.
+    let chunk = |data: &str| {
+        json!({"type": "audio", "mime_type": "audio/l16", "data": data,
+               "channels": 1, "sample_rate": 24000})
+    };
+    let blocks = stream_blocks(&[chunk("AAAA"), chunk("BBBB"), chunk("CCCC")]);
+    assert_eq!(
+        blocks,
+        [
+            json!({"type": "audio", "mime_type": "audio/l16", "data": "AAAABBBBCCCC",
+                "channels": 1, "sample_rate": 24000})
+        ]
+    );
+}
+
+#[test]
+fn test_accumulator_audio_in_another_format_starts_a_block() {
+    let blocks = stream_blocks(&[
+        json!({"type": "audio", "mime_type": "audio/l16", "data": "AAAA"}),
+        json!({"type": "audio", "data": "BBBB"}),
+        json!({"type": "audio", "mime_type": "audio/wav", "data": "CCCC"}),
+        json!({"type": "audio", "mime_type": "audio/wav", "data": "DDDD", "sample_rate": 16000}),
+    ]);
+    let data: Vec<&str> = blocks.iter().map(|b| b["data"].as_str().unwrap()).collect();
+    // A delta naming no format continues; a new mime type or rate does not.
+    assert_eq!(data, ["AAAABBBB", "CCCC", "DDDD"]);
+}
+
+#[test]
+fn test_accumulator_whole_videos_and_documents_stay_separate() {
+    let blocks = stream_blocks(&[
+        json!({"type": "video", "mime_type": "video/mp4", "data": "AAAA"}),
+        json!({"type": "video", "data": "BBBB"}),
+        json!({"type": "video", "mime_type": "video/mp4", "data": "CCCC"}),
+        json!({"type": "document", "mime_type": "application/pdf", "data": "DDDD"}),
+        json!({"type": "document", "mime_type": "application/pdf", "data": "EEEE"}),
+    ]);
+    let data: Vec<&str> = blocks.iter().map(|b| b["data"].as_str().unwrap()).collect();
+    assert_eq!(data, ["AAAABBBB", "CCCC", "DDDD", "EEEE"]);
+}
+
+#[test]
+fn test_accumulator_joins_padded_base64_as_bytes() {
+    use base64::Engine;
+    let engine = base64::engine::general_purpose::STANDARD;
+    // "a" and "bc" encode with padding; their text concatenation is invalid.
+    let blocks = stream_blocks(&[
+        json!({"type": "audio", "mime_type": "audio/l16", "data": engine.encode("a")}),
+        json!({"type": "audio", "mime_type": "audio/l16", "data": engine.encode("bc")}),
+    ]);
+    let joined = engine.decode(blocks[0]["data"].as_str().unwrap()).unwrap();
+    assert_eq!(joined, b"abc");
 }
