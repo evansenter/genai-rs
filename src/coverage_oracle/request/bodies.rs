@@ -220,6 +220,11 @@ pub(super) fn environment_specs() -> Vec<EnvironmentSpec> {
     vec![
         EnvironmentSpec::Id("environments/e".into()),
         EnvironmentSpec::Remote(remote_environment()),
+        // The allowlist's `Disabled` arm (#489).
+        EnvironmentSpec::Remote(RemoteEnvironment {
+            network: Some(NetworkConfig::AllowlistDisabled),
+            ..remote_environment()
+        }),
     ]
 }
 
@@ -402,6 +407,12 @@ pub(super) fn environment_requests() -> Vec<Value> {
             from_environment: None,
             sources: None,
             network: Some(NetworkConfig::Disabled),
+            extra: serde_json::Map::new(),
+        }),
+        to_value(&CreateEnvironmentRequest {
+            from_environment: None,
+            sources: None,
+            network: Some(NetworkConfig::AllowlistDisabled),
             extra: serde_json::Map::new(),
         }),
     ]

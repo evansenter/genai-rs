@@ -2073,6 +2073,7 @@ fn arb_environment_source() -> impl Strategy<Value = EnvironmentSource> {
 fn arb_network_config() -> impl Strategy<Value = NetworkConfig> {
     prop_oneof![
         Just(NetworkConfig::Disabled),
+        Just(NetworkConfig::AllowlistDisabled),
         proptest::collection::vec(
             (
                 arb_identifier(),
