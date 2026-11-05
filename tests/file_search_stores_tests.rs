@@ -168,11 +168,18 @@ async fn test_store_lifecycle() {
             );
             assert!(store.display_name.is_some());
             assert!(store.create_time.is_some());
-            // The default embedding model (live 2026-11-05). An empty store
-            // carries no document counts.
-            assert_eq!(
-                store.embedding_model.as_deref(),
-                Some("models/gemini-embedding-001")
+            // A store created without one reports the server's default
+            // embedding model, which is the server's to change
+            // (`models/gemini-embedding-001` live 2026-11-05, recorded in
+            // docs/ENUM_WIRE_FORMATS.md). An empty store carries no
+            // document counts.
+            assert!(
+                store
+                    .embedding_model
+                    .as_deref()
+                    .is_some_and(|model| model.starts_with("models/")),
+                "{:?}",
+                store.embedding_model
             );
             assert_eq!(store.active_documents_count, None);
 
