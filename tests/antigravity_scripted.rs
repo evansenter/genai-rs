@@ -114,6 +114,8 @@ mod options;
 mod parity;
 #[path = "antigravity_scripted/policies.rs"]
 mod policies;
+#[path = "antigravity_scripted/subagents.rs"]
+mod subagents;
 #[path = "antigravity_scripted/triggers.rs"]
 mod triggers;
 

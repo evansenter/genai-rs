@@ -326,8 +326,8 @@ transports feed one canonical debugging surface:
   backend and tool errors, the turn deadline over a hung async tool, a
   blocking sync tool and a blocking hook, the key-free harness environment
   under a custom host, the process-tree kill, and every Python SDK option
-  the bridge models (`tests/antigravity_scripted/`: options, lifecycle
-  hooks, policies, triggers, and the parity-table guard). This replaced
+  the bridge models (`tests/antigravity_scripted/`: options, subagents,
+  lifecycle hooks, policies, triggers, and the parity-table guard). This replaced
   the planned mockable transport trait: it tests the bridge *and* the
   harness behavior it depends on, which a mock of the socket could not. CI runs it in the
   required `Test Suite (antigravity)` job with the key blanked, forks

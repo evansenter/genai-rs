@@ -661,7 +661,7 @@ harness option setters), `instructions.rs` (`SystemInstructions`),
 `SubagentSkills`, `SessionContinuation`), `lifecycle.rs` (answers to the
 lifecycle hooks), `protocol/options.rs` (the `HarnessConfig` option
 messages), and `tests/antigravity_scripted/` (the scripted suite's option,
-hook, policy, trigger and parity tests, compiled into the
+subagent, hook, policy, trigger and parity tests, compiled into the
 `antigravity_scripted` binary through `#[path]`).
 
 **Consequences.** Links to `src/antigravity/builder.rs:<line>`, or to the

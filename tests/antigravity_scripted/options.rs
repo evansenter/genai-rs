@@ -8,7 +8,6 @@ use genai_rs::antigravity::{
     Budget, InlineSkill, McpServer, RetryConfig, RunCommandOptions, SessionContinuation, Subagent,
     SystemInstructions,
 };
-use std::sync::atomic::AtomicUsize;
 
 // =============================================================================
 // System instructions (item 1)
@@ -177,82 +176,6 @@ async fn test_scripted_generate_image_calls_the_image_model() {
             .iter()
             .map(|r| &r.target)
             .collect::<Vec<_>>()
-    );
-    agent.shutdown().await.expect("shutdown");
-}
-
-// =============================================================================
-// Subagent controls (item 3)
-// =============================================================================
-
-#[tokio::test]
-#[ignore = "Requires localharness binary"]
-async fn test_scripted_subagent_controls_shape_tools_and_models() {
-    let main_calls = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&main_calls);
-    let fake = FakeGemini::routed(move |request, _| {
-        if request.target.contains("scripted-subagent-model") {
-            return ModelTurn::text("sub-done-5521");
-        }
-        match counter.fetch_add(1, Ordering::SeqCst) {
-            0 => ModelTurn::call(
-                "invoke_subagent",
-                json!({"Subagents": [{
-                    "TypeName": "helper", "Prompt": "say done", "Role": "Helper"
-                }]}),
-            ),
-            _ => ModelTurn::text("delegated"),
-        }
-    })
-    .await;
-    let mut agent = scripted_agent(&fake)
-        .add_subagent(
-            Subagent::new("helper")
-                .with_description("Says done.")
-                .with_model("scripted-subagent-model"),
-        )
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
-        .add_policy(policy::allow_all())
-        .spawn()
-        .await
-        .expect("spawn");
-    agent.chat("delegate").await.expect("turn");
-    // define_subagent is off by default; the rest of the subagent tools
-    // are there.
-    let tools = fake.tool_names(0);
-    assert!(tools.contains(&"invoke_subagent".to_string()), "{tools:?}");
-    assert!(!tools.contains(&"define_subagent".to_string()), "{tools:?}");
-    // The subagent ran on its own model.
-    assert!(
-        fake.wait_for_requests(3, Duration::from_secs(10)).await,
-        "the subagent never called its model"
-    );
-    assert!(
-        fake.requests().iter().any(|r| r
-            .target
-            .starts_with("/v1beta/models/scripted-subagent-model:")),
-        "{:?}",
-        fake.requests()
-            .iter()
-            .map(|r| &r.target)
-            .collect::<Vec<_>>()
-    );
-    agent.shutdown().await.expect("shutdown");
-
-    // Opting in offers define_subagent again.
-    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
-    let mut agent = scripted_agent(&fake)
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
-        .with_define_subagent_tool(true)
-        .add_policy(policy::allow_all())
-        .spawn()
-        .await
-        .expect("spawn");
-    agent.chat("hi").await.expect("turn");
-    assert!(
-        fake.tool_names(0).contains(&"define_subagent".to_string()),
-        "{:?}",
-        fake.tool_names(0)
     );
     agent.shutdown().await.expect("shutdown");
 }
@@ -566,17 +489,59 @@ async fn test_scripted_session_continuation_resume_needs_a_saved_conversation() 
     assert!(stderr.contains("cannot resume"), "{stderr}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
-async fn test_scripted_sandbox_status_is_reported() {
-    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
-    let agent = scripted_agent(&fake).spawn().await.expect("spawn");
-    let status = agent
-        .sandbox_status()
-        .expect("0.1.23 reports a sandbox status");
-    println!("sandbox status: {status:?}");
-    assert!(status.available.is_some());
-    agent.shutdown().await.expect("shutdown");
+async fn test_scripted_sandbox_confines_what_commands_write() {
+    // The sandbox lets a command write to the workspace and the temp
+    // directories, so the probe writes under `target/` instead: outside
+    // both, and gitignored.
+    let workspace = scratch_dir("agy-scripted-sandbox");
+    let ws = workspace.path().canonicalize().unwrap();
+    let target_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+    std::fs::create_dir_all(&target_dir).unwrap();
+    let outside = tempfile::Builder::new()
+        .prefix("agy-sandbox-probe")
+        .tempdir_in(&target_dir)
+        .expect("create probe dir");
+    let file = outside.path().canonicalize().unwrap().join("written.txt");
+    let write = format!("echo hi > '{}' && echo WROTE-6620", file.display());
+
+    for sandbox in [false, true] {
+        let _ = std::fs::remove_file(&file);
+        let fake = FakeGemini::start(vec![
+            run_command(&write, &ws, 5000),
+            ModelTurn::text("done"),
+        ])
+        .await;
+        let mut agent = scripted_agent(&fake)
+            .add_workspace(ws.to_string_lossy())
+            .with_capabilities(
+                Capabilities::read_only()
+                    .enable(BuiltinTool::RunCommand)
+                    .with_run_command(RunCommandOptions::new().with_sandbox(sandbox)),
+            )
+            .add_policy(policy::allow_all())
+            .spawn()
+            .await
+            .expect("spawn");
+        agent.chat("write").await.expect("turn");
+        let available = agent
+            .sandbox_status()
+            .expect("0.1.23 reports a sandbox status")
+            .available;
+        let told = function_response_text(&fake, 1);
+        if sandbox && available == Some(true) {
+            assert!(!file.exists(), "the sandbox let the write through: {told}");
+            assert!(!told.contains("WROTE-6620"), "{told}");
+        } else {
+            // Unsandboxed, or no sandbox on this platform: the write runs.
+            println!("sandbox={sandbox}, available={available:?}");
+            assert!(file.exists(), "{told}");
+            assert!(told.contains("WROTE-6620"), "{told}");
+        }
+        agent.shutdown().await.expect("shutdown");
+    }
 }
 
 #[tokio::test]

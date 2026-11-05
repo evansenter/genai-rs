@@ -98,8 +98,8 @@ answers by request rather than by position, and `system_prompt(n)` and
 `tool_names(n)` show what call *n* carried.
 
 The Python SDK options the bridge models are proved in
-`tests/antigravity_scripted/` (options, lifecycle hooks, policies,
-triggers). `parity.rs` holds the guard on the parity table in
+`tests/antigravity_scripted/` (options, subagents, lifecycle hooks,
+policies, triggers). `parity.rs` holds the guard on the parity table in
 `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`: `.github/scripts/dump_sdk_options.py`
 reads the installed wheel's sources with `ast` (never importing them), and
 the test fails when the wheel exposes an option the table lacks or the
