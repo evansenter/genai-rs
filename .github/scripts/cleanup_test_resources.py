@@ -2,9 +2,9 @@
 """Delete the resources genai-rs's live tests leaked on the shared test key.
 
 A live test deletes what it creates, but a test that dies first (a timeout,
-a panic before its guard, a cancelled job) leaves it behind, and nothing
-expires on its own: on 2026-11-03 the key held 99 environments, all
-test-created, some from July (#492). This runs on a schedule
+a panic before its guard, a cancelled job) leaves it behind, and apart from
+uploaded files nothing it creates expires on its own: on 2026-11-03 the key
+held 99 environments, all test-created, some from July (#492). This runs on a schedule
 (`test-resource-janitor.yml`) and deletes only resources that carry a live
 test's marker, and only once they are older than `--min-age-hours`, so a
 run never pulls a resource out from under a test still using it.
@@ -37,8 +37,13 @@ Usage:
   cleanup_test_resources.py --dry-run | --delete
                             [--min-age-hours N] [--kinds a,b] [--base-url URL]
 
-`--dry-run` lists what would be deleted and deletes nothing. Needs
-GEMINI_API_KEY. Exits 1 when a list or a delete failed, 2 on a usage error.
+`--dry-run` lists what would be deleted and deletes nothing. A delete
+that answers 404 counts as done: the resource is already gone (a test's own
+cleanup got there first, or a retried delete whose first try went through).
+Credentials and webhooks answer a delete of a missing id with 404;
+environments, agents and triggers with 200 (2026-11-05).
+Needs GEMINI_API_KEY. Exits 1 when a list or a delete failed, 2 on a usage
+error.
 """
 
 from __future__ import annotations
@@ -81,7 +86,9 @@ MAX_ATTEMPTS = 4
 
 
 class ApiError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 class Api:
@@ -105,7 +112,7 @@ class Api:
                 if retryable and attempt < MAX_ATTEMPTS:
                     time.sleep(retry_delay(e.headers.get("Retry-After"), attempt))
                     continue
-                raise ApiError(f"{method} {path}: HTTP {e.code}: {detail}") from None
+                raise ApiError(f"{method} {path}: HTTP {e.code}: {detail}", e.code) from None
             except (urllib.error.URLError, TimeoutError) as e:
                 if attempt < MAX_ATTEMPTS:
                     time.sleep(retry_delay(None, attempt))
@@ -352,8 +359,14 @@ def run(args) -> int:
                 try:
                     api.call("DELETE", path, query)
                 except ApiError as e:
-                    print(f"::error::{name}/{ident}: delete failed: {e}")
-                    failed += 1
+                    if e.status != 404:
+                        print(f"::error::{name}/{ident}: delete failed: {e}")
+                        failed += 1
+                        continue
+                    # Gone already: a retry after a delete that went through
+                    # but answered 5xx, or the test's own cleanup.
+                    removed += 1
+                    print(f"{'gone':<8} {name}/{ident}: {reason}, created {when}; already deleted (404)")
                     continue
             removed += 1
             print(f"{verb:<8} {name}/{ident}: {reason}, created {when}")

@@ -189,6 +189,20 @@ else
   failures=$((failures + 1))
 fi
 
+# --- A delete that went through but answered 500 is retried into a 404:
+#     the resource is gone, so it counts as deleted and the run stays green
+#     (a red scheduled run would open an escalation issue for nothing).
+jq '. + {"DELETE /v1beta/webhooks/wh-test-endpoint": [
+      {"status": 500, "body": {"error": {"message": "backend"}}},
+      {"status": 404, "body": {"error": {"message": "not found"}}}]}' \
+  "$FIXTURES/routes.json" > "$WORK/routes-delete-404.json"
+start_server "$WORK/routes-delete-404.json"
+run_janitor --delete --kinds webhooks
+expect_rc     "retried delete into a 404: exits 0" 0
+expect_output "retried delete into a 404: reported as already gone" \
+  "gone     webhooks/wh-test-endpoint: the test webhook endpoint, created 2026-11-01T01:00:00+00:00; already deleted (404)"
+expect_output "retried delete into a 404: counted as deleted" "| webhooks | 4 | 3 | 2 | 1 | 0 |"
+
 # --- A 429 honours Retry-After and then succeeds.
 jq '. + {"GET /v1beta/credentials?page_size=100": [
       {"status": 429, "headers": {"Retry-After": "0"}, "body": {"error": {"message": "slow down"}}},
