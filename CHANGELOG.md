@@ -69,14 +69,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `&FileMetadata`, or a `DocumentImport` that adds custom metadata, a
   chunking config and the wait's `PollOptions` (default 60 s, every
   500 ms). The document is named after the file's ID and is a copy, so
-  deleting the file leaves it (verified live 2026-11-05).
+  deleting the file leaves it. The document exists, pending, under the
+  operation's ID as soon as the import is accepted, and a second import
+  makes a second document, so a timeout or a failed poll returns an error
+  that names the operation and that document, and says not to import again
+  (all verified live 2026-11-05).
 - `DocumentUpload` wraps a `FileUpload` with the custom metadata and
   chunking config of a document `FileSearchStores::upload` adds.
   `CustomMetadata` (`string`, `numeric`, `string_list`, with `StringList`
   for the last) and `ChunkingConfig::white_space(max_tokens_per_chunk,
   max_overlap_tokens)` (with `WhiteSpaceConfig`) build them, and
   `FileSearchDocument::custom_metadata` reads them back, in the order sent
-  (verified live 2026-11-05).
+  (verified live 2026-11-05). An upload or import whose white-space overlap
+  is not smaller than its chunk fails with `GenaiError::InvalidInput` before
+  any request: the API answers it with a 500 (live 2026-11-05).
 - `CreateFileSearchStoreRequest::embedding_model` and
   `with_embedding_model` pick a store's embedding model. Unset, the API
   uses `models/gemini-embedding-001`; an unknown model is a 400 (verified
@@ -90,10 +96,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every file (verified live 2026-11-05). `FileError::details` and
   `FileError::extra` keep a failed file's `google.rpc.Status` whole, and
   `VideoMetadata::extra` keeps keys beyond `videoDuration`.
-- `Agent::agent_config` and `Agent::with_agent_config` set the base
-  agent's configuration, such as an `AntigravityConfig`. It is stored and
-  echoed, `max_total_tokens` as a string; a config of another type is
-  stored as `{"type": "antigravity"}` (verified live 2026-11-05).
+- `Agent::agent_config` and `Agent::with_agent_config(AntigravityConfig)`
+  set the base agent's configuration. It is stored and echoed,
+  `max_total_tokens` as a string; a config of another type is stored as a
+  bare `{"type": "antigravity"}`, its settings lost (verified live
+  2026-11-05), so the setter takes only an `AntigravityConfig`.
 - `VoiceSpec::description`, `language_code`, `region_code`, `accent`,
   `persona`, `context`, `gender` and `pitch`, set with the matching
   `CreateVoiceRequest::with_*` builders. A created voice stores and echoes
@@ -101,10 +108,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bindings' `sample_audio` is output only: a value sent is ignored, so it
   is not modeled on the request.
 - `RemoteEnvironment::environment_id` and `with_environment_id` run an
-  agent interaction in an existing environment, with its files. The
-  interaction reports the ID as its `environment_id`; an ID that does not
-  exist is a 404. On an agent's `base_environment` the API accepts and
-  drops it (all verified live 2026-11-05).
+  agent interaction in an existing environment, with its files: the live
+  test's agent reads back a file seeded into it. The interaction reports
+  the ID as its `environment_id`; an ID that does not exist is a 404. On an
+  agent's `base_environment` the API accepts and drops it (all verified
+  live 2026-11-05).
+- `EnvironmentFiles::download(environment_id, path)` reads a file out of an
+  environment, as an `EnvironmentFileDownload` (its bytes and served
+  content type); a directory comes back as a tar archive
+  (`is_tar_archive()`). It is `GET` on the listing's path with `alt=media`
+  (verified live 2026-11-05).
 
 ### Changed
 
@@ -276,6 +289,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Migration: none for callers; a test double that answered the `raw`
   request must answer the start request with an `x-goog-upload-url`
   header.
+- A Files API or file search store upload's start request now sends
+  `Api-Revision`, as every other API request does; the request that sends
+  the file goes to the session URL and still carries neither it nor the
+  key.
 - The Antigravity harness runs in its own process group on Unix. A
   terminal's Ctrl-C now reaches only your process; when it exits, the
   harness sees stdin close and shuts down gracefully. To stop the harness on

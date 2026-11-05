@@ -1,17 +1,22 @@
 //! Example: File Search for Semantic Document Retrieval
 //!
 //! Demonstrates the full File Search loop end to end: provision a store,
-//! upload a document, wait for it to be indexed, retrieve from it, and clean
-//! up. No prior setup is needed — the example creates everything it uses and
-//! deletes it again on the way out.
+//! upload a document with custom metadata and its own chunking, import a
+//! second one from the Files API, wait for both to be indexed, retrieve from
+//! them, and clean up. No prior setup is needed — the example creates
+//! everything it uses and deletes it again on the way out.
 //!
-//! The document is uploaded from memory; `FileUpload::from_path` uploads a
-//! file from disk the same way.
+//! The documents come from memory; `FileUpload::from_path` uploads a file
+//! from disk the same way. An imported document is a copy, so the Files API
+//! file is deleted as soon as it is imported. Don't retry an import that
+//! timed out: its document already exists, and a second import makes a
+//! second copy.
 //!
 //! Run with: cargo run --example file_search
 
 use genai_rs::{
-    Client, CreateFileSearchStoreRequest, FileSearchConfig, FileUpload, GenaiError, PollOptions,
+    ChunkingConfig, Client, CreateFileSearchStoreRequest, CustomMetadata, DocumentImport,
+    DocumentUpload, FileSearchConfig, FileUpload, GenaiError, PollOptions,
 };
 use std::env;
 use std::error::Error;
@@ -27,6 +32,14 @@ is 6, chosen after the 2026 latency review.
 
 Error handling: services return `thiserror`-derived enums at module
 boundaries and reserve `anyhow` for binaries only.
+";
+
+/// A second document, imported from the Files API.
+const ON_CALL: &str = "\
+Ferrymead Engineering — on-call rotation
+
+Rotations last one week and hand over on Mondays at 10:00. The secondary
+on-call engineer owns the incident log.
 ";
 
 #[tokio::main]
@@ -70,29 +83,70 @@ async fn run_example(
     model_name: &str,
     store_name: &str,
 ) -> Result<(), Box<dyn Error>> {
-    // 2. Upload a document into the store.
+    // 2. Upload a document into the store, with custom metadata and smaller
+    //    chunks than the default. The overlap must be smaller than the chunk.
     let document = client
         .file_search_stores()
         .upload(
             store_name,
-            FileUpload::from_bytes(DOCUMENT.as_bytes().to_vec(), "text/plain")
-                .with_display_name("engineering-handbook"),
+            DocumentUpload::new(
+                FileUpload::from_bytes(DOCUMENT.as_bytes().to_vec(), "text/plain")
+                    .with_display_name("engineering-handbook"),
+            )
+            .add_custom_metadata(CustomMetadata::string("team", "platform"))
+            .add_custom_metadata(CustomMetadata::numeric("year", 2026.0))
+            .with_chunking_config(ChunkingConfig::white_space(200, 20)),
         )
         .await?;
     println!("Uploaded document: {}", document.name);
     println!("  state: {:?}", document.state);
+    print_metadata(&document.custom_metadata);
+    if document.custom_metadata.len() != 2 {
+        return Err(format!(
+            "expected the 2 metadata entries sent, got {:?}",
+            document.custom_metadata
+        )
+        .into());
+    }
 
-    // 3. Indexing is asynchronous. A freshly uploaded document is Pending,
-    //    and File Search silently returns nothing for it until it is Active —
-    //    so waiting here is not optional.
-    let active = client
-        .file_search_stores()
-        .documents()
-        .wait_until_active(&document.name, PollOptions::new())
+    // 3. Import a file already in the Files API. The document is a copy, so
+    //    the file is deleted whether or not the import worked.
+    let file = client
+        .files()
+        .upload(
+            FileUpload::from_bytes(ON_CALL.as_bytes().to_vec(), "text/plain")
+                .with_display_name("on-call"),
+        )
         .await?;
-    println!("  indexed: {:?}\n", active.state);
+    let imported = client
+        .file_search_stores()
+        .import_file(
+            store_name,
+            DocumentImport::new(&file.name)
+                .add_custom_metadata(CustomMetadata::string_list("tags", ["on-call", "ops"])),
+        )
+        .await;
+    if let Err(e) = client.files().delete(&file.name).await {
+        eprintln!("cleanup failed for {}: {e}", file.name);
+    }
+    let imported = imported?;
+    println!("Imported {} as document: {}", file.name, imported.name);
+    print_metadata(&imported.custom_metadata);
 
-    // 4. Retrieve from the store.
+    // 4. Indexing is asynchronous. A fresh document is Pending, and File
+    //    Search silently returns nothing for it until it is Active — so
+    //    waiting here is not optional.
+    for name in [&document.name, &imported.name] {
+        let active = client
+            .file_search_stores()
+            .documents()
+            .wait_until_active(name, PollOptions::new())
+            .await?;
+        println!("  indexed {name}: {:?}", active.state);
+    }
+    println!();
+
+    // 5. Retrieve from the store.
     println!("--- Basic File Search ---");
     let prompt = "According to my documents, how many worker threads do edge services use?";
     println!("Prompt: {prompt}\n");
@@ -136,7 +190,7 @@ async fn run_example(
         println!("No file search result steps in response");
     }
 
-    // 5. Narrow the retrieval with top_k.
+    // 6. Narrow the retrieval with top_k.
     println!("--- File Search with top_k ---");
     let response = client
         .interaction()
@@ -152,7 +206,7 @@ async fn run_example(
         println!("Response: {preview}\n");
     }
 
-    // 6. File Search cannot be combined with *either* web-retrieval tool.
+    // 7. File Search cannot be combined with *either* web-retrieval tool.
     //    The API rejects both pairs outright (verified live 2026-08-16):
     //
     //      400 'google_search' and 'file_search' cannot be combined in the
@@ -187,4 +241,21 @@ async fn run_example(
     }
 
     Ok(())
+}
+
+/// Prints a document's custom metadata, one `key = value` per line.
+fn print_metadata(metadata: &[CustomMetadata]) {
+    for entry in metadata {
+        let value = match (
+            &entry.string_value,
+            entry.numeric_value,
+            &entry.string_list_value,
+        ) {
+            (Some(text), _, _) => text.clone(),
+            (_, Some(number), _) => number.to_string(),
+            (_, _, Some(list)) => list.values.join(", "),
+            _ => format!("{:?}", entry.extra),
+        };
+        println!("  metadata: {} = {value}", entry.key);
+    }
 }

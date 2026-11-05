@@ -430,7 +430,12 @@ everything):
 
 `src/file_search_stores.rs` keeps the handles and their verbs, and the new
 `src/file_search_stores/document_input.rs` holds `DocumentUpload` and
-`DocumentImport`.
+`DocumentImport`. Counted up to the first `#[cfg(test)]`, after the new
+surface landed: `src/file_search_stores.rs` 592 lines (963 before),
+`src/files.rs` 644 (about 750 after #500), `types.rs` 497, `list.rs` 240,
+`document_input.rs` 182, `src/files/upload.rs` 153, and
+`src/http/file_search_stores.rs` 526. Both modules leave the oversized list
+of WP8 and #504.
 
 ---
 

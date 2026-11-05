@@ -6,7 +6,9 @@ wrong, so this catalog records what the live API actually sent or accepted,
 and when.
 
 **Revision.** Everything here is Interactions API revision **2026-05-20**.
-Every request sends `Api-Revision: 2026-05-20`. The server currently ignores
+Every request sends `Api-Revision: 2026-05-20`, except the second request
+of a resumable upload, which goes to the session URL the first one returned
+and carries neither the key nor the header. The server currently ignores
 the header and serves 2026-05-20 whatever value it carries.
 
 **Status markers.** "Verified live *date*" means the value was observed on
@@ -670,20 +672,26 @@ Stores, documents and imports, verified live 2026-11-05:
   be indexed (random bytes as `application/pdf`) fails its upload with a 500
   instead.
 - `embeddingModel` on create picks the model (`models/gemini-embedding-2`);
-  unset, it is `models/gemini-embedding-001`, and an unknown model is a
+  unset, it is `models/gemini-embedding-001` (the server's default, which
+  the live test checks only as a `models/` name), and an unknown model is a
   `400 INVALID_ARGUMENT`.
 - `customMetadata` entries are `{"key", "stringValue" | "numericValue" |
   "stringListValue": {"values": [...]}}`, served back on the document in the
   order sent. A whole `numericValue` comes back without a fraction (`2026`).
 - `chunkingConfig` is `{"whiteSpaceConfig": {"maxTokensPerChunk",
   "maxOverlapTokens"}}`. An unknown key is a `400 Invalid JSON payload`; an
-  overlap larger than the chunk fails the upload with a 500.
+  overlap as large as the chunk or larger fails the upload or import with a
+  500, and creates no document. The crate rejects such an overlap before any
+  request.
 - `POST {store}:importFile` with `{"fileName": "files/<id>", "customMetadata",
   "chunkingConfig"}` answers with an unfinished operation
   (`{"name": "fileSearchStores/<s>/operations/<id>", "response": {"@type":
   ...}}`). `GET` on that name reports `"done": true` and the document's
   **bare** ID in `response.documentName` (and the store's bare ID as
-  `parent`). The document is named after the file's ID and is a copy.
+  `parent`). The document is named after the file's ID and is a copy. Its
+  ID is the operation's, and it exists, `STATE_PENDING`, as soon as the
+  `POST` answers; importing the same file again makes a second document
+  under a new ID.
 
 Covered by `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
 

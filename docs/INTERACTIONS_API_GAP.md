@@ -88,10 +88,12 @@ facts from 2026-11-04:
 
 ## Resource residue (live, 2026-11-05)
 
-Every field and verb the bindings define for the resources (Files, File
+Every field the bindings' classes define for the resources (Files, File
 Search Stores and their documents, agents, voices, environments,
-credentials, webhooks, triggers) is modeled, or listed in the coverage
-oracle's tables with a dated reason. Probed live 2026-11-05:
+credentials, webhooks, triggers), and every endpoint they list, is modeled
+or listed in the coverage oracle's tables with a dated reason. The Python
+SDK has verbs beyond those, listed under "Deferred" below with dated
+reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
 
 - **Files:** `updateTime` and `source` (`FileSource`, `UPLOADED` on every
   upload) are modeled, and `sizeBytes` reads a string or a number. A file
@@ -109,9 +111,12 @@ oracle's tables with a dated reason. Probed live 2026-11-05:
   `resumable` protocol so its JSON body can carry `customMetadata` and
   `chunkingConfig` (`DocumentUpload`). `file_search_stores.import_file` is
   `FileSearchStores::import_file` (`DocumentImport`): its operation
-  finishes on the first `GET` and names the document by bare ID. The
-  bindings' `ImportFileConfig` lacks `fileName`, which the body needs.
-  `download_media` is not modeled.
+  finishes on the first `GET` and names the document by bare ID, which is
+  the operation's; the document exists, pending, as soon as the `POST`
+  answers, and a second import makes a second document, so a timed-out
+  import's error names both. The bindings' `ImportFileConfig` lacks
+  `fileName`, which the body needs. A white-space overlap as large as the
+  chunk is a 500, so the crate rejects it first.
 - **Agents:** `agent_config` is stored and echoed (`max_total_tokens` as a
   string); a config of another type is stored as `{"type": "antigravity"}`,
   and an unknown field is a 400.
@@ -121,9 +126,22 @@ oracle's tables with a dated reason. Probed live 2026-11-05:
   is ignored and replaced by a generated sample (`NOT_SENT`).
 - **Environments:** the remote environment's `environment_id` runs an agent
   interaction in that existing environment (the agent read a file the
-  environment was created with); an unknown ID is a 404. On an agent's
-  `base_environment` it is accepted and dropped. A stored agent interaction
-  serves `environment: {"environment_id", "type": "remote"}`.
+  environment was created with, which the live test checks); an unknown ID
+  is a 404. On an agent's `base_environment` it is accepted and dropped. A
+  stored agent interaction serves `environment: {"environment_id", "type":
+  "remote"}`. `environments.files.download` is
+  `EnvironmentFiles::download`: `GET` on the listing's path with
+  `alt=media` serves the file's bytes under its own content type, and a
+  directory as `application/x-tar`. The bindings list that endpoint once,
+  for both verbs, so the oracle maps both to it.
+- **Deferred** (SDK verbs outside the bindings' classes and endpoints):
+  `files.download` (an uploaded file is a `400 Only GENERATED files can be
+  downloaded`), `files.register_files` (`401 API keys are not supported`),
+  `files.upload(config={"name"})` (accepted, but `FileUpload` is shared with
+  store uploads, which take no name), `file_search_stores.download_media`
+  (needs a `file_citation` `media_id`, never served) and
+  `triggers.list(filter_=)` (every expression tried is a `400 Invalid filter
+  expression`, syntax undocumented).
 
 ## Protocol facts (live, 2026-09-24)
 

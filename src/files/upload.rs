@@ -63,10 +63,9 @@ pub struct FileUpload {
 impl FileUpload {
     /// An upload of the file at `path`, read when it is sent.
     ///
-    /// Nothing is read until the upload: [`Files::upload`](crate::Files::upload) streams the file
-    /// from disk, and
-    /// [`FileSearchStores::upload`](crate::FileSearchStores::upload) reads it
-    /// into memory. A missing, unreadable or empty file, or one over 2 GB,
+    /// Nothing is read until the upload: [`Files::upload`](crate::Files::upload)
+    /// and [`FileSearchStores::upload`](crate::FileSearchStores::upload) both
+    /// stream the file from disk. A missing, unreadable or empty file, or one over 2 GB,
     /// fails there with [`GenaiError::InvalidInput`] before any request. The
     /// MIME type comes from the file extension unless
     /// [`with_mime_type`](Self::with_mime_type) sets it (an extension it
