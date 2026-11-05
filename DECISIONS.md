@@ -646,6 +646,8 @@ policy engine) were next in line.
 | `Subagent` and its tests in `src/antigravity/config.rs` | `src/antigravity/subagent.rs`, `subagent_tests.rs` |
 | `McpServer` and its tests in `src/antigravity/config.rs` | `src/antigravity/mcp.rs`, `mcp_tests.rs` |
 | `Policy`, `PolicyDecision`, the `policy` constructors, `PolicyEngine`, `decide` and `mcp_tool_name` in `src/antigravity/hooks.rs`, and their tests | `src/antigravity/policies.rs`, `policies_tests.rs` |
+| `CallHookRequest`, `PreToolArgs`, `PostToolArgs`, `PreTurnArgs`, `PostTurnArgs`, `decode_genai_struct` and `hook_tool_name` in `src/antigravity/protocol/output.rs`; `CallHookResponse`, `HookVerdict` and `EmptyResult` in `protocol/input.rs` | `src/antigravity/protocol/hook_messages.rs` |
+| The inline `mod tests` in `src/antigravity/triggers.rs` | `src/antigravity/triggers_tests.rs` |
 
 The new submodules are private; `antigravity/mod.rs` re-exports the same
 names it did, so `genai_rs::antigravity::{Subagent, McpServer, Policy,
@@ -653,8 +655,75 @@ policy}` are unchanged. `config.rs` keeps `AgentBehavior`, `BuiltinTool`,
 `Capabilities` and `SUPPORTED_HARNESS_VERSION`; `hooks.rs` keeps the hook
 argument and verdict types.
 
+New modules in the same work: `builder/options.rs` (model, subagent and
+harness option setters), `instructions.rs` (`SystemInstructions`),
+`options.rs` (`Budget`, `RetryConfig`, `RunCommandOptions`, `InlineSkill`,
+`SubagentSkills`, `SessionContinuation`), `lifecycle.rs` (answers to the
+lifecycle hooks), `protocol/options.rs` (the `HarnessConfig` option
+messages), and `tests/antigravity_scripted/` (the scripted suite's option,
+hook, policy, trigger and parity tests, compiled into the
+`antigravity_scripted` binary through `#[path]`).
+
 **Consequences.** Links to `src/antigravity/builder.rs:<line>`, or to the
 `Subagent`, `McpServer` and policy code in `config.rs` / `hooks.rs`, written
 before 2026-11-05 point at the old layout. `tracing` events from moved code
 log under the new module path (`genai_rs::antigravity::policies`), which an
 `antigravity` prefix filter still selects.
+
+---
+
+## D-022 — Antigravity policies are evaluated client-side; the auto policy runs in the harness (2026-11-05)
+
+**Context.** Since 0.1.23 the Python SDK sends its policies to the harness
+as `PolicyConfig` rules: static rules run in the harness's evaluator, and
+rules with a `when` condition or an `ask_user` handler come back to the
+client as `policyDecisionRequest`s. #493 item 6 asked for the same. Probing
+0.1.23 with a scripted model (2026-11-05) showed: the evaluator is itself a
+pre-tool hook inside the harness ("denied by pre-tool hook: …"), called
+after the client's pre-tool callback, so it sees exactly the calls that
+callback sees; it orders rules named tool over wildcard, then deny over ask
+over allow; with any rule present it **fails closed** on a call no rule
+matches; and the error step a denial becomes carries no tool name.
+
+**Decision.** Keep evaluating policies in this client, in the pre-tool
+callback it already answers, with the harness evaluator's precedence and
+the Python SDK's features (conditions, ask-user handlers, reasons, names,
+server-wide MCP rules). Send only the auto policy to the harness: its
+model-judged assessment can run nowhere else, and a call it flags comes
+back as a `policyDecisionRequest`, answered by the policy's handler (or
+denied).
+
+**Consequences.** Every denial is this client's, so the event stream names
+the denied tool and its arguments, and an ask-user handler runs once per
+call. Default-open survives without a synthetic catch-all rule. The
+precedence change is breaking: two rules of one tier that disagree now
+resolve to the safer decision, not the first registered. The cost is the
+round trip per tool call that the pre-tool callback already made; static
+harness rules would have saved it. Revisit if the harness gains a policy
+feature its pre-tool callback cannot express.
+
+---
+
+## D-023 — Two Antigravity defaults: appended instructions, no `define_subagent` (2026-11-05)
+
+**Context.** #493 items 1 and 3. `with_system_instructions` sent `custom`
+instructions, which replace the harness's 7-10k-character prompt: its tool
+guidance, safety rules, workspace list, skills list and built-in subagents.
+The Python SDK appends a string instead. And enabling the subagent builtin
+silently gave the model `define_subagent`, with which it writes new
+subagents (instructions and tools of its choosing) at runtime; the Python
+SDK has no setting for it.
+
+**Decision.** A string passed to `with_system_instructions` now appends,
+under `<user_system_instructions>`, as in Python; `SystemInstructions::custom`
+replaces. The workspace note this crate added is kept for custom
+instructions only, since the harness's own prompt lists the workspaces
+(verified on 0.1.23 for agents and subagents). `define_subagent` is off
+unless `with_define_subagent_tool(true)`, matching this crate's other
+safety defaults (read-only builtins, containment on, `schedule` off).
+
+**Consequences.** Both are behavior changes that compile unchanged: code
+that relied on replacing the prompt must say `SystemInstructions::custom`,
+and an agent that relied on the model defining subagents must opt in. Skills
+from `add_skills_path` become visible to the model under appended
+instructions, which they were not under custom ones.
