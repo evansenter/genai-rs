@@ -21,11 +21,26 @@ async fn test_scripted_appended_instructions_keep_the_harness_prompt() {
     let root = workspace.path().canonicalize().unwrap();
     let root = root.to_string_lossy();
 
+    // A skill on disk, which the harness lists in its own prompt.
+    let skills = scratch_dir("agy-scripted-skills");
+    std::fs::create_dir_all(skills.path().join("disk-skill")).unwrap();
+    std::fs::write(
+        skills.path().join("disk-skill/SKILL.md"),
+        "---
+name: disk-skill
+description: DISK-SKILL-4474 for probes.
+---
+Body.
+",
+    )
+    .unwrap();
+
     // A string is added to the harness's prompt, which keeps its workspace
-    // list: no note of ours is needed.
+    // list (no note of ours is needed) and its skills list.
     let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
     let mut agent = scripted_agent(&fake)
         .add_workspace(root.as_ref())
+        .add_skills_path(skills.path().to_string_lossy())
         .with_system_instructions("APPENDED-MARK-4471")
         .spawn()
         .await
@@ -39,6 +54,7 @@ async fn test_scripted_appended_instructions_keep_the_harness_prompt() {
     assert!(prompt.contains("Active Workspaces"), "{prompt}");
     assert!(prompt.contains(root.as_ref()), "{prompt}");
     assert!(!prompt.contains("=== Workspace ==="), "{prompt}");
+    assert!(prompt.contains("DISK-SKILL-4474"), "{prompt}");
     agent.shutdown().await.expect("shutdown");
 
     // The harness's prompt with its identity replaced.
