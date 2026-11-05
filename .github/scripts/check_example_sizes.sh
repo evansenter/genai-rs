@@ -31,9 +31,10 @@ is_example_binary() {
     local f="$1" name suffix
     [ -f "$f" ] || return 1
     [ -x "$f" ] || return 1
-    # `${f##*/}`, not `basename`: no fork per file, and the same result for
-    # these paths (no trailing slash). Kept a pure predicate: echoing the
-    # name for the callers would fork a subshell per call instead (#456).
+    # `${f##*/}` strips the directory without forking a process per file,
+    # and gives the same result for these paths (no trailing slash). Kept a
+    # pure predicate: echoing the name for the callers would fork a subshell
+    # per call instead (#456).
     name=${f##*/}
     case "$name" in
         *.d) return 1 ;;

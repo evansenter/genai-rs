@@ -47,7 +47,7 @@ CONFIG="$SETUP_DEV_CARGO_DIR/config.toml"
 
 # The checkout's own config, fingerprinted so the last case can show it was
 # never touched. Absent is a fingerprint too.
-REAL_CONFIG="$ROOT/.cargo/config.toml"
+REAL_CONFIG="$ROOT/.cargo/config.toml"  # read, never written
 fingerprint() {
   if [ -f "$REAL_CONFIG" ]; then cksum < "$REAL_CONFIG"; else echo absent; fi
 }
