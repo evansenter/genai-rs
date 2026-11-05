@@ -394,12 +394,12 @@ pub(super) fn tools() -> Vec<Tool> {
     let all = vec![
         Tool::Function {
             name: "get_weather".into(),
-            description: "Gets the weather".into(),
-            parameters: FunctionParameters::new(
+            description: Some("Gets the weather".into()),
+            parameters: Some(FunctionParameters::new(
                 "object".into(),
                 json!({"city": {"type": "string"}}),
                 vec!["city".into()],
-            ),
+            )),
         },
         Tool::GoogleSearch {
             search_types: Some(vec![

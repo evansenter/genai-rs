@@ -154,10 +154,12 @@ const UNSEEN: &str = "In the snapshot, not modeled, and not seen live yet \
 
 /// Values for sites whose snapshot type is looser than what the API sends,
 /// so a synthesized value would test the synthesizer rather than the crate.
-fn values() -> BTreeMap<&'static str, Value> {
+pub(super) fn values() -> BTreeMap<&'static str, Value> {
     BTreeMap::from([
-        // Typed `Any`. The crate reads a JSON Schema object, which every
-        // served function tool carries.
+        // Typed `Any`; what is served is the JSON Schema the caller sent.
+        // `FunctionParameters` keeps keywords beyond `type`, `properties`
+        // and `required` in a private `extra`, which a synthesized key
+        // would land in.
         (
             "interactions.Function.parameters",
             json!({"type": "object", "properties": {"city": {"type": "string"}}}),
@@ -196,11 +198,13 @@ fn values() -> BTreeMap<&'static str, Value> {
     ])
 }
 
-type Probe = fn(Value) -> Result<(String, Value), String>;
+pub(super) type Probe = fn(Value) -> Result<(String, Value), String>;
 
 /// Deserializes, then returns the `{:?}` rendering and the value serialized
 /// again.
-fn probe<T: DeserializeOwned + Serialize + Debug>(value: Value) -> Result<(String, Value), String> {
+pub(super) fn probe<T: DeserializeOwned + Serialize + Debug>(
+    value: Value,
+) -> Result<(String, Value), String> {
     let parsed: T = serde_json::from_value(value).map_err(|e| e.to_string())?;
     let back = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     Ok((format!("{parsed:?}"), back))
@@ -210,7 +214,7 @@ fn probe<T: DeserializeOwned + Serialize + Debug>(value: Value) -> Result<(Strin
 /// event, then dispatched to the public [`StreamEvent`]. Serialized again,
 /// a `StreamEvent` uses the crate's own `{chunk_type, data}` envelope, which
 /// is mapped back to the wire shape for the comparison.
-fn probe_stream_event(value: Value) -> Result<(String, Value), String> {
+pub(super) fn probe_stream_event(value: Value) -> Result<(String, Value), String> {
     use crate::http::interactions::dispatch_stream_event;
     use crate::steps::StepAccumulator;
     use crate::wire_streaming::{InteractionStreamEvent, StreamEvent};
@@ -245,14 +249,14 @@ fn probe_stream_event(value: Value) -> Result<(String, Value), String> {
 
 /// A response type and the class it is read from, in the bindings and the
 /// spec.
-struct Target {
-    name: &'static str,
-    binding: Option<&'static str>,
-    spec: Option<&'static str>,
-    probe: Probe,
+pub(super) struct Target {
+    pub(super) name: &'static str,
+    pub(super) binding: Option<&'static str>,
+    pub(super) spec: Option<&'static str>,
+    pub(super) probe: Probe,
 }
 
-fn targets() -> Vec<Target> {
+pub(super) fn targets() -> Vec<Target> {
     use crate::agents::{Agent, AgentListResponse};
     use crate::credentials::{Credential, CredentialListResponse};
     use crate::environments::{
@@ -489,7 +493,7 @@ fn count(items: &[String], item: &str) -> usize {
 /// Everything wrong with one body. `traced` holds the sites already traced
 /// to an `extra` key or an `Unknown` value in an earlier body, whose
 /// candidates need no second round of removals.
-fn analyze(
+pub(super) fn analyze(
     surface: &Surface,
     ty: &Ty,
     body: &Value,

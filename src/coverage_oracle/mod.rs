@@ -23,6 +23,8 @@ mod request;
 // measures.
 #[cfg(not(feature = "strict-unknown"))]
 mod response;
+#[cfg(not(feature = "strict-unknown"))]
+mod response_minimal;
 
 use api_surface::{Finding, Surface};
 use serde_json::json;
