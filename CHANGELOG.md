@@ -92,8 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Step` or `Content` is an error that names the field and why
   (``field `arguments`: expected an object``) instead of calling the type
   unknown; that includes an unrecognized `language` on
-  `code_execution_call`, which strict mode used to read as Python.
-  Well-formed API responses are unaffected. Migration: none, unless you
+  `code_execution_call`, which strict mode used to read as Python. A
+  streamed `StepDelta` holding such a value (that `language`, or an unknown
+  content type in a `thought_summary`) fails the same way; strict mode used
+  to read the delta's `language` as absent. Other malformed deltas are
+  still kept as `StepDelta::Unknown`. Well-formed API responses are
+  unaffected. Migration: none, unless you
   relied on the lenient reading.
 - **Breaking: Antigravity hooks run on a dedicated thread, not on the
   thread driving the turn.** A hook that blocks (`on_pre_tool`,

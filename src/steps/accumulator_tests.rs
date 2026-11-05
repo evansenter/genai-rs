@@ -130,6 +130,63 @@ fn test_accumulator_keeps_unmodeled_delta_fields() {
     );
 }
 
+/// A streamed code execution call whose language the crate does not know
+/// keeps its code, as the same call read as a step does. By default the
+/// language reads as `CodeExecutionLanguage::Unknown`. Under
+/// `strict-unknown` the delta fails to parse, naming the field, like the
+/// step; it used to become a `StepDelta::Unknown`, which the accumulator
+/// left out of the step, so the code was lost without an error.
+#[test]
+fn test_accumulator_code_execution_delta_with_an_unknown_language() {
+    let delta = json!({
+        "type": "code_execution_call",
+        "arguments": {"language": "cobol", "code": "DISPLAY 1"}
+    });
+
+    #[cfg(feature = "strict-unknown")]
+    {
+        let err = serde_json::from_value::<StepDelta>(delta).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "StepDelta 'code_execution_call' has a field this crate cannot read: \
+             field `arguments.language`: Unknown CodeExecutionLanguage 'cobol'. \
+             Strict mode is enabled via the 'strict-unknown' feature flag. \
+             Either update the library or disable strict mode."
+        );
+        let step = json!({
+            "type": "code_execution_call", "id": "c1",
+            "arguments": {"language": "cobol", "code": "DISPLAY 1"}
+        });
+        let step_err = serde_json::from_value::<Step>(step).unwrap_err();
+        assert_eq!(
+            step_err.to_string().replacen("Step ", "StepDelta ", 1),
+            err.to_string(),
+            "the step and the delta fail alike"
+        );
+    }
+
+    #[cfg(not(feature = "strict-unknown"))]
+    {
+        let mut acc = StepAccumulator::new();
+        acc.start(
+            0,
+            serde_json::from_value(json!({
+                "type": "code_execution_call", "id": "c1", "arguments": {}
+            }))
+            .unwrap(),
+        );
+        acc.apply_delta(0, &serde_json::from_value(delta).unwrap());
+        let steps = acc.finish();
+        assert_eq!(
+            serde_json::to_value(&steps).unwrap(),
+            json!([{
+                "type": "code_execution_call", "id": "c1",
+                "arguments": {"language": "cobol", "code": "DISPLAY 1"}
+            }])
+        );
+    }
+}
+
 #[test]
 fn test_accumulator_video_and_document_deltas_accumulate() {
     let mut acc = StepAccumulator::new();

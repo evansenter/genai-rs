@@ -512,6 +512,41 @@ mod strict_mode {
         );
     }
 
+    /// `StepDelta` is not strict as a union: an unknown delta type, or a
+    /// known one with a malformed field, is still kept whole. But a value
+    /// strict mode rejects inside a known delta fails, naming the field, as
+    /// it does in a step: here an unknown content type in a thought summary.
+    /// (`src/steps/accumulator_tests.rs` covers an unknown `language`.)
+    #[test]
+    fn delta_fails_only_on_a_value_strict_mode_rejects() {
+        use genai_rs::StepDelta;
+
+        let err = serde_json::from_value::<StepDelta>(json!({
+            "type": "thought_summary",
+            "content": {"type": "hologram", "data": "x"}
+        }))
+        .expect_err("an unknown content type in a delta fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            "StepDelta 'thought_summary' has a field this crate cannot read: \
+             field `content`: Unknown Content type 'hologram'. Strict mode is \
+             enabled via the 'strict-unknown' feature flag. Either update the \
+             library or disable strict mode."
+        );
+
+        for (wire, delta_type) in [
+            (json!({"type": "future_delta", "x": 1}), "future_delta"),
+            (
+                json!({"type": "url_context_call", "arguments": "https://a.example"}),
+                "url_context_call",
+            ),
+        ] {
+            let delta: StepDelta = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(delta.unknown_delta_type(), Some(delta_type));
+            assert_eq!(delta.unknown_data(), Some(&wire));
+        }
+    }
+
     /// The same for content, and for content nested in a step: the cause
     /// chain reaches the field that failed.
     #[test]

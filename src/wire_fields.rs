@@ -125,6 +125,8 @@ impl<'a> WireFields<'a> {
 /// Why a tagged union's value did not read as a known variant. The union
 /// keeps the value whole as its `Unknown` variant, or, where
 /// `strict-unknown` applies (`Step`, `Content`), fails with the cause.
+/// `StepDelta` fails only on a [strict rejection](Self::is_strict_rejection)
+/// nested in a known delta.
 #[derive(Debug)]
 pub(crate) enum Fallback {
     /// Not an object with a string `type` that the crate models.
@@ -160,6 +162,19 @@ impl Fallback {
         }
     }
 
+    /// Whether a known type's field failed because strict mode rejected a
+    /// value nested in it (an unknown enum value or content type), rather
+    /// than because the field is malformed.
+    #[cfg(feature = "strict-unknown")]
+    pub(crate) fn is_strict_rejection(&self) -> bool {
+        matches!(self, Self::Malformed(error) if Self::is_strict_cause(&error.to_string()))
+    }
+
+    #[cfg(feature = "strict-unknown")]
+    fn is_strict_cause(cause: &str) -> bool {
+        cause.contains("'strict-unknown'")
+    }
+
     /// The `strict-unknown` error: an unknown type, or a known one with a
     /// field the crate cannot read, with that field and why.
     #[cfg(feature = "strict-unknown")]
@@ -174,7 +189,7 @@ impl Fallback {
                 let cause = error.to_string();
                 // A nested value that strict mode rejected (an unknown enum
                 // value or content type) already says so; say it once.
-                if cause.contains("'strict-unknown'") {
+                if Self::is_strict_cause(&cause) {
                     self.describe(union, type_name)
                 } else {
                     format!(

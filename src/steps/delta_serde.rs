@@ -470,6 +470,21 @@ impl<'de> Deserialize<'de> for StepDelta {
                     .unwrap_or("<missing type>")
                     .to_string();
 
+                // `StepDelta` itself is not strict: an unknown type, or a
+                // known one with a malformed field, is kept whole. A value
+                // strict mode rejects inside a known delta (an unknown
+                // `arguments.language`, an unknown content type in a
+                // summary) fails as it does in a `Step`, naming the field,
+                // instead of turning the delta into `Unknown`, which the
+                // accumulator would leave out of the step it builds.
+                #[cfg(feature = "strict-unknown")]
+                if fallback.is_strict_rejection() {
+                    use serde::de::Error as _;
+                    return Err(D::Error::custom(
+                        fallback.strict_message("StepDelta", &delta_type),
+                    ));
+                }
+
                 tracing::warn!(
                     "Keeping a delta whole in StepDelta::Unknown: {}.",
                     fallback.describe("StepDelta", &delta_type)
