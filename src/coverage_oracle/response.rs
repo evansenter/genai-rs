@@ -4,7 +4,12 @@
 //! together they carry every field, union arm and enum value the class
 //! reaches (`Surface::fixtures`). Each must deserialize, and then:
 //!
-//! - no key lands in a flattened `extra` map (an unmodeled field),
+//! - no key lands in an `extra` map (an unmodeled field): a response
+//!   struct's flattened `extra`, or, since #491, the `extra` of a known
+//!   `Step`, `StepDelta`, `Content` or `Annotation` variant, the
+//!   `arguments_extra` of a call step or delta, or the `extra` of a result
+//!   item, place, review snippet, step error or static video segment
+//!   (`a_new_field_on_a_known_variant_is_reported`),
 //! - no value deserializes as an `Unknown` variant (an unmodeled enum value
 //!   or union arm), and
 //! - no key is missing when the value is serialized again (a field dropped
@@ -123,9 +128,9 @@ const GAPS: &[Allowed] = &[
         "FileSearchResultDelta.result",
         "Opaque objects in the spec (`FileSearchResult` has no properties; the \
          bindings class has no fields). The crate reads each as \
-         `FileSearchResultItem` (`title`, `text`, `file_search_store`), which \
-         keeps no other key. Not seen filled live (src/content/results.rs, \
-         #429); WP2.",
+         `FileSearchResultItem` (`title`, `text`, `file_search_store`) and \
+         keeps any other key in its `extra` (#491; before, it was dropped). \
+         Not seen filled live (src/content/results.rs, #429); WP2.",
     ),
     // Files and File Search Stores.
     (
@@ -650,36 +655,120 @@ fn findings(
         .collect()
 }
 
-/// A new field is reported wherever its class sits, including on an object
-/// directly inside a list that keeps no `extra` (an annotation, a search
-/// result), where serde drops it without a trace.
+/// Classes reached from a step or a delta whose fields the crate reads as
+/// free-form JSON, so a key the snapshot adds there is the tool's own data,
+/// kept verbatim, not a field to model: a function or MCP tool's `result`
+/// object (`FunctionResultPayload::Json`).
+const FREE_FORM: &[&str] = &[
+    "interactions.FunctionResultDeltaResult",
+    "interactions.FunctionResultStepResult",
+    "interactions.MCPServerToolResultDeltaResult",
+    "interactions.MCPServerToolResultStepResult",
+];
+
+/// A field the snapshot adds to any class a `Step` or `StepDelta` reaches is
+/// reported, and as landing in `extra`: since #491 every known variant of
+/// `Step`, `StepDelta`, `Content` and `Annotation` keeps such a key in its
+/// `extra` (a call's `arguments` keys in `arguments_extra`), as do the
+/// result items, places, review snippets, step errors and static video
+/// segments inside them. Before, the key was dropped on re-serialization.
+/// Either way it shows in `{:?}`, which is what the oracle reads, so a new
+/// field on a known variant fails `binding_fields_deserialize_without_extra`
+/// until it is modeled or listed. Deltas go through the stream pipeline, as
+/// in the `StreamEvent` target.
 #[test]
-fn a_new_field_on_a_list_element_is_reported() {
+fn a_new_field_on_a_known_variant_is_reported() {
     let mut root = super::api_surface::read_json("bindings.json");
-    let classes = [
-        "interactions.URLCitation",
-        "interactions.GoogleSearchResult",
-        "interactions.URLContextResult",
-    ];
-    for class in classes {
+    let snapshot = Surface::from_bindings(&root);
+    let mut classes = BTreeSet::new();
+    for union in ["interactions.Step", "interactions.StepDeltaData"] {
+        classes.extend(snapshot.reachable_classes(&snapshot.ty(union)));
+    }
+    assert!(classes.len() > 70, "{classes:?}");
+    for class in &classes {
         root["classes"][class]["fields"]["brand_new_field"] =
             json!({"required": false, "type": {"kind": "str"}});
     }
     let surface = Surface::from_bindings(&root);
-    let step = Target {
-        name: "Step",
-        binding: Some("interactions.Step"),
-        spec: None,
-        probe: probe::<crate::steps::Step>,
-    };
-    let sites: BTreeSet<String> = findings(&surface, vec![step], |t| t.binding)
+    let targets = vec![
+        Target {
+            name: "Step",
+            binding: Some("interactions.Step"),
+            spec: None,
+            probe: probe::<crate::steps::Step>,
+        },
+        Target {
+            name: "StreamEvent",
+            binding: Some("interactions.StepDelta"),
+            spec: None,
+            probe: probe_stream_event,
+        },
+    ];
+    let reported: BTreeMap<String, String> = findings(&surface, targets, |t| t.binding)
         .into_iter()
-        .map(|f| f.site)
+        .filter(|f| f.site.ends_with(".brand_new_field"))
+        .map(|f| (f.site, f.message))
         .collect();
-    for class in classes {
+    let mut wrong = Vec::new();
+    for class in &classes {
         let site = format!("{class}.brand_new_field");
-        assert!(sites.contains(&site), "{site} not reported; got {sites:?}");
+        let expected =
+            (!FREE_FORM.contains(&class.as_str())).then_some("lands in `extra`: not modeled");
+        let got = reported.get(&site).map(String::as_str);
+        if got != expected {
+            wrong.push(format!("{site}: expected {expected:?}, got {got:?}"));
+        }
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A field on a type that keeps no `extra` is reported as dropped, including
+/// on an object directly inside a list, where serde drops it without a
+/// trace: `key_paths` records list elements, so the element counts as the
+/// key's kept parent. (The crate's step and content types all keep an
+/// `extra` now, so a type of the test's own stands in.)
+#[test]
+fn a_dropped_field_on_a_list_element_is_reported() {
+    #[derive(Debug, serde::Deserialize, Serialize)]
+    struct Holder {
+        items: Vec<Item>,
+    }
+    #[derive(Debug, serde::Deserialize, Serialize)]
+    struct Item {
+        name: String,
+    }
+    let optional = |kind: &str| json!({"required": false, "type": {"kind": kind}});
+    let surface = Surface::from_bindings(&json!({
+        "sdk_version": "test",
+        "aliases": {},
+        "classes": {
+            "t.Holder": {"fields": {"items": {
+                "required": true,
+                "type": {"kind": "list", "item": {"kind": "ref", "name": "t.Item"}},
+            }}},
+            "t.Item": {"fields": {
+                "name": {"required": true, "type": {"kind": "str"}},
+                "brand_new_field": optional("str"),
+            }},
+        },
+    }));
+    let holder = Target {
+        name: "Holder",
+        binding: Some("t.Holder"),
+        spec: None,
+        probe: probe::<Holder>,
+    };
+    let reported: Vec<(String, String)> = findings(&surface, vec![holder], |t| t.binding)
+        .into_iter()
+        .map(|f| (f.site, f.message))
+        .collect();
+    assert_eq!(
+        reported,
+        [(
+            "t.Item.brand_new_field".to_string(),
+            "dropped: not modeled, and not kept in `extra`".to_string()
+        )]
+    );
 }
 
 #[test]

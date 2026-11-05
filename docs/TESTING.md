@@ -318,7 +318,11 @@ checks on it:
   builder), plus proptest samples for the union arms and enum values. An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
-  test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). Every
+  test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
+  `extra` and `arguments_extra` maps of history steps and content, which
+  hold the unmodeled fields a response carried; a populated one is sent
+  flat and its keys are checked as its class's own
+  (`a_populated_variant_extra_is_sent_flat_and_not_vouched_for`). Every
   key it serializes to, at every depth, must exist on the binding class it
   is sent as, and every required key must be sent. A value carrying a
   union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s
@@ -338,9 +342,15 @@ checks on it:
   every field, union arm and enum value its class reaches (the generator
   fails if they do not). Each must
   deserialize with no key in an `extra` map, no `Unknown` variant, and no
-  key dropped when the value is serialized again, including keys on an
-  object that sits directly in a list (an annotation, a search result),
-  which serde drops silently when the type keeps no `extra`. Each finding is
+  key dropped when the value is serialized again. Every known variant of
+  `Step`, `StepDelta`, `Content` and `Annotation` keeps an unmodeled key in
+  its `extra` (a call's `arguments` keys in `arguments_extra`), as do the
+  result items, places, review snippets, step errors and static video
+  segments in them (#491), so a new field there is reported as landing in
+  `extra` (`a_new_field_on_a_known_variant_is_reported`). A type with no
+  `extra` drops the key, which is reported too, including on an object that
+  sits directly in a list (`a_dropped_field_on_a_list_element_is_reported`).
+  Each finding is
   traced to its `Class.field` by removing keys until it goes away. It runs
   against the bindings and the v1beta spec (whose `writeOnly` fields are
   left out of responses), and not under `strict-unknown`.

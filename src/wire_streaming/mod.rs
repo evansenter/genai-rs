@@ -575,6 +575,7 @@ mod tests {
                 index: 0,
                 delta: StepDelta::Text {
                     text: String::new(),
+                    extra: Default::default(),
                 },
             },
             StreamChunk::StepStop {
