@@ -192,34 +192,50 @@ genai-rs therefore offers the Antigravity harness at two altitudes:
 
 ## Module layout
 
-New top-level module, feature-gated:
+Feature-gated top-level module. The original sketch had one file per
+concern; the Python SDK parity work (#493) split the builder and the
+protocol into directories (D-021). Current layout:
 
 ```text
 src/antigravity/
-  mod.rs           Public API: AntigravityAgent, AgentBuilder, AgentSession
-  config.rs        AgentConfig, CapabilitiesConfig, ModelTarget, McpServer,
-                   SubagentConfig, WorkspaceConfig (serde, Evergreen)
-  protocol.rs      Wire types: InputEvent/OutputEvent envelopes, StepUpdate,
-                   ToolCall/ToolResponse, HarnessConfig (proto-JSON serde,
-                   Unknown variants throughout)
+  mod.rs           Re-exports the public API
+  agent.rs         AntigravityAgent: chat, streaming turns, trigger turns,
+                   session start/end, shutdown
+  builder/         AgentBuilder: mod.rs (setters, spawn), hooks.rs (hook
+                   setters), options.rs (model, subagent and harness option
+                   setters), validate.rs (spawn-time checks), wire.rs (the
+                   HarnessConfig it sends)
+  config.rs        Capabilities, BuiltinTool, ModelTarget, workspaces
+  instructions.rs  SystemInstructions: appended, edited or custom prompt
+  options.rs       Budget, RetryConfig, RunCommandOptions, InlineSkill,
+                   SubagentSkills, SessionContinuation
+  subagent.rs      Subagent (static subagent definitions)
+  mcp.rs           McpServer
+  hooks.rs         Hook argument and verdict types, LifecycleHooks
+  policies.rs      Policy, the policy module's constructors, PolicyEngine
+                   (harness precedence, evaluated client-side; D-022)
+  lifecycle.rs     Answers to the lifecycle hooks (turn, stop, tool error,
+                   compaction, session start/end)
+  turn.rs          One turn: step routing, deltas, terminal steps, deadline
+  turn_requests.rs Tool calls, pre/post-tool hooks, auto-policy decision
+                   requests, confirmations and questions within a turn
+  hook_mapping.rs  Harness step/action to ToolInvocation mapping
+  streaming.rs     AgentEvent, ToolAction, ChatResponse
+  triggers.rs      Interval, custom and file-change triggers; TriggerContext
+  tools.rs         Custom tool dispatch onto FunctionRegistry / ToolService
+  session.rs       WebSocket transport: connect, send/receive, wire inspection
   handshake.rs     Binary-proto InputConfig/OutputConfig encode/decode
-                   (hand-rolled, ~100 LOC, exhaustively unit-tested)
-  process.rs       Spawn, stdin-EOF shutdown ordering, SIGTERM/SIGKILL
-                   escalation, stderr drain task (pipe-deadlock avoidance),
-                   wheel-version detection
+  process.rs       Discovery, spawn, stderr drain, ordered shutdown
   process_tree.rs  Signals the harness's process group and its children's
-                   (unix; run_command commands lead groups of their own)
-  session.rs       WebSocket pump: reader task, step routing, idle tracking,
-                   confirmation-request debouncing
-  tools.rs         Custom tool dispatch — bridges harness ToolCall to the
-                   existing FunctionRegistry / ToolService / #[tool] macro
-  hooks.rs         Hook + Policy types (pre/post turn/tool, on_tool_error);
-                   policy combinators: allow_all, deny_all, allow, deny,
-                   confirm, workspace_only
-  triggers.rs      Client-side timers -> automated_trigger events
-  streaming.rs     Step/delta stream types (text_delta, thinking_delta,
-                   tool actions), AgentEvent public enum
+  error.rs         AntigravityError
+  protocol/        Proto-JSON wire types: config.rs (HarnessConfig),
+                   options.rs (budget, retry, compaction, skills, policy
+                   rules), hook_messages.rs (callHookRequest,
+                   policyDecisionRequest and answers), input.rs, output.rs,
+                   step_update.rs, enums.rs
 ```
+
+Unit tests sit beside their module as `<module>_tests.rs` (D-014).
 
 Feature flag: `antigravity` (default **off** initially; revisit after
 stabilization). Dependencies added under the flag: `tokio-tungstenite`
@@ -299,8 +315,9 @@ transports feed one canonical debugging surface:
   policy-engine decision tables; Unknown-variant preservation.
 - **Harness-integration** (`#[ignore = "Requires localharness binary"]`):
   spawn/handshake/init against the pinned wheel binary — **no API key
-  needed** (verified: init succeeds with a placeholder key), so these run in
-  CI wherever the wheel installs.
+  needed** (init succeeds with a placeholder key, and none of these runs a
+  turn), so they run in CI wherever the wheel installs. Tests that run a
+  turn without a real model are scripted (next item).
 - **Scripted harness** (`tests/antigravity_scripted.rs`, same ignore
   reason): the real harness against a scripted local model reached through
   `with_gemini_base_url`, so turns run end to end with no key and a
@@ -308,9 +325,11 @@ transports feed one canonical debugging surface:
   through policies, containment both ways, cancellation, a trigger turn,
   backend and tool errors, the turn deadline over a hung async tool, a
   blocking sync tool and a blocking hook, the key-free harness environment
-  under a custom host, and the process-tree kill. This replaced the planned
-  mockable transport trait: it tests the bridge *and* the harness behavior
-  it depends on, which a mock of the socket could not. CI runs it in the
+  under a custom host, the process-tree kill, and every Python SDK option
+  the bridge models (`tests/antigravity_scripted/`: options, lifecycle
+  hooks, policies, triggers, and the parity-table guard). This replaced
+  the planned mockable transport trait: it tests the bridge *and* the
+  harness behavior it depends on, which a mock of the socket could not. CI runs it in the
   required `Test Suite (antigravity)` job with the key blanked, forks
   included.
 - **Full-integration** (`#[ignore = "Requires API key"]`): real chat, tool
