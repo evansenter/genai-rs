@@ -566,11 +566,9 @@ impl TriggerUpdate {
     /// `400 Invalid status transition from active to error` (live
     /// 2026-11-01). The open enum accepts it here per the Evergreen posture.
     ///
-    /// In a read-modify-write flow, don't echo back a status whose
-    /// [`is_unknown()`](TriggerStatus::is_unknown) type came from a
-    /// *non-string* wire value: its wire form is the crate's
-    /// `<non-string: ...>` debug marker, not the original value. (An
-    /// unknown *string* status round-trips faithfully.)
+    /// In a read-modify-write flow an
+    /// [`is_unknown()`](TriggerStatus::is_unknown) status read from the API
+    /// is sent back as the value it arrived as, string or not.
     #[must_use]
     pub fn with_status(mut self, status: TriggerStatus) -> Self {
         self.status = Some(status);

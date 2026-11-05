@@ -51,7 +51,7 @@ Under API revision 2026-05-20 the server emits this lifecycle:
 | `interaction.created` | `Created { interaction }` | First event; carries the interaction id |
 | `interaction.status_update` | `StatusUpdate { interaction_id, status, usage, .. }` | Background/agent progress. `interaction_id` is `None` on a `store: false` stream; background streams carry `usage` mid-run |
 | `step.start` | `StepStart { index, step }` | A step begins; it may be partial (a `FunctionCall` with empty arguments) |
-| `step.delta` | `StepDelta { index, delta }` | Incremental payload for that step |
+| `step.delta` | `StepDelta { index, delta, total_usage }` | Incremental payload for that step. `total_usage` is the event's cumulative `metadata.total_usage`; in the bindings and the spec, but no text, TTS or agent stream sent it (live 2026-11-05) |
 | `step.stop` | `StepStop { index, usage, step_usage }` | `usage` is cumulative; `step_usage` is this step's alone |
 | `interaction.completed` | `Completed(response)` | Terminal: the full response |
 | `error` | `Error { message, code }` | Terminal |
@@ -98,7 +98,8 @@ audio deltas are under 8 KB. The limit leaves four times the largest.
 steps, it fills them in, including parsing streamed `arguments_delta`
 fragments into `Step::FunctionCall.arguments`. If the payload omits usage, it
 falls back to the event's `metadata.total_usage`, then to the last cumulative
-`step.stop` usage. So `response.as_text()`, `response.function_calls()` and
+usage seen earlier in the stream, from a `step.stop` or a `step.delta`'s
+`metadata.total_usage`. So `response.as_text()`, `response.function_calls()` and
 `response.usage` work on `Completed` exactly as they do after `create()`.
 Accumulate deltas yourself only for live display.
 

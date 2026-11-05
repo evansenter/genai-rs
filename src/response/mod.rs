@@ -176,10 +176,15 @@ pub struct InteractionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_config: Option<crate::webhooks::WebhookConfig>,
 
-    /// Convenience field: concatenated output text, when provided by the API.
+    /// Convenience field: concatenated output text, from the google-genai
+    /// 2.34.0 bindings.
     ///
-    /// Prefer [`as_text()`](Self::as_text) / [`all_text()`](Self::all_text),
-    /// which fall back to this field when steps are absent.
+    /// Not served: create responses, stored reads and stream completed
+    /// events carry none (live 2026-11-05); the text is in the steps. Kept
+    /// because it is in the bindings and the text helpers' fallback to it
+    /// costs nothing. Use [`as_text()`](Self::as_text) /
+    /// [`all_text()`](Self::all_text), which fall back to this field when
+    /// no step has text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_text: Option<String>,
 
@@ -329,7 +334,8 @@ impl InteractionResponse {
 
     /// Extract the first text content from the model output steps.
     ///
-    /// Falls back to the API-provided `output_text` convenience field when no
+    /// Falls back to the [`output_text`](Self::output_text) convenience
+    /// field (in the bindings, not served as of 2026-11-05) when no
     /// text-bearing steps are present.
     ///
     /// # Example

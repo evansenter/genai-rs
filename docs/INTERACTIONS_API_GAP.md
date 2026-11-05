@@ -124,6 +124,7 @@ required fields (`docs/TESTING.md`, "Sparse response bodies").
 | `Place` address, coordinates, types, rating, ratings count, website, phone | Removed | 30 places across three Maps results carried only `name`, `place_id` and `url` (the bindings add `review_snippets`) |
 | `Step::FileSearchResult.result`, `FileSearchResultItem`, `file_search_results()` | Removed; the delta's `result` is opaque JSON | The step and its delta carry only `call_id`/`signature`, stored and streamed. Neither the bindings nor the spec give the step a `result`; the spec gives the delta a list of field-less objects |
 | `FunctionResult.signature` | Kept | A server-run MCP call's `function_result` carries one (a deepwiki call); not in the bindings |
+| `InteractionResponse.output_text` | Kept | Never served: not on TTS, image or text create responses, stored reads, or stream completed events. Kept because it is in the bindings and `as_text()`/`all_text()`/`has_text()` fall back to it at no cost; removing it would break struct literals for nothing. Its siblings `output_audio`/`_image`/`_video` stay unmodeled (below) |
 
 ### Not modeled, with the reason
 
