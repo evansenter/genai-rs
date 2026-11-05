@@ -125,8 +125,8 @@ impl<'a> WireFields<'a> {
 /// Why a tagged union's value did not read as a known variant. The union
 /// keeps the value whole as its `Unknown` variant, or, where
 /// `strict-unknown` applies (`Step`, `Content`), fails with the cause.
-/// `StepDelta` fails only on a [strict rejection](Self::is_strict_rejection)
-/// nested in a known delta.
+/// `StepDelta` fails only on a strict rejection nested in a known delta
+/// (`is_strict_rejection`).
 #[derive(Debug)]
 pub(crate) enum Fallback {
     /// Not an object with a string `type` that the crate models.
