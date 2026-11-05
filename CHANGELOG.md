@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Triggers: `add_custom_trigger` with a `TriggerContext`,
     `triggers::on_file_change`, and `AntigravityAgent::next_trigger_turn`,
     which drives a turn a trigger started and returns its response.
+  - Prompts with media and slash commands: `chat` and `send_streaming`
+    take a `Prompt` of text, `Media` (images, documents, audio, video, from
+    bytes or `Media::from_file`) and `SlashCommand::Plan`, as the Python
+    SDK's `chat` takes content primitives.
   - `ToolInvocation::new` and `ToolInvocation::mcp`, for unit-testing
     policy conditions and hooks.
   - Examples `lifecycle_hooks` (a stop hook as a definition of done),
@@ -91,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `user_system_instructions` instead of `System`. The workspace note this
   crate adds now goes only with custom instructions; the harness's prompt
   lists the workspaces itself (verified on 0.1.23).
+- **Breaking: Antigravity's `chat` and `send_streaming` take
+  `impl Into<Prompt>` instead of `impl Into<String>`.** A `&str`, `String`,
+  `&String`, `Cow<str>` or `Box<str>` argument compiles unchanged. A value
+  of a generic `T: Into<String>` does not: call `.into()` to make it a
+  `String` first.
 - **Breaking: `BuiltinTool::StartSubagent` is `BuiltinTool::InvokeSubagent`,
   and the subagent tool is named `invoke_subagent` everywhere**: in
   `ToolAction::tool_name()`, in the pre-tool hook's `ToolInvocation`, and as

@@ -207,6 +207,7 @@ src/antigravity/
                    HarnessConfig it sends)
   config.rs        Capabilities, BuiltinTool, ModelTarget, workspaces
   instructions.rs  SystemInstructions: appended, edited or custom prompt
+  prompt.rs        Prompt, Media, SlashCommand: what a turn sends
   options.rs       Budget, RetryConfig, RunCommandOptions, InlineSkill,
                    SubagentSkills, SessionContinuation
   subagent.rs      Subagent (static subagent definitions)
@@ -454,11 +455,16 @@ Process lifecycle findings (0.1.23, 2026-11-04, same technique):
 Every option the 0.1.23 Python SDK exposes for the harness, and what this
 crate does with it. The first column's keys are exactly what
 `.github/scripts/dump_sdk_options.py` reads from the wheel's sources
-(`Class.field`, `Enum.MEMBER`, `Class.method`, `module.function`);
+(`Class.field`, `Enum.MEMBER`, `Class.method`, `module.function`, and a
+bare `Class` for a class with nothing of its own);
 `test_python_sdk_options_are_all_in_the_parity_table`
-(`tests/antigravity_scripted.rs`, in the required key-free CI step) fails
-when the installed wheel has a key this table lacks, or this table has one
-the wheel lacks. A harness bump updates the table with the wheel.
+(`tests/antigravity_scripted/parity.rs`, in the required key-free CI step)
+fails when the installed wheel has a key this table lacks, or this table
+has one the wheel lacks. The script also fails on any public class in the
+modules it reads that it neither reads nor skips with a reason (outputs,
+errors, the hook base classes, transport plumbing; its `CLASS_SKIP`), so a
+new config model or content type cannot go unlisted. A harness bump
+updates the table with the wheel.
 
 "Not modeled" rows give the reason. Each modeled option is shown changing
 the harness's behavior by a test in `tests/antigravity_scripted/` (D-010):
@@ -469,8 +475,8 @@ turn's outcome.
 
 | Python SDK option | genai-rs | Notes |
 |---|---|---|
-| `Agent.chat` | `AntigravityAgent::chat`, `send_streaming` | |
-| `Agent.conversation` | Not modeled as an object | Its history, usage and step stream are `initial_history()`, `ChatResponse::usage()` and the `send_streaming` events. |
+| `Agent.chat` | `AntigravityAgent::chat`, `send_streaming` | Each takes a string or a `Prompt` of text, `Media` and `SlashCommand`s, as Python takes a string or content primitives (see Prompts). |
+| `Agent.conversation` | Not modeled as an object | Its methods map onto the agent and `ChatResponse` (see Conversation and response). |
 | `Agent.conversation_id`, `AgentConfig.conversation_id` | `conversation_id()`, `with_conversation_id` | Python also checks the id's shape (32+ characters); the harness checks existence. |
 | `Agent.is_started` | Not modeled | A value of `AntigravityAgent` exists only once `spawn()` succeeded. |
 | `Agent.run_workflow`, `BuiltinTools.RUN_WORKFLOW` | Not modeled (product decision) | Beta. Workflows are Python scripts against the SDK's `workflows` module, run by the harness's `run_workflow` builtin; a Rust client has no way to author them. The toggle is written disabled (#493 item 9). |
@@ -500,7 +506,8 @@ turn's outcome.
 | `GeminiModelOptions.max_output_tokens` | `with_max_output_tokens` | Harness default 65,535. |
 | `LocalAgentConfig.vertex`, `LocalAgentConfig.project`, `LocalAgentConfig.location`, `VertexEndpoint.api_key`, `VertexEndpoint.project`, `VertexEndpoint.location`, `VertexEndpoint.options` | Not modeled (product decision) | Vertex AI endpoints, out of scope since v1: the supported path is a Gemini API key. The wire types exist (`protocol::VertexEndpoint`). |
 | `LocalOpenAIAgentConfig.model`, `LocalOpenAIAgentConfig.base_url` | Not modeled (product decision) | An OpenAI-compatible local server (Ollama, LM Studio) as the model backend, through the harness's Gemma endpoint. This crate targets the Gemini API. |
-| `LiteRTAgentConfig.model_path`, `LiteRTAgentConfig.backend`, `LiteRTAgentConfig.enable_speculative_decoding`, `LiteRTAgentConfig.cache_dir`, `LiteRTAgentConfig.audio_backend`, `LiteRTAgentConfig.vision_backend`, `LiteRTAgentConfig.port`, `LiteRTAgentConfig.download_if_missing` | Not modeled (product decision) | An on-device LiteRT model server that the Python SDK runs in its own process; a different backend from the Gemini API. |
+| `LiteRTAgentConfig.model_path`, `LiteRTAgentConfig.backend`, `LiteRTAgentConfig.enable_speculative_decoding`, `LiteRTAgentConfig.cache_dir`, `LiteRTAgentConfig.audio_backend`, `LiteRTAgentConfig.vision_backend`, `LiteRTAgentConfig.port`, `LiteRTAgentConfig.download_if_missing`, `LiteRTBackend.CPU`, `LiteRTBackend.GPU`, `LiteRTBackend.NPU` | Not modeled (product decision) | An on-device LiteRT model server that the Python SDK runs in its own process; a different backend from the Gemini API. |
+| `InteractionsAgentConfig` | Not modeled (blocked) | The Interactions-mode transport: harness 0.1.23 rejects every `interaction.create` that carries an agent config, the Python SDK's included (#494, D-018; see Interactions-mode transport below). |
 
 ### Instructions
 
@@ -510,6 +517,32 @@ turn's outcome.
 | `TemplatedSystemInstructions.sections`, `SystemInstructionSection.content`, `SystemInstructionSection.title` | `SystemInstructions::appended`, `add_section`, `with_title` | Default title `user_system_instructions`, as in Python. |
 | `TemplatedSystemInstructions.identity` | `SystemInstructions::with_identity` | With custom instructions it becomes a leading `identity` part. |
 | `CustomSystemInstructions.text`, `CustomSystemInstructions.title` | `SystemInstructions::custom`, `with_title` | Replaces the harness prompt; genai-rs then announces the workspaces itself. |
+
+### Prompts
+
+| Python SDK option | genai-rs | Notes |
+|---|---|---|
+| `Image`, `Document`, `Audio`, `Video`, `_BaseMedia.data`, `_BaseMedia.mime_type` | `Media::new(bytes, mime_type)`, `Prompt::add_media` | One type; the MIME type says which. The harness hands it to the model as inline data after the text. A MIME type the Python SDK does not list is sent with a `warn!`, not refused. |
+| `_BaseMedia.description` | `Media::with_description` | Harness 0.1.23 does not pass it to the model (verified 2026-11-05). |
+| `_BaseMedia.from_file` | `Media::from_file` | The MIME type comes from the extension (`detect_mime_type`). |
+| `SlashCommand.name`, `BuiltinSlashCommandName.PLAN` | `SlashCommand::Plan`, `Prompt::add_slash_command` | The harness puts `/plan` before the prompt's text. |
+
+### Conversation and response
+
+| Python SDK option | genai-rs | Notes |
+|---|---|---|
+| `Conversation.create` | `AgentBuilder::spawn` | |
+| `Conversation.chat`, `Conversation.send` | `chat`, `send_streaming` | |
+| `Conversation.receive_steps`, `Conversation.receive_chunks`, `ChatResponse.chunks`, `ChatResponse.tool_calls`, `ChatResponse.resolve` | `send_streaming`'s `AgentEvent`s | Steps arrive as `ToolAction` and `Error` events, chunks as `TextDelta` and `ThoughtDelta`; `chat` drives the turn to its end. |
+| `ChatResponse.text`, `ChatResponse.thoughts`, `ChatResponse.structured_output`, `ChatResponse.stop_reason`, `ChatResponse.usage_metadata`, `Conversation.last_response`, `Conversation.get_last_structured_output`, `Conversation.last_turn_usage` | `ChatResponse::text`, `thoughts`, `structured_output`, `stop_reason`, `usage` | Python's response streams; genai-rs returns it once the turn ends. |
+| `ChatResponse.cancel`, `Conversation.cancel` | `cancel`, `cancel_handle()` | |
+| `Conversation.conversation_id`, `Conversation.sandbox_status` | `conversation_id()`, `sandbox_status()` | |
+| `Conversation.disconnect` | `shutdown` | |
+| `Conversation.wait_for_wakeup` | `next_trigger_turn(wait)` | Waits for a turn the agent starts on its own, then drives it and returns its response. |
+| `Conversation.history`, `Conversation.clear_history`, `Conversation.turn_count`, `Conversation.compaction_indices` | Not modeled | The SDK's own bookkeeping over the steps it has received. genai-rs keeps none, so there is nothing to clear: keep the `send_streaming` events you need, and take compaction step indices from `on_compaction`. A resumed conversation's history is `initial_history()`. |
+| `Conversation.total_usage`, `Conversation.trajectory_usages` | Not modeled | Sums of the per-turn usage: add up `ChatResponse::usage()`. Usage is not split per subagent trajectory. |
+| `Conversation.is_idle`, `Conversation.wait_for_idle` | Not modeled | A turn borrows the agent mutably, so nothing else can run on it mid-turn; `chat` returns once the agent is idle. |
+| `Conversation.connection` | Not modeled | The SDK's transport object; genai-rs's session is internal. |
 
 ### Capabilities and builtins
 
@@ -540,7 +573,7 @@ turn's outcome.
 | `SubagentConfig.model` | `Subagent::with_model` | Name only; the parent's endpoint. |
 | `CapabilitiesConfig.max_subagent_depth` | `with_max_subagent_depth` | |
 | `CapabilitiesConfig.allowed_subagents`, `SubagentCapabilities.allowed_subagents` | `with_allowed_subagents`, `Subagent::with_allowed_subagents` | Names validated at `spawn()`, as in Python. |
-| `SubagentConfig.skills_config`, `SubagentSkillsConfig.inherit_config`, `SubagentSkillsConfig.none_config`, `SubagentSkillsConfig.override_config`, `SubagentInheritSkillsConfig.skill_names`, `SubagentInheritSkillsConfig.extra_skills_paths`, `SubagentOverrideSkillsConfig.skills_paths` | `Subagent::with_skills(SubagentSkills::inherit / none / from_paths)` | |
+| `SubagentConfig.skills_config`, `SubagentNoneSkillsConfig`, `SubagentSkillsConfig.inherit_config`, `SubagentSkillsConfig.none_config`, `SubagentSkillsConfig.override_config`, `SubagentInheritSkillsConfig.skill_names`, `SubagentInheritSkillsConfig.extra_skills_paths`, `SubagentOverrideSkillsConfig.skills_paths` | `Subagent::with_skills(SubagentSkills::inherit / none / from_paths)` | |
 | `SubagentOverrideSkillsConfig.inline_skills` | Not modeled | The Python SDK refuses them on the local harness ("not supported by LocalConnectionStrategy"). |
 
 ### Skills, MCP, budgets, retries
@@ -581,8 +614,9 @@ turn's outcome.
 | Python SDK option | genai-rs | Notes |
 |---|---|---|
 | `AgentConfig.policies`, `BaseLocalAgentConfig.policies` | `add_policy` | Python's local default is `confirm_run_command()`; genai-rs has none and refuses write tools without a policy or hook. Evaluated client-side in the pre-tool callback (D-022). |
-| `policy.allow`, `policy.deny`, `policy.allow_all`, `policy.deny_all`, `Policy.tool`, `Policy.decision` | `policy::allow`, `deny`, `allow_all`, `deny_all`, `confirm` | MCP rules target `mcp_<server>_<tool>`, `mcp_<server>_*` or `mcp_*` (Python: a server config and tool list). |
-| `policy.ask_user`, `Policy.ask_user` | `policy::ask_user`, `Policy::with_handler` | `confirm` defers to the pre-tool hook instead. |
+| `policy.allow`, `policy.deny`, `policy.allow_all`, `policy.deny_all`, `Policy.tool`, `Policy.decision` | `policy::allow`, `deny`, `allow_all`, `deny_all`, `confirm` | MCP rules target `mcp_<server>_<tool>`, `mcp_<server>_*` or `mcp_*` (Python: `server/tool`, `server/*`). The server-wide forms match the call's server exactly, as Python's do. |
+| `Decision.APPROVE`, `Decision.DENY`, `Decision.ASK_USER` | `PolicyDecision::Allow`, `Deny`, `Confirm` | |
+| `policy.ask_user`, `Policy.ask_user` | `policy::ask_user`, `Policy::with_handler` | `confirm` defers to the pre-tool hook instead. A panicking handler denies, as Python's fails closed. |
 | `Policy.when` | `Policy::when` | A panicking condition denies, as Python fails closed on an exception. |
 | `Policy.name`, `Policy.reason` | `Policy::with_name`, `with_reason` | |
 | `policy.auto`, `AutoPolicy.ask_user`, `AutoPolicy.name`, `AutoPolicy.tool`, `AutoPolicy.decision`, `AutoPolicy.when`, `AutoPolicy.reason` | `policy::auto()`, `with_handler`, `with_name` | Harness-side; flagged calls come back as `policyDecisionRequest`s. `tool`, `decision`, `when` and `reason` are fixed by the constructor in both SDKs. |
@@ -598,7 +632,8 @@ turn's outcome.
 |---|---|---|
 | `AgentConfig.triggers`, `triggers.every` | `add_trigger(TriggerConfig::new(message, interval))` | |
 | `triggers.trigger`, `TriggerContext.send` | `add_custom_trigger(\|ctx\| async move { ctx.send(..).await })` | Sends wait while a turn runs. |
-| `triggers.on_file_change` | `triggers::on_file_change(path, poll_interval, callback)` | Polls size and modification time (no OS watcher dependency); skips the directories `watchfiles` skips. |
+| `triggers.on_file_change` | `triggers::on_file_change(path, poll_interval, callback)` | Polls size and modification time (no OS watcher dependency); skips the directories `watchfiles` skips. Changes made during a turn reach the callback as one batch once the agent is idle. |
+| `FileChange.kind`, `FileChange.path`, `FileChangeKind.ADDED`, `FileChangeKind.MODIFIED`, `FileChangeKind.DELETED` | `triggers::FileChange`, `FileChangeKind` | What the callback is handed. |
 
 ## Harness config beyond the Python SDK
 

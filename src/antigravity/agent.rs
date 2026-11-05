@@ -1,6 +1,7 @@
 use super::hooks::LifecycleHooks;
 use super::policies::PolicyEngine;
 use super::process::HarnessProcess;
+use super::prompt::{Prompt, user_input};
 use super::protocol::{self, InputEvent, OutputPayload, StepUpdate};
 use super::session::{Session, SinkHandle};
 use super::tools::ToolDispatcher;
@@ -183,16 +184,22 @@ impl AntigravityAgent {
 
     /// Sends a message and drives the turn to completion.
     ///
+    /// The message is a string, or a [`Prompt`] of text, [`Media`] and
+    /// [`SlashCommand`](super::SlashCommand)s.
+    ///
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
+    ///
+    /// [`Media`]: super::Media
     pub async fn chat(
         &mut self,
-        prompt: impl Into<String>,
+        prompt: impl Into<Prompt>,
     ) -> Result<ChatResponse, AntigravityError> {
+        let input = user_input(prompt)?;
         // Mark busy before sending so a trigger cannot slip in between.
         let guard = self.begin_turn().await;
-        self.session.send(&InputEvent::user_text(prompt)).await?;
+        self.session.send(&input).await?;
         let mut turn = TurnState::new(self.turn_timeout, Some(guard));
         loop {
             match self.next_turn_event(&mut turn).await? {
@@ -208,20 +215,22 @@ impl AntigravityAgent {
     }
 
     /// Sends a message and returns a stream of [`AgentEvent`]s for the
-    /// turn. The stream ends after [`AgentEvent::Finished`].
+    /// turn. The stream ends after [`AgentEvent::Finished`]. The message is
+    /// a string or a [`Prompt`], as for [`chat`](Self::chat).
     ///
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
     pub async fn send_streaming(
         &mut self,
-        prompt: impl Into<String>,
+        prompt: impl Into<Prompt>,
     ) -> Result<AgentEventStream<'_>, AntigravityError> {
+        let input = user_input(prompt)?;
         // Mark busy before sending so a trigger cannot slip in between.
         // The guard moves into the stream's turn state: dropping the
         // stream mid-turn marks the agent idle again.
         let guard = self.begin_turn().await;
-        self.session.send(&InputEvent::user_text(prompt)).await?;
+        self.session.send(&input).await?;
         let timeout = self.turn_timeout;
         let stream = async_stream::try_stream! {
             let mut turn = TurnState::new(timeout, Some(guard));

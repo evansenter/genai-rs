@@ -601,3 +601,46 @@ async fn test_scripted_every_option_together_is_accepted_and_runs_a_turn() {
     assert_eq!(response.text(), "all-options-6601");
     agent.shutdown().await.expect("shutdown");
 }
+
+// =============================================================================
+// Prompts: media and slash commands (Python: `Agent.chat(types.Content)`)
+// =============================================================================
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_prompt_media_and_slash_commands_reach_the_model() {
+    use genai_rs::antigravity::{Media, Prompt, SlashCommand};
+
+    // Media goes to the model as inline data, after the text.
+    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
+    let mut agent = scripted_agent(&fake).spawn().await.expect("spawn");
+    let prompt = Prompt::new()
+        .add_text("PROMPT-TEXT-4401")
+        .add_media(Media::new(b"PNG-BYTES-4402".to_vec(), "image/png"));
+    agent.chat(prompt).await.expect("turn");
+    let request = fake.request_json(0).unwrap();
+    let parts = &request["contents"][0]["parts"];
+    assert!(
+        parts[0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("PROMPT-TEXT-4401")),
+        "{parts}"
+    );
+    assert_eq!(parts[1]["inlineData"]["mimeType"], "image/png", "{parts}");
+    assert_eq!(
+        parts[1]["inlineData"]["data"], "UE5HLUJZVEVTLTQ0MDI=",
+        "base64 of the bytes: {parts}"
+    );
+    agent.shutdown().await.expect("shutdown");
+
+    // A slash command reaches the model as its `/name` before the text.
+    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
+    let mut agent = scripted_agent(&fake).spawn().await.expect("spawn");
+    let prompt = Prompt::new()
+        .add_slash_command(SlashCommand::Plan)
+        .add_text("PLAN-TEXT-4403");
+    agent.chat(prompt).await.expect("turn");
+    let text = fake.request_json(0).unwrap()["contents"][0]["parts"][0]["text"].to_string();
+    assert!(text.contains("/plan PLAN-TEXT-4403"), "{text}");
+    agent.shutdown().await.expect("shutdown");
+}

@@ -657,7 +657,7 @@ argument and verdict types.
 
 New modules in the same work: `builder/options.rs` (model, subagent and
 harness option setters), `instructions.rs` (`SystemInstructions`),
-`options.rs` (`Budget`, `RetryConfig`, `RunCommandOptions`, `InlineSkill`,
+`prompt.rs` (`Prompt`, `Media`, `SlashCommand`), `options.rs` (`Budget`, `RetryConfig`, `RunCommandOptions`, `InlineSkill`,
 `SubagentSkills`, `SessionContinuation`), `lifecycle.rs` (answers to the
 lifecycle hooks), `protocol/options.rs` (the `HarnessConfig` option
 messages), and `tests/antigravity_scripted/` (the scripted suite's option,

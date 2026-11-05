@@ -48,6 +48,7 @@ mod policies;
 mod process;
 #[cfg(unix)]
 mod process_tree;
+mod prompt;
 pub mod protocol;
 mod session;
 mod streaming;
@@ -73,6 +74,7 @@ pub use options::{
     SubagentSkills,
 };
 pub use policies::{AskUserHandler, Policy, PolicyCondition, PolicyDecision, policy};
+pub use prompt::{Media, Prompt, SlashCommand};
 pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
 pub use subagent::Subagent;
 pub use triggers::{TriggerConfig, TriggerContext};

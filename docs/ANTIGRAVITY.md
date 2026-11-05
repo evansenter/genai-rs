@@ -150,6 +150,30 @@ out of reach. Because the harness is in its own group, a terminal's Ctrl-C
 reaches only your process; when it exits, the harness sees stdin close and
 shuts down gracefully.
 
+### Images, documents and slash commands
+
+`chat` and `send_streaming` take a string or a `Prompt`, which holds text,
+inline media and slash commands in order (the Python SDK's content
+primitives):
+
+```rust,ignore
+use genai_rs::antigravity::{Media, Prompt, SlashCommand};
+
+let prompt = Prompt::new()
+    .add_slash_command(SlashCommand::Plan)
+    .add_text("What does this chart show, and what should we change?")
+    .add_media(Media::from_file("q3-revenue.png")?);
+let response = agent.chat(prompt).await?;
+```
+
+`Media` is one type for images, documents, audio and video: the MIME type
+says which (`Media::new(bytes, "application/pdf")`, or `Media::from_file`
+from the extension). The harness hands it to the model as inline data after
+the text. Harness 0.1.23 drops a media item's `with_description` before the
+model sees it, so say what matters in a text part. `SlashCommand::Plan`
+reaches the model as `/plan` before the text, the harness's cue to plan
+before acting.
+
 ## System instructions
 
 The harness writes a system prompt of its own (7 to 10 thousand characters
