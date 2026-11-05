@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Antigravity: the Python SDK's harness options (#493), each shown changing
+  what harness 0.1.23 does against a scripted model (2026-11-05).
+  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md` lists every option the 0.1.23 SDK
+  exposes, modeled or with the reason it is not, and a CI test fails when a
+  new wheel adds one the table lacks.
+  - `SystemInstructions`: `custom` replaces the harness's prompt,
+    `harness_default().with_identity(..).add_section(..)` edits it, and a
+    string appends to it.
+  - Model options: `with_thinking_level`, `with_service_tier`,
+    `with_max_output_tokens`, `with_image_model`, `add_model_header`.
+  - Subagent controls: `with_max_subagent_depth`, `with_allowed_subagents`,
+    `with_define_subagent_tool`, and `Subagent::with_model`,
+    `with_allowed_subagents` and `with_skills(SubagentSkills)`.
+  - Harness config: `with_budget(Budget)`, `with_retry(RetryConfig)`,
+    `with_compaction_threshold`, `with_tool_output_truncation`,
+    `with_mcp_max_output_bytes`, `add_inline_skill(InlineSkill)`,
+    `with_session_continuation(SessionContinuation)`, `add_harness_env`,
+    `McpServer::with_force_all_tools_eager`,
+    `Capabilities::with_run_command(RunCommandOptions)` (timeout, daemons,
+    OS sandbox) and `AntigravityAgent::sandbox_status`.
+  - Lifecycle hooks: `on_session_start`, `on_session_end`, `on_pre_turn`,
+    `on_post_turn`, `on_tool_error` (its text replaces the error the model
+    sees), `on_compaction` and `on_stop` (`StopDecision::Continue` keeps
+    the turn going). A pre-tool hook can return `PreToolDecision::modify`
+    to run the call on other arguments.
+  - Policies: `Policy::when` conditions, `with_reason`, `with_name`,
+    `policy::ask_user` handlers, `mcp_<server>_*` and `mcp_*` targets, and
+    `policy::auto()`, the harness's model-judged assessment of risky calls,
+    whose flagged calls its handler approves or refuses (D-022).
+  - Triggers: `add_custom_trigger` with a `TriggerContext`,
+    `triggers::on_file_change`, and `AntigravityAgent::next_trigger_turn`,
+    which drives a turn a trigger started and returns its response.
+  - `ToolInvocation::new`, for unit-testing policy conditions and hooks.
 - `AgentBuilder::with_gemini_base_url(url)` points the Antigravity harness's
   model calls at another Gemini API host: a gateway, a recording proxy, or a
   scripted local server in tests. It needs a non-empty `with_api_key`.
@@ -29,6 +62,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: a string passed to Antigravity's `with_system_instructions`
+  is added to the harness's own prompt instead of replacing it**, as in the
+  Python SDK, so the harness's tool guidance, safety rules, workspace list,
+  skills list and built-in subagents stay (D-023). To replace the prompt as
+  before, pass `SystemInstructions::custom(text)`. The same holds for
+  `Subagent::with_system_instructions`, whose sections are now titled
+  `user_system_instructions` instead of `System`. The workspace note this
+  crate adds now goes only with custom instructions; the harness's prompt
+  lists the workspaces itself (verified on 0.1.23).
+- **Breaking: `BuiltinTool::StartSubagent` is `BuiltinTool::InvokeSubagent`,
+  and the subagent tool is named `invoke_subagent` everywhere**: in
+  `ToolAction::tool_name()`, in the pre-tool hook's `ToolInvocation`, and as
+  a policy target. Rename the variant and any string match;
+  `policy::deny("start_subagent")` and the other constructors still target
+  it.
+- **Breaking: enabling the subagent builtin no longer offers the model
+  `define_subagent`**, with which it writes subagents of its own at runtime
+  (D-023). Call `with_define_subagent_tool(true)` to keep it.
+- **Breaking: Antigravity policy precedence follows the harness's
+  evaluator.** A named tool still beats `mcp_<server>_*`, which beats `"*"`;
+  within a tier, deny now beats confirm/ask, which beats allow, where the
+  first registered rule used to win. `[allow("t"), deny("t")]` now denies
+  `t`. Remove the rule you do not want, or narrow it with `when`. `Policy`
+  is no longer `PartialEq`/`Eq`, as it can hold closures.
+- **Breaking: a call the pre-tool hook or a policy denied surfaces as
+  `ToolAction::Denied { name, args }`**, named and with the arguments it was
+  judged on. It was a `ToolAction::Error` named `"error"`, as the harness's
+  error step carries no action. Match on `Denied` (the event's decision is
+  unchanged).
+- **Breaking: `AntigravityAgent::shutdown()` returns
+  `AntigravityError::HarnessExited`** with the exit code and stderr tail when
+  the harness exits with a failure status after stdin closes, as the Python
+  SDK raises. Escalated exits (SIGTERM, SIGKILL) still return `Ok`.
+- **Breaking: Antigravity protocol types changed with the new options.**
+  `HarnessSideTools.run_command` and `.subagents` are `RunCommandToolConfig`
+  and `SubagentsConfig` (`ToolToggle::new(on).into()` builds the old
+  shape); `InputEvent::CallHookResponse` and
+  `OutputPayload::CallHookRequest` hold a `Box`; `HookVerdict`,
+  `GeminiModelOptions`, `McpServerConfig`, `CustomAgent`,
+  `SystemInstructionPart`, `PolicyConfig` and `HarnessConfig` gained fields
+  (build them with `..Default::default()`).
+- Antigravity's pre-tool hook runs once per custom tool call; it ran twice,
+  once when the harness asked and again on dispatch.
+- Harness discovery no longer starts `python3` when the explicit path or
+  `ANTIGRAVITY_HARNESS_PATH` names the binary.
 - **Breaking: Antigravity hooks run on a dedicated thread, not on the
   thread driving the turn.** A hook that blocks (`on_pre_tool`,
   `on_post_tool`, `on_questions`) therefore no longer stalls the runtime,
@@ -79,6 +157,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity's `generate_image` builtin failed every call ("model is
+  empty"): no image model was configured. With the builtin enabled the
+  bridge now sends one, `DEFAULT_IMAGE_MODEL` unless `with_image_model`
+  says otherwise (verified on 0.1.23, 2026-11-05).
+- An Antigravity step in an error state no longer streams its text as a
+  `TextDelta`. Harness 0.1.23 puts a denial's message in the delta of a
+  model-sourced error step, which read as the model's answer; it surfaces as
+  `AgentEvent::Error` only.
 - Dropping an Antigravity agent no longer leaves processes the harness
   started running; neither does a failed `spawn()` or a shutdown that had to
   escalate. The kill used to signal only the harness's pid, and harness
