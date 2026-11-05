@@ -26,7 +26,7 @@ use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 use crate::environments::EnvironmentSpec;
-use crate::request::AgentConfig;
+use crate::request::{AgentConfig, AntigravityConfig};
 use crate::tools::Tool;
 
 /// An agent definition for the `/v1beta/agents` resource.
@@ -61,14 +61,17 @@ pub struct Agent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_agent: Option<String>,
     /// The base agent's configuration: an
-    /// [`AntigravityConfig`](crate::AntigravityConfig) (its `model` and
-    /// `max_total_tokens`).
+    /// [`AntigravityConfig`] (its `model` and
+    /// `max_total_tokens`), set with
+    /// [`with_agent_config`](Self::with_agent_config).
     ///
     /// Stored and echoed back on create, get and list, with
     /// `max_total_tokens` as a string int64 (`"50000"`). The agent keeps only
     /// an Antigravity config: a config of another type is stored as
-    /// `{"type": "antigravity"}`, and an unknown field is
-    /// `400 Unknown parameter` (live 2026-11-05).
+    /// `{"type": "antigravity"}`, its settings dropped, and an unknown field
+    /// is `400 Unknown parameter` (live 2026-11-05). The field is the open
+    /// [`AgentConfig`] so that what the API echoes reads back whole; setting
+    /// it directly sends any JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_config: Option<AgentConfig>,
     /// System instruction for the agent.
@@ -127,9 +130,12 @@ impl Agent {
         }
     }
 
-    /// Sets the base agent's configuration, such as an
-    /// [`AntigravityConfig`](crate::AntigravityConfig) with the model the
-    /// agent reasons with.
+    /// Sets the base agent's configuration: the model the agent reasons
+    /// with, and its token cap.
+    ///
+    /// It takes an [`AntigravityConfig`], the only config the resource keeps:
+    /// another type is stored as a bare `{"type": "antigravity"}` and its
+    /// settings lost (live 2026-11-05).
     ///
     /// ```
     /// use genai_rs::{Agent, AntigravityConfig};
@@ -149,7 +155,7 @@ impl Agent {
     /// );
     /// ```
     #[must_use]
-    pub fn with_agent_config(mut self, config: impl Into<AgentConfig>) -> Self {
+    pub fn with_agent_config(mut self, config: AntigravityConfig) -> Self {
         self.agent_config = Some(config.into());
         self
     }
