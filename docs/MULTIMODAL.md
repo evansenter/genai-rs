@@ -264,7 +264,7 @@ The constructors leave them unset; the API fills them in on audio it returns.
 | Document | `pdf` → `application/pdf`, `txt` → `text/plain`, `md` → `text/markdown`, `json`, `csv`, `html`, `xml` |
 
 Detection doesn't guarantee the model accepts a format: `document_from_file`
-only sends the PDF, plain-text and Markdown document types (above). Always pass
+sends only PDF as document content, and `.txt` / `.md` files as text (above). Always pass
 full MIME types (`"image/png"`, not `"png"`).
 
 ## Examples
