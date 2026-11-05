@@ -220,20 +220,41 @@ async fn load_and_encode_file(path: impl AsRef<Path>) -> Result<String, GenaiErr
         );
     }
 
-    let bytes = tokio::fs::read(path).await.map_err(|e| {
-        let suggestion = match e.kind() {
-            std::io::ErrorKind::NotFound => " Check that the file path is correct.",
-            std::io::ErrorKind::PermissionDenied => " Check file permissions.",
-            _ => "",
-        };
-        GenaiError::InvalidInput(format!(
-            "Failed to read file '{}': {}.{}",
-            path.display(),
-            e,
-            suggestion
-        ))
-    })?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| file_read_error(path, &e))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+/// Reads a plain-text file as UTF-8, with the same read-error guidance as the
+/// binary loaders.
+async fn read_text_file(path: &Path) -> Result<String, GenaiError> {
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| file_read_error(path, &e))?;
+    String::from_utf8(bytes).map_err(|_| {
+        GenaiError::InvalidInput(format!(
+            "File '{}' is not valid UTF-8. document_from_file() sends .txt and .md files \
+             as text content; convert the file to UTF-8, or send it with \
+             document_from_file_with_mime() if it is really another format.",
+            path.display()
+        ))
+    })
+}
+
+/// Maps a file read failure to `InvalidInput`, with a hint for the common causes.
+fn file_read_error(path: &Path, e: &std::io::Error) -> GenaiError {
+    let suggestion = match e.kind() {
+        std::io::ErrorKind::NotFound => " Check that the file path is correct.",
+        std::io::ErrorKind::PermissionDenied => " Check file permissions.",
+        _ => "",
+    };
+    GenaiError::InvalidInput(format!(
+        "Failed to read file '{}': {}.{}",
+        path.display(),
+        e,
+        suggestion
+    ))
 }
 
 /// Helper to get extension-specific error information
@@ -271,9 +292,12 @@ fn validate_mime_category(
             "video_from_file()"
         } else if DOCUMENT_MIME_TYPES.contains(&mime_type) {
             "document_from_file()"
+        } else if TEXT_FILE_MIME_TYPES.contains(&mime_type) {
+            "document_from_file(), which sends .txt and .md files as text content"
         } else if mime_type.starts_with("text/")
             || matches!(mime_type, "application/json" | "application/xml")
         {
+            // document_from_file() rejects these, so don't point at it.
             "Content::text() with the file contents read via std::fs::read_to_string()"
         } else {
             "the appropriate *_from_file() function"
@@ -543,13 +567,12 @@ pub async fn video_from_file_with_mime(
     Ok(Content::video_data(data, mime_type))
 }
 
-/// MIME types [`document_from_file`] sends as inline document content: the
-/// ones the Interactions API accepted, verified live 2026-11-05 by reading
-/// back a real file of each type. The legacy `.doc`, `.xls` and `.ppt` types
-/// only passed the API's MIME check (with plain-text bytes); parsing a real
-/// legacy binary was not verified. Since
-/// 2026-11-04 it rejects every other inline document type, `text/plain` and
-/// `text/markdown` included, with `400 Unsupported mime_type`.
+/// MIME types [`document_from_file`] sends as document content: the ones the
+/// Interactions API accepts inline, verified live 2026-11-05 by reading back a
+/// real file of each type. The legacy `.doc`, `.xls` and `.ppt` types only
+/// passed the API's MIME check with plain-text bytes; parsing a real legacy
+/// file is unverified. The API rejects other inline document types with
+/// `400 Unsupported mime_type`.
 const DOCUMENT_MIME_TYPES: &[&str] = &[
     "application/pdf",
     "text/csv",
@@ -564,42 +587,50 @@ const DOCUMENT_MIME_TYPES: &[&str] = &[
     "application/vnd.oasis.opendocument.presentation",
 ];
 
+/// MIME types [`document_from_file`] reads as UTF-8 and sends as text content.
+/// The API accepted these as documents until 2026-11-04, when it started
+/// rejecting them with a 400 ("Unsupported mime_type ... in document content"),
+/// see #514.
+const TEXT_FILE_MIME_TYPES: &[&str] = &["text/plain", "text/markdown"];
+
 /// Loads a document file with automatic MIME type detection.
-///
-/// Reads the file, encodes it as base64, and validates the MIME type.
 ///
 /// # Supported Formats
 ///
-/// The formats the Interactions API accepts as inline document content
-/// (verified live 2026-11-05; for `.doc`, `.xls` and `.ppt`, only that the
-/// API accepts the MIME type, not that it parses a real legacy file):
+/// | Extension | Sent as |
+/// |-----------|---------|
+/// | `.pdf` | Document content (`application/pdf`) |
+/// | `.csv` | Document content (`text/csv`) |
+/// | `.docx` | Document content (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`) |
+/// | `.xlsx` | Document content (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`) |
+/// | `.pptx` | Document content (`application/vnd.openxmlformats-officedocument.presentationml.presentation`) |
+/// | `.odt` | Document content (`application/vnd.oasis.opendocument.text`) |
+/// | `.ods` | Document content (`application/vnd.oasis.opendocument.spreadsheet`) |
+/// | `.odp` | Document content (`application/vnd.oasis.opendocument.presentation`) |
+/// | `.doc` | Document content (`application/msword`) |
+/// | `.xls` | Document content (`application/vnd.ms-excel`) |
+/// | `.ppt` | Document content (`application/vnd.ms-powerpoint`) |
+/// | `.txt`, `.md` | Text content ([`Content::text()`]) with the file's UTF-8 contents |
 ///
-/// | Extension | MIME Type |
-/// |-----------|-----------|
-/// | `.pdf` | `application/pdf` |
-/// | `.csv` | `text/csv` |
-/// | `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
-/// | `.xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
-/// | `.pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` |
-/// | `.doc` | `application/msword` |
-/// | `.xls` | `application/vnd.ms-excel` |
-/// | `.ppt` | `application/vnd.ms-powerpoint` |
-/// | `.odt` | `application/vnd.oasis.opendocument.text` |
-/// | `.ods` | `application/vnd.oasis.opendocument.spreadsheet` |
-/// | `.odp` | `application/vnd.oasis.opendocument.presentation` |
+/// Document content is base64-encoded. These are the document types the
+/// Interactions API accepts inline (verified live 2026-11-05 by reading back
+/// a real file of each type; for `.doc`, `.xls` and `.ppt`, only that the API
+/// accepts the MIME type, not that it parses a real legacy file).
 ///
-/// Plain text and Markdown (`.txt`, `.md`) are not accepted inline as
-/// documents since 2026-11-04, nor are JSON, HTML or XML. Read such a file
-/// and send it as [`Content::text()`]; a `.txt` or `.md` file uploaded to the
-/// Files API still works as a document by URI ([`Content::from_file()`]).
+/// The Interactions API rejects `text/plain` and `text/markdown` as document
+/// content, so plain-text files are sent as text instead; the model reads them
+/// the same way.
+///
+/// The API also rejects JSON, HTML and XML documents. Read such a file and
+/// send it as [`Content::text()`].
 ///
 /// # Errors
 ///
 /// Returns [`GenaiError::InvalidInput`] if:
 /// - The file cannot be read (with a suggestion based on the error type)
 /// - The file has no extension
-/// - The file is not one of the formats above (the message names the
-///   alternative)
+/// - The file is not one of the formats above
+/// - A `.txt` or `.md` file is not valid UTF-8
 ///
 /// # Example
 ///
@@ -629,6 +660,11 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
         ))
     })?;
 
+    if TEXT_FILE_MIME_TYPES.contains(&mime_type) {
+        let text = read_text_file(path).await?;
+        return Ok(Content::text(text));
+    }
+
     if !DOCUMENT_MIME_TYPES.contains(&mime_type) {
         let suggestion = if mime_type.starts_with("image/") {
             "image_from_file()"
@@ -636,10 +672,6 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
             "audio_from_file()"
         } else if mime_type.starts_with("video/") {
             "video_from_file()"
-        } else if matches!(mime_type, "text/plain" | "text/markdown") {
-            "Content::text() with the file contents read via std::fs::read_to_string(), \
-             or upload it with client.files().upload() and send Content::from_file(), \
-             which the API still accepts as a document by URI"
         } else if mime_type.starts_with("text/")
             || matches!(mime_type, "application/json" | "application/xml")
         {
@@ -649,9 +681,9 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
         };
 
         return Err(GenaiError::InvalidInput(format!(
-            "File '{}' has MIME type '{}' which is not supported for inline document content. \
-             The Interactions API accepts PDF, CSV and Office/OpenDocument documents. \
-             For this file, use {}.",
+            "File '{}' has MIME type '{}' which is not supported for document content. \
+             The Gemini API accepts PDF, CSV and Office/OpenDocument documents \
+             (document_from_file() sends .txt and .md files as text). For this file, use {}.",
             path.display(),
             mime_type,
             suggestion
@@ -663,9 +695,12 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 
 /// Loads a document file with an explicit MIME type.
 ///
-/// Use this when the file's extension doesn't match its format. The MIME
-/// type is sent as given, unchecked: the API rejects inline document types
-/// outside the list in [`document_from_file`].
+/// Use this when you need to override the auto-detected MIME type,
+/// such as for files with non-standard extensions. The MIME type is sent
+/// as-is: the API accepts only the types [`document_from_file`] sends as
+/// document content and rejects the rest, `text/plain` and `text/markdown`
+/// included, so send text files with [`document_from_file`] or
+/// [`Content::text()`].
 ///
 /// # Example
 ///
@@ -900,8 +935,48 @@ mod tests {
         assert!(err.contains("document_from_file()"));
     }
 
+    #[test]
+    fn test_validate_mime_category_suggests_document_from_file_for_csv_and_office() {
+        for (name, mime) in [
+            ("data.csv", "text/csv"),
+            (
+                "letter.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        ] {
+            let err = validate_mime_category(mime, "image/", Path::new(name), "an image")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("document_from_file()"), "{name}: {err}");
+        }
+    }
+
+    #[test]
+    fn test_validate_mime_category_text_hints_name_a_helper_that_accepts_them() {
+        // document_from_file() sends .txt and .md files as text.
+        for (name, mime) in [("notes.txt", "text/plain"), ("notes.md", "text/markdown")] {
+            let err = validate_mime_category(mime, "image/", Path::new(name), "an image")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("document_from_file()"), "{name}: {err}");
+        }
+        // document_from_file() rejects these, so the hint must not send the
+        // caller to any *_from_file() helper.
+        for (name, mime) in [
+            ("data.json", "application/json"),
+            ("page.html", "text/html"),
+            ("feed.xml", "application/xml"),
+        ] {
+            let err = validate_mime_category(mime, "image/", Path::new(name), "an image")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("Content::text()"), "{name}: {err}");
+            assert!(!err.contains("_from_file()"), "{name}: {err}");
+        }
+    }
+
     #[tokio::test]
-    async fn test_document_from_file_accepts_inline_document_types() {
+    async fn test_document_from_file_sends_document_types_as_documents() {
         let dir = tempfile::tempdir().unwrap();
         let mut seen = std::collections::HashSet::new();
         for name in [
@@ -932,70 +1007,60 @@ mod tests {
                 other => panic!("{name}: expected a document, got {other:?}"),
             }
         }
-        // The extensions cover exactly the accepted types.
+        // The extensions cover exactly the accepted document types.
         let accepted: std::collections::HashSet<_> = DOCUMENT_MIME_TYPES.iter().copied().collect();
         assert_eq!(seen, accepted);
     }
 
+    /// The API rejects text/plain and text/markdown document content since
+    /// 2026-11-04 (#514), so these go out as text.
     #[tokio::test]
-    async fn test_document_from_file_rejects_text_formats() {
+    async fn test_document_from_file_sends_txt_and_markdown_as_text() {
         let dir = tempfile::tempdir().unwrap();
-        for name in [
-            "notes.txt",
-            "README.md",
-            "SHOUT.TXT",
-            "page.html",
-            "data.json",
-            "feed.xml",
-        ] {
+        for name in ["notes.txt", "README.md", "SHOUT.TXT"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "# héllo\nworld\n").unwrap();
+            match document_from_file(&path).await.unwrap() {
+                Content::Text { text, .. } => {
+                    assert_eq!(text.as_deref(), Some("# héllo\nworld\n"), "{name}");
+                }
+                other => panic!("{name}: expected text content, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_document_from_file_rejects_non_utf8_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("latin1.txt");
+        std::fs::write(&path, [0x63, 0x61, 0x66, 0xE9]).unwrap();
+        let err = document_from_file(&path).await.unwrap_err().to_string();
+        assert!(err.contains("not valid UTF-8"), "{err}");
+        assert!(err.contains("latin1.txt"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_document_from_file_missing_text_file_has_read_hint() {
+        let err = document_from_file("/nonexistent/path/notes.md")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Failed to read file"), "{err}");
+        assert!(err.contains("Check that the file path is correct"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_document_from_file_rejects_other_text_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["page.html", "data.json", "feed.xml"] {
             let path = dir.path().join(name);
             std::fs::write(&path, b"x").unwrap();
             let err = document_from_file(&path).await.unwrap_err().to_string();
             assert!(
-                err.contains("not supported for inline document content"),
+                err.contains("not supported for document content"),
                 "{name}: {err}"
             );
             assert!(err.contains("Content::text()"), "{name}: {err}");
-            // The Files API route was verified live for plain text and
-            // Markdown only, so only those name it.
-            let plain_or_markdown = name.to_lowercase().ends_with(".txt") || name.ends_with(".md");
-            assert_eq!(
-                err.contains("Content::from_file()"),
-                plain_or_markdown,
-                "{name}: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_validate_mime_category_suggests_document_from_file_for_office_types() {
-        let err = validate_mime_category(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "image/",
-            Path::new("letter.docx"),
-            "an image",
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("document_from_file()"), "{err}");
-    }
-
-    #[test]
-    fn test_validate_mime_category_suggests_content_text_for_text_types() {
-        // No *_from_file() helper accepts these since the API stopped taking
-        // text/plain and text/markdown documents, so the hint must not send
-        // the caller to one.
-        for (name, mime) in [
-            ("notes.txt", "text/plain"),
-            ("notes.md", "text/markdown"),
-            ("data.json", "application/json"),
-            ("page.html", "text/html"),
-        ] {
-            let err = validate_mime_category(mime, "image/", Path::new(name), "an image")
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("Content::text()"), "{name}: {err}");
-            assert!(!err.contains("_from_file()"), "{name}: {err}");
         }
     }
 

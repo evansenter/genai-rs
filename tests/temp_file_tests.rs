@@ -185,27 +185,72 @@ async fn test_pdf_from_temp_file() {
 // Document File Tests (CSV and Text Formats)
 // =============================================================================
 
-/// Tests that document_from_file rejects TXT and Markdown files, which the
-/// Interactions API stopped accepting as inline documents on 2026-11-04
-/// (`400 Unsupported mime_type 'text/plain' in document content`), and points
-/// to `Content::text()` and the Files API instead.
+/// Tests that document_from_file sends TXT and Markdown files as text content.
+///
+/// The Interactions API accepted `text/plain` and `text/markdown` document
+/// content until 2026-11-04, when it started rejecting both with a 400 (#514).
 #[tokio::test]
-async fn test_document_from_file_rejects_txt_and_markdown() {
+async fn test_document_from_file_sends_txt_and_markdown_as_text() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    for (name, mime) in [("test.txt", "text/plain"), ("README.md", "text/markdown")] {
+    for name in ["test.txt", "README.md"] {
         let path = temp_dir.path().join(name);
         std::fs::write(&path, "# Test content").expect("Failed to write file");
 
-        let err = document_from_file(&path).await.expect_err(name).to_string();
-        assert!(err.contains(mime), "{name}: {err}");
-        assert!(
-            err.contains("Content::text()") && err.contains("Content::from_file()"),
-            "{name} should point to the alternatives: {err}"
-        );
+        let content = document_from_file(&path)
+            .await
+            .unwrap_or_else(|e| panic!("{name} should load: {e}"));
+        match content {
+            Content::Text { text, .. } => {
+                assert_eq!(text.as_deref(), Some("# Test content"), "{name}");
+            }
+            other => panic!("{name}: expected Content::Text, got {other:?}"),
+        }
     }
 }
 
+/// Tests that the API reads a Markdown file loaded with document_from_file().
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_markdown_document_from_temp_file() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let md_path = temp_dir.path().join("notes.md");
+    std::fs::write(
+        &md_path,
+        "# Inventory\n\nThe warehouse holds exactly 417 crates.\n",
+    )
+    .expect("Failed to write Markdown");
+
+    let doc_content = document_from_file(&md_path)
+        .await
+        .expect("Failed to load Markdown from file");
+    let contents = vec![
+        Content::text("How many crates does the warehouse hold? Answer with just the number."),
+        doc_content,
+    ];
+
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Markdown document interaction failed");
+
+    assert_eq!(response.status, InteractionStatus::Completed);
+    let text = response.as_text().expect("Should have text response");
+    // A deterministic value read out of the document.
+    assert!(text.contains("417"), "Expected 417 in: {text}");
+}
+
 /// Tests that the API reads a CSV document from document_from_file().
+///
+/// `text/csv` is one of the inline document types the Interactions API accepts
+/// (verified live 2026-11-05).
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_csv_document_from_temp_file() {
@@ -467,6 +512,14 @@ async fn test_document_from_file_unsupported_extension() {
     assert!(
         err.contains("Unsupported document extension"),
         "Error should mention unsupported extension: {}",
+        err
+    );
+    // The override only helps for a type the API accepts.
+    assert!(
+        err.contains("PDF, CSV or Office/OpenDocument")
+            && err.contains("document_from_file_with_mime()")
+            && err.contains("Content::text()"),
+        "Error should scope the override and name the text alternative: {}",
         err
     );
 }

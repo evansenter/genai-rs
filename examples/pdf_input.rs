@@ -1,12 +1,10 @@
-//! Document input: a PDF, and a CSV file sent as a document.
+//! Document input: PDFs, and plain-text files loaded from disk.
 //!
 //! `Content::document_data(base64, mime_type)` sends a document inline.
-//! `document_from_file(path)` loads one from disk, picking the MIME type from
-//! the extension. Inline documents must be PDF, CSV or Office/OpenDocument
-//! files: since 2026-11-04 the API rejects `text/plain` and `text/markdown`
-//! documents, so send plain text as `Content::text`, or upload it to the Files
-//! API and reference it by URI (`files_api`), which also suits large or reused
-//! documents.
+//! `document_from_file(path)` loads a `.pdf` as document content and a `.txt`
+//! or `.md` file as text content: the API rejects `text/plain` and
+//! `text/markdown` documents. Large or reused documents belong in the Files
+//! API (`files_api`).
 //!
 //! Run with: `cargo run --example pdf_input`
 
@@ -54,24 +52,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         follow_up.as_text().ok_or("no text in response")?
     );
 
-    println!("--- CSV document from a file ---");
-    let mut inventory = tempfile::Builder::new().suffix(".csv").tempfile()?;
-    write!(inventory, "item,crates\nbolts,417\nnuts,52\nwashers,9\n")?;
-    let document = document_from_file(inventory.path()).await?;
+    println!("--- Plain-text file ---");
+    let mut notes = tempfile::Builder::new().suffix(".txt").tempfile()?;
+    writeln!(
+        notes,
+        "Release checklist: bump versions, tag, then watch the release workflow."
+    )?;
+    let document = document_from_file(notes.path()).await?;
     let response = client
         .interaction()
         .with_model(model)
         .with_content(vec![
-            Content::text("How many crates of bolts are there? Just the number."),
+            Content::text("What is the last step of this checklist? One short phrase."),
             document,
         ])
         .create()
         .await?;
-    let answer = response.as_text().ok_or("no text in response")?;
-    println!("Bolts: {answer}");
-    if !answer.contains("417") {
-        return Err(format!("the model did not read 417 out of the CSV: {answer}").into());
-    }
+    println!("{}", response.as_text().ok_or("no text in response")?);
 
     Ok(())
 }

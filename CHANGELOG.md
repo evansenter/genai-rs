@@ -7,26 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- **Breaking: `document_from_file` no longer sends `.txt` or `.md` files.**
-  Since 2026-11-04 the Interactions API rejects `text/plain` and
-  `text/markdown` inline documents (`400 Unsupported mime_type 'text/plain'
-  in document content`) and accepts only PDF, CSV and Office/OpenDocument
-  files (verified live 2026-11-05). `document_from_file` now fails locally
-  with `GenaiError::InvalidInput` for `.txt` and `.md`, and sends `.csv`,
-  `.docx`, `.xlsx`, `.pptx`, `.doc`, `.xls`, `.ppt`, `.odt`, `.ods` and
-  `.odp`, which it rejected before (for `.doc`, `.xls` and `.ppt`, only the
-  MIME type was verified, not parsing of a real legacy file).
-  `detect_mime_type`, and so `FileUpload::from_path`, now recognizes those
-  Office/OpenDocument extensions. Migration: send the text as
-  `Content::text(std::fs::read_to_string(path)?)`, or upload the file with
-  `client.files().upload(FileUpload::from_path(path))`, wait for it with
-  `client.files().wait_until_active(&file.name, poll)`, and pass
-  `Content::from_file(&file)`; a `text/plain` or `text/markdown` file still
-  works as a document by URI. `Content::document_data` and
-  `document_from_file_with_mime` send any MIME type unchanged, so a
-  `text/plain` document built with them now fails at the API.
+- `document_from_file()` sends `.csv` (`text/csv`) and the Office/OpenDocument
+  formats (`.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, and the legacy
+  `.doc`, `.xls`, `.ppt`) as document content; it rejected them before. With
+  PDF, these are the inline document types the API accepts (verified live
+  2026-11-05 by reading back a real file of each type; the legacy `.doc`,
+  `.xls` and `.ppt` only passed the API's MIME check with plain-text bytes,
+  so parsing a real legacy file is unverified). `detect_mime_type()`, and so
+  `FileUpload::from_path()`, now recognizes the nine Office/OpenDocument
+  extensions (#516).
+
+### Fixed
+
+- `document_from_file()` sends `.txt` and `.md` files as text content
+  (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
+  `text/markdown` document content, which the API rejects with a 400 since
+  2026-11-04. A file that isn't valid UTF-8 returns `GenaiError::InvalidInput`.
+  If you match on the returned `Content`, expect `Content::Text` for these
+  extensions. `document_from_file_with_mime()` is unchanged and still sends
+  any MIME type as a document (#514).
 
 ## [0.13.0] - 2026-11-03
 
