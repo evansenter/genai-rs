@@ -52,6 +52,7 @@ become `with_*` setters.
 | Python (`google-genai` 2.25) | genai-rs |
 |------------------------------|----------|
 | `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id, base_agent)...)` |
+| `client.agents.create(..., agent_config={"type": "antigravity", "model": m, "max_total_tokens": n})` | `Agent::new(id, base_agent).with_agent_config(AntigravityConfig::new().with_model(m).with_max_total_tokens(n))` |
 | `client.agents.get(id)` | `client.agents().get(id)` |
 | `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).with_parent(p).send()` |
 | (no equivalent) | `client.agents().list().pages()` / `.items()` |
@@ -101,6 +102,8 @@ become `with_*` setters.
 | `client.credentials.delete(id)` | `client.credentials().delete(id)` |
 | `client.voices.create(voice={"type": "prompted", ...}, store=True)` | `client.voices().create(&CreateVoiceRequest::prompted(prompt).with_display_name(n))` |
 | `client.voices.create(voice={"type": "replicated", ...}, store=)` | `client.voices().create(&CreateVoiceRequest::replicated(source, consent).with_store(s))` |
+| `client.voices.create(voice={..., "description": d, "language_code": l, "region_code": r, "accent": a, "persona": p, "context": c, "gender": g, "pitch": t})` | `CreateVoiceRequest::prompted(prompt).with_description(d).with_language_code(l).with_region_code(r).with_accent(a).with_persona(p).with_context(c).with_gender(g).with_pitch(t)` |
+| `client.voices.create(voice={..., "sample_audio": ...})` | Not sent: output only, the API ignores it and generates the sample (live 2026-11-05); read it on `Voice::sample_audio` |
 | `client.voices.get(id)` | `client.voices().get(id)` |
 | `client.voices.list(page_size=, page_token=, search=, type_=, gender=, language_code=, region_code=, accent=, persona=, contexts=, pitch=)` | `client.voices().list().with_page_size(n).with_page_token(t).with_search(q).with_voice_type(v).with_gender(g).with_language_code(l).with_region_code(r).with_accent(a).with_persona(p).with_context(c).with_pitch(p).send()` |
 | (no equivalent) | `client.voices().list().pages()` / `.items()` |
@@ -115,7 +118,7 @@ become `with_*` setters.
 | (no equivalent) | `client.files().wait_until_active(name, PollOptions::new())` |
 | `client.files.download(file=)`, `client.files.register_files(uris=)` | Not modeled yet |
 | `client.file_search_stores.create(config={"display_name": n})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_display_name(n))` |
-| `client.file_search_stores.create(config={"embedding_model": "models/<m>"})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_extra("embeddingModel", "models/<m>"))` |
+| `client.file_search_stores.create(config={"embedding_model": "models/<m>"})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_embedding_model("models/<m>"))` |
 | `client.file_search_stores.get(name=)` | `client.file_search_stores().get(name)` |
 | `client.file_search_stores.list(config={"page_size": n, "page_token": t})` (one page) | `client.file_search_stores().list().with_page_size(n).with_page_token(t).send()` |
 | iterating `client.file_search_stores.list()` | `client.file_search_stores().list().items()` (or `.pages()`) |
@@ -123,8 +126,10 @@ become `with_*` setters.
 | `client.file_search_stores.delete(name=, config={"force": True})` | `client.file_search_stores().force_delete(name)` |
 | `client.file_search_stores.upload_to_file_search_store(file_search_store_name=, file=path, config={"display_name": n, "mime_type": m})` | `client.file_search_stores().upload(store_name, FileUpload::from_path(path).with_display_name(n).with_mime_type(m))` |
 | `client.file_search_stores.upload_to_file_search_store(file_search_store_name=, file=io_object, config={"mime_type": m})` | `client.file_search_stores().upload(store_name, FileUpload::from_bytes(data, m))` |
-| `upload_to_file_search_store(config={"custom_metadata": ..., "chunking_config": ...})` | Not modeled yet |
-| `client.file_search_stores.import_file(file_search_store_name=, file_name=)`, `client.file_search_stores.download_media(media_id=)` | Not modeled yet |
+| `upload_to_file_search_store(config={"custom_metadata": [...], "chunking_config": {...}})` | `client.file_search_stores().upload(store_name, DocumentUpload::new(FileUpload::from_path(path)).add_custom_metadata(CustomMetadata::string(k, v)).with_chunking_config(ChunkingConfig::white_space(max_tokens, overlap)))` |
+| `client.file_search_stores.import_file(file_search_store_name=, file_name=)` | `client.file_search_stores().import_file(store_name, file_name)` (or `&file`) |
+| `client.file_search_stores.import_file(..., config={"custom_metadata": [...], "chunking_config": {...}})` | `client.file_search_stores().import_file(store_name, DocumentImport::new(file_name).add_custom_metadata(m).with_chunking_config(c))` |
+| `client.file_search_stores.download_media(media_id=)` | Not modeled yet |
 | `client.file_search_stores.documents.list(parent=, config={"page_size": n, "page_token": t})` (one page) | `client.file_search_stores().documents().list(store_name).with_page_size(n).with_page_token(t).send()` |
 | iterating `client.file_search_stores.documents.list(parent=)` | `client.file_search_stores().documents().list(store_name).items()` (or `.pages()`) |
 | `client.file_search_stores.documents.get(name=)` | `client.file_search_stores().documents().get(name)` |
@@ -141,10 +146,14 @@ Python's `files.upload` guesses a missing `mime_type` from a path, as
 object, as `FileUpload::from_bytes` does. A path upload's display name
 defaults to the file name.
 
-Python's `file_search_stores.upload_to_file_search_store` returns the
-upload operation; `upload` resolves it and returns the new
+Python's `file_search_stores.upload_to_file_search_store` and
+`import_file` return an operation; `upload` and `import_file` resolve it
+(an import polls the operation until it is done, up to 60 s by default,
+set with `DocumentImport::with_poll_options`) and return the new
 `FileSearchDocument`. A document is named by its display name, else a path
-upload's file name; an in-memory upload without one is unnamed.
+upload's file name; an in-memory upload without one is unnamed. An imported
+document is named after the file's ID, and is a copy: deleting the file
+leaves it in place.
 
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them (verified live 2026-09-27). genai-rs sends one value per

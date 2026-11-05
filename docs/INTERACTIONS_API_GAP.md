@@ -64,18 +64,17 @@ facts from 2026-11-04:
   (`speakers`, `stop_sequences`, `response_modalities`, `safety_settings`)
   comes back with each entry twice, which modeling them has to allow for.
   `FileSearchStore.activeDocumentsCount` and `sizeBytes` (string int64s);
-  `File.updateTime` and `File.source` (`UPLOADED`).
+  `File.updateTime` and `File.source` (`UPLOADED`); all four modeled since
+  (see "Resource residue" below).
 - **In the snapshot, not modeled, not seen live yet:** the `queued` status
   (#501); `Interaction.agent_config`, `environment`, `continuation_ids`,
-  `output_audio`/`_image`/`_video`, and the spec's `max_total_tokens`;
-  `Agent.agent_config`; the inline environment's `environment_id`; the
-  CodeMender agent config (#501); `CreateFileSearchStoreConfig.embeddingModel`;
-  the document upload config's `customMetadata` and `chunkingConfig`, and
-  `import_file` (`UploadToFileSearchStoreConfig`, `ImportFileConfig`);
-  nine `VoiceInput` fields (accent, context, description, gender,
-  language_code, persona, pitch, region_code, sample_audio);
-  `FileSearchStore.pending`/`failedDocumentsCount`; `Document.customMetadata`;
-  `File.downloadUri`; `FileStatus.details` (dropped, no `extra`).
+  `output_audio`/`_image`/`_video`, and the spec's `max_total_tokens`; the
+  CodeMender agent config (#501). The resource fields this bullet listed
+  (`Agent.agent_config`, the inline environment's `environment_id`,
+  `embeddingModel`, the document upload and import configs, the `VoiceInput`
+  fields, the store's document counts, `Document.customMetadata`,
+  `File.downloadUri`, `FileStatus.details`) are modeled or reasoned out
+  since; see "Resource residue" below.
 - **Read but lost:** `StreamChunk::StepDelta` drops the event's
   `metadata.total_usage`. The spec types `file_search_result` delta items
   as opaque objects, and `FileSearchResultItem` keeps only `title`, `text`
@@ -86,6 +85,45 @@ facts from 2026-11-04:
 - **Live coverage:** `FileSearchDocuments::get` and
   `Interactions::get_with_input` had no live test; both have one now.
   `include_input=true` now echoes the input as a `user_input` step.
+
+## Resource residue (live, 2026-11-05)
+
+Every field and verb the bindings define for the resources (Files, File
+Search Stores and their documents, agents, voices, environments,
+credentials, webhooks, triggers) is modeled, or listed in the coverage
+oracle's tables with a dated reason. Probed live 2026-11-05:
+
+- **Files:** `updateTime` and `source` (`FileSource`, `UPLOADED` on every
+  upload) are modeled, and `sizeBytes` reads a string or a number. A file
+  that fails processing serves `error: {code: 3, message}` with no
+  `details`; `FileError` models `details` and keeps other keys in `extra`.
+  `downloadUri` stays a `GAPS` entry: no uploaded or failed file carries it,
+  and only a generated file (a video generation) would.
+- **File Search Stores:** `activeDocumentsCount`, `pendingDocumentsCount`
+  (served only while a document indexes) and `sizeBytes` are string int64s,
+  all modeled; `failedDocumentsCount`, never seen because an unindexable
+  document fails its upload with a 500, is modeled beside them.
+  `embeddingModel` on create is read (another model is kept; an unknown one
+  is a 400). Documents serve `customMetadata` in the order sent.
+- **Uploads and imports:** the document upload moved from the `raw` to the
+  `resumable` protocol so its JSON body can carry `customMetadata` and
+  `chunkingConfig` (`DocumentUpload`). `file_search_stores.import_file` is
+  `FileSearchStores::import_file` (`DocumentImport`): its operation
+  finishes on the first `GET` and names the document by bare ID. The
+  bindings' `ImportFileConfig` lacks `fileName`, which the body needs.
+  `download_media` is not modeled.
+- **Agents:** `agent_config` is stored and echoed (`max_total_tokens` as a
+  string); a config of another type is stored as `{"type": "antigravity"}`,
+  and an unknown field is a 400.
+- **Voices:** eight `VoiceInput` fields (`description`, `language_code`,
+  `region_code`, `accent`, `persona`, `context`, `gender`, `pitch`) are
+  stored, echoed and filterable. `sample_audio` is output only: a value sent
+  is ignored and replaced by a generated sample (`NOT_SENT`).
+- **Environments:** the remote environment's `environment_id` runs an agent
+  interaction in that existing environment (the agent read a file the
+  environment was created with); an unknown ID is a 404. On an agent's
+  `base_environment` it is accepted and dropped. A stored agent interaction
+  serves `environment: {"environment_id", "type": "remote"}`.
 
 ## Protocol facts (live, 2026-09-24)
 
