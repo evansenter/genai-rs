@@ -17,7 +17,10 @@ a wrong flag, or a command that fails at runtime. It catches exactly the
 class of defect above, which is the class that survives review.
 
 It also parse-checks the standalone scripts under `.github/scripts/`,
-which are invoked only from schedule-only jobs and carry the same latency.
+which are invoked only from schedule-only jobs and carry the same latency,
+and the `run:` steps of the composite actions under `.github/actions/`
+(`runs.steps`), which run wherever a job uses them — including a
+schedule-only job (#457).
 
 Limits worth stating, so a green check is not read as broader coverage than
 it is:
@@ -32,8 +35,11 @@ it is:
   (`[[ ]]`, process substitution, arrays) that dash rejects at runtime.
   Nothing in this repo sets `shell: sh` today, so it is not reachable —
   but a pass on such a step is weaker than it looks.
-- Only `.github/workflows/*.y*ml` and `.github/scripts/*.sh` are scanned.
-  A shell script living anywhere else is not covered.
+- Only `.github/workflows/*.y*ml`, `.github/actions/*/action.y*ml` and
+  `.github/scripts/*.sh` are scanned. A shell script living anywhere else
+  (`scripts/`, the harnesses under `.github/scripts/tests/`) is covered by
+  `make test-scripts`'s shellcheck instead, and a composite action nested
+  deeper than `.github/actions/<name>/` is not covered.
 - A step with no explicit `shell:` in a job whose matrix includes Windows
   runs under pwsh on the Windows leg and bash elsewhere. Such steps are
   still parsed as bash — all of them are plain `cargo ...` invocations
@@ -121,12 +127,35 @@ def iter_run_steps(path: str):
             yield job_name, index, step.get("name", "(unnamed)"), run, assumed_bash
 
 
-def check(path: str) -> tuple[int, int, int]:
+def iter_action_run_steps(path: str):
+    """Yield the same tuples as `iter_run_steps` for a composite action.
+
+    A composite action's steps sit under `runs.steps`, not `jobs.*.steps`,
+    and each `run:` step must name its `shell:` (GitHub rejects a composite
+    step without one), so nothing is assumed. The "job" is `runs`. Other
+    action kinds (`docker`, `node20`) have no shell steps.
+    """
+    with open(path, encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    runs = document.get("runs") or {}
+    if runs.get("using") != "composite":
+        return
+    for index, step in enumerate(runs.get("steps") or []):
+        run = step.get("run")
+        if not run:
+            continue
+        shell = str(step.get("shell") or "bash")
+        if shell.split(maxsplit=1)[0] not in SHELLS:
+            continue
+        yield "runs", index, step.get("name", "(unnamed)"), run, False
+
+
+def check(path: str, steps=iter_run_steps) -> tuple[int, int, int]:
     """Returns (blocks checked, blocks assumed bash, failures)."""
     checked = 0
     assumed = 0
     failures = 0
-    for job_name, index, step_name, run, assumed_bash in iter_run_steps(path):
+    for job_name, index, step_name, run, assumed_bash in steps(path):
         checked += 1
         if assumed_bash:
             assumed += 1
@@ -195,6 +224,17 @@ def main() -> int:
         assumed += path_assumed
         failures += path_failures
 
+    # Composite actions: their steps run inside whichever job uses them.
+    actions = sorted(
+        glob.glob(".github/actions/*/action.yml")
+        + glob.glob(".github/actions/*/action.yaml")
+    )
+    action_checked = 0
+    for action in actions:
+        path_checked, _, path_failures = check(action, iter_action_run_steps)
+        action_checked += path_checked
+        failures += path_failures
+
     # Scripts too: they have the same discovery latency. Counted separately, so
     # the inert-gate check below still fires if run-block extraction yields
     # nothing.
@@ -204,7 +244,7 @@ def main() -> int:
         script_checked += 1
         failures += check_script(script)
 
-    total = checked + script_checked
+    total = checked + action_checked + script_checked
 
     if failures:
         print(f"\n{failures} of {total} shell block(s) failed to parse.")
@@ -221,7 +261,8 @@ def main() -> int:
     summary = (
         f"All {total} shell blocks parse "
         f"({checked} workflow `run:` block(s) across {len(paths)} file(s), "
-        f"{script_checked} script(s))"
+        f"{action_checked} composite action step(s) across {len(actions)} "
+        f"action(s), {script_checked} script(s))"
     )
     print(
         f"{summary}; {assumed} assumed bash on a Windows-capable job."
