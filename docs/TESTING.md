@@ -382,7 +382,12 @@ leaves it and the snapshot unchanged.
 
 The committed `bindings.json` must match a fresh dump of the baseline
 release, so a dump-script change needs a refresh too (run the script
-without `--version`). `refresh_api_snapshot.sh --check` compares them
-without writing; it runs as the sweep's last step, and in the
-`shell-scripts` job on a PR that touches the dump script, the refresh
-script, the baseline or `bindings.json`.
+without `--version`), and the file is never edited by hand.
+`refresh_api_snapshot.sh --check` checks it without writing. Its offline
+half fails when the snapshot's `sdk_version` is not exactly the baseline
+(a bump made without the script) or the snapshot has no classes or
+endpoints; `--check --offline` stops there, and `make test-scripts` runs it
+on every push. The full check then compares the file with a fresh dump,
+which catches a hand edit; it runs as the sweep's last step every day, and
+in the `shell-scripts` job on a PR that touches the dump script, the
+refresh script, the baseline or `bindings.json`.

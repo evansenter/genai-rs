@@ -17,7 +17,7 @@
 
 | Rank | Source | Why |
 |------|--------|-----|
-| 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py` | Ships ahead of prose. Diff two releases to find new surface. |
+| 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
 | 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404 since about 2026-11-03, and no new public URL was found (2026-11-04), so the 2026-11-01 copies are the latest. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |

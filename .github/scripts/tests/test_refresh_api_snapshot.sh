@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fixture tests for refresh_api_snapshot.sh, offline: pip and the dump
-# script are stubbed, so no wheel is downloaded.
+# script are stubbed, so no wheel is downloaded. Ends by running the offline
+# half of --check on the committed snapshot and baseline.
 #
 # Run directly: .github/scripts/tests/test_refresh_api_snapshot.sh
 set -euo pipefail
@@ -44,6 +45,9 @@ exec "$real_python" "\$@"
 EOF
 chmod +x "$work/bin/python3"
 
+# A committed snapshot of the right shape for baseline 1.0.0.
+SNAP='{"sdk_version": "1.0.0", "endpoints": ["GET /{}/x"], "classes": {"a.A": {"x": {}}}}'
+
 # A checkout: the script under test, a stub dump script (FAKE_DUMP=fail
 # exits 1; otherwise it prints FAKE_DUMP_OUTPUT), the real spec snapshotter,
 # a baseline and a committed snapshot.
@@ -59,7 +63,7 @@ if os.environ.get("FAKE_DUMP") == "fail":
 print(os.environ.get("FAKE_DUMP_OUTPUT", '{"sdk_version": "new"}'))
 EOF
     echo "1.0.0" >"$repo/.github/last-swept-sdk-version"
-    echo '{"sdk_version": "1.0.0"}' >"$repo/tests/fixtures/api_surface/bindings.json"
+    printf '%s\n' "$SNAP" >"$repo/tests/fixtures/api_surface/bindings.json"
     echo '{"source": "old"}' >"$repo/tests/fixtures/api_surface/openapi-v1beta.json"
 }
 
@@ -70,11 +74,26 @@ run() {
 
 baseline() { tr -d '[:space:]' <"$work/repo/.github/last-swept-sdk-version"; }
 snapshot() { cat "$work/repo/tests/fixtures/api_surface/$1"; }
+set_baseline() { printf '%s\n' "$1" >"$work/repo/.github/last-swept-sdk-version"; }
+set_snapshot() { printf '%s\n' "$1" >"$work/repo/tests/fixtures/api_surface/bindings.json"; }
+
+# Runs the script with the rest of the arguments and fails unless it exits
+# with $2. The exit codes are part of the contract: 1 for a failed check or
+# step, 2 for bad usage or a missing file.
+expect_rc() {
+    local label=$1 want=$2
+    shift 2
+    local rc=0
+    run "$@" || rc=$?
+    if [ "$rc" -ne "$want" ]; then
+        fail "$label: expected exit $want, got $rc: $(cat "$work/out.log")"
+    fi
+}
 
 unchanged() {
     local what=$1
     [ "$(baseline)" = 1.0.0 ] || fail "$what: the baseline was bumped to $(baseline)"
-    [ "$(snapshot bindings.json)" = '{"sdk_version": "1.0.0"}' ] ||
+    [ "$(snapshot bindings.json)" = "$SNAP" ] ||
         fail "$what: bindings.json was rewritten"
     [ "$(snapshot openapi-v1beta.json)" = '{"source": "old"}' ] ||
         fail "$what: openapi-v1beta.json was rewritten"
@@ -135,13 +154,68 @@ unchanged "--out"
 
 # --check compares a fresh dump of the baseline with the committed one.
 new_repo
-FAKE_DUMP_OUTPUT='{"sdk_version": "1.0.0"}' run --check ||
-    fail "--check on a matching snapshot exited non-zero: $(cat "$work/out.log")"
+FAKE_DUMP_OUTPUT=$SNAP expect_rc "--check, matching snapshot" 0 --check
+
+# A hand-edited body: the offline part passes, the fresh dump differs.
 new_repo
-if FAKE_DUMP_OUTPUT='{"sdk_version": "drifted"}' run --check; then
-    fail "--check on a drifted snapshot exited 0"
-fi
+FAKE_DUMP_OUTPUT='{"sdk_version": "1.0.0", "endpoints": ["GET /{}/y"], "classes": {"a.A": {"x": {}}}}' \
+    expect_rc "--check, edited body" 1 --check
 unchanged "--check"
+
+# A dump that fails is a failed check, not a pass.
+new_repo
+FAKE_DUMP=fail expect_rc "--check, failed dump" 1 --check
+unchanged "--check, failed dump"
+
+# --offline never downloads: with pip failing, a matching snapshot passes.
+new_repo
+FAKE_PIP=fail expect_rc "--check --offline, matching snapshot" 0 --check --offline
+
+# The baseline bumped without regenerating: the snapshot names another
+# release. Caught offline, before any download (pip would fail here).
+new_repo
+set_baseline 1.1.0
+FAKE_PIP=fail expect_rc "--check --offline, stale snapshot" 1 --check --offline
+FAKE_PIP=fail expect_rc "--check, stale snapshot" 1 --check
+grep -q "is for google-genai '1.0.0'" "$work/out.log" ||
+    fail "--check on a stale snapshot did not fail on the version: $(cat "$work/out.log")"
+
+# A version that is only a prefix match is a mismatch (1.0.0 vs 1.0.01).
+new_repo
+set_baseline 1.0.01
+FAKE_PIP=fail expect_rc "--check --offline, prefix version" 1 --check --offline
+
+# A snapshot with the version but nothing in it, or that is not JSON.
+new_repo
+set_snapshot '{"sdk_version": "1.0.0", "endpoints": [], "classes": {}}'
+FAKE_PIP=fail expect_rc "--check --offline, empty body" 1 --check --offline
+set_snapshot '{"sdk_version": "1.0.0", "endpoints": ["GET /{}/x"]}'
+FAKE_PIP=fail expect_rc "--check --offline, no classes" 1 --check --offline
+set_snapshot 'model a.py:A.x: str'
+FAKE_PIP=fail expect_rc "--check --offline, not JSON" 1 --check --offline
+
+# Missing files and bad usage are errors, not passes.
+new_repo
+rm "$work/repo/tests/fixtures/api_surface/bindings.json"
+expect_rc "--check, missing snapshot" 2 --check
+new_repo
+rm "$work/repo/.github/last-swept-sdk-version"
+expect_rc "--check, missing baseline" 2 --check
+new_repo
+expect_rc "unknown argument" 2 --bogus
+expect_rc "--check with --version" 2 --check --version 2.0.0
+expect_rc "--check with --out" 2 --check --out "$work/artifact"
+expect_rc "--check with a spec" 2 --check --spec-v1 "$work/spec.json"
+expect_rc "--offline without --check" 2 --offline
+expect_rc "--offline with a refresh" 2 --offline --version 2.0.0
+unchanged "bad usage"
+
+# The committed snapshot is for the committed baseline, and not empty.
+# Offline, so it runs on every `make test-scripts`; the sweep and PR CI run
+# the full --check against a fresh dump.
+if ! bash "$scripts/refresh_api_snapshot.sh" --check --offline >"$work/out.log" 2>&1; then
+    fail "the committed snapshot fails --check --offline: $(cat "$work/out.log")"
+fi
 
 if [ "$failures" -gt 0 ]; then
     echo "$failures failure(s)" >&2
