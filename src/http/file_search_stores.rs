@@ -237,6 +237,7 @@ pub async fn upload_to_file_search_store(
     options: &DocumentOptions,
 ) -> Result<FileSearchDocument, GenaiError> {
     let store_path = store_resource_path(store_name)?;
+    options.validate()?;
     let url = ctx.upload_url(&format!("{store_path}:uploadToFileSearchStore"));
     let mime_type_value = mime_type_header(mime_type)?;
 
@@ -323,6 +324,7 @@ pub async fn import_file(
     import: &DocumentImport,
 ) -> Result<FileSearchDocument, GenaiError> {
     let store_path = store_resource_path(store_name)?;
+    import.options.validate()?;
     let url = ctx.api_url(&format!("{store_path}:importFile"));
     let body = ImportFileBody {
         file_name: &import.file_name,
@@ -336,11 +338,23 @@ pub async fn import_file(
     let operation = if operation.is_finished(&store_path) {
         operation
     } else {
-        let operation_url = operation_url(ctx, &store_path, &operation.name)?;
+        let (operation_url, operation_id) = operation_url(ctx, &store_path, &operation.name)?;
+        // The import goes on without the client, and a second import makes a
+        // second document, so an error from here on names what it creates.
+        // The document already exists, pending, under the operation's ID
+        // (live 2026-11-05).
+        let handle = format!(
+            "It may still be running on the server as operation '{}', which \
+             creates document '{store_path}/documents/{operation_id}': wait for \
+             that document (FileSearchDocuments::wait_until_active) rather than \
+             importing the file again, which makes a second document.",
+            operation.name
+        );
         import
             .poll
-            .wait(
+            .wait_with_advice(
                 &what,
+                &handle,
                 (IMPORT_WAIT_TIMEOUT, IMPORT_POLL_INTERVAL),
                 || get_operation(ctx, &operation_url),
                 |current| {
@@ -351,7 +365,10 @@ pub async fn import_file(
                     }
                 },
             )
-            .await?
+            .await
+            .map_err(|e| {
+                unfinished_import(e, &format!("Polling {what} failed. {handle} Cause: "))
+            })?
     };
     if let Some(error) = &operation.error {
         return Err(GenaiError::Internal(format!(
@@ -408,8 +425,12 @@ impl Operation {
 }
 
 /// The URL of an operation of the store at `store_path`, from the name the
-/// API gave it, with its ID percent-encoded.
-fn operation_url(ctx: &HttpContext, store_path: &str, name: &str) -> Result<String, GenaiError> {
+/// API gave it, with its ID percent-encoded; and the ID, as given.
+fn operation_url<'n>(
+    ctx: &HttpContext,
+    store_path: &str,
+    name: &'n str,
+) -> Result<(String, &'n str), GenaiError> {
     let id = name
         .strip_prefix(store_path)
         .and_then(|rest| rest.strip_prefix("/operations/"))
@@ -420,7 +441,36 @@ fn operation_url(ctx: &HttpContext, store_path: &str, name: &str) -> Result<Stri
                  an operation of '{store_path}'"
             ))
         })?;
-    Ok(ctx.api_url(&format!("{store_path}/operations/{}", path_segment(id))))
+    Ok((
+        ctx.api_url(&format!("{store_path}/operations/{}", path_segment(id))),
+        id,
+    ))
+}
+
+/// An error from polling an unfinished import, with `context` (which names
+/// the operation and the document it creates) put in front of its message.
+/// The wait's own deadline error names them already. Only non-retryable
+/// errors reach here (the wait polls through the rest), so nothing is made
+/// retryable that was not.
+fn unfinished_import(e: GenaiError, context: &str) -> GenaiError {
+    match e {
+        GenaiError::Api {
+            status_code,
+            message,
+            request_id,
+            retry_after,
+        } => GenaiError::Api {
+            status_code,
+            message: format!("{context}{message}"),
+            request_id,
+            retry_after,
+        },
+        timeout @ GenaiError::Internal(_) => timeout,
+        GenaiError::MalformedResponse(message) => {
+            GenaiError::MalformedResponse(format!("{context}{message}"))
+        }
+        other => GenaiError::Internal(format!("{context}{other}")),
+    }
 }
 
 async fn get_operation(ctx: &HttpContext, url: &str) -> Result<Operation, GenaiError> {

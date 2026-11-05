@@ -2677,8 +2677,57 @@ async fn import_file_times_out_on_an_operation_that_never_finishes() {
         .unwrap_err();
 
     assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
-    assert!(err.to_string().contains("Timeout"), "{err}");
+    let message = err.to_string();
+    assert!(message.contains("Timeout"), "{message}");
+    // The import goes on, and a second one makes a second document: the
+    // error hands over the operation and the document, and does not say to
+    // try again.
+    assert!(
+        message.contains("operation 'fileSearchStores/abc/operations/op-1'"),
+        "{message}"
+    );
+    assert!(
+        message.contains("document 'fileSearchStores/abc/documents/op-1'"),
+        "{message}"
+    );
+    assert!(message.contains("second document"), "{message}");
+    assert!(!message.contains("try again"), "{message}");
     assert!(stub.requests().len() >= 2, "{:?}", stub.requests().len());
+}
+
+/// A non-retryable error from the operation poll keeps its status and
+/// names the operation and the document the import creates.
+#[tokio::test]
+async fn import_file_poll_failure_names_the_operation_and_document() {
+    let stub = Stub::replying(vec![
+        import_operation(None, None),
+        Reply::json(
+            403,
+            json!({"error": {"code": 403, "message": "Permission denied", "status": "PERMISSION_DENIED"}}),
+        ),
+    ])
+    .await;
+
+    let err = stub
+        .client()
+        .file_search_stores()
+        .import_file(STORE, full_import())
+        .await
+        .unwrap_err();
+
+    let GenaiError::Api { status_code, .. } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(*status_code, 403);
+    let message = err.to_string();
+    for expected in [
+        "operation 'fileSearchStores/abc/operations/op-1'",
+        "document 'fileSearchStores/abc/documents/op-1'",
+        "Permission denied",
+    ] {
+        assert!(message.contains(expected), "{expected}: {message}");
+    }
+    assert!(!err.is_retryable(), "{err:?}");
 }
 #[tokio::test]
 async fn file_search_store_upload_rejects_bad_input_before_any_request() {
@@ -2735,6 +2784,27 @@ async fn file_search_store_upload_rejects_bad_input_before_any_request() {
             "bare store id for an import",
             call(stores.import_file("abc", "files/f1")),
         ),
+        // The API answers both with a 500 (live 2026-11-05).
+        (
+            "chunk overlap equal to the chunk",
+            call(
+                stores.upload(
+                    STORE,
+                    DocumentUpload::new(FileUpload::from_path(&text))
+                        .with_chunking_config(ChunkingConfig::white_space(100, 100)),
+                ),
+            ),
+        ),
+        (
+            "chunk overlap larger than the chunk, for an import",
+            call(
+                stores.import_file(
+                    STORE,
+                    DocumentImport::new("files/f1")
+                        .with_chunking_config(ChunkingConfig::white_space(100, 150)),
+                ),
+            ),
+        ),
     ];
     for (label, call) in cases {
         let err = call.await.unwrap_err();
@@ -2742,6 +2812,9 @@ async fn file_search_store_upload_rejects_bad_input_before_any_request() {
             matches!(err, GenaiError::InvalidInput(_)),
             "{label}: {err:?}"
         );
+        if label.starts_with("chunk overlap") {
+            assert!(err.to_string().contains("max_overlap_tokens"), "{err}");
+        }
     }
     assert!(stub.requests().is_empty());
 }

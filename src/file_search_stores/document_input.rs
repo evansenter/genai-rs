@@ -3,6 +3,7 @@
 //! take: the file, and how the store indexes it.
 
 use super::types::{ChunkingConfig, CustomMetadata};
+use crate::errors::GenaiError;
 use crate::files::{FileMetadata, FileUpload};
 use crate::poll::PollOptions;
 use serde::Serialize;
@@ -17,6 +18,33 @@ pub(crate) struct DocumentOptions {
     pub(crate) custom_metadata: Vec<CustomMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) chunking_config: Option<ChunkingConfig>,
+}
+
+impl DocumentOptions {
+    /// Rejects a white-space overlap that is not smaller than its chunk. The
+    /// API answers one with a `500 Internal error` (live 2026-11-05: an
+    /// overlap equal to the chunk and one larger), which reads as
+    /// retryable, so it is caught before any request.
+    pub(crate) fn validate(&self) -> Result<(), GenaiError> {
+        let Some(white_space) = self
+            .chunking_config
+            .as_ref()
+            .and_then(|c| c.white_space_config.as_ref())
+        else {
+            return Ok(());
+        };
+        if let (Some(chunk), Some(overlap)) = (
+            white_space.max_tokens_per_chunk,
+            white_space.max_overlap_tokens,
+        ) && overlap >= chunk
+        {
+            return Err(GenaiError::InvalidInput(format!(
+                "white-space chunking needs max_overlap_tokens ({overlap}) smaller than \
+                 max_tokens_per_chunk ({chunk}); the API fails the request with a 500 otherwise"
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// A document to upload into a file search store with

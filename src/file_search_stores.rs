@@ -275,12 +275,12 @@ impl<'a> FileSearchStores<'a> {
     /// name that is not `fileSearchStores/<id>`, a file that cannot be read,
     /// empty contents or contents over 2 GB, no MIME type (a path whose
     /// extension doesn't map to one, without [`FileUpload::with_mime_type`](crate::FileUpload::with_mime_type)),
-    /// or a MIME type that cannot be sent as a header value. MIME *syntax* is
-    /// not checked: `nonsense` or `text/` reach the API and come back as an
-    /// API error. Returns an API or network error if the upload fails (a
-    /// chunk overlap larger than the chunk fails it with a 500, live
-    /// 2026-11-05), and [`GenaiError::MalformedResponse`] if its answer names
-    /// no document. If the upload succeeds but reading the document back
+    /// a MIME type that cannot be sent as a header value, or a white-space
+    /// chunking overlap not smaller than its chunk (which the API fails with
+    /// a 500, live 2026-11-05). MIME *syntax* is not checked: `nonsense` or
+    /// `text/` reach the API and come back as an API error. Returns an API or
+    /// network error if the upload fails, and
+    /// [`GenaiError::MalformedResponse`] if its answer names no document. If the upload succeeds but reading the document back
     /// fails, the error names the created document.
     ///
     /// The 2 GB ceiling is borrowed from the Files API and has not been
@@ -361,12 +361,20 @@ impl<'a> FileSearchStores<'a> {
     /// # Errors
     ///
     /// Returns [`GenaiError::InvalidInput`], before any request, for a store
-    /// name that is not `fileSearchStores/<id>`. Returns an API or network
+    /// name that is not `fileSearchStores/<id>` or a white-space chunking
+    /// overlap not smaller than its chunk. Returns an API or network
     /// error if the import is refused (a file that does not exist, for
     /// instance), [`GenaiError::Internal`] if the operation reports an error
     /// or the wait times out, and [`GenaiError::MalformedResponse`] if the
     /// operation finishes without naming a document. If reading the document
     /// back fails, the error names the imported document.
+    ///
+    /// Do not retry an import that timed out or whose polling failed: the
+    /// import goes on on the server, and its document already exists,
+    /// pending, under the operation's ID, so a second import makes a second
+    /// document (live 2026-11-05). The error names the operation and that
+    /// document; wait for it with
+    /// [`FileSearchDocuments::wait_until_active`] instead.
     ///
     /// # Example
     ///

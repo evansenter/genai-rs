@@ -90,6 +90,30 @@ impl PollOptions {
         self,
         what: &str,
         defaults: (Duration, Duration),
+        get: impl FnMut() -> Fut,
+        check: impl FnMut(T) -> Result<PollStep<T>, GenaiError>,
+    ) -> Result<T, GenaiError>
+    where
+        Fut: std::future::Future<Output = Result<T, GenaiError>>,
+    {
+        self.wait_with_advice(
+            what,
+            "It may still be processing - try again with a longer timeout.",
+            defaults,
+            get,
+            check,
+        )
+        .await
+    }
+
+    /// [`wait`](Self::wait), ending its deadline error with `advice` instead
+    /// of the advice to wait again, for a caller whose retry is not a wait
+    /// (an import, which a second call repeats).
+    pub(crate) async fn wait_with_advice<T, Fut>(
+        self,
+        what: &str,
+        advice: &str,
+        defaults: (Duration, Duration),
         mut get: impl FnMut() -> Fut,
         mut check: impl FnMut(T) -> Result<PollStep<T>, GenaiError>,
     ) -> Result<T, GenaiError>
@@ -150,8 +174,7 @@ impl PollOptions {
                 }
                 return Err(GenaiError::Internal(format!(
                     "Timeout waiting for {what} to become active (timeout {timeout:?}, \
-                     waited {waited:?}, last state: {last_state}{cause}). It may still be \
-                     processing - try again with a longer timeout."
+                     waited {waited:?}, last state: {last_state}{cause}). {advice}"
                 )));
             }
             tracing::debug!("{what} not active yet, waiting {delay:?}...");

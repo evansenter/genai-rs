@@ -350,9 +350,13 @@ pub struct StringList {
 ///
 /// The only strategy is white space ([`ChunkingConfig::white_space`]). The
 /// API reads it: an unknown key is a `400 Invalid JSON payload`, and an
-/// overlap larger than the chunk fails the upload with a 500 (live
-/// 2026-11-05). A chunking strategy the crate does not model yet can be
-/// sent through [`extra`](Self::extra).
+/// overlap as large as the chunk or larger fails the upload or import with
+/// a 500 (live 2026-11-05), so
+/// [`FileSearchStores::upload`](crate::FileSearchStores::upload) and
+/// [`import_file`](crate::FileSearchStores::import_file) reject one with
+/// [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput) before any
+/// request. A chunking strategy the crate does not model yet can be sent
+/// through [`extra`](Self::extra).
 ///
 /// ```
 /// use genai_rs::ChunkingConfig;
@@ -379,7 +383,8 @@ pub struct ChunkingConfig {
 impl ChunkingConfig {
     /// Chunks on white space: at most `max_tokens_per_chunk` tokens per
     /// chunk, with up to `max_overlap_tokens` shared by neighboring chunks.
-    /// The overlap must be smaller than the chunk.
+    /// The overlap must be smaller than the chunk: the upload or import
+    /// checks it before any request.
     #[must_use]
     pub fn white_space(max_tokens_per_chunk: u32, max_overlap_tokens: u32) -> Self {
         Self {
