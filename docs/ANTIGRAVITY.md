@@ -953,7 +953,9 @@ while let Some(response) = agent.next_trigger_turn(Duration::from_secs(60)).awai
 The file watch polls every `poll_interval`, comparing each file's size and
 modification time (no OS watcher, so no extra dependency), and skips the
 directories the Python SDK's `watchfiles` filter skips (`.git`,
-`node_modules`, virtualenvs, caches).
+`node_modules`, virtualenvs, caches). Changes made while a turn runs are
+held until the agent is idle and handed to the callback as one batch, the
+net change since the last batch.
 
 Delivery semantics (see `antigravity::triggers` for details):
 

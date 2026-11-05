@@ -267,3 +267,57 @@ async fn test_on_file_change_sends_the_callbacks_message() {
     assert_eq!(message.as_deref(), Some("1 change(s): Added"));
     handle.abort();
 }
+
+#[tokio::test]
+async fn test_on_file_change_holds_changes_during_a_turn_and_sends_one_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let (idle_tx, idle_rx) = watch::channel(false); // a turn is running
+    let (context, mut rx) = observable_context(idle_rx);
+    let seen: Arc<std::sync::Mutex<Vec<Vec<FileChange>>>> = Arc::default();
+    let calls = Arc::clone(&seen);
+    let trigger = on_file_change(dir.path(), Duration::from_millis(10), move |changes| {
+        calls.lock().unwrap().push(changes.to_vec());
+        Some(format!("{} change(s)", changes.len()))
+    });
+    let handle = tokio::spawn(trigger(context));
+
+    // Changes spread across several polls of one turn; one of them nets
+    // out (added, then deleted).
+    std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    std::fs::write(dir.path().join("b.txt"), "y").unwrap();
+    std::fs::write(dir.path().join("tmp.txt"), "z").unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    std::fs::remove_file(dir.path().join("tmp.txt")).unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "on_change must not run while the turn runs"
+    );
+    assert!(rx.try_recv().is_err(), "nothing is delivered mid-turn");
+
+    idle_tx.send_replace(true);
+    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("a message within 5s");
+    assert_eq!(message.as_deref(), Some("2 change(s)"));
+    let batches = seen.lock().unwrap().clone();
+    let names: Vec<Vec<_>> = batches
+        .iter()
+        .map(|batch| {
+            batch
+                .iter()
+                .map(|c| (c.kind, c.path.file_name().unwrap().to_owned()))
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![vec![
+            (FileChangeKind::Added, "a.txt".into()),
+            (FileChangeKind::Added, "b.txt".into()),
+        ]],
+        "one batch, holding the turn's net changes"
+    );
+    handle.abort();
+}

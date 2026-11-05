@@ -34,7 +34,8 @@ cargo run --example file_watcher --features antigravity
   `.git`, `node_modules` and similar directories.
 - **The baseline is taken when `on_file_change` is called**, so a file
   written right after `spawn()` is reported.
-- **Changes made during a turn arrive as one batch after it.** Return
-  `None` from the callback to skip a batch.
+- **Changes made during a turn arrive as one batch after it**: the
+  callback runs once the agent is idle, with the net change since the
+  last batch. Return `None` from it to skip a batch.
 - **Without `next_trigger_turn`**, a trigger's turn runs unobserved and
   the next `chat` discards its events (see `proactive_agent`).

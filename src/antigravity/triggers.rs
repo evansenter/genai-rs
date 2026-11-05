@@ -173,6 +173,11 @@ impl TriggerContext {
             return delivered;
         }
     }
+
+    /// Whether the agent is between turns right now.
+    fn is_idle(&self) -> bool {
+        *self.idle.borrow()
+    }
 }
 
 /// A custom trigger, as added with
@@ -319,9 +324,13 @@ const IGNORED_DIRS: &[&str] = &[
 /// modification time (no OS notification API, so it works the same on every
 /// platform and adds no dependency). It skips the directories the Python
 /// SDK's `watchfiles` filter skips (`.git`, `node_modules`, `__pycache__`,
-/// virtualenvs and tool caches) and does not follow symbolic links. Changes
-/// that happen while a turn runs are collected and arrive as one batch
-/// after it. `on_change` runs on the trigger's task: keep it quick.
+/// virtualenvs and tool caches) and does not follow symbolic links.
+///
+/// Changes that happen while a turn runs are held until the agent is idle,
+/// then handed to `on_change` as one batch: the net change since the last
+/// batch, so a file added and deleted within the turn is not reported.
+/// `on_change` runs when the batch is about to be delivered, on the
+/// trigger's task: keep it quick.
 ///
 /// The baseline is the state of `path` when `on_file_change` is called, so
 /// a change made during `spawn()` or just after it is reported, with no
@@ -336,23 +345,29 @@ pub fn on_file_change(
     let baseline = snapshot(&path);
     move |context: TriggerContext| {
         Box::pin(async move {
-            let mut last = baseline;
+            // The state the last batch was reported against.
+            let mut reported = baseline;
             loop {
                 tokio::time::sleep(poll_interval).await;
+                // Hold changes while a turn runs: the next idle poll diffs
+                // against `reported`, so they arrive merged, in one batch.
+                if !context.is_idle() {
+                    continue;
+                }
                 let now = snapshot_of(&path).await;
-                let changes = diff_snapshots(&last, &now);
-                last = now;
+                let changes = diff_snapshots(&reported, &now);
+                reported = now;
                 if changes.is_empty() {
                     continue;
                 }
+                // A turn that begins between the idle check and here makes
+                // `send` wait for it; changes made meanwhile go in the next
+                // batch, against the snapshot just taken.
                 if let Some(message) = on_change(&changes)
                     && let Err(e) = context.send(message).await
                 {
                     break Err::<(), _>(e);
                 }
-                // Changes made while a delivery waited are picked up by the
-                // next poll, against the snapshot taken before the wait, so
-                // none are lost.
             }
         }) as BoxFuture<Result<(), AntigravityError>>
     }
