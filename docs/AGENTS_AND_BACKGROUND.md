@@ -137,6 +137,12 @@ let env_id = response.environment_id.clone().expect("assigned environment");
   interaction with 404 `not_found`.
 - A custom agent can carry a default environment via
   `Agent::with_base_environment`.
+- **`CodeMenderConfig`** (`agent_config.type: "code-mender"`, with
+  `CodeMenderFindRequest`, `CodeMenderFixRequest` and `CodeMenderFile`)
+  models the bindings' CodeMender agent config. It is Vertex-only: the
+  Gemini API answers `400 The value 'code-mender' is not supported for
+  'agent_config.type' on the Gemini API, it is allowed on the Gemini
+  Enterprise Agent Platform` (live 2026-11-05).
 
 ### Managing environments
 

@@ -124,3 +124,45 @@ fn test_agent_config_roundtrip() {
 
     assert_eq!(config, parsed);
 }
+
+#[test]
+fn test_code_mender_config_wire_shape() {
+    // The google-genai 2.34.0 CodeMenderAgentConfig; Vertex-only on the
+    // Gemini API (live 2026-11-05).
+    let config: AgentConfig = CodeMenderConfig::new()
+        .with_model("m")
+        .with_session_id("s1")
+        .with_max_rounds(3)
+        .with_find_request(
+            CodeMenderFindRequest::new()
+                .with_mode(CodeMenderMode::Scan)
+                .with_description("find overflows")
+                .add_source_file(CodeMenderFile::new("a.c", "int main(){}")),
+        )
+        .with_fix_request(
+            CodeMenderFixRequest::new()
+                .with_finding_id("f1")
+                .add_source_file(CodeMenderFile::new("a.c", "int main(){}")),
+        )
+        .into();
+    assert_eq!(
+        config.as_value(),
+        &serde_json::json!({
+            "type": "code-mender",
+            "model": "m",
+            "session_id": "s1",
+            "session_config": {"max_rounds": 3},
+            "find_request": {
+                "description": "find overflows",
+                "mode": "scan",
+                "source_files": [{"path": "a.c", "content": "int main(){}"}]
+            },
+            "fix_request": {
+                "finding_id": "f1",
+                "source_files": [{"path": "a.c", "content": "int main(){}"}]
+            }
+        })
+    );
+    let bare: AgentConfig = CodeMenderConfig::new().into();
+    assert_eq!(bare.as_value(), &serde_json::json!({"type": "code-mender"}));
+}

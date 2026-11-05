@@ -4,7 +4,8 @@ mod agent_config;
 mod generation_config;
 
 pub use agent_config::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, ThinkingSummaries,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, ThinkingSummaries,
     Visualization,
 };
 pub use generation_config::{

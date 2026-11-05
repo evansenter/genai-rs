@@ -78,11 +78,6 @@ const NOT_SENT: &[Allowed] = &[
     // Not modeled yet: WP2 (#504).
     ("agents.Agent.agent_config", GAP),
     ("interactions.Environment.environment_id", GAP),
-    ("interactions.CodeMenderAgentConfig.*", GAP_CODEMENDER),
-    ("interactions.FindRequest.*", GAP_CODEMENDER),
-    ("interactions.FixRequest.*", GAP_CODEMENDER),
-    ("interactions.FileContent.*", GAP_CODEMENDER),
-    ("interactions.SessionConfig.*", GAP_CODEMENDER),
     ("legacy.CreateFileSearchStoreConfig.embeddingModel", GAP),
     ("voices.VoiceInput.accent", GAP_VOICE),
     ("voices.VoiceInput.context", GAP_VOICE),
@@ -96,7 +91,6 @@ const NOT_SENT: &[Allowed] = &[
 ];
 
 const GAP: &str = "Not modeled yet; WP2 of #504 (probe live before modeling, D-010).";
-const GAP_CODEMENDER: &str = "The CodeMender agent config is not modeled (#501); WP2.";
 const GAP_VOICE: &str = "Not on `VoiceSpec` yet; the API may treat some as output only. \
      Probe live before modeling (D-010); WP2.";
 

@@ -21,7 +21,8 @@ use crate::environments::{
 use crate::file_search_stores::CreateFileSearchStoreRequest;
 use crate::http::webhooks::WebhookInput;
 use crate::request::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, ServiceTier,
     SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TranscriptionMode,
     VideoConfig, VideoTask, Visualization,
@@ -108,6 +109,24 @@ pub(super) fn agent_configs() -> Vec<AgentConfig> {
             .with_max_total_tokens(1000)
             .into(),
         DynamicConfig::new().into(),
+        CodeMenderConfig::new()
+            .with_model("m")
+            .with_session_id("s")
+            .with_max_rounds(3)
+            .with_find_request(
+                CodeMenderFindRequest::new()
+                    .with_description("d")
+                    .with_finding_id("f")
+                    .with_mode(CodeMenderMode::Verify)
+                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
+            )
+            .with_fix_request(
+                CodeMenderFixRequest::new()
+                    .with_description("d")
+                    .with_finding_id("f")
+                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
+            )
+            .into(),
     ]
 }
 

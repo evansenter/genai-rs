@@ -65,6 +65,7 @@ the shape was a `Content` block rather than a step.
 | 44 | `EnvironmentFileType` | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
 | 45 | `VideoResolution` | `resolution_type` | 360p/720p/1080p/4k |
 | 46 | `TranscriptionMode` | `mode_type` | smart/verbatim, string or tagged object |
+| 47 | `CodeMenderMode` | `mode_type` | scan/verify (CodeMender is Vertex-only) |
 
 The Antigravity harness enums are listed in their
 [own section](#antigravity-harness-protocol-feature-antigravity).
@@ -180,6 +181,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | The validation error lists exactly these (2026-07), but `delivery` is rejected for audio and image |
 | `VideoTask` | snake_case | `"text_to_video"`, ..., `"extend"` | Verified live 2026-07 via the validation error |
 | `Visualization` | lowercase | `"off"`, `"auto"` | Verified live 2026-07 via the validation error |
+| `CodeMenderMode` | lowercase | `"scan"`, `"verify"` | `agent_config.find_request.mode`, from the google-genai 2.34.0 bindings. Unverified: the `code-mender` agent config is Vertex-only (`400 ... allowed on the Gemini Enterprise Agent Platform`, live 2026-11-05) |
 | Audio MIME type (TTS) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent; see [Audio response](#audio-response-tts-output). Live 2026-09-24 |
 | `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `prebuilt`/`prompted` verified live 2026-09-24 |
 | `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Verified live 2026-09-24 |

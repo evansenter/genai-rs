@@ -99,6 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credentials, voices and triggers. An interaction created on one version
   reads on the other. `v1beta` stays the default, since only it has every
   resource.
+- `CodeMenderConfig`, with `CodeMenderFindRequest`, `CodeMenderFixRequest`,
+  `CodeMenderFile` and `CodeMenderMode`, builds the CodeMender agent config
+  of the google-genai 2.34.0 bindings (`agent_config.type: "code-mender"`:
+  a find or fix request over source files, a model, a session id and
+  `session_config.max_rounds`) (#501). It is Vertex-only: the Gemini API
+  answers `400 The value 'code-mender' is not supported for
+  'agent_config.type' on the Gemini API, it is allowed on the Gemini
+  Enterprise Agent Platform` (live 2026-11-05), so it is modeled and
+  documented per D-005 but not exercised live.
 
 ### Changed
 

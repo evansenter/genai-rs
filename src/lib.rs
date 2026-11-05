@@ -149,7 +149,8 @@ pub use steps::{FunctionResultPayload, Step, StepDelta, StepError};
 // Request types (includes agent configuration)
 pub mod request;
 pub use request::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role,
     ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig,
     TranscriptionMode, TurnContent, VideoConfig, VideoTask, Visualization,
