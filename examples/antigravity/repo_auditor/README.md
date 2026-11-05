@@ -108,9 +108,8 @@ Usage: prompt=Some(408606) total=Some(427009)
 
 Notes from real runs:
 
-- The workspace root is announced to the model (and appended to the
-  subagent's instructions) automatically; without that, agents guess paths
-  and wander the filesystem.
+- The harness's prompt lists the workspace root, for the subagent too;
+  without that, agents guess paths and wander the filesystem.
 - The pre-tool hook is handed the *model's* arguments — on 0.1.18 plain
   absolute paths under `AbsolutePath` / `DirectoryPath` / `SearchDirectory`
   / `SearchPath` — while the streamed actions carry `file:///` URIs. The
@@ -119,8 +118,8 @@ Notes from real runs:
   read the action-record keys (`filePath`) the hook is never given.
 - A denied call never runs, so it has no action record: the harness turns
   it into an error step carrying the hook's reason, which surfaces as a
-  `ToolAction::Error` marked `ToolDecision::Denied` (plus the harness's own
-  error event), and the model sees the reason.
+  `ToolAction::Denied` naming the tool, marked `ToolDecision::Denied` (plus
+  the harness's own error event), and the model sees the reason.
 - It is expensive: on 0.1.18 a run costs a few hundred thousand prompt
   tokens (the subagent re-reads the fixture and polls subagent status),
   against roughly ten thousand on 0.1.10.

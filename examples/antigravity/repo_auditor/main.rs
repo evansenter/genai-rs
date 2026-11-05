@@ -134,11 +134,10 @@ const AUDITOR_INSTRUCTIONS: &str = "You are a security auditor reviewing one cod
      relative to the workspace root. Only report real vulnerabilities in \
      the project's own source code. Never touch paths outside the workspace.";
 
-/// The task prompt. The workspace root is announced to the model
-/// automatically (`with_workspace_announcement`, on by default) and appended
-/// to the subagent's instructions too, so neither the task nor the subagent
-/// has to spell out the absolute path — the pre-tool hook still enforces the
-/// boundary regardless.
+/// The task prompt. The harness's own prompt lists the workspace root, for
+/// the subagent too (instructions given as a string are added to that
+/// prompt), so neither the task nor the subagent has to spell out the
+/// absolute path — the pre-tool hook still enforces the boundary regardless.
 const AUDIT_TASK: &str = "Audit this project's workspace for security vulnerabilities. \
      Inspect its files — including dotfiles like .env, which often hold \
      committed secrets. Delegate the source review to the file_auditor \
@@ -170,9 +169,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The subagent runs in its own trajectory with the default read-only
     // built-ins. Custom tools are referenced by name and must also be
     // registered on the parent (dispatch goes through the parent's registry).
-    // Its trajectory does not inherit the parent's context, but the workspace
-    // announcement is appended to its instructions automatically, so it need
-    // not name the workspace root itself.
+    // Its trajectory does not inherit the parent's context, but the
+    // harness's prompt for it lists the workspace root, so it need not name
+    // the root itself.
     let file_auditor = Subagent::new("file_auditor")
         .with_description(
             "Reviews the workspace's source files for security vulnerabilities \
@@ -361,8 +360,10 @@ fn tool_path(args: &serde_json::Value) -> Option<&str> {
 /// they don't read like executed ones.
 fn print_action(action: &ToolAction, decision: &ToolDecision) {
     if let ToolDecision::Denied { reason } = decision {
-        // A hook-denied call never ran, so there is no action record for
-        // it: the harness reports it as an error step carrying the reason.
+        // A denied call never ran, so there is no action record for it.
+        // The bridge reports this client's denials as ToolAction::Denied,
+        // named after the tool; a denial the harness reports only as an
+        // error step is the Error arm.
         match action {
             ToolAction::Error(_) => println!("[DENIED] {reason}"),
             other => println!("[DENIED {}] {reason}", other.tool_name()),

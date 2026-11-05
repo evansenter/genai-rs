@@ -26,12 +26,12 @@
 //!
 //! - Policies gate by tool name; `on_pre_tool` gates by content. Use both: a
 //!   name-based allow cannot tell a safe argument from a dangerous one.
-//! - Hooks run inline on the event pump. Keep them non-blocking, and never
-//!   wait for a human decision inside one.
+//! - Each hook call runs on a thread of its own, bounded by the turn
+//!   deadline, so a slow hook spends the turn's budget.
 //! - A denial reaches the model as the call's error, so the reason string
 //!   steers its next attempt.
-//! - The workspace root is announced to the model by default
-//!   (`with_workspace_announcement(false)` to ground paths yourself).
+//! - The harness's own prompt lists the workspace roots, so the model
+//!   knows where to look without being told.
 //!
 //! ## Requirements
 //!
@@ -122,8 +122,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Workspace: {workspace_path}");
     println!("  src/config.rs, src/main.rs, README.md, secrets.env\n");
 
-    // The audit trail is shared between the hooks (which run inline on the
-    // event pump) and the stream loop, so it needs interior mutability.
+    // The audit trail is shared between the hooks (which run on threads
+    // of their own) and the stream loop, so it needs interior mutability.
     let audit: Arc<Mutex<Vec<Audit>>> = Arc::new(Mutex::new(Vec::new()));
     let hook_audit = Arc::clone(&audit);
     let post_audit = Arc::clone(&audit);
@@ -142,9 +142,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              that look interesting, and call record_finding once for each notable \
              thing you find. Do not read or record credentials. Finish when done.",
         )
-        // Real content for the builtins to work against. The crate
-        // announces the root to the model by default, so it does not have
-        // to guess paths.
+        // Real content for the builtins to work against. The harness's
+        // prompt lists the root, so the model does not have to guess
+        // paths.
         .add_workspace(workspace_path.clone())
         // Read-only builtins are exactly what an explorer needs; the file
         // tools below are all in this set.
