@@ -35,10 +35,11 @@ checks the crate against it offline: request keys against the binding
 classes, every response field for an empty `extra`, and every class
 reached or listed with a reason. `tests/ci_coverage.rs` maps every endpoint
 to the handle verbs that call it and requires a live test of each verb on
-its handle. It is the one committed dump of the bindings, and that script
-is the only thing that writes it: bump the baseline with
-`.github/scripts/refresh_api_snapshot.sh --version X.Y.Z`, which
-regenerates the snapshot too. `refresh_api_snapshot.sh --check` fails on a
+its handle. `tests/fixtures/api_surface/bindings.json` is the one
+committed dump of the bindings, and only
+`.github/scripts/refresh_api_snapshot.sh` writes it: bump the baseline with
+`refresh_api_snapshot.sh --version X.Y.Z`, which regenerates the snapshot
+too. `refresh_api_snapshot.sh --check` fails on a
 stale, empty or hand-edited snapshot (`make test-scripts` runs its offline
 half); see `docs/TESTING.md`.
 
