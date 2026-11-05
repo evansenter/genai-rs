@@ -257,10 +257,10 @@ async fn test_on_file_change_sends_the_callbacks_message() {
             changes[0].kind
         ))
     });
-    let handle = tokio::spawn(trigger(context));
-    // Let the watch take its first snapshot before the change.
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    // Written before the watch's task runs at all: the baseline was taken
+    // when the trigger was declared, so the change is still reported.
     std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+    let handle = tokio::spawn(trigger(context));
     let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("a message within 5s");

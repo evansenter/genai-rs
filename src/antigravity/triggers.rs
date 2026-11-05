@@ -322,15 +322,21 @@ const IGNORED_DIRS: &[&str] = &[
 /// virtualenvs and tool caches) and does not follow symbolic links. Changes
 /// that happen while a turn runs are collected and arrive as one batch
 /// after it. `on_change` runs on the trigger's task: keep it quick.
+///
+/// The baseline is the state of `path` when `on_file_change` is called, so
+/// a change made during `spawn()` or just after it is reported, with no
+/// wait for the watch to start. Taking it reads the tree once, on the
+/// calling thread.
 pub fn on_file_change(
     path: impl Into<PathBuf>,
     poll_interval: Duration,
     on_change: impl Fn(&[FileChange]) -> Option<String> + Send + Sync + 'static,
 ) -> impl FnOnce(TriggerContext) -> BoxFuture<Result<(), AntigravityError>> + Send + 'static {
     let path = path.into();
+    let baseline = snapshot(&path);
     move |context: TriggerContext| {
         Box::pin(async move {
-            let mut last = snapshot_of(&path).await;
+            let mut last = baseline;
             loop {
                 tokio::time::sleep(poll_interval).await;
                 let now = snapshot_of(&path).await;

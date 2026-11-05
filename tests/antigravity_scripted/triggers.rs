@@ -92,8 +92,7 @@ async fn test_scripted_file_change_trigger_delivers_the_callbacks_message() {
         .spawn()
         .await
         .expect("spawn");
-    // Let the watch take its first snapshot before the change.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // No wait: the watch's baseline was taken when it was declared.
     write_file(&watched, "notes.md", "new");
     let response = agent
         .next_trigger_turn(Duration::from_secs(20))
