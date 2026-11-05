@@ -1,14 +1,14 @@
-//! Document input: PDFs, and plain-text files sent as documents.
+//! Document input: PDFs, and plain-text files loaded from disk.
 //!
 //! `Content::document_data(base64, mime_type)` sends a document inline.
-//! `document_from_file(path)` loads a PDF from disk; it rejects other
-//! extensions, so text files go through `document_from_file_with_mime` with an
-//! explicit `text/plain` (or are simply read into `Content::text`). Large or
-//! reused documents belong in the Files API (`files_api`).
+//! `document_from_file(path)` loads a `.pdf` as document content and a `.txt`
+//! or `.md` file as text content: the API rejects `text/plain` and
+//! `text/markdown` documents. Large or reused documents belong in the Files
+//! API (`files_api`).
 //!
 //! Run with: `cargo run --example pdf_input`
 
-use genai_rs::{Client, Content, document_from_file_with_mime};
+use genai_rs::{Client, Content, document_from_file};
 use std::env;
 use std::error::Error;
 use std::io::Write;
@@ -52,13 +52,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         follow_up.as_text().ok_or("no text in response")?
     );
 
-    println!("--- Plain-text document from a file ---");
+    println!("--- Plain-text file ---");
     let mut notes = tempfile::Builder::new().suffix(".txt").tempfile()?;
     writeln!(
         notes,
         "Release checklist: bump versions, tag, then watch the release workflow."
     )?;
-    let document = document_from_file_with_mime(notes.path(), "text/plain").await?;
+    let document = document_from_file(notes.path()).await?;
     let response = client
         .interaction()
         .with_model(model)
