@@ -96,6 +96,20 @@ client.agents().delete("customer-sentinel").await?;
 `.with_parent()` configure it, and `.send()`, `.pages()` or `.items()` run it
 (see [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders)).
 
+`Agent::with_agent_config` stores the base agent's configuration, an
+`AntigravityConfig` (its model and token cap), with the agent. The API echoes
+it back on `Agent::agent_config`, `max_total_tokens` as a string, and keeps
+only an Antigravity config: a config of another type is stored as a bare
+`{"type": "antigravity"}` (verified live 2026-11-05).
+
+```rust
+use genai_rs::{Agent, AntigravityConfig};
+
+let agent = Agent::new("reviewer", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
+    .with_agent_config(AntigravityConfig::new().with_max_total_tokens(50_000));
+# let _ = agent;
+```
+
 ## Environments
 
 An agent interaction can run in a sandboxed **environment**: mounted sources
@@ -135,8 +149,21 @@ let env_id = response.environment_id.clone().expect("assigned environment");
   to `gemini-3.8-flash`; `with_model()` takes the 3.8/3.7/3.6/3.5 Flash
   models or `gemini-3.5-flash-lite`, and any other value fails the
   interaction with 404 `not_found`.
+- **An existing environment**: `RemoteEnvironment::new().with_environment_id(id)`
+  runs the interaction in that environment, with its files (an ID from
+  `environments().create()` or a previous interaction's `environment_id`).
+  The interaction reports the ID back, and an ID that does not exist is a
+  404 (verified live 2026-11-05).
 - A custom agent can carry a default environment via
-  `Agent::with_base_environment`.
+  `Agent::with_base_environment`. An `environment_id` there is accepted and
+  silently dropped (live 2026-11-05), so a custom agent can't be pinned to an
+  existing environment that way; pass the ID on each interaction instead.
+- **`CodeMenderConfig`** (`agent_config.type: "code-mender"`, with
+  `CodeMenderFindRequest`, `CodeMenderFixRequest` and `CodeMenderFile`)
+  models the bindings' CodeMender agent config. It is Vertex-only: the
+  Gemini API answers `400 The value 'code-mender' is not supported for
+  'agent_config.type' on the Gemini API, it is allowed on the Gemini
+  Enterprise Agent Platform` (live 2026-11-05).
 
 ### Managing environments
 
@@ -161,7 +188,8 @@ let env = client
     .await?;
 let env_id = env.id.clone().expect("create returns an id");
 
-// Put a file in before a run, and list what the agent left afterwards
+// Put a file in before a run, list what the agent left afterwards, and
+// read a file back (a directory downloads as a tar archive)
 let upload = EnvironmentFileUpload::new(b"a,b\n1,2\n".to_vec(), "text/csv").with_overwrite(true);
 client.environments().files().upload(&env_id, "data/input.csv", upload).await?;
 let files: Vec<EnvironmentFile> = client
@@ -172,6 +200,8 @@ let files: Vec<EnvironmentFile> = client
     .items()
     .try_collect()
     .await?;
+let input = client.environments().files().download(&env_id, "data/input.csv").await?;
+assert_eq!(input.data, b"a,b\n1,2\n");
 
 // Fork it, files included
 let fork = client
@@ -262,7 +292,7 @@ use genai_rs::{
 # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let interaction = InteractionRequest {
     agent: Some("my-custom-agent".to_string()),
-    input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
+    input: Some(InteractionInput::Text("Summarize yesterday's alerts".to_string())),
     ..Default::default()
 };
 
@@ -430,6 +460,7 @@ async fn poll_until_done(
 | `Incomplete` | Ended before completion (for example a token limit); inspect partial results. On `CONTINUATION_MODEL` it carries a `continuation_token` to resume the decode |
 | `RequiresContinuation` | In the spec, never observed: continuable responses report `Incomplete` |
 | `BudgetExceeded` | The configured budget ran out; inspect partial results |
+| `Queued` | Accepted, not started. In the bindings, never observed: background interactions report `InProgress` from their create response on (2026-11-05) |
 
 Persist the interaction id as soon as `create()` returns, so a restart can
 resume with `client.interactions().get(&id)`. `response.steps` can be non-empty while
@@ -451,10 +482,9 @@ while let Some(event) = stream.next().await {
     if let Some(text) = event.chunk.delta_text() {
         print!("{text}");
     }
-    if event.is_terminal() {
-        break;
-    }
 }
+// The stream ends after its terminal event and the server's tail, once
+// the interaction is stored (see STREAMING_API.md#read-to-the-end).
 ```
 
 ### Cancellation

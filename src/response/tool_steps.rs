@@ -7,7 +7,7 @@ use super::views::{
     CodeExecutionCallInfo, CodeExecutionResultInfo, GoogleMapsResultInfo, ToolCallInfo,
     UrlContextResultInfo,
 };
-use crate::content::{FileSearchResultItem, GoogleSearchResultItem};
+use crate::content::GoogleSearchResultItem;
 use crate::steps::Step;
 
 impl InteractionResponse {
@@ -250,47 +250,18 @@ impl InteractionResponse {
     // File Search Step Helpers
     // =========================================================================
 
-    /// Check if the response contains file search *steps*.
+    /// Whether the response contains a `file_search_result` step, that is,
+    /// whether a file search ran.
     ///
-    /// Note that this being `true` does **not** mean
-    /// [`file_search_results`](Self::file_search_results) returns anything —
-    /// on today's API it never does. The step arrives; its `result` payload
-    /// does not. See that method and
-    /// [#429](https://github.com/evansenter/genai-rs/issues/429).
+    /// The step carries no results (live 2026-11-05): the retrieved chunks
+    /// are folded into the answer, which cites them with `file_citation`
+    /// [`Annotation`](crate::Annotation)s. Read those with
+    /// [`all_annotations`](Self::all_annotations).
     #[must_use]
     pub fn has_file_search_results(&self) -> bool {
         self.steps
             .iter()
             .any(|s| matches!(s, Step::FileSearchResult { .. }))
-    }
-
-    /// Extract file search result items from steps.
-    ///
-    /// # Always empty on the Gemini API
-    ///
-    /// Verified live 2026-08-16 against a store whose indexed documents
-    /// demonstrably grounded the answer: the `file_search_result` step
-    /// carries no `result` payload, so this returns an empty vector even on a
-    /// successful, well-grounded search. Retrieved chunks are folded into the
-    /// response text — read it with [`as_text`](Self::as_text).
-    ///
-    /// Treat an empty result as expected rather than as "the search found
-    /// nothing". Kept because the step is spec-defined and may be populated
-    /// later. Tracked in
-    /// [#429](https://github.com/evansenter/genai-rs/issues/429).
-    #[must_use]
-    pub fn file_search_results(&self) -> Vec<&FileSearchResultItem> {
-        self.steps
-            .iter()
-            .filter_map(|step| {
-                if let Step::FileSearchResult { result, .. } = step {
-                    Some(result.iter())
-                } else {
-                    None
-                }
-            })
-            .flatten()
-            .collect()
     }
 
     // =========================================================================

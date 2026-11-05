@@ -13,9 +13,8 @@ use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 
 use super::content::{
-    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
-    VideoProcessing,
+    Annotation, CodeExecutionLanguage, Content, GoogleMapsResultItem, GoogleSearchResultItem,
+    Place, Resolution, ReviewSnippet, UrlContextResultItem, VideoProcessing,
 };
 use super::environments::EnvironmentStatus;
 use super::environments::{
@@ -367,50 +366,27 @@ fn arb_annotation() -> impl Strategy<Value = Annotation> {
 
 /// Strategy for generating GoogleSearchResultItem objects.
 fn arb_google_search_result_item() -> impl Strategy<Value = GoogleSearchResultItem> {
-    (
-        arb_text(),
-        arb_text(),
-        proptest::option::of(arb_text()),
-        proptest::option::of(arb_text()),
-    )
-        .prop_map(|(title, url, rendered_content, search_suggestions)| {
-            GoogleSearchResultItem {
-                title,
-                url,
-                rendered_content,
-                search_suggestions,
-                extra: Default::default(),
-            }
-        })
+    proptest::option::of(arb_text()).prop_map(|search_suggestions| GoogleSearchResultItem {
+        search_suggestions,
+        extra: Default::default(),
+    })
 }
 
 /// Strategy for generating Place objects.
-/// Uses only simple fields to avoid f64 NaN comparison issues.
 fn arb_place() -> impl Strategy<Value = Place> {
     (
         proptest::option::of(arb_text()),
         proptest::option::of(arb_text()),
         proptest::option::of(arb_text()),
-        proptest::option::of(arb_text()),
         proptest::option::of(prop::collection::vec(arb_review_snippet(), 0..2)),
     )
-        .prop_map(
-            |(name, formatted_address, place_id, url, review_snippets)| Place {
-                name,
-                formatted_address,
-                place_id,
-                url,
-                lat: None,
-                lng: None,
-                types: None,
-                rating: None,
-                user_ratings_total: None,
-                website: None,
-                phone_number: None,
-                review_snippets,
-                extra: serde_json::Map::new(),
-            },
-        )
+        .prop_map(|(name, place_id, url, review_snippets)| Place {
+            name,
+            place_id,
+            url,
+            review_snippets,
+            extra: serde_json::Map::new(),
+        })
 }
 
 /// Strategy for generating GoogleMapsResultItem objects.
@@ -424,16 +400,6 @@ fn arb_google_maps_result_item() -> impl Strategy<Value = GoogleMapsResultItem> 
             widget_context_token,
             extra: Default::default(),
         })
-}
-
-/// Strategy for generating FileSearchResultItem objects.
-fn arb_file_search_result_item() -> impl Strategy<Value = FileSearchResultItem> {
-    (arb_text(), arb_text(), arb_text()).prop_map(|(title, text, store)| FileSearchResultItem {
-        title,
-        text,
-        store,
-        extra: Default::default(),
-    })
 }
 
 /// Strategy for generating UrlContextResultItem objects.
@@ -485,6 +451,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::Incomplete),
         Just(InteractionStatus::BudgetExceeded),
         Just(InteractionStatus::RequiresContinuation),
+        Just(InteractionStatus::Queued),
         // Unknown variant with preserved data
         unknown_or(InteractionStatus::Completed, |status_type| {
             InteractionStatus::Unknown {
@@ -985,18 +952,14 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                 extra: Default::default(),
             }
         }),
-        // file_search_result (empty result skips the field; default is empty)
-        (
-            arb_identifier(),
-            prop::collection::vec(arb_file_search_result_item(), 0..3),
-            proptest::option::of(arb_text()),
-        )
-            .prop_map(|(call_id, result, signature)| Step::FileSearchResult {
+        // file_search_result (no result: none in the bindings or served)
+        (arb_identifier(), proptest::option::of(arb_text())).prop_map(|(call_id, signature)| {
+            Step::FileSearchResult {
                 call_id,
-                result,
                 signature,
                 extra: Default::default(),
-            }),
+            }
+        }),
         // google_maps_call (wire: nested arguments {queries})
         (
             arb_identifier(),
@@ -1304,9 +1267,12 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
             signature,
             extra: Default::default()
         }),
-        // file_search_result
+        // file_search_result (opaque result objects)
         (
-            prop::collection::vec(arb_file_search_result_item(), 0..3),
+            prop::collection::vec(
+                arb_text().prop_map(|text| serde_json::json!({ "text": text })),
+                0..3
+            ),
             proptest::option::of(arb_text()),
         )
             .prop_map(|(result, signature)| StepDelta::FileSearchResult {
@@ -1517,6 +1483,7 @@ pub(crate) fn arb_generation_config() -> impl Strategy<Value = GenerationConfig>
                 image_config,
                 video_config,
                 transcription_config,
+                extra: serde_json::Map::new(),
             }
         },
     )
@@ -1682,13 +1649,16 @@ fn arb_function_parameters() -> impl Strategy<Value = FunctionParameters> {
 fn arb_tool() -> impl Strategy<Value = Tool> {
     prop_oneof![
         // Function tool
-        (arb_identifier(), arb_text(), arb_function_parameters()).prop_map(
-            |(name, description, parameters)| Tool::Function {
+        (
+            arb_identifier(),
+            proptest::option::of(arb_text()),
+            proptest::option::of(arb_function_parameters()),
+        )
+            .prop_map(|(name, description, parameters)| Tool::Function {
                 name,
                 description,
                 parameters
-            }
-        ),
+            }),
         // Google Search (non-empty search_types when present)
         proptest::option::of(proptest::collection::vec(arb_search_type(), 1..3))
             .prop_map(|search_types| Tool::GoogleSearch { search_types }),
@@ -2103,6 +2073,7 @@ fn arb_environment_source() -> impl Strategy<Value = EnvironmentSource> {
 fn arb_network_config() -> impl Strategy<Value = NetworkConfig> {
     prop_oneof![
         Just(NetworkConfig::Disabled),
+        Just(NetworkConfig::AllowlistDisabled),
         proptest::collection::vec(
             (
                 arb_identifier(),
@@ -2318,8 +2289,16 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
         (any::<usize>(), arb_step())
             .prop_map(|(index, step)| StreamChunk::StepStart { index, step }),
         // StepDelta variant
-        (any::<usize>(), arb_step_delta())
-            .prop_map(|(index, delta)| StreamChunk::StepDelta { index, delta }),
+        (
+            any::<usize>(),
+            arb_step_delta(),
+            proptest::option::of(arb_usage_metadata())
+        )
+            .prop_map(|(index, delta, total_usage)| StreamChunk::StepDelta {
+                index,
+                delta,
+                total_usage
+            }),
         // StepStop variant
         (
             any::<usize>(),
@@ -2916,7 +2895,7 @@ proptest! {
     fn request_wraps_content_input(contents in prop::collection::vec(arb_content(), 0..3)) {
         let request = crate::InteractionRequest {
             model: Some("test-model".to_string()),
-            input: InteractionInput::Content(contents.clone()),
+            input: Some(InteractionInput::Content(contents.clone())),
             ..Default::default()
         };
         let json = serde_json::to_value(&request).expect("Serialization should succeed");
@@ -2932,7 +2911,7 @@ proptest! {
 
         let by_hand = crate::InteractionRequest {
             model: Some("test-model".to_string()),
-            input: InteractionInput::Steps(vec![Step::user_input(contents)]),
+            input: Some(InteractionInput::Steps(vec![Step::user_input(contents)])),
             ..Default::default()
         };
         let by_hand_json = serde_json::to_value(&by_hand).expect("Serialization should succeed");

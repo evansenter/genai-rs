@@ -33,12 +33,15 @@
 //!
 //! [`Environments::files`] returns the [`EnvironmentFiles`] handle:
 //! [`list`](EnvironmentFiles::list) shows what an agent left in an
-//! environment, and [`upload`](EnvironmentFiles::upload) writes a file into
-//! one before an interaction runs. Paths are relative to the environment
-//! root; `""` lists the root.
+//! environment, [`download`](EnvironmentFiles::download) reads a file (or a
+//! directory, as a tar archive) back out, and
+//! [`upload`](EnvironmentFiles::upload) writes a file into one before an
+//! interaction runs. Paths are relative to the environment root; `""` lists
+//! the root.
 //!
 //! Verified live 2026-09-24: listing (root, a directory, one file,
-//! recursive) and a resumable single-shot upload. The API reports entry
+//! recursive) and a resumable single-shot upload; 2026-11-05: downloading a
+//! file and a directory. The API reports entry
 //! types in uppercase (`FILE`, `DIRECTORY`) although the bindings spell them
 //! lowercase; both are accepted. Environments are forked with
 //! [`CreateEnvironmentRequest::from_environment`].
@@ -59,8 +62,8 @@ mod files;
 mod spec;
 
 pub use files::{
-    EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
-    EnvironmentFiles, ListEnvironmentFiles,
+    EnvironmentFile, EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileType,
+    EnvironmentFileUpload, EnvironmentFiles, ListEnvironmentFiles,
 };
 pub use spec::{
     AllowlistEntry, EnvVar, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,

@@ -27,14 +27,20 @@ use common::{get_client, stateful_builder};
 use futures_util::{FutureExt, StreamExt};
 use genai_rs::wire::{WireEvent, WireInspector};
 use genai_rs::{
-    Client, Content, CreateFileSearchStoreRequest, DocumentState, FileSearchDocument, FileUpload,
-    GenaiError, InteractionInput, InteractionStatus, PollOptions, Tool,
+    ChunkingConfig, Client, Content, CreateFileSearchStoreRequest, CustomMetadata, DocumentImport,
+    DocumentState, DocumentUpload, FileSearchDocument, FileUpload, GenaiError, InteractionInput,
+    InteractionStatus, PollOptions, Tool,
 };
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 
-/// Creates a uniquely-named store so concurrent runs don't collide.
-async fn create_test_store(client: &Client, label: &str) -> genai_rs::FileSearchStore {
+/// Creates a uniquely-named store from `request` so concurrent runs don't
+/// collide.
+async fn create_test_store(
+    client: &Client,
+    label: &str,
+    request: CreateFileSearchStoreRequest,
+) -> genai_rs::FileSearchStore {
     // Display names are sanitized into the resource name by the API, so a
     // nanosecond suffix is enough to keep parallel test binaries apart.
     let unique = std::time::SystemTime::now()
@@ -44,10 +50,7 @@ async fn create_test_store(client: &Client, label: &str) -> genai_rs::FileSearch
 
     client
         .file_search_stores()
-        .create(
-            &CreateFileSearchStoreRequest::new()
-                .with_display_name(format!("genai-rs-test-{label}-{unique}")),
-        )
+        .create(&request.with_display_name(format!("genai-rs-test-{label}-{unique}")))
         .await
         .expect("failed to create file search store")
 }
@@ -64,7 +67,20 @@ where
     F: FnOnce(String) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
-    let store = create_test_store(client, label).await;
+    with_store_from(client, label, CreateFileSearchStoreRequest::new(), body).await;
+}
+
+/// [`with_store`], for a store created from `request`.
+async fn with_store_from<F, Fut>(
+    client: &Client,
+    label: &str,
+    request: CreateFileSearchStoreRequest,
+    body: F,
+) where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let store = create_test_store(client, label, request).await;
     let name = store.name.clone();
 
     let outcome = AssertUnwindSafe(body(name.clone())).catch_unwind().await;
@@ -152,6 +168,20 @@ async fn test_store_lifecycle() {
             );
             assert!(store.display_name.is_some());
             assert!(store.create_time.is_some());
+            // A store created without one reports the server's default
+            // embedding model, which is the server's to change
+            // (`models/gemini-embedding-001` live 2026-11-05, recorded in
+            // docs/ENUM_WIRE_FORMATS.md). An empty store carries no
+            // document counts.
+            assert!(
+                store
+                    .embedding_model
+                    .as_deref()
+                    .is_some_and(|model| model.starts_with("models/")),
+                "{:?}",
+                store.embedding_model
+            );
+            assert_eq!(store.active_documents_count, None);
 
             // The new store appears in a listing: one page, then streamed
             // one store per page (the list is oldest first, so the new
@@ -429,10 +459,10 @@ impl WireInspector for GetUrls {
     }
 }
 
-/// Uploads from memory: the same raw protocol as a path upload (verified
-/// live 2026-09-27). With a display name the document carries it; without
-/// one it is unnamed, as `FileUpload::from_bytes` documents. The store's
-/// two documents then stream one per page.
+/// Uploads from memory: the same resumable protocol as a path upload
+/// (verified live 2026-11-05). With a display name the document carries it;
+/// without one it is unnamed, as `FileUpload::from_bytes` documents. The
+/// store's two documents then stream one per page.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_bytes_upload_indexes_and_lists_across_pages() {
@@ -521,6 +551,157 @@ async fn test_bytes_upload_indexes_and_lists_across_pages() {
                 );
                 assert_eq!(url.contains("page_token="), i > 0, "page {i}: {url}");
             }
+        }
+    })
+    .await;
+}
+
+/// A store created with another embedding model keeps it, and a model that
+/// does not exist is refused (live 2026-11-05).
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_store_embedding_model() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    let request =
+        CreateFileSearchStoreRequest::new().with_embedding_model("models/gemini-embedding-2");
+    with_store_from(&client, "embedding", request, |store_name| {
+        let client = &client;
+        async move {
+            let store = client
+                .file_search_stores()
+                .get(&store_name)
+                .await
+                .expect("get store failed");
+            assert_eq!(
+                store.embedding_model.as_deref(),
+                Some("models/gemini-embedding-2")
+            );
+        }
+    })
+    .await;
+
+    let refused = client
+        .file_search_stores()
+        .create(
+            &CreateFileSearchStoreRequest::new()
+                .with_display_name("genai-rs-test-bogus-model")
+                .with_embedding_model("models/not-an-embedding-model"),
+        )
+        .await;
+    if let Ok(store) = &refused {
+        // Clean up before failing, so the assertion does not leak a store.
+        let _ = client.file_search_stores().force_delete(&store.name).await;
+    }
+    assert!(
+        matches!(
+            refused,
+            Err(GenaiError::Api {
+                status_code: 400,
+                ..
+            })
+        ),
+        "an unknown embedding model should be a 400, got {refused:?}"
+    );
+}
+
+/// Custom metadata of every kind and a chunking config on an upload, the
+/// same on an import from the Files API, and the store's document counts
+/// (live 2026-11-05).
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_custom_metadata_chunking_and_import() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    with_store(&client, "metadata", |store_name| {
+        let client = &client;
+        async move {
+            let metadata = vec![
+                CustomMetadata::string("team", "search"),
+                CustomMetadata::numeric("year", 2026.0),
+                CustomMetadata::string_list("tags", ["rust", "docs"]),
+            ];
+            let mut upload = DocumentUpload::new(
+                FileUpload::from_bytes(
+                    b"The Vega launch window opens on the 3rd.\n".to_vec(),
+                    "text/plain",
+                )
+                .with_display_name("vega-memo"),
+            )
+            .with_chunking_config(ChunkingConfig::white_space(100, 10));
+            for entry in metadata.clone() {
+                upload = upload.add_custom_metadata(entry);
+            }
+            let uploaded = client
+                .file_search_stores()
+                .upload(&store_name, upload)
+                .await
+                .expect("upload with metadata and chunking failed");
+            println!("uploaded document: {}", uploaded.name);
+            assert_eq!(uploaded.display_name.as_deref(), Some("vega-memo"));
+            assert_eq!(uploaded.custom_metadata, metadata);
+            wait_active(client, &uploaded).await;
+
+            let store = client
+                .file_search_stores()
+                .get(&store_name)
+                .await
+                .expect("get store failed");
+            println!(
+                "store counts: active={:?} pending={:?} size={:?}",
+                store.active_documents_count, store.pending_documents_count, store.size_bytes
+            );
+            assert_eq!(store.active_documents_count, Some(1));
+            assert!(
+                store.size_bytes.is_some_and(|n| n > 0),
+                "{:?}",
+                store.size_bytes
+            );
+
+            let file = client
+                .files()
+                .upload(
+                    FileUpload::from_bytes(
+                        b"Vega support hours are 9 to 5.\n".to_vec(),
+                        "text/plain",
+                    )
+                    .with_display_name("genai-rs-test-import"),
+                )
+                .await
+                .expect("files.upload failed");
+            let imported = client
+                .file_search_stores()
+                .import_file(
+                    &store_name,
+                    DocumentImport::new(&file.name)
+                        .add_custom_metadata(CustomMetadata::string("origin", "files-api"))
+                        .with_chunking_config(ChunkingConfig::white_space(100, 10)),
+                )
+                .await;
+            // The document is a copy, so the file can go before the checks.
+            if let Err(e) = client.files().delete(&file.name).await {
+                eprintln!("cleanup failed for {}: {e:?}", file.name);
+            }
+            let imported = imported.expect("import_file failed");
+            println!("imported document: {}", imported.name);
+            assert!(
+                imported
+                    .name
+                    .starts_with(&format!("{store_name}/documents/")),
+                "{}",
+                imported.name
+            );
+            assert_eq!(
+                imported.custom_metadata,
+                [CustomMetadata::string("origin", "files-api")]
+            );
+            wait_active(client, &imported).await;
         }
     })
     .await;

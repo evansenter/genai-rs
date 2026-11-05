@@ -11,9 +11,7 @@ mod serde_impls;
 mod video_processing;
 
 pub use annotation::{Annotation, ReviewSnippet};
-pub use results::{
-    FileSearchResultItem, GoogleMapsResultItem, GoogleSearchResultItem, Place, UrlContextResultItem,
-};
+pub use results::{GoogleMapsResultItem, GoogleSearchResultItem, Place, UrlContextResultItem};
 pub use video_processing::{VideoProcessing, VideoProcessingBuilder};
 
 use crate::wire_enum::wire_enum;

@@ -117,6 +117,52 @@ async fn base_url_prefix_and_standard_headers_are_used() {
     assert!(request.json().get("stream").is_none());
 }
 
+/// `with_api_version` replaces the `v1beta` segment of every URL, the
+/// upload one included.
+#[tokio::test]
+async fn api_version_replaces_the_path_segment() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, text_response("int-1", "hi")),
+        Reply::json(200, text_response("int-1", "hi")),
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/abc", "mimeType": "text/plain", "uri": "https://x/files/abc", "state": "ACTIVE"}}),
+        ),
+    ])
+    .await;
+    let client = Client::builder("test-key".to_string())
+        .with_base_url(&stub.base_url)
+        .with_api_version("v1")
+        .build()
+        .unwrap();
+
+    client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hello")
+        .create()
+        .await
+        .unwrap();
+    client.interactions().get("int-1").await.unwrap();
+    client
+        .files()
+        .upload(FileUpload::from_bytes(b"hello".to_vec(), "text/plain"))
+        .await
+        .unwrap();
+
+    let targets: Vec<String> = stub.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(
+        targets,
+        [
+            "/v1/interactions",
+            "/v1/interactions/int-1",
+            "/upload/v1/files",
+            "/upload-session/1"
+        ]
+    );
+}
+
 #[tokio::test]
 async fn execute_clears_a_stream_flag_set_by_hand() {
     let stub = Stub::replying(vec![Reply::json(200, text_response("int-1", "hi"))]).await;
@@ -157,6 +203,59 @@ async fn execute_stream_sends_stream_true() {
     let [request] = stub.requests().try_into().unwrap();
     assert_eq!(request.target, "/v1beta/interactions?alt=sse");
     assert_eq!(request.json()["stream"], json!(true));
+}
+
+/// `stream` belongs to the transport. `extra` is written after the modeled
+/// fields and the API keeps the last of a repeated key, so a copy there
+/// would win: an SSE answer to `create()`. Both send paths drop it.
+#[tokio::test]
+async fn a_stream_key_in_extra_is_dropped_on_both_send_paths() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, text_response("int-1", "hi")),
+        Reply::sse(&[
+            "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-2\",\"status\":\"completed\"}}\n\n",
+        ]),
+    ])
+    .await;
+    let client = stub.client();
+
+    let response = client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hello")
+        .add_extra("stream", json!(true))
+        .create()
+        .await
+        .unwrap();
+    assert_eq!(response.as_text(), Some("hi"));
+
+    let events: Vec<_> = client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hello")
+        .add_extra("stream", json!(false))
+        .add_extra("brand_new_field", json!(1))
+        .create_stream()
+        .collect()
+        .await;
+    assert!(
+        matches!(events.as_slice(), [Ok(event)] if event.is_complete()),
+        "{events:?}"
+    );
+
+    let [plain, streamed] = stub.requests().try_into().unwrap();
+    // The raw bodies: a parsed one keeps only the last of a repeated key.
+    let raw = |request: &Recorded| String::from_utf8(request.body.clone()).unwrap();
+    assert!(!raw(&plain).contains(r#""stream""#), "{}", raw(&plain));
+    assert_eq!(
+        raw(&streamed).matches(r#""stream""#).count(),
+        1,
+        "{}",
+        raw(&streamed)
+    );
+    assert_eq!(streamed.json()["stream"], json!(true));
+    // Other extra keys are still sent.
+    assert_eq!(streamed.json()["brand_new_field"], json!(1));
 }
 
 #[tokio::test]

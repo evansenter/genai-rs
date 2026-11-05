@@ -18,10 +18,14 @@ use crate::environments::{
     AllowlistEntry, CreateEnvironmentRequest, EnvVar, EnvironmentSource, EnvironmentSpec,
     NetworkConfig, RemoteEnvironment, SourceType,
 };
-use crate::file_search_stores::CreateFileSearchStoreRequest;
+use crate::file_search_stores::{
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentOptions, WhiteSpaceConfig,
+};
+use crate::http::file_search_stores::{ImportFileBody, UploadDocumentBody};
 use crate::http::webhooks::WebhookInput;
 use crate::request::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, ServiceTier,
     SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TranscriptionMode,
     VideoConfig, VideoTask, Visualization,
@@ -33,7 +37,8 @@ use crate::safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 use crate::tools::{AllowedTools, FunctionCallingMode, Tool, ToolChoice};
 use crate::triggers::{TriggerCreateParams, TriggerStatus, TriggerUpdate};
 use crate::voices::{
-    CreateVoiceRequest, PromptedVoice, ReplicatedVoice, VoiceAudio, VoiceSpec, VoiceType,
+    CreateVoiceRequest, PromptedVoice, ReplicatedVoice, VoiceAudio, VoicePitch, VoiceSpec,
+    VoiceType,
 };
 use crate::webhooks::{
     SigningSecret, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
@@ -57,6 +62,8 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             language: Some("en-US".into()),
             speaker: Some("Joe".into()),
         }]),
+        // The caller's keys, not the crate's (see `cases`).
+        extra: serde_json::Map::new(),
         image_config: Some(ImageConfig {
             aspect_ratio: Some(ImageAspectRatio::Square),
             image_size: Some(ImageSize::Hd1k),
@@ -106,6 +113,24 @@ pub(super) fn agent_configs() -> Vec<AgentConfig> {
             .with_max_total_tokens(1000)
             .into(),
         DynamicConfig::new().into(),
+        CodeMenderConfig::new()
+            .with_model("m")
+            .with_session_id("s")
+            .with_max_rounds(3)
+            .with_find_request(
+                CodeMenderFindRequest::new()
+                    .with_description("d")
+                    .with_finding_id("f")
+                    .with_mode(CodeMenderMode::Verify)
+                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
+            )
+            .with_fix_request(
+                CodeMenderFixRequest::new()
+                    .with_description("d")
+                    .with_finding_id("f")
+                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
+            )
+            .into(),
     ]
 }
 
@@ -149,6 +174,7 @@ pub(super) fn response_formats() -> Vec<ResponseFormat> {
 
 fn remote_environment() -> RemoteEnvironment {
     RemoteEnvironment {
+        environment_id: Some("environments/e".into()),
         sources: environment_sources(),
         network: Some(network()),
         env: [
@@ -199,6 +225,11 @@ pub(super) fn environment_specs() -> Vec<EnvironmentSpec> {
     vec![
         EnvironmentSpec::Id("environments/e".into()),
         EnvironmentSpec::Remote(remote_environment()),
+        // The allowlist's `Disabled` arm (#489).
+        EnvironmentSpec::Remote(RemoteEnvironment {
+            network: Some(NetworkConfig::AllowlistDisabled),
+            ..remote_environment()
+        }),
     ]
 }
 
@@ -235,7 +266,7 @@ pub(super) fn model_requests() -> Vec<InteractionRequest> {
                 model: Some("test-model".into()),
                 agent: None,
                 agent_config: None,
-                input: input.clone(),
+                input: Some(input.clone()),
                 previous_interaction_id: Some("prev".into()),
                 tools: Some(tools()),
                 response_modalities: Some(vec!["text".into(), "image".into()]),
@@ -267,7 +298,7 @@ pub(super) fn agent_requests() -> Vec<InteractionRequest> {
             model: None,
             agent: Some("test-agent".into()),
             agent_config: Some(config),
-            input: inputs().remove(i % 3),
+            input: Some(inputs().remove(i % 3)),
             previous_interaction_id: Some("prev".into()),
             tools: Some(tools()),
             response_modalities: Some(vec!["text".into()]),
@@ -353,6 +384,12 @@ pub(super) fn agents() -> Vec<Value> {
             to_value(&Agent {
                 id: Some("my-agent".into()),
                 base_agent: Some(crate::DEFAULT_ANTIGRAVITY_AGENT.into()),
+                agent_config: Some(
+                    AntigravityConfig::new()
+                        .with_model("m")
+                        .with_max_total_tokens(1000)
+                        .into(),
+                ),
                 system_instruction: Some("be brief".into()),
                 description: Some("d".into()),
                 tools: Some(vec![
@@ -381,6 +418,12 @@ pub(super) fn environment_requests() -> Vec<Value> {
             from_environment: None,
             sources: None,
             network: Some(NetworkConfig::Disabled),
+            extra: serde_json::Map::new(),
+        }),
+        to_value(&CreateEnvironmentRequest {
+            from_environment: None,
+            sources: None,
+            network: Some(NetworkConfig::AllowlistDisabled),
             extra: serde_json::Map::new(),
         }),
     ]
@@ -481,6 +524,14 @@ pub(super) fn voice_requests() -> Vec<Value> {
                 replicated: None,
                 display_name: Some("narrator".into()),
                 model: Some("m".into()),
+                description: Some("a calm narrator".into()),
+                language_code: Some("en-US".into()),
+                region_code: Some("US".into()),
+                accent: Some("General American".into()),
+                persona: Some("Storyteller & Narrator".into()),
+                context: Some("Content & Media".into()),
+                gender: Some("male".into()),
+                pitch: Some(VoicePitch::Low),
                 extra: serde_json::Map::new(),
             },
             store: Some(true),
@@ -495,6 +546,14 @@ pub(super) fn voice_requests() -> Vec<Value> {
                 }),
                 display_name: Some("me".into()),
                 model: Some("m".into()),
+                description: None,
+                language_code: None,
+                region_code: None,
+                accent: None,
+                persona: None,
+                context: None,
+                gender: None,
+                pitch: None,
                 extra: serde_json::Map::new(),
             },
             store: Some(false),
@@ -505,7 +564,44 @@ pub(super) fn voice_requests() -> Vec<Value> {
 pub(super) fn file_search_store_requests() -> Vec<Value> {
     vec![to_value(&CreateFileSearchStoreRequest {
         display_name: Some("docs".into()),
+        embedding_model: Some("models/gemini-embedding-2".into()),
         extra: serde_json::Map::new(),
+    })]
+}
+
+/// The custom metadata and chunking an upload or import sends, every value
+/// kind included.
+fn document_options() -> DocumentOptions {
+    DocumentOptions {
+        custom_metadata: vec![
+            CustomMetadata::string("team", "search"),
+            CustomMetadata::numeric("year", 2026.0),
+            CustomMetadata::string_list("tags", ["a", "b"]),
+        ],
+        chunking_config: Some(ChunkingConfig {
+            white_space_config: Some(WhiteSpaceConfig {
+                max_tokens_per_chunk: Some(200),
+                max_overlap_tokens: Some(20),
+            }),
+            extra: serde_json::Map::new(),
+        }),
+    }
+}
+
+/// The JSON that starts a document upload.
+pub(super) fn document_uploads() -> Vec<Value> {
+    vec![to_value(&UploadDocumentBody {
+        display_name: Some("handbook"),
+        mime_type: "text/plain",
+        options: &document_options(),
+    })]
+}
+
+/// The body of an import.
+pub(super) fn document_imports() -> Vec<Value> {
+    vec![to_value(&ImportFileBody {
+        file_name: "files/abc",
+        options: &document_options(),
     })]
 }
 

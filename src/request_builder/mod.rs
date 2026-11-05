@@ -266,7 +266,10 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// If `with_timeout()` was set, the timeout applies **per-chunk**, not to
     /// the total stream duration. Each `stream.next().await` call must complete
-    /// within the timeout, or a [`GenaiError::Timeout`] error is yielded.
+    /// within the timeout, or a [`GenaiError::Timeout`] error is yielded. The
+    /// poll after the terminal event, which reads the body's tail so the
+    /// stored interaction is readable once the stream ends, is not bounded by
+    /// it (the crate bounds that read itself).
     ///
     /// This is useful for detecting stalled connections (e.g., model stops
     /// responding mid-stream), but does **not** limit the total time to
@@ -342,12 +345,23 @@ impl<'a> InteractionBuilder<'a> {
         Box::pin(async_stream::try_stream! {
             let request = self.build()?;
             let mut stream = client.execute_stream(request);
+            let mut finished = false;
 
             loop {
-                let result = within(timeout, "Stream chunk", stream.next()).await?;
+                // After the terminal event the stream only reads the body's
+                // tail, under its own bound: the per-chunk timeout must not
+                // fail a finished stream.
+                let result = if finished {
+                    stream.next().await
+                } else {
+                    within(timeout, "Stream chunk", stream.next()).await?
+                };
 
                 match result {
-                    Some(Ok(event)) => yield event,
+                    Some(Ok(event)) => {
+                        finished = event.is_terminal();
+                        yield event;
+                    }
                     Some(Err(e)) => Err(e)?,
                     None => break,
                 }
@@ -388,7 +402,11 @@ impl<'a> InteractionBuilder<'a> {
     /// # Errors
     ///
     /// Returns [`GenaiError::InvalidInput`] if:
-    /// - No input was provided (via `with_text()`, `with_history()`, `with_content()`, etc.)
+    /// - No input was provided (via `with_text()`, `with_history()`, `with_content()`, etc.),
+    ///   unless this is a decoding continuation of a stored interaction
+    ///   ([`continue_decode`](Self::continue_decode))
+    /// - A continuation token is set without input and without a previous
+    ///   interaction id
     /// - `with_content()` was combined with `with_history()` (mutually exclusive)
     /// - Neither model nor agent was specified
     /// - Both model and agent were specified (mutually exclusive)
@@ -426,25 +444,45 @@ impl<'a> InteractionBuilder<'a> {
             if let Some(text) = self.current_message {
                 content.insert(0, Content::text(text));
             }
-            InteractionInput::Content(content)
+            Some(InteractionInput::Content(content))
         } else {
             // Text/history mode
             match (self.history.is_empty(), self.current_message) {
-                (true, None) => {
-                    return Err(GenaiError::InvalidInput(
-                        "Input is required for interaction".to_string(),
-                    ));
-                }
-                (true, Some(msg)) => InteractionInput::Text(msg),
-                (false, None) => InteractionInput::Steps(self.history),
+                (true, None) => None,
+                (true, Some(msg)) => Some(InteractionInput::Text(msg)),
+                (false, None) => Some(InteractionInput::Steps(self.history)),
                 (false, Some(msg)) => {
                     // Compose: history + current message as final user_input step
                     let mut steps = self.history;
                     steps.push(Step::user_text(msg));
-                    InteractionInput::Steps(steps)
+                    Some(InteractionInput::Steps(steps))
                 }
             }
         };
+        // Only a continuation of a stored interaction goes without input
+        // (live 2026-11-05). Without one, the API answers with a misleading
+        // `404 Model '...' not found` rather than naming the missing input.
+        if input.is_none() {
+            match (&self.continuation_token, &self.previous_interaction_id) {
+                (None, _) => {
+                    return Err(GenaiError::InvalidInput(
+                        "Input is required for interaction (only a decoding continuation, \
+                         with_continuation_token() or continue_decode(), may leave it out)"
+                            .to_string(),
+                    ));
+                }
+                (Some(_), None) => {
+                    return Err(GenaiError::InvalidInput(
+                        "A continuation without input continues a stored interaction, so it \
+                         needs that interaction's id: call with_previous_interaction(), or \
+                         continue_decode() with a stored response. A store-disabled \
+                         interaction has no id; resend its original input instead."
+                            .to_string(),
+                    ));
+                }
+                (Some(_), Some(_)) => {}
+            }
+        }
 
         // Validate that we have either model or agent (but not both)
         match (&self.model, &self.agent) {

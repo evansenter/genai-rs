@@ -248,12 +248,10 @@ impl Serialize for Step {
             }
             Self::FileSearchResult {
                 call_id,
-                result,
                 signature,
                 extra,
             } => {
                 map.field("call_id", call_id)?;
-                map.field_unless(result.is_empty(), "result", result)?;
                 map.opt("signature", signature.as_ref())?;
                 extra
             }
@@ -455,7 +453,6 @@ fn read_known(object: &Map<String, Value>) -> Result<Step, Fallback> {
         },
         "file_search_result" => Step::FileSearchResult {
             call_id: f.required("call_id")?,
-            result: f.or_default("result")?,
             signature: f.optional("signature")?,
             extra: f.extra(),
         },

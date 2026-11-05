@@ -252,19 +252,19 @@ pub struct Trigger {
 
 /// Deserializes `Trigger::interaction`, degrading a nested `input` that
 /// [`InteractionInput`]'s deserializer
-/// rejects (explicit null, a stray scalar) onto the empty default with a
-/// `warn!` before parsing the interaction, and a non-object `interaction`
-/// onto `None`. (Under default features a malformed steps *array* never
-/// reaches the rejection path — the Evergreen `Step` deserializer absorbs
-/// unrecognized elements as `Step::Unknown` per-element; `strict-unknown`
-/// rejects it and it degrades here like any other bad input.)
+/// rejects (a stray scalar) onto `None` with a `warn!`, and a non-object
+/// `interaction` onto `None`. (Under default features a malformed steps
+/// *array* never reaches the rejection path — the Evergreen `Step`
+/// deserializer absorbs unrecognized elements as `Step::Unknown`
+/// per-element; `strict-unknown` rejects it and it degrades here like any
+/// other bad input.)
 ///
-/// The nested `input` is the one non-`Option` field in the trigger tree,
-/// so without this a projection carrying `input: null` (or `input: 0`)
-/// would propagate a hard error up through `Trigger` and fail the whole
-/// list response — the same wholesale failure the lenient int64 and
-/// timestamp helpers exist to avoid. Scoped here (not on
-/// `InteractionRequest` itself) so the send side stays strict.
+/// Without this a projection carrying `input: 0` would propagate a hard
+/// error up through `Trigger` and fail the whole list response — the same
+/// wholesale failure the lenient int64 and timestamp helpers exist to
+/// avoid. Scoped here (not on `InteractionRequest` itself) so a request
+/// loaded from a config file still fails on a malformed input, and
+/// [`TriggerCreateParams`] also fails on a missing one.
 fn deserialize_lenient_interaction<'de, D>(
     deserializer: D,
 ) -> Result<Option<InteractionRequest>, D::Error>
@@ -284,17 +284,10 @@ where
         Some(mut value) => {
             // Take `input` out and parse the rest — one parse each, no
             // clone (the catch-all arm above guarantees an object here).
-            // The placeholder satisfies the now-required field; a sparse
-            // projection's absent input thus deserializes to empty text
-            // *on this path only* — the send side keeps input required.
             let obj = value
                 .as_object_mut()
                 .expect("non-object interactions are handled by the arm above");
             let raw_input = obj.remove("input");
-            obj.insert(
-                "input".to_string(),
-                serde_json::Value::String(String::new()),
-            );
             // Warn-and-drop like the arms above: a type mismatch on a
             // modeled field (numeric `model`, string `tools`) must not
             // zero the whole page either.
@@ -303,15 +296,17 @@ where
             else {
                 return Ok(None);
             };
-            if let Some(raw) = raw_input {
-                request.input = crate::request::input_from_value(raw).unwrap_or_else(|e| {
-                    tracing::warn!(
-                        "Undeserializable input in trigger interaction ({e}); \
-                         degrading to empty text"
-                    );
-                    crate::request::InteractionInput::default()
-                });
-            }
+            request.input = match raw_input {
+                None | Some(serde_json::Value::Null) => None,
+                Some(raw) => crate::request::input_from_value(raw)
+                    .map_err(|e| {
+                        tracing::warn!(
+                            "Undeserializable input in trigger interaction ({e}); \
+                             dropping it"
+                        );
+                    })
+                    .ok(),
+            };
             Ok(Some(request))
         }
     }
@@ -332,7 +327,7 @@ where
 ///
 /// let interaction = InteractionRequest {
 ///     agent: Some("my-custom-agent".to_string()),
-///     input: InteractionInput::Text("Daily repo audit".to_string()),
+///     input: Some(InteractionInput::Text("Daily repo audit".to_string())),
 ///     ..Default::default()
 /// };
 /// let params = TriggerCreateParams::new("0 9 * * *", "UTC", interaction)
@@ -405,7 +400,8 @@ pub struct TriggerCreateParams {
 /// - `store` set: the API rejects it inside a trigger's interaction.
 /// - no `agent`: a trigger must target a custom agent; a model-only request
 ///   is refused ("Agent '' is invalid or not found").
-/// - empty input: would fire on a schedule with an empty prompt.
+/// - no input, or an empty one: would fire on a schedule with an empty
+///   prompt.
 ///
 /// Called from [`TriggerCreateParams::new`], the deserialize path, and
 /// [`Triggers::create`] (which also catches struct literals and later
@@ -426,21 +422,28 @@ pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
         );
     }
     let input_is_empty = match &interaction.input {
-        InteractionInput::Text(text) => text.is_empty(),
-        InteractionInput::Content(content) => content.is_empty(),
-        InteractionInput::Steps(steps) => steps.is_empty(),
+        None => true,
+        Some(InteractionInput::Text(text)) => text.is_empty(),
+        Some(InteractionInput::Content(content)) => content.is_empty(),
+        Some(InteractionInput::Steps(steps)) => steps.is_empty(),
     };
     if input_is_empty {
         tracing::warn!(
-            "TriggerCreateParams: the nested interaction's input is empty \
-             (empty text, content, or steps); the trigger would fire on \
-             its schedule with an empty prompt"
+            "TriggerCreateParams: the nested interaction's input is missing \
+             or empty (empty text, content, or steps); the trigger would fire \
+             on its schedule with an empty prompt"
         );
     }
 }
 
 /// Derived [`InteractionRequest`] deserialization plus the pre-flight
 /// warns, so a config-file load gets the same signals as `new()`.
+///
+/// A missing `input` is an error here, as it was before `input` became
+/// optional for decoding continuations (#489): a trigger fires a fresh
+/// interaction, never a continuation, so an absent or misspelled
+/// (`"inputs"`) input in a config file fails the load instead of
+/// scheduling an empty prompt.
 fn deserialize_interaction_with_warns<'de, D>(
     deserializer: D,
 ) -> Result<InteractionRequest, D::Error>
@@ -448,6 +451,9 @@ where
     D: Deserializer<'de>,
 {
     let interaction = InteractionRequest::deserialize(deserializer)?;
+    if interaction.input.is_none() {
+        return Err(serde::de::Error::missing_field("input"));
+    }
     warn_on_interaction_footguns(&interaction);
     Ok(interaction)
 }
@@ -560,11 +566,9 @@ impl TriggerUpdate {
     /// `400 Invalid status transition from active to error` (live
     /// 2026-11-01). The open enum accepts it here per the Evergreen posture.
     ///
-    /// In a read-modify-write flow, don't echo back a status whose
-    /// [`is_unknown()`](TriggerStatus::is_unknown) type came from a
-    /// *non-string* wire value: its wire form is the crate's
-    /// `<non-string: ...>` debug marker, not the original value. (An
-    /// unknown *string* status round-trips faithfully.)
+    /// In a read-modify-write flow an
+    /// [`is_unknown()`](TriggerStatus::is_unknown) status read from the API
+    /// is sent back as the value it arrived as, string or not.
     #[must_use]
     pub fn with_status(mut self, status: TriggerStatus) -> Self {
         self.status = Some(status);
@@ -744,7 +748,7 @@ impl<'a> Triggers<'a> {
     /// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
     /// let interaction = InteractionRequest {
     ///     agent: Some("my-custom-agent".to_string()),
-    ///     input: InteractionInput::Text("Daily repo audit".to_string()),
+    ///     input: Some(InteractionInput::Text("Daily repo audit".to_string())),
     ///     ..Default::default()
     /// };
     /// let trigger = client

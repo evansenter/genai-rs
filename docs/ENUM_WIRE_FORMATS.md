@@ -6,7 +6,9 @@ wrong, so this catalog records what the live API actually sent or accepted,
 and when.
 
 **Revision.** Everything here is Interactions API revision **2026-05-20**.
-Every request sends `Api-Revision: 2026-05-20`. The server currently ignores
+Every request sends `Api-Revision: 2026-05-20`, except the second request
+of a resumable upload, which goes to the session URL the first one returned
+and carries neither the key nor the header. The server currently ignores
 the header and serves 2026-05-20 whatever value it carries.
 
 **Status markers.** "Verified live *date*" means the value was observed on
@@ -65,6 +67,8 @@ the shape was a `Content` block rather than a step.
 | 44 | `EnvironmentFileType` | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
 | 45 | `VideoResolution` | `resolution_type` | 360p/720p/1080p/4k |
 | 46 | `TranscriptionMode` | `mode_type` | smart/verbatim, string or tagged object |
+| 47 | `CodeMenderMode` | `mode_type` | scan/verify (CodeMender is Vertex-only) |
+| 48 | `FileSource` | `source_type` | Files API file origin: UPLOADED/GENERATED/REGISTERED |
 
 The Antigravity harness enums are listed in their
 [own section](#antigravity-harness-protocol-feature-antigravity).
@@ -105,7 +109,7 @@ with `extra_mut()`. The call steps and deltas that flatten a nested
 `google_search_call`, `google_maps_call`, `retrieval_call`) keep its other
 keys in `arguments_extra`, merged back into `arguments` on serialize. The
 result items (`GoogleSearchResultItem`, `UrlContextResultItem`,
-`GoogleMapsResultItem`, `FileSearchResultItem`), `Place`, `ReviewSnippet`,
+`GoogleMapsResultItem`), `Place`, `ReviewSnippet`,
 `StepError` and `VideoProcessing::StaticSegment` keep theirs in a flattened
 `extra` field. So a field the API adds survives stateless history replay
 before the crate models it, which is how `signature` once broke replay.
@@ -156,17 +160,18 @@ before the crate models it, which is how `signature` once broke replay.
 | `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `"active"` verified live 2026-08-08 |
 | `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `active`/`paused` verified live 2026-11-01; `error` is output-only (sending it is a 400) |
 | `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | `completed` verified live 2026-11-01; the rest from the SDK spec |
-| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"`, `"requires_continuation"` | `budget_exceeded` pending live verification; `requires_continuation` spec only. `Default` is `InProgress` |
+| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"`, `"requires_continuation"`, `"queued"` | `budget_exceeded` pending live verification; `requires_continuation` spec only; `queued` bindings only. `Default` is `InProgress` |
 | `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` pending live verification |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
 | `ThinkingLevel` | lowercase | `"low"`, `"medium"`, `"high"` | `DEFAULT_MODEL` rejects `"minimal"` (live 2026-09-24) |
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Verified 2026-01-05 (pre-revision) |
 | `VideoProcessing` | string or object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | The window is the cost lever among the `static` forms. Only valid inside a `user_input` step. Measured live 2026-08-18 |
-| `Tool::FileSearch` | object | `{"type": "file_search", "file_search_store_names": [...]}` | Rust `store_names` → wire `file_search_store_names`. Verified live 2026-08-16 |
+| `Tool::Function` | object | `{"type": "function", "name": "get_time", "description": "...", "parameters": {...}}` | Only `name` is needed: a function tool sent with just a `name` is accepted and called, and a stored read serves it that way (live 2026-11-05). `description` and `parameters` are left out when `None`; `FunctionParameters` keeps schema keywords it doesn't model. A tool read without its optional fields is still `Tool::Function`, not `Unknown` |
+| `Tool::FileSearch` | object | `{"type": "file_search", "file_search_store_names": [...]}` | Rust `store_names` → wire `file_search_store_names`, left out when the list is empty. Verified live 2026-08-16 |
 | `Tool::GoogleSearch` | object + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | object + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification |
-| `Tool::ComputerUse` | snake_case object | `{"type": "computer_use", "environment": "browser", ...}` | Pending live verification |
+| `Tool::ComputerUse` | snake_case object | `{"type": "computer_use", "environment": "browser", ...}` | Pending live verification. An empty `environment` (as read from a tool without one) is left out; so are an `mcp_server` tool's empty `name` and `url` |
 | `Tool::Retrieval` | object | `{"type": "retrieval", "retrieval_types": [...], ...}` | **Rejected by the Gemini API** as Vertex-only (live 2026-07) |
 | `RetrievalType` | snake_case | `"vertex_ai_search"`, `"rag_store"` | Not verifiable on the Gemini API |
 | `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | The crate sends the list. See [speech_config wire forms](#speech_config-wire-forms) (live 2026-09-24) |
@@ -174,12 +179,13 @@ before the crate models it, which is how `signature` once broke replay.
 | `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. `enabled`/`disabled` observed live 2026-07 |
 | `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only. Verified live 2026-07 (the validation error lists exactly these) |
 | `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | `inline` verified live 2026-07 |
-| `NetworkConfig` | string or object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit to allow all traffic. Both forms verified live 2026-07 |
+| `NetworkConfig` | string or object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit to allow all traffic. Both forms verified live 2026-07. `{"allowlist": "disabled"}` (`AllowlistDisabled`, the bindings' `Disabled` arm) is accepted too, echoed by a GET as `{"allowlist": [{"mode": "disabled"}]}`, which reads as `AllowlistDisabled` as well, and blocks egress like `"disabled"` (an agent's `curl` got the egress proxy's 403 under both, 200 with no network config; live 2026-11-05). `is_disabled()` is true for both |
 | `EnvironmentSpec` | string or object | `"env-123"` / `{"type": "remote", "sources": [...]}` | Both forms verified live 2026-07 on requests |
 | `ResponseFormat` | tagged by `"type"`, or a raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list. Verified live 2026-07; see [ResponseFormat](#responseformat) |
 | `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | The validation error lists exactly these (2026-07), but `delivery` is rejected for audio and image |
 | `VideoTask` | snake_case | `"text_to_video"`, ..., `"extend"` | Verified live 2026-07 via the validation error |
 | `Visualization` | lowercase | `"off"`, `"auto"` | Verified live 2026-07 via the validation error |
+| `CodeMenderMode` | lowercase | `"scan"`, `"verify"` | `agent_config.find_request.mode`, from the google-genai 2.34.0 bindings. Unverified: the `code-mender` agent config is Vertex-only (`400 ... allowed on the Gemini Enterprise Agent Platform`, live 2026-11-05) |
 | Audio MIME type (TTS) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent; see [Audio response](#audio-response-tts-output). Live 2026-09-24 |
 | `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `prebuilt`/`prompted` verified live 2026-09-24 |
 | `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Verified live 2026-09-24 |
@@ -189,9 +195,10 @@ before the crate models it, which is how `signature` once broke replay.
 | `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Server-validated (2026-09-24); no Interactions model outputs video to exercise it |
 | `TranscriptionMode` | string or object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | See [TranscriptionConfig](#transcriptionconfig) |
 | `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
-| `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Live 2026-07: items may carry **only** `search_suggestions` |
+| `GoogleSearchResultItem` | snake_case | `{"search_suggestions": "<html>"}` | The only field in the 2.34.0 bindings and on the wire (live 2026-07 and 2026-11-05); `title`, `url` and `rendered_content` were removed, and one that arrives lands in `extra` |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | `status` is `success`/`error`/`paywall`/`unsafe`; no separate paywall field (2026-01-13) |
 | `FileState` | uppercase | `"PROCESSING"`, `"ACTIVE"`, `"FAILED"` | Files API |
+| `FileSource` | uppercase | `"UPLOADED"`, `"GENERATED"`, `"REGISTERED"` | Files API; `UPLOADED` on every uploaded file (live 2026-11-05), the other two from google-genai 2.34.0 |
 | `DocumentState` | prefixed uppercase | `"STATE_PENDING"`, `"STATE_ACTIVE"`, `"STATE_FAILED"` | File Search documents; verified live 2026-08-16 |
 | `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 values |
 | `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | |
@@ -243,7 +250,7 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`, as in the google-genai 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
 | `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`, as in the 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
 | `file_search_call` | `FileSearchCall` | `{"id", "signature"?}` |
-| `file_search_result` | `FileSearchResult` | `{"call_id", "result": [FileSearchResultItem], "signature"?}`. `result` (items with `title`, `text`, `file_search_store`) is spec-only and never populated (see [File Search](#file-search)) |
+| `file_search_result` | `FileSearchResult` | `{"call_id", "signature"?}`, as in the bindings and the spec (live 2026-11-05). The delta's spec-only `result` items are opaque objects, kept as JSON (see [File Search](#file-search)) |
 | `google_maps_call` | `GoogleMapsCall` | `{"id", "arguments": {"queries": [...]}, "signature"?}` |
 | `google_maps_result` | `GoogleMapsResult` | `{"call_id", "result": [GoogleMapsResultItem], "signature"?}` |
 | `processing_call` | `ProcessingCall` | `{"id", "signature"?}`. Emitted for video with `processing: "agentic"`, one or more per turn (live 2026-09-24, `gemini-3.8-flash`). The ~36KB signature is **required** on stateless replay (`400 Processing call step is missing signature`) |
@@ -296,7 +303,7 @@ Deltas build up the step that the matching `step.start` announced.
 | Wire `type` | Variant | Notes |
 |-------------|---------|-------|
 | `text` | `Text` | Text fragment |
-| `image` / `audio` / `video` / `document` | media variants | `Content` field shapes (audio also accepts legacy `rate`). Each streamed image arrived whole in one `image` delta with its `mime_type` and a complete base64 JPEG, in its own `model_output` step after a `thought` step and before any text in that step (live 2026-11-04, `gemini-3.1-flash-image`, three streams, up to four images; two images in one step never appeared). An image delta with a `mime_type` or `uri` starts a new block, so the unobserved same-step case stays two blocks, and only a bare `data` fragment continues the last one. Audio, video and document data deltas, never captured streamed, still concatenate into the last block of their kind |
+| `image` / `audio` / `video` / `document` | media variants | `Content` field shapes (audio also accepts legacy `rate`). Each streamed image arrived whole in one `image` delta with its `mime_type` and a complete base64 JPEG, in its own `model_output` step after a `thought` step and before any text in that step (live 2026-11-04, `gemini-3.1-flash-image`, three streams, up to four images; two images in one step never appeared). An image delta with a `mime_type` or `uri` starts a new block, so the unobserved same-step case stays two blocks, and only a bare `data` fragment continues the last one. A streamed TTS answer is many `audio` deltas in one step, each with the same `mime_type` (`audio/l16`), `sample_rate` (24000) and `channels` (1) and a padding-free base64 chunk (live 2026-11-05, 243 deltas); an audio delta continues the last audio block unless it names a `uri` or a different format. Video and document deltas, never captured streamed, follow the image rule |
 | `thought_summary` | `ThoughtSummary` | `{"content": Content}` |
 | `thought_signature` | `ThoughtSignature` | `{"signature": "..."}` |
 | `text_annotation_delta` | `TextAnnotation` | **Tag differs from the variant name.** `{"annotations": [Annotation]}` |
@@ -333,7 +340,7 @@ a `{"chunk_type": ..., "data": ...}` map and reads that map back.
 | `created` | `Created` | The `InteractionResponse` |
 | `status_update` | `StatusUpdate` | `status`, plus `interaction_id`, `usage` and `continuation_token` when set |
 | `step_start` | `StepStart` | `index`, `step` |
-| `step_delta` | `StepDelta` | `index`, `delta` |
+| `step_delta` | `StepDelta` | `index`, `delta`, plus `total_usage` when set (the wire event's `metadata.total_usage`; not seen live as of 2026-11-05) |
 | `step_stop` | `StepStop` | `index`, plus `usage` and `step_usage` when set |
 | `completed` | `Completed` | The `InteractionResponse` |
 | `error` | `Error` | `message`, `code` |
@@ -513,6 +520,7 @@ field does not disable thinking (see [Thinking Mode](THINKING_MODE.md)).
 | `Incomplete` | `incomplete` | Live 2026-11-01: `max_output_tokens` reached; carries a `continuation_token` on the continuation model |
 | `BudgetExceeded` | `budget_exceeded` | Pending live verification |
 | `RequiresContinuation` | `requires_continuation` | google-genai 2.34.0; never observed live |
+| `Queued` | `queued` | google-genai 2.34.0 bindings, not the spec (#501); never observed live: background interactions report `in_progress` from their create response on (2026-11-05) |
 
 ### Resolution
 
@@ -578,8 +586,13 @@ Verified live 2026-09-27 (list paging, three text files at `pageSize=1`):
 - `pageSize` must be 1 to 100; `5000` is a 400 (`page_size must be between
   1 and 100`). `0` is the default. The snake_case `page_size` is accepted
   too; the crate sends `pageSize`.
-- Files carry `updateTime` and `source` (`UPLOADED`), which the crate does
-  not model; they are dropped on deserialization.
+- Files carry `updateTime` and `source` (`UPLOADED`), both modeled since
+  0.14.0 (live 2026-11-05). `sizeBytes` is a JSON string (`"17"`);
+  `FileMetadata::size_bytes` is an `i64` that reads a string or a number.
+- A file that fails processing (an undecodable video) carries
+  `{"error": {"code": 3, "message": "The file failed to be processed."}}`
+  with no `details` (live 2026-11-05). `FileError` models `details` and
+  keeps any other key in `extra`.
 
 ### File Search
 
@@ -617,15 +630,22 @@ Behavior, all verified live 2026-08-16:
 - **Deleting a non-empty document or store needs `force=true`**. Otherwise:
   `400 Cannot delete non-empty Document` / `... FileSearchStore`
   (`FAILED_PRECONDITION`).
-- **Uploads accept `raw` and `multipart`.** The crate uses `raw`, with
-  `display_name` as a query parameter.
+- **Uploads accept `raw`, `multipart` and `resumable`.** The crate used
+  `raw`, with `display_name` as a query parameter, until 0.14.0; it now uses
+  `resumable`, as the Files API does, because only a JSON body carries
+  `customMetadata` and `chunkingConfig` (live 2026-11-05). The start request's
+  body is `{"displayName", "mimeType", "customMetadata", "chunkingConfig"}`;
+  a body `mimeType` wins over the session's content-type header.
 - **The upload response is an operation wrapper**:
   `{"name": ".../upload/operations/...", "response": {"documentName": ...}}`.
   The crate resolves it with a follow-up GET.
 - **`file_search_result` steps carry no chunks.** Only `call_id`,
-  `signature` and `type` arrive, so `has_file_search_results()` is true
-  while `file_search_results()` is empty. The retrieved content shows only
-  in the answer (#429).
+  `signature` and `type` arrive, on a stored interaction and in the stream's
+  delta (live 2026-11-05). The retrieved content shows only in the answer,
+  cited by `file_citation` annotations (#429). The spec gives the delta a
+  `result` list of objects with no fields; `StepDelta::FileSearchResult`
+  keeps any it receives as JSON, and the accumulator puts them in the
+  step's `extra` under `result`.
 - **`file_search` can't be combined with `google_search` or
   `url_context`**: 400 `'<other>' and 'file_search' cannot be combined in the
   same request. Please choose one to continue.` `code_execution` is accepted.
@@ -641,26 +661,56 @@ documents:
   `page_size`, or none, continues the list). An unknown token is a 400
   `Requested page_token is invalid.`; a document token sent to another store
   lists nothing (`{}`).
-- **Raw uploads take any body**, so in-memory bytes upload exactly as a
-  file does. Without `display_name`, the document is named after the
+- **Uploads take any body**, so in-memory bytes upload exactly as a file
+  does. Without `display_name`, the document is named after the
   `X-Goog-Upload-File-Name` header (`"notes.txt"` becomes the display name
   and the ID prefix `notestxt-`); with neither, it has no display name and a
   random ID. With both, `display_name` wins. The crate sends the header for
-  path uploads only, so an unnamed in-memory upload stays unnamed.
+  path uploads only, so an unnamed in-memory upload stays unnamed. The
+  resumable protocol names documents the same way (live 2026-11-05).
 - Deleting an empty store needs no `force`; a non-empty one is a 400
   `Cannot delete non-empty FileSearchStore`.
+
+Stores, documents and imports, verified live 2026-11-05:
+
+- A store serves `activeDocumentsCount`, `pendingDocumentsCount` (only while
+  a document indexes) and `sizeBytes` as string int64s; an empty store has
+  none of them. `failedDocumentsCount` was not seen: a document that cannot
+  be indexed (random bytes as `application/pdf`) fails its upload with a 500
+  instead.
+- `embeddingModel` on create picks the model (`models/gemini-embedding-2`);
+  unset, it is `models/gemini-embedding-001` (the server's default, which
+  the live test checks only as a `models/` name), and an unknown model is a
+  `400 INVALID_ARGUMENT`.
+- `customMetadata` entries are `{"key", "stringValue" | "numericValue" |
+  "stringListValue": {"values": [...]}}`, served back on the document in the
+  order sent. A whole `numericValue` comes back without a fraction (`2026`).
+- `chunkingConfig` is `{"whiteSpaceConfig": {"maxTokensPerChunk",
+  "maxOverlapTokens"}}`. An unknown key is a `400 Invalid JSON payload`; an
+  overlap as large as the chunk or larger fails the upload or import with a
+  500, and creates no document. The crate rejects such an overlap before any
+  request.
+- `POST {store}:importFile` with `{"fileName": "files/<id>", "customMetadata",
+  "chunkingConfig"}` answers with an unfinished operation
+  (`{"name": "fileSearchStores/<s>/operations/<id>", "response": {"@type":
+  ...}}`). `GET` on that name reports `"done": true` and the document's
+  **bare** ID in `response.documentName` (and the store's bare ID as
+  `parent`). The document is named after the file's ID and is a copy. Its
+  ID is the operation's, and it exists, `STATE_PENDING`, as soon as the
+  `POST` answers; importing the same file again makes a second document
+  under a new ID.
 
 Covered by `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
 
 ### Google Search steps
 
-Verified live 2026-07 with `LOUD_WIRE=1`:
+Verified live 2026-07 with `LOUD_WIRE=1`, and again 2026-11-05:
 
 - `google_search_call` carried `id`, nested `arguments.queries`,
   `search_type: "web_search"` and `signature`.
 - The `google_search_result` items carried **only** `search_suggestions`
-  (an HTML rendering payload), with no `title` / `url` / `rendered_content`.
-  Those then deserialize empty and are skipped on re-serialize.
+  (an HTML rendering payload), the one field of the bindings'
+  `GoogleSearchResult`. `GoogleSearchResultItem` models only that.
 - Citations arrived as `url_citation` annotations on the `model_output`
   text, and `usage.grounding_tool_count` was `[{"type": "google_search",
   "count": 1}]`.
@@ -669,12 +719,11 @@ Verified live 2026-07 with `LOUD_WIRE=1`:
 
 - `google_maps_call`: `id`, `arguments.queries`, `signature`.
 - `google_maps_result`: `call_id`, `result: [GoogleMapsResultItem]`,
-  `signature`. Each item has `places: [Place]` (`name`,
-  `formatted_address`, `place_id`, `lat`, `lng`, plus `url` and
-  `review_snippets` in this revision) and `widget_context_token`.
-
-Verified pre-revision as `Content`. The step form and the new `Place` fields
-are pending live verification.
+  `signature`. Each item has `places: [Place]` and `widget_context_token`.
+  A place carries `name`, `place_id` and `url` (live 2026-11-05, 30 places
+  across three results), and the bindings add `review_snippets`. The
+  older address, coordinate, rating and contact fields were never served
+  and were removed from `Place`; one that arrives lands in `extra`.
 
 ### Computer Use
 
@@ -732,13 +781,15 @@ one entry for a single voice, one per `speaker` for multi-speaker TTS.
   docs returns 400 (`no such field: 'voiceConfig'`, 2026-01-10).
 - A stored interaction read back serves `generation_config`, with
   `speech_config` in the `{"speakers": [...]}` form whichever form was sent
-  (live 2026-11-04, `gemini-3.8-flash-tts`, sent as the list form). The
-  crate does not model it on `InteractionResponse` yet, so it lands in
-  `extra` (#504, WP2). With `include_input=true` the input comes back as a
-  `user_input` step, and every list in the stored config comes back twice
-  over: each `speakers` entry, `stop_sequences` value, `response_modalities`
-  value and `safety_settings` entry appears twice (live 2026-11-04, on the
-  TTS model and on `gemini-3.8-flash`). Neither was echoed in 2026-07.
+  (live 2026-11-04 and 2026-11-05, `gemini-3.8-flash-tts`, sent as the list
+  form). `InteractionResponse::generation_config` reads it into the same
+  list, and serializes it back as the list. With `include_input=true` the
+  input comes back as a `user_input` step, and every list in the stored
+  config comes back twice over: each `speakers` entry, `stop_sequences`
+  value, `response_modalities` value and `safety_settings` entry appears
+  twice (live 2026-11-04 and 2026-11-05, on the TTS model and on
+  `gemini-3.8-flash`). The crate keeps what is served and does not
+  deduplicate. Neither was echoed in 2026-07.
 
 #### speech_config wire forms
 
@@ -910,6 +961,11 @@ string or a remote environment object:
   (`Invalid input at 'environment'`) and lands in `extra` if read.
 - The response echoes the assigned `environment_id`, which works as the
   string form on later turns.
+- The remote object's own `environment_id` runs an interaction in that
+  existing environment, with its files; the response's `environment_id` is
+  that ID, and one that does not exist is a 404. On an agent's
+  `base_environment` it is accepted, dropped and unchecked (live
+  2026-11-05).
 
 Verified live 2026-07 (Antigravity agent, `background: true`): the inline
 source, `"disabled"`, an allowlist with `transform`, and the id string form.
@@ -956,6 +1012,12 @@ Verified live 2026-09-27 (list paging and IDs):
 - `GET /v1beta/voices/{id}` finds stored custom voices (`voice_...`) only.
   Prebuilt IDs (`achernar`, `kore`, `en-gb-storyteller-1`), an upper-cased
   custom ID and a percent-encoded `voices/<id>` resource name are 404s.
+
+Verified live 2026-11-05: a create's `description`, `language_code`,
+`region_code`, `accent`, `persona`, `context`, `gender` and `pitch` are
+stored, echoed and matched by the list filters. `sample_audio` is output
+only: a value sent is ignored, and the response carries a sample the API
+generated.
 
 ### ResponseFormat
 

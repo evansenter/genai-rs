@@ -63,7 +63,8 @@ async fn test_upload_list_and_fork() {
             let env_id = env.id.clone().expect("environment has no id");
             ids.lock().unwrap().push(env_id.clone());
 
-            let content = b"hello from genai-rs\n".to_vec();
+            // Not valid UTF-8, so a lossy text read would not round-trip.
+            let content = b"hello from genai-rs\n\xff\xfe\x00".to_vec();
             let written = client
                 .environments()
                 .files()
@@ -125,6 +126,63 @@ async fn test_upload_list_and_fork() {
                 .find(|f| f.path.as_deref() == Some("etc/motd"))
                 .unwrap_or_else(|| panic!("source file missing from {:?}", root.files));
             assert_eq!(listed_motd.size_bytes, Some(motd.len() as i64));
+
+            // A download hands back the bytes written and their type; a
+            // directory comes back as a tar archive (live 2026-11-05).
+            let downloaded = client
+                .environments()
+                .files()
+                .download(&env_id, "genai-rs/hello.txt")
+                .await
+                .expect("download failed");
+            assert_eq!(downloaded.data, content);
+            assert!(
+                downloaded
+                    .mime_type
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("text/plain")),
+                "{downloaded:?}"
+            );
+            assert!(!downloaded.is_tar_archive());
+            let directory = client
+                .environments()
+                .files()
+                .download(&env_id, "genai-rs")
+                .await
+                .expect("directory download failed");
+            assert!(directory.is_tar_archive(), "{directory:?}");
+            // A tar archive: 512-byte blocks, its first header naming the
+            // file, which the archive then carries.
+            assert_eq!(directory.data.len() % 512, 0, "{directory:?}");
+            assert!(
+                directory.data[..100].starts_with(b"hello.txt")
+                    || directory.data[..100].starts_with(b"./hello.txt")
+                    || directory.data[..100].starts_with(b"genai-rs/hello.txt"),
+                "unexpected first entry: {:?}",
+                String::from_utf8_lossy(&directory.data[..100])
+            );
+            assert!(
+                directory
+                    .data
+                    .windows(content.len())
+                    .any(|window| window == content.as_slice()),
+                "the archive does not carry the file"
+            );
+            let missing_download = client
+                .environments()
+                .files()
+                .download(&env_id, "no/such/path")
+                .await;
+            assert!(
+                matches!(
+                    missing_download,
+                    Err(GenaiError::Api {
+                        status_code: 404,
+                        ..
+                    })
+                ),
+                "{missing_download:?}"
+            );
 
             let single = client
                 .environments()

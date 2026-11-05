@@ -4,7 +4,8 @@ mod agent_config;
 mod generation_config;
 
 pub use agent_config::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, ThinkingSummaries,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, ThinkingSummaries,
     Visualization,
 };
 pub use generation_config::{
@@ -187,15 +188,6 @@ pub enum InteractionInput {
     Steps(Vec<Step>),
 }
 
-impl Default for InteractionInput {
-    /// An empty text input — the zero value for struct-literal
-    /// construction of [`InteractionRequest`]; replace it with real input
-    /// before sending.
-    fn default() -> Self {
-        Self::Text(String::new())
-    }
-}
-
 /// Serializer for [`InteractionRequest::input`]: emits
 /// [`InteractionInput::Content`] as a single `user_input` step rather than as
 /// a bare content array.
@@ -210,20 +202,27 @@ impl Default for InteractionInput {
 /// Scoped to this field rather than to `InteractionInput`'s own `Serialize`
 /// so that [`InteractionResponse::input`](crate::InteractionResponse) keeps
 /// re-serializing server data in the shape it arrived in.
-fn serialize_request_input<S>(input: &InteractionInput, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_request_input<S>(
+    input: &Option<InteractionInput>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     // Exhaustive on purpose: a new `InteractionInput` arm must make a
     // wrap-or-not decision here rather than default to one by omission.
     match input {
-        InteractionInput::Content(c) => {
+        Some(InteractionInput::Content(c)) => {
             use serde::ser::SerializeSeq;
             let mut seq = serializer.serialize_seq(Some(1))?;
             seq.serialize_element(&UserInputRef { content: c })?;
             seq.end()
         }
-        InteractionInput::Text(_) | InteractionInput::Steps(_) => input.serialize(serializer),
+        Some(input @ (InteractionInput::Text(_) | InteractionInput::Steps(_))) => {
+            input.serialize(serializer)
+        }
+        // Left out by `skip_serializing_if`; here for completeness.
+        None => serializer.serialize_none(),
     }
 }
 
@@ -388,18 +387,30 @@ pub struct InteractionRequest {
 
     /// The input for this interaction.
     ///
-    /// *Required* and strict on deserialize, so a typo in a config file
-    /// feeding [`TriggerCreateParams`](crate::TriggerCreateParams) is a parse
-    /// error rather than a scheduled empty prompt. (The lenient response side
-    /// is [`Trigger::interaction`](crate::Trigger).)
+    /// Every request needs one except a decoding continuation of a stored
+    /// interaction: with
+    /// [`previous_interaction_id`](Self::previous_interaction_id) and
+    /// [`continuation_token`](Self::continuation_token) set, the API
+    /// continues without it (verified live 2026-11-05;
+    /// [`InteractionBuilder::continue_decode`](crate::InteractionBuilder::continue_decode)
+    /// builds that request). Without input and without a token the API
+    /// answers `404 Model '...' not found`, a misleading error that
+    /// [`InteractionBuilder::build`](crate::InteractionBuilder::build)
+    /// heads off. Optional in the google-genai 2.34.0 bindings, so `None` is
+    /// left out of the body, and a deserialized request without `input`
+    /// reads as `None`.
     ///
     /// On the way out, [`InteractionInput::Content`] is wrapped in a single
     /// `user_input` step: the API accepts video `processing` only inside a
     /// step. Scoped to this field rather than to `InteractionInput`'s own
     /// `Serialize`, so [`InteractionResponse::input`](crate::InteractionResponse)
     /// still re-serializes server data in the shape it arrived in.
-    #[serde(serialize_with = "serialize_request_input")]
-    pub input: InteractionInput,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_request_input"
+    )]
+    pub input: Option<InteractionInput>,
 
     /// Reference to a previous interaction for stateful conversations
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -486,11 +497,18 @@ pub struct InteractionRequest {
     /// Resumes a decode that stopped early, from
     /// [`InteractionResponse::continuation_token`](crate::InteractionResponse::continuation_token).
     ///
-    /// Send it with the *original* input (live 2026-11-01): any other input,
-    /// including empty text, gets `400 Cannot provide a different input on a
-    /// continuation request`. `max_output_tokens` is cumulative across
-    /// continuations, so raise it, or the API answers that the budget "has
-    /// already been exhausted". Only
+    /// For a stored interaction, send it with
+    /// [`previous_interaction_id`](Self::previous_interaction_id) and no
+    /// `input` (live 2026-11-05); the API requires the id then (`400
+    /// previous_interaction_id is required when continuation_token is set
+    /// for a stored interaction`). For a `store: false` one, which has no
+    /// id, resend the *original* input (live 2026-11-01 and 2026-11-05):
+    /// without it the API answers `400 contents is not specified`, and any
+    /// other input, including empty text, gets `400 Cannot provide a
+    /// different input on a continuation request`. `max_output_tokens` is
+    /// cumulative across continuations, so raise it or leave it out (a
+    /// continuation without one ran to completion, live 2026-11-05), or the
+    /// API answers that the budget "has already been exhausted". Only
     /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports
     /// continuation so far.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -511,7 +529,12 @@ pub struct InteractionRequest {
     /// written after the modeled fields, and for a key sent twice the API
     /// keeps the last (live 2026-11-04), so a key that collides with a
     /// modeled field overrides it: a way to send a modeled field in a shape
-    /// the crate gets wrong. The same typo cost as
+    /// the crate gets wrong. The exception is `stream`, which belongs to
+    /// the transport: [`Client::execute`](crate::Client::execute) and
+    /// [`Client::execute_stream`](crate::Client::execute_stream) drop a
+    /// `stream` key from here before sending, with a `warn!`, since a copy
+    /// here would override the [`stream`](Self::stream) they set (an SSE
+    /// answer to a non-streaming call). The same typo cost as
     /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams::extra)
     /// applies to a deserialized request: a misspelled key lands here and is
     /// sent as is. Clear this map before sending to drop every such key, as

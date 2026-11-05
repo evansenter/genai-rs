@@ -51,7 +51,7 @@ Under API revision 2026-05-20 the server emits this lifecycle:
 | `interaction.created` | `Created { interaction }` | First event; carries the interaction id |
 | `interaction.status_update` | `StatusUpdate { interaction_id, status, usage, .. }` | Background/agent progress. `interaction_id` is `None` on a `store: false` stream; background streams carry `usage` mid-run |
 | `step.start` | `StepStart { index, step }` | A step begins; it may be partial (a `FunctionCall` with empty arguments) |
-| `step.delta` | `StepDelta { index, delta }` | Incremental payload for that step |
+| `step.delta` | `StepDelta { index, delta, total_usage }` | Incremental payload for that step. `total_usage` is the event's cumulative `metadata.total_usage`; in the bindings and the spec, but no text, TTS or agent stream sent it (live 2026-11-05) |
 | `step.stop` | `StepStop { index, usage, step_usage }` | `usage` is cumulative; `step_usage` is this step's alone |
 | `interaction.completed` | `Completed(response)` | Terminal: the full response |
 | `error` | `Error { message, code }` | Terminal |
@@ -63,11 +63,12 @@ and `status()` for the common checks.
 
 ### How a stream ends
 
-- **At its terminal event.** The stream yields `Completed` or `Error` and
-  ends there: nothing after it is read, and the connection is dropped. (The
-  API follows `interaction.completed` with only `event: done` /
-  `data: [DONE]`, verified live 2026-11-04.) So no late error, such as a
-  reset while the server closes, can follow a finished interaction.
+- **At its terminal event.** The stream yields `Completed` or `Error` as
+  soon as it arrives. The next poll reads the rest of the body to its end,
+  discarding every frame and swallowing every error, and the stream ends.
+  So no late error, such as a reset while the server closes, can follow a
+  finished interaction. See [Read to the end](#read-to-the-end) for why the
+  rest is read rather than dropped.
 - **Cut off.** A body that ends before a terminal event yields
   `Err(GenaiError::StreamInterrupted)` last, whether the server closed the
   connection (between events or partway through one) or the transport
@@ -76,6 +77,25 @@ and `status()` for the common checks.
 - **On an unknown event.** A body that ends right after an event this crate
   doesn't recognize ends cleanly, with a `warn!`: it may be a new terminal
   event (Evergreen).
+
+### Read to the end
+
+The stored interaction is readable once the stream has ended, not when
+`Completed` arrives. After `interaction.completed` the API sends
+`event: done` / `data: [DONE]` and closes the connection about a second
+later, and finishes storing the interaction during that tail: a `GET` sent
+right after closing the connection at `interaction.completed` answered
+`500 Internal error encountered`, and the same `GET` ten seconds later
+`200`; after reading to the end, `200` at once (verified live 2026-11-05).
+Nothing is lost, it is late.
+
+So to `get` the interaction or chain on it with `previous_interaction_id`
+right away, read the stream until `next()` returns `None`, as the loops on
+this page do, rather than `break` at `Completed`.
+`create_stream_with_auto_functions()` reads each round to its end before
+sending the next, and before it ends. The read is bounded: a body still
+open 5 s after the terminal event is closed with a `warn!`, and the stream
+ends cleanly. `with_timeout()`'s per-chunk limit doesn't apply to it.
 
 A successful response that is not `text/event-stream` (a captive portal's
 page) is `GenaiError::MalformedResponse`, not a cut-off: no stream started.
@@ -98,7 +118,8 @@ audio deltas are under 8 KB. The limit leaves four times the largest.
 steps, it fills them in, including parsing streamed `arguments_delta`
 fragments into `Step::FunctionCall.arguments`. If the payload omits usage, it
 falls back to the event's `metadata.total_usage`, then to the last cumulative
-`step.stop` usage. So `response.as_text()`, `response.function_calls()` and
+usage seen earlier in the stream, from a `step.stop` or a `step.delta`'s
+`metadata.total_usage`. So `response.as_text()`, `response.function_calls()` and
 `response.usage` work on `Completed` exactly as they do after `create()`.
 Accumulate deltas yourself only for live display.
 
@@ -108,8 +129,14 @@ Each streamed image arrives whole in one `image` delta that names its
 `gemini-3.1-flash-image`, three streams, one with four images). An image
 delta that names a `mime_type` or `uri` starts a new `Content::Image` block,
 so two images in one step would also stay two blocks; that shape has not
-been observed. Audio, video and document data deltas concatenate into the
-last block of their kind. Fields a delta carries that the crate does not
+been observed. Streamed TTS is the opposite case: one recording arrives as
+many raw PCM `audio` deltas in one step, each naming the same `mime_type`,
+`sample_rate` and `channels` (verified 2026-11-05, `DEFAULT_TTS_MODEL`:
+`audio/l16`, 24000 Hz, mono, about 240 deltas for a sentence; the
+non-streamed answer is `audio/wav`). An audio delta continues the last
+audio block unless it names a `uri` or a different format, so the
+`Completed` response holds the one recording. Video and document deltas,
+which no model streams yet, follow the image rule. Fields a delta carries that the crate does not
 model land in the `extra` map of the block or step it builds, so the
 assembled steps replay as history exactly as a non-streamed response's
 would.

@@ -54,9 +54,10 @@ if response.has_google_search_calls() {
         println!("Searched: {}", query);
     }
 
-    // Get source URLs
-    for result in response.google_search_results() {
-        println!("Source: {} - {}", result.title, result.url);
+    // Sources arrive as citations on the answer; the result items carry
+    // only a rendering of the search suggestions.
+    for annotation in response.all_annotations() {
+        println!("Source: {}", annotation.source().unwrap_or("<none>"));
     }
 }
 ```
@@ -218,8 +219,9 @@ pages.
 ## File Search
 
 Semantic search over *file search stores* (resource names like
-`fileSearchStores/my-store-123`), not over Files API uploads. Create a store,
-upload documents into it, and wait for indexing before searching:
+`fileSearchStores/my-store-123`), not over Files API uploads directly
+(`import_file`, below, copies one into a store). Create a store, upload
+documents into it, and wait for indexing before searching:
 
 ```rust,no_run
 use genai_rs::{CreateFileSearchStoreRequest, FileUpload, PollOptions};
@@ -250,6 +252,54 @@ client
 # }
 ```
 
+A document can carry custom metadata and its own chunking, and a file
+already in the Files API can be imported instead of uploaded again. A store
+can also pick its embedding model when it is created
+(`CreateFileSearchStoreRequest::with_embedding_model("models/gemini-embedding-2")`;
+unset, the API uses `models/gemini-embedding-001`, live 2026-11-05):
+
+```rust,no_run
+use genai_rs::{ChunkingConfig, CustomMetadata, DocumentImport, DocumentUpload, FileUpload};
+
+# async fn run(client: genai_rs::Client, store_name: &str) -> Result<(), genai_rs::GenaiError> {
+// Metadata entries are strings, numbers or lists of strings, read back on
+// `FileSearchDocument::custom_metadata` in the order sent. The chunk overlap
+// must be smaller than the chunk, or the upload fails before any request.
+let memo = client
+    .file_search_stores()
+    .upload(
+        store_name,
+        DocumentUpload::new(FileUpload::from_path("q4-memo.md"))
+            .add_custom_metadata(CustomMetadata::string("team", "finance"))
+            .add_custom_metadata(CustomMetadata::numeric("year", 2026.0))
+            .add_custom_metadata(CustomMetadata::string_list("tags", ["budget", "q4"]))
+            .with_chunking_config(ChunkingConfig::white_space(200, 20)),
+    )
+    .await?;
+
+// Import a Files API upload: the document is a copy named after the file's
+// ID, so deleting the file afterwards leaves it.
+let file = client.files().upload(FileUpload::from_path("faq.md")).await?;
+let faq = client
+    .file_search_stores()
+    .import_file(
+        store_name,
+        DocumentImport::new(&file.name).add_custom_metadata(CustomMetadata::string("source", "faq")),
+    )
+    .await?;
+# let _ = (memo, faq);
+# Ok(())
+# }
+```
+
+`import_file` waits for the import operation (up to 60 s by default, set
+with `DocumentImport::with_poll_options`). Don't retry one that times out:
+the document already exists, pending, and a second import makes a second
+copy. The error names the operation and the document to wait for instead.
+Both uploaded and imported documents start pending, so wait for them as
+above. Whether `with_metadata_filter` matches custom metadata has not been
+verified live yet.
+
 A store created in Google AI Studio works the same way; pass its resource
 name. `client.file_search_stores().list()` and `.documents().list(store)` list
 stores and documents (`.send()` for one page, `.items()` for all), and
@@ -274,11 +324,12 @@ println!("{}", response.as_text().unwrap_or_default());
 `FileSearchConfig` also takes `.with_top_k(n)` (maximum retrieved chunks) and
 `.with_metadata_filter("category:technical")`.
 
-> **`file_search_results()` returns nothing on this API.** The live API never
-> emits the step it reads. This was verified against a store whose indexed,
-> `STATE_ACTIVE` documents demonstrably grounded the answer. Retrieved chunks
-> are folded into the response text, so an empty result set is expected
-> (#429).
+> **The `file_search_result` step carries no chunks.** It has only `call_id`
+> and `signature`, in the bindings, the spec and on the wire (live
+> 2026-11-05, streamed and stored). Retrieved chunks are folded into the
+> answer, which cites them with `file_citation` annotations
+> (`all_annotations()`); `has_file_search_results()` says whether a search
+> ran (#429).
 
 ## Retrieval
 
@@ -345,11 +396,7 @@ let response = client
 for result in response.google_maps_results() {
     for item in result.items {
         for place in item.places.iter().flatten() {
-            println!(
-                "{} - {}",
-                place.name.as_deref().unwrap_or("<unnamed>"),
-                place.formatted_address.as_deref().unwrap_or("<no address>")
-            );
+            println!("{}", place.name.as_deref().unwrap_or("<unnamed>"));
             if let Some(url) = &place.url {
                 println!("  Maps URL: {}", url);
             }
@@ -477,8 +524,7 @@ let result = client
 | `url_context_call_urls()` | URL Context | `Vec<&str>` |
 | `has_url_context_results()` | URL Context | `bool` |
 | `url_context_results()` | URL Context | `Vec<UrlContextResultInfo>` |
-| `has_file_search_results()` | File Search | `bool` |
-| `file_search_results()` | File Search | `Vec<&FileSearchResultItem>` |
+| `has_file_search_results()` | File Search | `bool` (whether a search ran; its step carries no chunks) |
 | `has_google_maps_results()` | Google Maps | `bool` |
 | `google_maps_results()` | Google Maps | `Vec<GoogleMapsResultInfo>` |
 | `function_calls()` | MCP (`<server>:<tool>`) and your functions | `Vec<FunctionCallInfo>` |

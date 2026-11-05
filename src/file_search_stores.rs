@@ -11,10 +11,12 @@
 //! [`get`](FileSearchStores::get), [`list`](FileSearchStores::list),
 //! [`delete`](FileSearchStores::delete) /
 //! [`force_delete`](FileSearchStores::force_delete), and
-//! [`upload`](FileSearchStores::upload) to add a document. Its nested
-//! [`documents`](FileSearchStores::documents) handle lists, gets and deletes
-//! documents, and [waits](FileSearchDocuments::wait_until_active) for one to
-//! be indexed.
+//! [`upload`](FileSearchStores::upload) or
+//! [`import_file`](FileSearchStores::import_file) to add a document, with
+//! [custom metadata](CustomMetadata) and [chunking](ChunkingConfig) if
+//! wanted. Its nested [`documents`](FileSearchStores::documents) handle
+//! lists, gets and deletes documents, and
+//! [waits](FileSearchDocuments::wait_until_active) for one to be indexed.
 //!
 //! # Names
 //!
@@ -33,13 +35,17 @@
 //! therefore carry explicit `rename_all = "camelCase"`, deliberately
 //! diverging from the rest of the crate — see `docs/ENUM_WIRE_FORMATS.md`.
 //!
-//! `sizeBytes` is returned as a **JSON string**, not a number, and goes
-//! through the crate's shared protobuf-JSON int64 helpers accordingly.
+//! `sizeBytes` and the document counts are returned as **JSON strings**, not
+//! numbers, and go through the crate's shared protobuf-JSON int64 helpers
+//! accordingly.
 //!
 //! # Example
 //!
 //! ```no_run
-//! use genai_rs::{Client, CreateFileSearchStoreRequest, FileUpload, PollOptions};
+//! use genai_rs::{
+//!     Client, CreateFileSearchStoreRequest, CustomMetadata, DocumentUpload, FileUpload,
+//!     PollOptions,
+//! };
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = Client::new("api-key".to_string());
@@ -50,7 +56,11 @@
 //!     .create(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
 //!     .await?;
 //! let document = stores
-//!     .upload(&store.name, FileUpload::from_path("handbook.pdf").with_display_name("handbook"))
+//!     .upload(
+//!         &store.name,
+//!         DocumentUpload::new(FileUpload::from_path("handbook.pdf").with_display_name("handbook"))
+//!             .add_custom_metadata(CustomMetadata::string("team", "search")),
+//!     )
 //!     .await?;
 //!
 //! // Documents are indexed asynchronously; wait before querying.
@@ -67,256 +77,23 @@
 //! # }
 //! ```
 
+mod document_input;
+mod list;
+mod types;
+
+pub(crate) use document_input::DocumentOptions;
+pub use document_input::{DocumentImport, DocumentUpload};
+pub use list::{ListFileSearchDocuments, ListFileSearchStores};
+pub use types::{
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentListResponse,
+    DocumentState, FileSearchDocument, FileSearchStore, FileSearchStoreListResponse, StringList,
+    WhiteSpaceConfig,
+};
+
 use crate::client::Client;
 use crate::errors::GenaiError;
-use crate::files::FileUpload;
-use crate::paging;
 use crate::poll::{PollOptions, PollStep};
-use crate::serde_util::{ForFileSearchDocument, deserialize_string_i64, serialize_string_i64};
-use crate::wire_enum::wire_enum;
-use chrono::{DateTime, Utc};
-use futures_util::stream::BoxStream;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-/// A file search store.
-///
-/// Created by [`FileSearchStores::create`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct FileSearchStore {
-    /// Full resource name, e.g. `fileSearchStores/my-docs-4kws71n2ybpr`.
-    ///
-    /// This is the value to pass to
-    /// [`Tool::FileSearch`](crate::Tool::FileSearch)'s `store_names`.
-    #[serde(default)]
-    pub name: String,
-
-    /// Human-readable name supplied at creation.
-    ///
-    /// Note the API derives [`name`](Self::name) from this by stripping
-    /// non-alphanumeric characters and appending a unique suffix, so the two
-    /// are related but not interchangeable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-
-    /// Creation timestamp.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub create_time: Option<DateTime<Utc>>,
-
-    /// Last-update timestamp.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<DateTime<Utc>>,
-
-    /// Embedding model used to index documents in this store, e.g.
-    /// `models/gemini-embedding-001`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embedding_model: Option<String>,
-
-    /// Fields the API returned that this struct does not model.
-    ///
-    /// Evergreen forward compatibility: unknown fields are preserved rather
-    /// than dropped, so a deserialize-then-serialize round-trip is lossless.
-    /// On serialize, a key present in both this map and a modeled field is
-    /// emitted from the map.
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-/// Response from listing file search stores.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct FileSearchStoreListResponse {
-    /// The stores on this page (wire: `fileSearchStores`). A null or
-    /// malformed list degrades to empty; malformed elements drop
-    /// individually.
-    #[serde(
-        default,
-        rename = "fileSearchStores",
-        deserialize_with = "crate::serde_util::deserialize_lenient_vec"
-    )]
-    pub stores: Vec<FileSearchStore>,
-
-    /// Token for the next page, absent on the final page.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_page_token: Option<String>,
-    /// Fields the crate does not model yet, kept so a deserialize/serialize
-    /// round trip preserves them. A list envelope is where the API is
-    /// likeliest to add something (a total count, a page-size echo).
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-paging::impl_list_page!(FileSearchStoreListResponse, stores: FileSearchStore);
-
-/// A document inside a file search store.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct FileSearchDocument {
-    /// Full resource name, e.g.
-    /// `fileSearchStores/my-docs-4kws71n2ybpr/documents/handbook-25rp7vz1euwz`.
-    #[serde(default)]
-    pub name: String,
-
-    /// Human-readable name supplied at upload.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-
-    /// Indexing state.
-    ///
-    /// A freshly uploaded document is [`DocumentState::Pending`] and becomes
-    /// [`DocumentState::Active`] once indexed — typically within a second or
-    /// two, but file search will not match against it until then. See
-    /// [`FileSearchDocuments::wait_until_active`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<DocumentState>,
-
-    /// MIME type detected at upload.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-
-    /// Size in bytes.
-    ///
-    /// The API returns this as a JSON *string* (e.g. `"27"`, protobuf JSON
-    /// convention); a plain number is accepted too, and it serializes back
-    /// as a string so captured responses round-trip faithfully.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_string_i64",
-        deserialize_with = "deserialize_string_i64::<_, ForFileSearchDocument>"
-    )]
-    pub size_bytes: Option<i64>,
-
-    /// Creation timestamp.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub create_time: Option<DateTime<Utc>>,
-
-    /// Last-update timestamp.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<DateTime<Utc>>,
-
-    /// Fields the API returned that this struct does not model.
-    ///
-    /// See [`FileSearchStore::extra`].
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-/// Response from listing documents in a store.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct DocumentListResponse {
-    /// The documents on this page. A null or malformed list degrades to
-    /// empty; malformed elements drop individually.
-    #[serde(
-        default,
-        deserialize_with = "crate::serde_util::deserialize_lenient_vec"
-    )]
-    pub documents: Vec<FileSearchDocument>,
-
-    /// Token for the next page, absent on the final page.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_page_token: Option<String>,
-    /// Fields the crate does not model yet, kept so a deserialize/serialize
-    /// round trip preserves them. A list envelope is where the API is
-    /// likeliest to add something (a total count, a page-size echo).
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-paging::impl_list_page!(DocumentListResponse, documents: FileSearchDocument);
-
-wire_enum! {
-    /// Indexing state of a document in a file search store.
-    ///
-    /// Wire values are SCREAMING_CASE with a `STATE_` prefix (`STATE_PENDING`,
-    /// `STATE_ACTIVE`), which differs from the Files API's [`FileState`] —
-    /// verified live 2026-08-16.
-    ///
-    /// [`FileState`]: crate::FileState
-    pub enum DocumentState {
-        /// Uploaded but not yet indexed; file search will not match it yet.
-        Pending = "STATE_PENDING",
-        /// Indexed and queryable.
-        Active = "STATE_ACTIVE",
-        /// Indexing failed.
-        Failed = "STATE_FAILED",
-    }
-    unknown(state_type, unknown_state_type)
-}
-
-impl DocumentState {
-    /// Returns `true` when the document is indexed and queryable.
-    #[must_use]
-    pub const fn is_active(&self) -> bool {
-        matches!(self, Self::Active)
-    }
-}
-
-/// Request body for creating a file search store.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct CreateFileSearchStoreRequest {
-    /// Optional human-readable name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-
-    /// Additional fields to send that this struct does not model.
-    ///
-    /// Evergreen forward compatibility: lets callers reach new API fields
-    /// without waiting for a crate release. A key present in both this map
-    /// and a modeled field is emitted from the map.
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-impl CreateFileSearchStoreRequest {
-    /// Creates an empty request.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the human-readable display name.
-    #[must_use]
-    pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
-        self.display_name = Some(display_name.into());
-        self
-    }
-
-    /// Adds an unmodeled field, sent flat alongside the modeled ones.
-    ///
-    /// ```
-    /// use genai_rs::CreateFileSearchStoreRequest;
-    ///
-    /// let request = CreateFileSearchStoreRequest::new()
-    ///     .with_display_name("my-docs")
-    ///     .with_extra("customChunkingConfig", serde_json::json!({"maxTokensPerChunk": 200}));
-    ///
-    /// assert_eq!(
-    ///     serde_json::to_value(&request).unwrap(),
-    ///     serde_json::json!({
-    ///         "displayName": "my-docs",
-    ///         "customChunkingConfig": {"maxTokensPerChunk": 200}
-    ///     })
-    /// );
-    /// ```
-    #[must_use]
-    pub fn with_extra(
-        mut self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self {
-        self.extra.insert(key.into(), value.into());
-        self
-    }
-}
 
 /// [`FileSearchDocuments::wait_until_active`] gives up after this long by
 /// default.
@@ -471,45 +248,49 @@ impl<'a> FileSearchStores<'a> {
     /// Uploads a document into a file search store, from disk or from
     /// memory, and returns it.
     ///
-    /// The MIME type is the one set on the [`FileUpload`], or for a path, the
+    /// Takes a [`FileUpload`](crate::FileUpload), or a [`DocumentUpload`] wrapping one with the
+    /// [custom metadata](DocumentUpload::add_custom_metadata) to attach and
+    /// the [chunking](DocumentUpload::with_chunking_config) to index it with.
+    /// The MIME type is the one set on the [`FileUpload`](crate::FileUpload), or for a path, the
     /// one its extension maps to, as for [`Files::upload`](crate::Files::upload).
     /// The document's display name is the one set with
-    /// [`FileUpload::with_display_name`]; without one, a path upload is named
-    /// after its file and an in-memory upload is unnamed.
+    /// [`FileUpload::with_display_name`](crate::FileUpload::with_display_name); without one, a path upload is named
+    /// after its file and an in-memory upload is unnamed (live 2026-11-05).
     ///
     /// The document is indexed asynchronously and starts in
     /// [`DocumentState::Pending`]; file search will not match it until it
     /// reaches [`Active`](DocumentState::Active). See
     /// [`FileSearchDocuments::wait_until_active`].
     ///
-    /// The upload is a single request with the whole file as its body (the
-    /// `raw` protocol, with no resumable path). A path upload streams the
-    /// file from disk, so memory use does not grow with it. The API answers with an operation naming the new document,
-    /// which a second request reads back.
+    /// The upload uses the resumable protocol, as the Files API does: one
+    /// request sends the document's settings as JSON and opens a session, a
+    /// second sends the file and finishes it, and the API answers with an
+    /// operation naming the new document, which a third request reads back.
+    /// A path upload streams the file from disk, so memory use does not grow
+    /// with it; an interrupted upload starts over.
     ///
     /// # Errors
     ///
     /// Returns [`GenaiError::InvalidInput`], before any request, for a store
     /// name that is not `fileSearchStores/<id>`, a file that cannot be read,
     /// empty contents or contents over 2 GB, no MIME type (a path whose
-    /// extension doesn't map to one, without [`FileUpload::with_mime_type`]),
-    /// or a MIME type that cannot be sent as a header value. MIME *syntax* is
-    /// not checked: `nonsense` or `text/` reach the API and come back as an
-    /// API error. Returns an API or network error if the upload fails, and
-    /// [`GenaiError::MalformedResponse`] if its answer names no document. If
-    /// the upload succeeds but reading the document back fails, the error
-    /// names the created document.
+    /// extension doesn't map to one, without [`FileUpload::with_mime_type`](crate::FileUpload::with_mime_type)),
+    /// a MIME type that cannot be sent as a header value, or a white-space
+    /// chunking overlap not smaller than its chunk (which the API fails with
+    /// a 500, live 2026-11-05). MIME *syntax* is not checked: `nonsense` or
+    /// `text/` reach the API and come back as an API error. Returns an API or
+    /// network error if the upload fails, and
+    /// [`GenaiError::MalformedResponse`] if its answer names no document. If the upload succeeds but reading the document back
+    /// fails, the error names the created document.
     ///
     /// The 2 GB ceiling is borrowed from the Files API and has not been
     /// verified for this resource, so treat it as a local guard rather than
-    /// the API's limit. The raw upload protocol sends one body with no
-    /// resumable path, so an interrupted upload starts over; a path upload
-    /// streams from disk, so memory use does not grow with the file.
+    /// the API's limit.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::{FileUpload, PollOptions};
+    /// use genai_rs::{ChunkingConfig, CustomMetadata, DocumentUpload, FileUpload, PollOptions};
     ///
     /// # async fn example(client: genai_rs::Client, store_name: &str) -> Result<(), genai_rs::GenaiError> {
     /// // From disk, MIME type from the extension, named after the file
@@ -518,13 +299,17 @@ impl<'a> FileSearchStores<'a> {
     ///     .upload(store_name, FileUpload::from_path("handbook.pdf"))
     ///     .await?;
     ///
-    /// // From memory
+    /// // From memory, with custom metadata and smaller chunks
     /// let memo = client
     ///     .file_search_stores()
     ///     .upload(
     ///         store_name,
-    ///         FileUpload::from_bytes(b"Q4 budget: 4.2M".to_vec(), "text/plain")
-    ///             .with_display_name("budget-memo"),
+    ///         DocumentUpload::new(
+    ///             FileUpload::from_bytes(b"Q4 budget: 4.2M".to_vec(), "text/plain")
+    ///                 .with_display_name("budget-memo"),
+    ///         )
+    ///         .add_custom_metadata(CustomMetadata::numeric("quarter", 4.0))
+    ///         .with_chunking_config(ChunkingConfig::white_space(100, 10)),
     ///     )
     ///     .await?;
     ///
@@ -541,17 +326,87 @@ impl<'a> FileSearchStores<'a> {
     pub async fn upload(
         self,
         store_name: &str,
-        upload: FileUpload,
+        upload: impl Into<DocumentUpload>,
     ) -> Result<FileSearchDocument, GenaiError> {
-        let (source, mime_type, display_name) = upload.into_parts()?;
+        let DocumentUpload { file, options } = upload.into();
+        let (source, mime_type, display_name) = file.into_parts()?;
         crate::http::file_search_stores::upload_to_file_search_store(
             &self.client.http,
             store_name,
             source,
             display_name.as_deref(),
             &mime_type,
+            &options,
         )
         .await
+    }
+
+    /// Imports a file from the Files API into a file search store, waits for
+    /// the import to finish, and returns the new document.
+    ///
+    /// Takes the file's full name (`files/<id>`), its
+    /// [`FileMetadata`](crate::FileMetadata), or a [`DocumentImport`] that adds
+    /// the [custom metadata](DocumentImport::add_custom_metadata) to attach,
+    /// the [chunking](DocumentImport::with_chunking_config) to index it with,
+    /// and how long to [wait](DocumentImport::with_poll_options). The
+    /// document is named after the file's ID, and is a copy: deleting the
+    /// file afterwards leaves it in place (live 2026-11-05).
+    ///
+    /// The API answers with an operation, which this polls (`GET` on the
+    /// operation, every 500 ms for up to 60 s by default) until it names the
+    /// document, then reads the document back. Like an upload, the document
+    /// may still be [`Pending`](DocumentState::Pending): see
+    /// [`FileSearchDocuments::wait_until_active`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`], before any request, for a store
+    /// name that is not `fileSearchStores/<id>` or a white-space chunking
+    /// overlap not smaller than its chunk. Returns an API or network
+    /// error if the import is refused (a file that does not exist, for
+    /// instance), [`GenaiError::Internal`] if the operation reports an error
+    /// or the wait times out, and [`GenaiError::MalformedResponse`] if the
+    /// operation finishes without naming a document. If reading the document
+    /// back fails, the error names the imported document.
+    ///
+    /// Do not retry an import that timed out or whose polling failed: the
+    /// import goes on on the server, and its document already exists,
+    /// pending, under the operation's ID, so a second import makes a second
+    /// document (live 2026-11-05). The error names the operation and that
+    /// document; wait for it with
+    /// [`FileSearchDocuments::wait_until_active`] instead.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{CustomMetadata, DocumentImport, FileUpload};
+    ///
+    /// # async fn example(client: genai_rs::Client, store_name: &str) -> Result<(), genai_rs::GenaiError> {
+    /// let file = client.files().upload(FileUpload::from_path("faq.md")).await?;
+    ///
+    /// // The file as it is
+    /// let faq = client.file_search_stores().import_file(store_name, &file).await?;
+    ///
+    /// // With custom metadata
+    /// let tagged = client
+    ///     .file_search_stores()
+    ///     .import_file(
+    ///         store_name,
+    ///         DocumentImport::new(&file.name)
+    ///             .add_custom_metadata(CustomMetadata::string("source", "faq")),
+    ///     )
+    ///     .await?;
+    /// # let _ = (faq, tagged);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn import_file(
+        self,
+        store_name: &str,
+        import: impl Into<DocumentImport>,
+    ) -> Result<FileSearchDocument, GenaiError> {
+        let import = import.into();
+        crate::http::file_search_stores::import_file(&self.client.http, store_name, &import).await
     }
 
     /// The documents inside file search stores: list, get and delete them,
@@ -735,557 +590,6 @@ impl<'a> FileSearchDocuments<'a> {
     }
 }
 
-/// A `GET /v1beta/fileSearchStores` request, from [`FileSearchStores::list`]:
-/// your file search stores, oldest first.
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `nextPageToken` to the end of the list. The page size is sent with every
-/// page.
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-/// use genai_rs::FileSearchStore;
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // One page
-/// let page = client.file_search_stores().list().with_page_size(10).send().await?;
-/// for store in &page.stores {
-///     println!("{}: {:?}", store.name, store.display_name);
-/// }
-///
-/// // Every store, across pages
-/// let all: Vec<FileSearchStore> = client.file_search_stores().list().items().try_collect().await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListFileSearchStores<'a> {
-    client: &'a Client,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
-
-impl<'a> ListFileSearchStores<'a> {
-    /// Sets the maximum number of stores per page, from 1 to 20 (a larger
-    /// value is a 400, verified live 2026-09-27). Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
-
-    /// Starts from this page token, from a previous page's
-    /// `next_page_token`.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
-
-    /// Sends the request and returns one page.
-    ///
-    /// With no stores, the page is empty and has no `next_page_token`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the HTTP request fails or response parsing fails.
-    pub async fn send(self) -> Result<FileSearchStoreListResponse, GenaiError> {
-        crate::http::file_search_stores::list_file_search_stores(
-            &self.client.http,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<FileSearchStoreListResponse, GenaiError>> {
-        let Self {
-            client,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("file search stores", page_token, move |token| {
-            let client = client.clone();
-            async move {
-                crate::http::file_search_stores::list_file_search_stores(
-                    &client.http,
-                    page_size,
-                    token.as_deref(),
-                )
-                .await
-            }
-        })
-    }
-
-    /// Streams every store across pages, oldest first. Same rules as
-    /// [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<FileSearchStore, GenaiError>> {
-        paging::items(self.pages())
-    }
-}
-
-/// A `GET /v1beta/fileSearchStores/{store}/documents` request, from
-/// [`FileSearchDocuments::list`]: the documents in one store, oldest first.
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `nextPageToken` to the end of the list. The page size is sent with every
-/// page. A store name that is not `fileSearchStores/<id>` fails with
-/// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
-/// the streams' only item).
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-/// use genai_rs::FileSearchDocument;
-///
-/// # async fn example(client: genai_rs::Client, store_name: &str) -> Result<(), genai_rs::GenaiError> {
-/// // One page
-/// let page = client
-///     .file_search_stores()
-///     .documents()
-///     .list(store_name)
-///     .with_page_size(10)
-///     .send()
-///     .await?;
-/// for document in &page.documents {
-///     println!("{}: {:?}", document.name, document.state);
-/// }
-///
-/// // Every document, across pages
-/// let all: Vec<FileSearchDocument> = client
-///     .file_search_stores()
-///     .documents()
-///     .list(store_name)
-///     .items()
-///     .try_collect()
-///     .await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListFileSearchDocuments<'a> {
-    client: &'a Client,
-    store_name: String,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
-
-impl<'a> ListFileSearchDocuments<'a> {
-    /// Sets the maximum number of documents per page, from 1 to 20 (a larger
-    /// value is a 400, verified live 2026-09-27). Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
-
-    /// Starts from this page token, from a previous page's
-    /// `next_page_token` for the same store (another store's token lists
-    /// nothing, verified live 2026-09-27).
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
-
-    /// Sends the request and returns one page.
-    ///
-    /// An empty store's page is empty and has no `next_page_token`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, and
-    /// an API or network error if the request fails or response parsing
-    /// fails.
-    pub async fn send(self) -> Result<DocumentListResponse, GenaiError> {
-        crate::http::file_search_stores::list_documents(
-            &self.client.http,
-            &self.store_name,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<DocumentListResponse, GenaiError>> {
-        let Self {
-            client,
-            store_name,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("file search documents", page_token, move |token| {
-            let (client, store_name) = (client.clone(), store_name.clone());
-            async move {
-                crate::http::file_search_stores::list_documents(
-                    &client.http,
-                    &store_name,
-                    page_size,
-                    token.as_deref(),
-                )
-                .await
-            }
-        })
-    }
-
-    /// Streams every document across pages, oldest first. Same rules as
-    /// [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<FileSearchDocument, GenaiError>> {
-        paging::items(self.pages())
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Exact create/get payload observed live 2026-08-16.
-    fn store_wire() -> serde_json::Value {
-        serde_json::json!({
-            "name": "fileSearchStores/genairsauditprobe-4kws71n2ybpr",
-            "displayName": "genai-rs-audit-probe",
-            "createTime": "2026-08-16T15:13:13.783782Z",
-            "updateTime": "2026-08-16T15:13:13.783782Z",
-            "embeddingModel": "models/gemini-embedding-001"
-        })
-    }
-
-    #[test]
-    fn store_deserializes_camel_case_wire() {
-        let store: FileSearchStore = serde_json::from_value(store_wire()).unwrap();
-
-        assert_eq!(
-            store.name,
-            "fileSearchStores/genairsauditprobe-4kws71n2ybpr"
-        );
-        assert_eq!(store.display_name.as_deref(), Some("genai-rs-audit-probe"));
-        assert_eq!(
-            store.embedding_model.as_deref(),
-            Some("models/gemini-embedding-001")
-        );
-        assert!(store.create_time.is_some());
-        assert!(store.extra.is_empty());
-    }
-
-    #[test]
-    fn store_roundtrips_exactly() {
-        let wire = store_wire();
-        let store: FileSearchStore = serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&store).unwrap(), wire);
-    }
-
-    #[test]
-    fn store_preserves_unknown_fields() {
-        let mut wire = store_wire();
-        wire["futureField"] = serde_json::json!({"nested": true});
-
-        let store: FileSearchStore = serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(
-            store.extra.get("futureField"),
-            Some(&serde_json::json!({"nested": true}))
-        );
-        assert_eq!(serde_json::to_value(&store).unwrap(), wire);
-    }
-
-    #[test]
-    fn list_response_uses_file_search_stores_envelope() {
-        let wire = serde_json::json!({"fileSearchStores": [store_wire()]});
-        let list: FileSearchStoreListResponse = serde_json::from_value(wire).unwrap();
-
-        assert_eq!(list.stores.len(), 1);
-        assert!(list.next_page_token.is_none());
-    }
-
-    #[test]
-    fn empty_list_response_deserializes() {
-        // The API returns a bare `{}` for an empty store list.
-        let list: FileSearchStoreListResponse =
-            serde_json::from_value(serde_json::json!({})).unwrap();
-        assert!(list.stores.is_empty());
-    }
-
-    #[test]
-    fn list_responses_drop_only_the_undeserializable_entry() {
-        // `name` is required on both element types; a number in its place
-        // costs that element, not the page.
-        let stores: FileSearchStoreListResponse = serde_json::from_value(serde_json::json!({
-            "fileSearchStores": [store_wire(), {"name": 7}],
-            "nextPageToken": "p2"
-        }))
-        .unwrap();
-        assert_eq!(stores.stores.len(), 1);
-        assert_eq!(stores.next_page_token.as_deref(), Some("p2"));
-
-        let docs: DocumentListResponse = serde_json::from_value(serde_json::json!({
-            "documents": [{"name": 7}, document_wire()]
-        }))
-        .unwrap();
-        assert_eq!(docs.documents.len(), 1);
-    }
-
-    #[test]
-    fn list_responses_treat_an_explicit_null_list_as_empty() {
-        let stores: FileSearchStoreListResponse =
-            serde_json::from_value(serde_json::json!({"fileSearchStores": null})).unwrap();
-        assert!(stores.stores.is_empty());
-        let docs: DocumentListResponse =
-            serde_json::from_value(serde_json::json!({"documents": null})).unwrap();
-        assert!(docs.documents.is_empty());
-    }
-
-    /// Exact document payload observed live 2026-08-16.
-    fn document_wire() -> serde_json::Value {
-        serde_json::json!({
-            "name": "fileSearchStores/probe-lhba715kr8z5/documents/doc1-25rp7vz1euwz",
-            "displayName": "doc1",
-            "updateTime": "2026-08-16T15:53:10.494695Z",
-            "createTime": "2026-08-16T15:53:10.494695Z",
-            "state": "STATE_PENDING",
-            "sizeBytes": "27",
-            "mimeType": "text/plain"
-        })
-    }
-
-    #[test]
-    fn document_deserializes_with_string_size_bytes() {
-        let doc: FileSearchDocument = serde_json::from_value(document_wire()).unwrap();
-
-        // sizeBytes arrives as a JSON string, not a number.
-        assert_eq!(doc.size_bytes, Some(27));
-        assert_eq!(doc.state, Some(DocumentState::Pending));
-        assert_eq!(doc.mime_type.as_deref(), Some("text/plain"));
-    }
-
-    #[test]
-    fn document_state_wire_values_use_state_prefix() {
-        assert_eq!(
-            serde_json::to_value(DocumentState::Pending).unwrap(),
-            "STATE_PENDING"
-        );
-        assert_eq!(
-            serde_json::to_value(DocumentState::Active).unwrap(),
-            "STATE_ACTIVE"
-        );
-        assert_eq!(
-            serde_json::to_value(DocumentState::Failed).unwrap(),
-            "STATE_FAILED"
-        );
-    }
-
-    #[cfg(not(feature = "strict-unknown"))]
-    #[test]
-    fn document_state_unknown_is_preserved() {
-        let state: DocumentState = serde_json::from_value(serde_json::json!("STATE_QUARANTINED"))
-            .expect("unknown states must not fail deserialization");
-
-        assert!(state.is_unknown());
-        assert_eq!(state.unknown_state_type(), Some("STATE_QUARANTINED"));
-        assert!(!state.is_active());
-        assert_eq!(
-            serde_json::to_value(&state).unwrap(),
-            "STATE_QUARANTINED",
-            "unknown states must round-trip to their original wire value"
-        );
-    }
-
-    #[test]
-    fn document_state_is_active_only_for_active() {
-        assert!(DocumentState::Active.is_active());
-        assert!(!DocumentState::Pending.is_active());
-        assert!(!DocumentState::Failed.is_active());
-    }
-
-    #[test]
-    fn document_preserves_unknown_fields() {
-        let mut wire = document_wire();
-        wire["chunkCount"] = serde_json::json!(3);
-
-        let doc: FileSearchDocument = serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(doc.extra.get("chunkCount"), Some(&serde_json::json!(3)));
-        assert_eq!(serde_json::to_value(&doc).unwrap(), wire);
-    }
-
-    #[test]
-    fn create_request_omits_display_name_when_unset() {
-        let request = CreateFileSearchStoreRequest::default();
-        assert_eq!(
-            serde_json::to_value(&request).unwrap(),
-            serde_json::json!({})
-        );
-    }
-
-    #[test]
-    fn create_request_serializes_camel_case() {
-        let request = CreateFileSearchStoreRequest {
-            display_name: Some("my-docs".to_string()),
-            extra: serde_json::Map::new(),
-        };
-        assert_eq!(
-            serde_json::to_value(&request).unwrap(),
-            serde_json::json!({"displayName": "my-docs"})
-        );
-    }
-
-    /// `extra` rides `#[serde(flatten)]`, so its keys must land beside
-    /// `displayName` rather than nested under an `extra` object.
-    #[test]
-    fn create_request_flattens_extra_beside_modeled_fields() {
-        let mut extra = serde_json::Map::new();
-        extra.insert(
-            "customChunkingConfig".to_string(),
-            serde_json::json!({"maxTokensPerChunk": 200}),
-        );
-        let request = CreateFileSearchStoreRequest {
-            display_name: Some("my-docs".to_string()),
-            extra,
-        };
-
-        assert_eq!(
-            serde_json::to_value(&request).unwrap(),
-            serde_json::json!({
-                "displayName": "my-docs",
-                "customChunkingConfig": {"maxTokensPerChunk": 200}
-            })
-        );
-    }
-
-    /// The builders have to agree with the struct-literal form the tests
-    /// around them use. They exist for downstream crates, which cannot use
-    /// that form at all on a `#[non_exhaustive]` type, so nothing outside
-    /// the crate would notice them drifting.
-    ///
-    /// Doctests cover `with_extra`'s serialization, but doctests run only in
-    /// CI — not under `make test` / `make test-all` — so this is what the
-    /// repo's own default test commands exercise.
-    #[test]
-    fn builders_match_the_struct_literal_form() {
-        let mut extra = serde_json::Map::new();
-        extra.insert("someNewField".to_string(), serde_json::json!(7));
-        let literal = CreateFileSearchStoreRequest {
-            display_name: Some("my-docs".to_string()),
-            extra,
-        };
-
-        let built = CreateFileSearchStoreRequest::new()
-            .with_display_name("my-docs")
-            .with_extra("someNewField", 7);
-
-        assert_eq!(built, literal);
-        assert_eq!(
-            serde_json::to_value(&built).unwrap(),
-            serde_json::to_value(&literal).unwrap()
-        );
-    }
-
-    #[test]
-    fn new_matches_default() {
-        assert_eq!(
-            CreateFileSearchStoreRequest::new(),
-            CreateFileSearchStoreRequest::default()
-        );
-    }
-
-    /// The other half of the flatten contract: an unmodeled key on the way
-    /// in has to survive into `extra` rather than being dropped, or a
-    /// round-trip through this type would silently discard it.
-    #[test]
-    fn create_request_captures_unknown_fields_into_extra() {
-        let wire = serde_json::json!({
-            "displayName": "my-docs",
-            "somethingNewUpstream": "value"
-        });
-        let request: CreateFileSearchStoreRequest = serde_json::from_value(wire.clone()).unwrap();
-
-        assert_eq!(request.display_name.as_deref(), Some("my-docs"));
-        assert_eq!(
-            request.extra.get("somethingNewUpstream"),
-            Some(&serde_json::json!("value"))
-        );
-        assert_eq!(serde_json::to_value(&request).unwrap(), wire);
-    }
-
-    #[test]
-    fn document_wait_defaults_are_60_s_and_500_ms() {
-        assert_eq!(DOCUMENT_WAIT_TIMEOUT, Duration::from_secs(60));
-        assert_eq!(DOCUMENT_POLL_INTERVAL, Duration::from_millis(500));
-    }
-
-    #[test]
-    fn store_list_builder_setters_replace() {
-        let client = Client::new("k".to_string());
-        let list = client.file_search_stores().list();
-        assert_eq!(list.page_size, None);
-        assert_eq!(list.page_token, None);
-
-        let list = list
-            .with_page_size(20)
-            .with_page_token("t1")
-            .with_page_size(1)
-            .with_page_token(String::from("t2"));
-        assert_eq!(list.page_size, Some(1));
-        assert_eq!(list.page_token.as_deref(), Some("t2"));
-    }
-
-    #[test]
-    fn document_list_builder_owns_its_store_name_and_query() {
-        let client = Client::new("k".to_string());
-        let store_name = String::from("fileSearchStores/abc");
-        let list = client.file_search_stores().documents().list(&store_name);
-        // The builder owns the store name, so the caller's string can go.
-        drop(store_name);
-        assert_eq!(list.store_name, "fileSearchStores/abc");
-        assert_eq!(list.page_size, None);
-        assert_eq!(list.page_token, None);
-
-        let list = list
-            .with_page_size(20)
-            .with_page_token("t1")
-            // `with_*` replaces.
-            .with_page_size(2)
-            .with_page_token("t2");
-        assert_eq!(list.page_size, Some(2));
-        assert_eq!(list.page_token.as_deref(), Some("t2"));
-    }
-
-    #[test]
-    fn file_search_handles_and_lists_debug_redact_the_api_key() {
-        let client = Client::new("secret-api-key".to_string());
-        let stores = client.file_search_stores();
-        for debug in [
-            format!("{stores:?}"),
-            format!("{:?}", stores.documents()),
-            format!("{:?}", stores.list().with_page_size(5)),
-            format!("{:?}", stores.documents().list("fileSearchStores/abc")),
-        ] {
-            assert!(!debug.contains("secret-api-key"), "{debug}");
-            assert!(debug.contains("[REDACTED]"), "{debug}");
-        }
-    }
-}
+#[path = "file_search_stores_tests.rs"]
+mod tests;

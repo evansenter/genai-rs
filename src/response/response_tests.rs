@@ -14,8 +14,8 @@
 
 use super::*;
 use crate::{
-    CodeExecutionLanguage, FileSearchResultItem, GoogleMapsResultItem, GoogleSearchResultItem,
-    Place, UrlContextResultItem,
+    CodeExecutionLanguage, GoogleMapsResultItem, GoogleSearchResultItem, Place,
+    UrlContextResultItem,
 };
 
 // --- Response Deserialization ---
@@ -662,7 +662,7 @@ fn test_interaction_response_google_search_helpers() {
         steps: vec![
             Step::GoogleSearchResult {
                 call_id: "call123".to_string(),
-                result: vec![GoogleSearchResultItem::new("Test", "https://example.com")],
+                result: vec![GoogleSearchResultItem::new("<div>Test</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
@@ -676,8 +676,10 @@ fn test_interaction_response_google_search_helpers() {
 
     let search_results = response.google_search_results();
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].title, "Test");
-    assert_eq!(search_results[0].url, "https://example.com");
+    assert_eq!(
+        search_results[0].search_suggestions.as_deref(),
+        Some("<div>Test</div>")
+    );
 }
 
 #[test]
@@ -719,10 +721,8 @@ fn test_interaction_response_google_maps_helpers() {
                 result: vec![GoogleMapsResultItem {
                     places: Some(vec![Place {
                         name: Some("Eiffel Tower".to_string()),
-                        formatted_address: Some("Paris, France".to_string()),
                         place_id: Some("ChIJLU7jZClu5kcR".to_string()),
-                        lat: Some(48.8584),
-                        lng: Some(2.2945),
+                        url: Some("https://maps.google.com/maps?cid=1".to_string()),
                         ..Default::default()
                     }]),
                     widget_context_token: Some("token123".to_string()),
@@ -746,8 +746,8 @@ fn test_interaction_response_google_maps_helpers() {
     assert_eq!(places.len(), 1);
     assert_eq!(places[0].name.as_deref(), Some("Eiffel Tower"));
     assert_eq!(
-        places[0].formatted_address.as_deref(),
-        Some("Paris, France")
+        places[0].url.as_deref(),
+        Some("https://maps.google.com/maps?cid=1")
     );
 }
 
@@ -1090,20 +1090,14 @@ fn test_interaction_response_google_search_results() {
         steps: vec![
             Step::GoogleSearchResult {
                 call_id: "search1".to_string(),
-                result: vec![GoogleSearchResultItem::new(
-                    "Rust Lang",
-                    "https://rust-lang.org",
-                )],
+                result: vec![GoogleSearchResultItem::new("<div>Rust Lang</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
             },
             Step::GoogleSearchResult {
                 call_id: "search2".to_string(),
-                result: vec![GoogleSearchResultItem::new(
-                    "Cargo",
-                    "https://doc.rust-lang.org/cargo/",
-                )],
+                result: vec![GoogleSearchResultItem::new("<div>Cargo</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
@@ -1116,8 +1110,14 @@ fn test_interaction_response_google_search_results() {
 
     let results = response.google_search_results();
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].title, "Rust Lang");
-    assert_eq!(results[1].title, "Cargo");
+    assert_eq!(
+        results[0].search_suggestions.as_deref(),
+        Some("<div>Rust Lang</div>")
+    );
+    assert_eq!(
+        results[1].search_suggestions.as_deref(),
+        Some("<div>Cargo</div>")
+    );
 }
 
 #[test]
@@ -1243,10 +1243,7 @@ fn test_interaction_response_complex_roundtrip() {
             },
             Step::GoogleSearchResult {
                 call_id: "gsearch-001".to_string(),
-                result: vec![GoogleSearchResultItem::new(
-                    "Tokyo Weather",
-                    "https://weather.example.com/tokyo",
-                )],
+                result: vec![GoogleSearchResultItem::new("<div>Tokyo Weather</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
@@ -1313,8 +1310,8 @@ fn test_interaction_response_complex_roundtrip() {
     );
     assert!(json_str.contains("print(2 + 2)"), "Should contain code");
     assert!(
-        json_str.contains("weather.example.com"),
-        "Should contain search result URL"
+        json_str.contains("Tokyo Weather"),
+        "Should contain the search suggestions"
     );
     assert!(
         json_str.contains("previous-interaction-abc"),
@@ -1365,7 +1362,10 @@ fn test_interaction_response_complex_roundtrip() {
     // Verify Google Search results
     let search_results = deserialized.google_search_results();
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].title, "Tokyo Weather");
+    assert_eq!(
+        search_results[0].search_suggestions.as_deref(),
+        Some("<div>Tokyo Weather</div>")
+    );
 
     // Verify URL context results
     let url_results = deserialized.url_context_results();
@@ -1872,12 +1872,6 @@ fn test_interaction_response_has_file_search_results() {
         status: InteractionStatus::Completed,
         steps: vec![Step::FileSearchResult {
             call_id: "call_123".to_string(),
-            result: vec![FileSearchResultItem {
-                title: "Technical Doc".to_string(),
-                text: "Relevant content...".to_string(),
-                store: "stores/my-store".to_string(),
-                extra: Default::default(),
-            }],
             signature: None,
             extra: Default::default(),
         }],
@@ -1898,83 +1892,6 @@ fn test_interaction_response_no_file_search_results() {
     };
 
     assert!(!response.has_file_search_results());
-}
-
-#[test]
-fn test_interaction_response_file_search_results_extraction() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("test-model".to_string()),
-        status: InteractionStatus::Completed,
-        steps: vec![
-            Step::FileSearchResult {
-                call_id: "call_1".to_string(),
-                result: vec![
-                    FileSearchResultItem {
-                        title: "Doc 1".to_string(),
-                        text: "Content from doc 1".to_string(),
-                        store: "stores/store-a".to_string(),
-                        extra: Default::default(),
-                    },
-                    FileSearchResultItem {
-                        title: "Doc 2".to_string(),
-                        text: "Content from doc 2".to_string(),
-                        store: "stores/store-a".to_string(),
-                        extra: Default::default(),
-                    },
-                ],
-                signature: None,
-                extra: Default::default(),
-            },
-            Step::model_text("Summary of search results"),
-            Step::FileSearchResult {
-                call_id: "call_2".to_string(),
-                result: vec![FileSearchResultItem {
-                    title: "Doc 3".to_string(),
-                    text: "Content from doc 3".to_string(),
-                    store: "stores/store-b".to_string(),
-                    extra: Default::default(),
-                }],
-                signature: None,
-                extra: Default::default(),
-            },
-        ],
-        ..Default::default()
-    };
-
-    assert!(response.has_file_search_results());
-
-    let results = response.file_search_results();
-    // Should collect all items from both FileSearchResult steps
-    assert_eq!(results.len(), 3);
-    assert_eq!(results[0].title, "Doc 1");
-    assert_eq!(results[1].title, "Doc 2");
-    assert_eq!(results[2].title, "Doc 3");
-    assert_eq!(results[0].store, "stores/store-a");
-    assert_eq!(results[2].store, "stores/store-b");
-}
-
-#[test]
-fn test_interaction_response_file_search_results_empty_results() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("test-model".to_string()),
-        status: InteractionStatus::Completed,
-        steps: vec![Step::FileSearchResult {
-            call_id: "call_empty".to_string(),
-            result: vec![], // Empty results array
-            signature: None,
-            extra: Default::default(),
-        }],
-        ..Default::default()
-    };
-
-    // has_file_search_results returns true if the step type exists
-    assert!(response.has_file_search_results());
-
-    // But file_search_results returns empty vec since result array is empty
-    let results = response.file_search_results();
-    assert!(results.is_empty());
 }
 
 // =============================================================================
@@ -2743,8 +2660,20 @@ fn interaction_echoes_labels_system_instruction_and_extras() {
     let response: InteractionResponse = serde_json::from_value(wire.clone()).unwrap();
     assert_eq!(response.system_instruction.as_deref(), Some("Be brief."));
     assert_eq!(response.labels.as_ref().unwrap()["team"], "audit");
-    assert_eq!(response.extra["environment"], wire["environment"]);
-    assert_eq!(serde_json::to_value(&response).unwrap(), wire);
+    assert!(
+        matches!(
+            response.environment,
+            Some(crate::EnvironmentSpec::Remote(_))
+        ),
+        "{:?}",
+        response.environment
+    );
+    assert!(response.extra.is_empty(), "{:?}", response.extra);
+    // The echo spells `env` as a list of single-key maps; it goes back out
+    // as the map a request sends (`RemoteEnvironment::env`).
+    let mut sent = wire.clone();
+    sent["environment"]["env"] = serde_json::json!({"A": {"value": "1"}});
+    assert_eq!(serde_json::to_value(&response).unwrap(), sent);
 }
 
 #[test]
@@ -2805,4 +2734,67 @@ fn continuation_token_and_errors_are_typed() {
     let status: InteractionStatus =
         serde_json::from_value(serde_json::json!("requires_continuation")).unwrap();
     assert_eq!(status, InteractionStatus::RequiresContinuation);
+}
+
+#[test]
+fn stored_read_request_config_is_modeled() {
+    // A stored TTS interaction read back (live 2026-11-05): the speakers
+    // object form, and the modalities.
+    let tts: InteractionResponse = serde_json::from_value(serde_json::json!({
+        "id": "i1",
+        "status": "completed",
+        "response_modalities": ["audio"],
+        "generation_config": {"speech_config": {"speakers": [{"voice": "Kore"}]}}
+    }))
+    .unwrap();
+    assert!(tts.extra.is_empty(), "{:?}", tts.extra);
+    assert_eq!(tts.response_modalities, Some(vec!["audio".to_string()]));
+    let speakers = tts
+        .generation_config
+        .as_ref()
+        .and_then(|c| c.speech_config.as_ref())
+        .unwrap();
+    assert_eq!(speakers[0].voice.as_deref(), Some("Kore"));
+
+    // A stored model interaction with a JSON response format and safety
+    // settings (live 2026-11-05).
+    let json: InteractionResponse = serde_json::from_value(serde_json::json!({
+        "id": "i2",
+        "status": "completed",
+        "generation_config": {"stop_sequences": ["STOP"], "max_output_tokens": 2000, "thinking_level": "low", "future_knob": 1},
+        "response_format": {"type": "text", "mime_type": "application/json", "schema": {"type": "object"}},
+        "safety_settings": [{"type": "hate_speech", "threshold": "block_only_high"}]
+    }))
+    .unwrap();
+    assert!(json.extra.is_empty(), "{:?}", json.extra);
+    let config = json.generation_config.as_ref().unwrap();
+    assert_eq!(config.max_output_tokens, Some(2000));
+    assert_eq!(config.extra["future_knob"], 1);
+    assert!(json.response_format.is_some());
+    assert_eq!(json.safety_settings.as_ref().map(Vec::len), Some(1));
+
+    // A stored agent interaction (live 2026-11-05).
+    let agent: InteractionResponse = serde_json::from_value(serde_json::json!({
+        "id": "i3",
+        "status": "completed",
+        "agent": crate::DEFAULT_ANTIGRAVITY_AGENT,
+        "agent_config": {"type": "antigravity"},
+        "environment": "835e59966a2fa3c2d4541ce46ebc26d6",
+        "environment_id": "835e59966a2fa3c2d4541ce46ebc26d6"
+    }))
+    .unwrap();
+    assert!(agent.extra.is_empty(), "{:?}", agent.extra);
+    assert_eq!(
+        agent.agent_config.as_ref().and_then(|c| c.config_type()),
+        Some("antigravity")
+    );
+    assert_eq!(
+        agent.environment,
+        Some(crate::EnvironmentSpec::Id(
+            "835e59966a2fa3c2d4541ce46ebc26d6".to_string()
+        ))
+    );
+    let back = serde_json::to_value(&agent).unwrap();
+    assert_eq!(back["agent_config"]["type"], "antigravity");
+    assert_eq!(back["environment"], "835e59966a2fa3c2d4541ce46ebc26d6");
 }

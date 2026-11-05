@@ -161,8 +161,10 @@ A stream from `create_stream()` ends in one of three ways:
   rather than re-sent. See [Cut-off streams](RELIABILITY.md#cut-off-streams)
   and [Stream Resume](STREAMING_API.md#stream-resume).
 
-Nothing is read after a terminal event, so no error can follow
-`Completed` or `Error`.
+After a terminal event the stream reads the rest of the body and discards
+it, errors included, so no error can follow `Completed` or `Error`. Read
+the stream to its end before you `get` the interaction or chain on it; see
+[Read to the end](STREAMING_API.md#read-to-the-end).
 
 ## Related
 

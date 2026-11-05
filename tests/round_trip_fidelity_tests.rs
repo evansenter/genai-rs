@@ -201,17 +201,17 @@ where
 #[test]
 fn struct_extras_never_shadow_a_modeled_field() {
     use genai_rs::{
-        FileSearchResultItem, GoogleMapsResultItem, GoogleSearchResultItem, Place, ReviewSnippet,
-        StepError, UrlContextResultItem,
+        GoogleMapsResultItem, GoogleSearchResultItem, Place, ReviewSnippet, StepError,
+        UrlContextResultItem,
     };
 
     assert_eq!(
         forge::<GoogleSearchResultItem>(
-            json!({"title": "t", "url": "https://real.example"}),
+            json!({"search_suggestions": "<div/>"}),
             |item| &mut item.extra,
-            &["title", "url", "rendered_content", "search_suggestions"],
+            &["search_suggestions"],
         ),
-        r#"{"title":"t","url":"https://real.example","type":"data","x_future":1}"#
+        r#"{"search_suggestions":"<div/>","type":"data","x_future":1}"#
     );
     assert_eq!(
         forge::<UrlContextResultItem>(
@@ -220,14 +220,6 @@ fn struct_extras_never_shadow_a_modeled_field() {
             &["url", "status"],
         ),
         r#"{"url":"https://real.example","status":"success","type":"data","x_future":1}"#
-    );
-    assert_eq!(
-        forge::<FileSearchResultItem>(
-            json!({"title": "Doc", "text": "chunk", "file_search_store": "stores/s"}),
-            |item| &mut item.extra,
-            &["title", "text", "file_search_store"],
-        ),
-        r#"{"title":"Doc","text":"chunk","file_search_store":"stores/s","type":"data","x_future":1}"#
     );
     assert_eq!(
         forge::<GoogleMapsResultItem>(
@@ -239,24 +231,11 @@ fn struct_extras_never_shadow_a_modeled_field() {
     );
     assert_eq!(
         forge::<Place>(
-            json!({"name": "Cafe", "lat": 1.5}),
+            json!({"name": "Cafe", "place_id": "p1"}),
             |place| &mut place.extra,
-            &[
-                "name",
-                "formatted_address",
-                "place_id",
-                "url",
-                "lat",
-                "lng",
-                "types",
-                "rating",
-                "user_ratings_total",
-                "website",
-                "phone_number",
-                "review_snippets",
-            ],
+            &["name", "place_id", "url", "review_snippets"],
         ),
-        r#"{"name":"Cafe","lat":1.5,"type":"data","x_future":1}"#
+        r#"{"name":"Cafe","place_id":"p1","type":"data","x_future":1}"#
     );
     assert_eq!(
         forge::<ReviewSnippet>(

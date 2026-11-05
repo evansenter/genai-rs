@@ -51,8 +51,8 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   wire: request shapes, error mapping, SSE framing, and the auto-function
   loop.
 - **`reliability_tests.rs`** covers the default timeouts, how a cut-off
-  stream is classified, the stop at a stream's terminal event, and
-  `Retry-After` in a poll.
+  stream is classified, the read of a stream's tail after its terminal
+  event, and `Retry-After` in a poll.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
@@ -435,6 +435,16 @@ checks on it:
   traced to its `Class.field` by removing keys until it goes away. It runs
   against the bindings and the v1beta spec (whose `writeOnly` fields are
   left out of responses), and not under `strict-unknown`.
+- **Sparse response bodies** (`src/coverage_oracle/response_minimal.rs`,
+  `sparse_binding_bodies_deserialize` and `sparse_spec_bodies_deserialize`).
+  The bodies above set every field, so a type that demands a field the
+  snapshot makes optional passes there and fails on a served object without
+  it: `Tool::Function` read a function tool with no `description` as
+  `Unknown`, and a stored interaction serves exactly that (2026-11-05). Here
+  every class a response type reaches is cut, one at a time, to its required
+  fields and its constant discriminators (`type`, `event_type`), and the
+  body must pass the same checks. A finding is traced to the optional field
+  whose absence alone causes it (`a_required_optional_field_is_reported`).
 - **Completeness** (`src/coverage_oracle/mod.rs`,
   `every_binding_class_is_mapped`). The checks above only see the classes
   their tables reach, so every class in `bindings.json` must be reached by a
@@ -464,6 +474,7 @@ reason to the list that fits:
 | `ALLOWED` (request, response, wire) | Deliberate: a key the crate sends that the bindings lack but the API needs (`signature` on `function_call`), a deprecated or Vertex-only field (D-005), a value never served |
 | `NOT_SENT` (request) | A request field nothing sends: deprecated, rejected live, or not modeled yet |
 | `GAPS` (response) | Served or specified but not modeled yet, the work list for the next modeling pass |
+| `SPARSE` (`response_minimal.rs`) | An optional field the crate cannot read its class without, with why that is safe |
 | `UNMAPPED` (`mod.rs`) | A binding class no table reaches: SDK plumbing, an empty body, a body checked at the wire, or a request not modeled yet |
 | `ENDPOINTS_WITHOUT_A_VERB`, `EXEMPT` (`tests/ci_coverage.rs`) | An endpoint no handle verb calls; a verb no live test can call |
 | `NO_JSON_BODY` (`tests/request_wire_oracle.rs`) | A verb whose POST, PATCH or PUT carries no JSON body (an upload's bytes) |

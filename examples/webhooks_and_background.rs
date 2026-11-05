@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "UTC",
         InteractionRequest {
             agent: Some("my-custom-agent".to_string()),
-            input: InteractionInput::Text("Daily repo audit".to_string()),
+            input: Some(InteractionInput::Text("Daily repo audit".to_string())),
             ..Default::default()
         },
     )

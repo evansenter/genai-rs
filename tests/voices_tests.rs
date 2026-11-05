@@ -25,7 +25,15 @@ where
         .create(
             &CreateVoiceRequest::prompted("A calm, low-pitched narrator.")
                 .with_display_name("genai-rs-test")
-                .with_base_voice("achird"),
+                .with_base_voice("achird")
+                .with_description("genai-rs test narrator")
+                .with_language_code("en-US")
+                .with_region_code("US")
+                .with_accent("General American")
+                .with_persona("Storyteller & Narrator")
+                .with_context("Content & Media")
+                .with_gender("male")
+                .with_pitch(VoicePitch::Low),
         )
         .await
         .expect("voices.create failed");
@@ -195,6 +203,31 @@ async fn test_prompted_voice_lifecycle_and_synthesis() {
                 Some("achird"),
                 "{:?}",
                 fetched.prompted
+            );
+            // The discovery fields sent on create are stored (live
+            // 2026-11-05).
+            let discovery = (
+                fetched.description.as_deref(),
+                fetched.language_code.as_deref(),
+                fetched.region_code.as_deref(),
+                fetched.accent.as_deref(),
+                fetched.persona.as_deref(),
+                fetched.context.as_deref(),
+                fetched.gender.as_deref(),
+                fetched.pitch.as_ref(),
+            );
+            assert_eq!(
+                discovery,
+                (
+                    Some("genai-rs test narrator"),
+                    Some("en-US"),
+                    Some("US"),
+                    Some("General American"),
+                    Some("Storyteller & Narrator"),
+                    Some("Content & Media"),
+                    Some("male"),
+                    Some(&VoicePitch::Low),
+                )
             );
 
             let response = client

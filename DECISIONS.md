@@ -415,6 +415,28 @@ pure moves with public paths unchanged:
 
 `files.rs` drops to about 750 lines and leaves WP8's split list (#504).
 
+**And for the resource residue (2026-11-05, #504 WP2).** Modeling the
+remaining Files and File Search Store surface would have pushed both past
+the bar again, so they split first, public paths unchanged
+(`genai_rs::file_search_stores::*` and `genai_rs::files::*` re-export
+everything):
+
+| From | To |
+|------|----|
+| `FileUpload` and `UploadSource` in `src/files.rs`, with their tests from `src/files_tests.rs` | `src/files/upload.rs`, `src/files/upload_tests.rs` |
+| The store, document, list-page and create types in `src/file_search_stores.rs` | `src/file_search_stores/types.rs` (with the new `CustomMetadata` and `ChunkingConfig` types) |
+| `ListFileSearchStores` and `ListFileSearchDocuments` | `src/file_search_stores/list.rs` |
+| The inline `mod tests` in `src/file_search_stores.rs` | `src/file_search_stores/types_tests.rs`, `list_tests.rs`, and `src/file_search_stores_tests.rs` for the handles |
+
+`src/file_search_stores.rs` keeps the handles and their verbs, and the new
+`src/file_search_stores/document_input.rs` holds `DocumentUpload` and
+`DocumentImport`. Counted up to the first `#[cfg(test)]`, after the new
+surface landed: `src/file_search_stores.rs` 592 lines (963 before),
+`src/files.rs` 644 (about 750 after #500), `types.rs` 497, `list.rs` 240,
+`document_input.rs` 182, `src/files/upload.rs` 153, and
+`src/http/file_search_stores.rs` 526. Both modules leave the oversized list
+of WP8 and #504.
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)
@@ -647,3 +669,68 @@ runner's tests are in `turn_requests_tests.rs`.
 **Consequences.** Links to `src/antigravity/turn.rs:<line>` for the request
 handlers, or to `src/antigravity/process.rs:<line>` for its tests, written
 before 2026-11-04 point at the old layout.
+
+---
+
+## D-024 — Continuation without input, the allowlist-disabled form, and `/v1` (2026-11-05)
+
+**Context.** #489 left three API questions open, each awaiting a probe or a
+design call. Probed live on 2026-11-05:
+
+- A stored decode continues from `previous_interaction_id` and
+  `continuation_token` alone, with no `input`; the crate always sent one.
+  Without input and without a token, the API answers a misleading `404
+  Model ... not found`.
+- `{"allowlist": "disabled"}` is accepted, echoed as `{"allowlist":
+  [{"mode": "disabled"}]}`, and blocks egress exactly as `network:
+  "disabled"` does (an agent's `curl` gets the egress proxy's 403 under
+  both, 200 with no network config). The bindings model it as the
+  allowlist's `Disabled` arm.
+- `/v1` serves interactions with the `/v1beta` protocol, continuation
+  included, plus files and file search stores, and 404s every other
+  resource.
+
+**Decision.**
+
+- `InteractionRequest::input` becomes `Option<InteractionInput>`, as the
+  bindings have it, rather than staying required with an omit-when-token
+  rule hidden in serialization. `InteractionBuilder::continue_decode(&response)`
+  builds the input-free continuation from a response, and `build()` keeps
+  requiring input outside a continuation, because the API's own error for
+  a missing input is misleading.
+- `NetworkConfig::AllowlistDisabled` keeps the second disabled form as its
+  own variant, so a read round-trips in the bindings' shape, and
+  `is_disabled()` answers the question callers ask of either form. Mapping
+  it onto `Disabled` would have dropped the `allowlist` key on the way back.
+- `ClientBuilder::with_api_version` overrides the version path segment;
+  `v1beta` stays the default. No per-resource refusal on a `v1` client: the
+  API's 404 is clear, and the set of resources `/v1` serves can grow
+  without a crate release.
+
+**Consequences.** A deserialized request without `input` reads as `None`
+instead of failing. `TriggerCreateParams` keeps the old strictness on its
+own deserialize path: a trigger fires a fresh interaction, never a
+continuation, so a missing or misspelled (`inputs`) input in a trigger
+config file is still a parse error. Code that matches `NetworkConfig::Disabled` misses the
+allowlist form; `is_disabled()` covers both.
+
+---
+
+## D-025 — The response oracle's targets move to `response_targets.rs` (2026-11-05)
+
+**Context.** The sparse-body pass and the new `InteractionResponse` fields
+pushed `src/coverage_oracle/response.rs` past the roughly 800-line limit
+(D-014).
+
+**Decision.** Moved, per D-011, with no behavior change:
+
+| From | To |
+|------|----|
+| `Probe`, `probe`, `probe_stream_event`, `Target`, `targets` and `target_classes` in `src/coverage_oracle/response.rs` | `src/coverage_oracle/response_targets.rs` |
+
+`response.rs` keeps the lists, the value overrides and the analysis. New in
+the same work: `src/coverage_oracle/response_minimal.rs`, the sparse-body
+pass, which shares both.
+
+**Consequences.** Links to `src/coverage_oracle/response.rs:<line>` for the
+target table, written before 2026-11-05, point at the old layout.

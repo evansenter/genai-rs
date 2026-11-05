@@ -17,17 +17,17 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use common::http_stub::{Reply, Stub, hold_clock};
+use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
-    Agent, AllowlistEntry, CreateCredentialRequest, CreateEnvironmentRequest,
+    Agent, AllowlistEntry, ChunkingConfig, CreateCredentialRequest, CreateEnvironmentRequest,
     CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
-    CredentialUpdate, DocumentState, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec,
-    EnvironmentStatus, FileMetadata, FileSearchDocument, FileUpload, GenaiError, InjectionLocation,
-    InteractionInput, InteractionRequest, NetworkConfig, PollOptions, RevocationBehavior,
-    StreamChunk, Tool, Trigger, TriggerCreateParams, TriggerExecution, TriggerStatus,
-    TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState,
-    WebhookUpdate,
+    CredentialUpdate, CustomMetadata, DocumentImport, DocumentState, DocumentUpload,
+    EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec, EnvironmentStatus, FileMetadata,
+    FileSearchDocument, FileUpload, GenaiError, InjectionLocation, InteractionInput,
+    InteractionRequest, NetworkConfig, PollOptions, RevocationBehavior, StreamChunk, Tool, Trigger,
+    TriggerCreateParams, TriggerExecution, TriggerStatus, TriggerUpdate, Voice, VoiceAudio,
+    VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState, WebhookUpdate,
 };
 #[cfg(not(feature = "strict-unknown"))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
@@ -380,7 +380,9 @@ fn trigger_params() -> TriggerCreateParams {
 fn nightly_interaction() -> InteractionRequest {
     InteractionRequest {
         agent: Some("agents/nightly".to_string()),
-        input: InteractionInput::Text("Summarize overnight alerts".to_string()),
+        input: Some(InteractionInput::Text(
+            "Summarize overnight alerts".to_string(),
+        )),
         ..Default::default()
     }
 }
@@ -812,7 +814,7 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     assert!(trigger.next_run_time.is_some());
     let interaction = trigger.interaction.as_ref().unwrap();
     assert_eq!(interaction.agent.as_deref(), Some("agents/nightly"));
-    assert!(matches!(&interaction.input, InteractionInput::Text(t) if t.is_empty()));
+    assert!(interaction.input.is_none(), "{:?}", interaction.input);
     assert_eq!(trigger.extra["owner"], "users/42");
     // Counts go back out as plain numbers, the trigger API's own wire form
     // (live 2026-11-01), whichever form came in.
@@ -1660,6 +1662,82 @@ async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 }
 
+/// A download is `GET` on the listing's URL with `alt=media`, and hands
+/// back the body's bytes as served, with its content type.
+#[tokio::test]
+async fn environment_file_download_reads_the_raw_body() {
+    let bytes: &[u8] = b"a,b\n1,2\n\xff";
+    let file = Reply {
+        status: 200,
+        headers: vec![("content-type".into(), "text/csv; charset=utf-8".into())],
+        delay: Duration::ZERO,
+        parts: vec![(Duration::ZERO, bytes.to_vec())],
+        content_length: true,
+    };
+    let archive = Reply {
+        status: 200,
+        headers: vec![("content-type".into(), "application/x-tar".into())],
+        delay: Duration::ZERO,
+        parts: vec![(Duration::ZERO, vec![0; 1024])],
+        content_length: true,
+    };
+    let stub = Stub::replying(vec![file, archive, not_found()]).await;
+    let client = stub.client();
+    let files = client.environments().files();
+
+    let downloaded = files.download("env/1", "data/in 1.csv").await.unwrap();
+    assert_eq!(downloaded.data, bytes);
+    assert_eq!(
+        downloaded.mime_type.as_deref(),
+        Some("text/csv; charset=utf-8")
+    );
+    assert!(!downloaded.is_tar_archive());
+    assert!(
+        format!("{downloaded:?}").contains("data_len: 9"),
+        "{downloaded:?}"
+    );
+
+    let directory = files.download("env/1", "data").await.unwrap();
+    assert!(directory.is_tar_archive());
+    assert_eq!(directory.data.len(), 1024);
+
+    let missing = files.download("env/1", "nope").await.unwrap_err();
+    assert!(
+        matches!(
+            missing,
+            GenaiError::Api {
+                status_code: 404,
+                ..
+            }
+        ),
+        "{missing:?}"
+    );
+
+    let requests = stub.requests();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r.target.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "/v1beta/environments/env%2F1/files/data/in%201.csv?alt=media",
+            "/v1beta/environments/env%2F1/files/data?alt=media",
+            "/v1beta/environments/env%2F1/files/nope?alt=media",
+        ]
+    );
+    for request in &requests {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.header("x-goog-api-key"), Some("test-key"));
+        assert_eq!(request.header("api-revision"), Some(API_REVISION));
+        assert!(request.body.is_empty());
+    }
+
+    // A dot segment never leaves the client.
+    let err = files.download("env/1", "../etc").await.unwrap_err();
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert_eq!(stub.requests().len(), 3);
+}
+
 #[tokio::test]
 async fn environment_file_upload_starts_a_session_then_finalizes() {
     let stub = Stub::replying(vec![
@@ -1895,7 +1973,7 @@ async fn file_search_store_endpoints_send_the_documented_requests() {
                 async move {
                     let request = CreateFileSearchStoreRequest::new()
                         .with_display_name("Docs")
-                        .with_extra("embeddingModel", "models/text-embedding");
+                        .with_embedding_model("models/text-embedding");
                     c.file_search_stores().create(&request).await
                 },
             ),
@@ -1984,7 +2062,8 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
         "createTime": "2026-08-16T15:13:13.783782Z",
         "updateTime": "2026-08-16T15:13:13.783782Z",
         "embeddingModel": "models/text-embedding",
-        "activeDocumentsCount": "3"
+        "activeDocumentsCount": "3",
+        "archivedDocumentsCount": "1"
     });
     let stub = Stub::replying(vec![
         Reply::json(200, store.clone()),
@@ -2004,10 +2083,12 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
         Some("models/text-embedding")
     );
     assert!(fetched.create_time.is_some() && fetched.update_time.is_some());
-    assert_eq!(fetched.extra["activeDocumentsCount"], "3");
+    assert_eq!(fetched.active_documents_count, Some(3));
+    assert_eq!(fetched.extra["archivedDocumentsCount"], "1");
     let back = serde_json::to_value(&fetched).unwrap();
     assert_eq!(back["displayName"], "Docs");
     assert_eq!(back["activeDocumentsCount"], "3");
+    assert_eq!(back["archivedDocumentsCount"], "1");
 
     let list = client.file_search_stores().list().send().await.unwrap();
     let names: Vec<_> = list.stores.iter().map(|s| s.name.as_str()).collect();
@@ -2044,10 +2125,7 @@ async fn document_list_parses_states_sizes_and_unknown_states() {
     assert_eq!(active.state, Some(DocumentState::Active));
     assert_eq!(active.size_bytes, Some(27));
     assert_eq!(active.mime_type.as_deref(), Some("text/plain"));
-    assert_eq!(
-        active.extra["customMetadata"],
-        json!([{"key": "k", "stringValue": "v"}])
-    );
+    assert_eq!(active.custom_metadata, [CustomMetadata::string("k", "v")]);
     let archived = list.documents[1].state.as_ref().unwrap();
     assert_eq!(archived.unknown_state_type(), Some("STATE_ARCHIVED"));
     assert_eq!(serde_json::to_value(archived).unwrap(), "STATE_ARCHIVED");
@@ -2207,7 +2285,14 @@ async fn file_search_document_items_for_a_malformed_store_name_yield_only_the_er
     assert!(stub.requests().is_empty());
 }
 
-/// The API's upload answer: an operation naming the created document.
+/// The answer to a resumable upload's start request: the session to send
+/// the file to.
+fn upload_session(url: &str) -> Reply {
+    Reply::json(200, json!({})).header("x-goog-upload-url", url)
+}
+
+/// The API's answer to the finalizing request: an operation naming the
+/// created document.
 fn upload_operation() -> Reply {
     Reply::json(
         200,
@@ -2225,9 +2310,51 @@ fn temp_file(name: &str, contents: &[u8]) -> (tempfile::TempDir, std::path::Path
     (dir, path)
 }
 
+/// The three requests of a document upload, checked for the parts every
+/// upload shares: a resumable start at the store's upload URL, the file sent
+/// to the session, and the document read back.
+fn assert_upload_requests(requests: Vec<Recorded>, size: usize) -> (Recorded, Recorded) {
+    let [start, finish, read_back] = requests.try_into().unwrap();
+    assert_eq!(start.method, "POST");
+    assert_eq!(
+        start.target,
+        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
+    );
+    assert_eq!(start.header("x-goog-api-key"), Some("test-key"));
+    assert_eq!(start.header("api-revision"), Some(API_REVISION));
+    assert_eq!(start.header("x-goog-upload-protocol"), Some("resumable"));
+    assert_eq!(start.header("x-goog-upload-command"), Some("start"));
+    assert_eq!(
+        start.header("x-goog-upload-header-content-length"),
+        Some(size.to_string().as_str())
+    );
+    assert_eq!(finish.method, "POST");
+    assert_eq!(finish.target, "/upload-session/doc");
+    assert_eq!(
+        finish.header("x-goog-upload-command"),
+        Some("upload, finalize")
+    );
+    assert_eq!(finish.header("x-goog-upload-offset"), Some("0"));
+    assert_eq!(
+        finish.header("content-length"),
+        Some(size.to_string().as_str())
+    );
+    assert_eq!(read_back.method, "GET");
+    assert_eq!(
+        read_back.target,
+        "/v1beta/fileSearchStores/abc/documents/doc-1"
+    );
+    (start, finish)
+}
+
 #[tokio::test]
-async fn file_search_store_path_upload_sends_raw_bytes_then_reads_the_document_back() {
-    let stub = Stub::replying(vec![upload_operation(), document(Some("STATE_PENDING"))]).await;
+async fn file_search_store_path_upload_starts_a_resumable_session_then_reads_the_document_back() {
+    let stub = Stub::replying(vec![
+        upload_session("{base}/upload-session/doc"),
+        upload_operation(),
+        document(Some("STATE_PENDING")),
+    ])
+    .await;
     let (_dir, path) = temp_file("notes.txt", b"hello search");
 
     let doc = stub
@@ -2242,29 +2369,30 @@ async fn file_search_store_path_upload_sends_raw_bytes_then_reads_the_document_b
     assert_eq!(doc.name, DOC);
     assert_eq!(doc.state, Some(DocumentState::Pending));
 
-    let [upload, read_back] = stub.requests().try_into().unwrap();
-    assert_eq!(upload.method, "POST");
+    let (start, finish) = assert_upload_requests(stub.requests(), 12);
     assert_eq!(
-        upload.target,
-        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore?display_name=My%20Doc"
+        start.json(),
+        json!({"displayName": "My Doc", "mimeType": "text/plain"})
     );
-    assert_eq!(upload.header("x-goog-api-key"), Some("test-key"));
-    assert_eq!(upload.header("x-goog-upload-protocol"), Some("raw"));
-    assert_eq!(upload.header("x-goog-upload-file-name"), Some("notes.txt"));
-    assert_eq!(upload.header("content-type"), Some("text/plain"));
+    assert_eq!(
+        start.header("x-goog-upload-header-content-type"),
+        Some("text/plain")
+    );
+    // Without a display name the API would name the document after this
+    // header (live 2026-11-05), so a path upload sends its file name.
+    assert_eq!(start.header("x-goog-upload-file-name"), Some("notes.txt"));
     // The body is streamed from disk, so the length comes from the file.
-    assert_eq!(upload.header("content-length"), Some("12"));
-    assert_eq!(upload.body, b"hello search");
-    assert_eq!(read_back.method, "GET");
-    assert_eq!(
-        read_back.target,
-        "/v1beta/fileSearchStores/abc/documents/doc-1"
-    );
+    assert_eq!(finish.body, b"hello search");
 }
 
 #[tokio::test]
-async fn file_search_store_path_upload_with_a_mime_type_and_no_display_name_sends_no_query() {
-    let stub = Stub::replying(vec![upload_operation(), document(None)]).await;
+async fn file_search_store_path_upload_with_a_mime_type_and_no_display_name_sends_its_file_name() {
+    let stub = Stub::replying(vec![
+        upload_session("{base}/upload-session/doc"),
+        upload_operation(),
+        document(None),
+    ])
+    .await;
     let (_dir, path) = temp_file("report.data", b"# Report");
 
     stub.client()
@@ -2276,25 +2404,25 @@ async fn file_search_store_path_upload_with_a_mime_type_and_no_display_name_send
         .await
         .unwrap();
 
-    let requests = stub.requests();
+    let (start, _) = assert_upload_requests(stub.requests(), 8);
+    assert_eq!(start.json(), json!({"mimeType": "text/markdown"}));
     assert_eq!(
-        requests[0].target,
-        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
+        start.header("x-goog-upload-header-content-type"),
+        Some("text/markdown")
     );
-    assert_eq!(requests[0].header("content-type"), Some("text/markdown"));
-    // Without `display_name` the API names the document after this header
-    // (live 2026-09-27), so a path upload is named after its file.
-    assert_eq!(
-        requests[0].header("x-goog-upload-file-name"),
-        Some("report.data")
-    );
+    assert_eq!(start.header("x-goog-upload-file-name"), Some("report.data"));
 }
 
-/// In-memory uploads use the same raw protocol, verified live 2026-09-27.
-/// They send no file-name header: the API would take it as the display name.
+/// An in-memory upload sends no file-name header: the API would take it as
+/// the display name.
 #[tokio::test]
 async fn file_search_store_bytes_upload_sends_the_data_and_display_name_without_a_file_name() {
-    let stub = Stub::replying(vec![upload_operation(), document(Some("STATE_PENDING"))]).await;
+    let stub = Stub::replying(vec![
+        upload_session("{base}/upload-session/doc"),
+        upload_operation(),
+        document(Some("STATE_PENDING")),
+    ])
+    .await;
 
     let doc = stub
         .client()
@@ -2307,24 +2435,23 @@ async fn file_search_store_bytes_upload_sends_the_data_and_display_name_without_
         .unwrap();
     assert_eq!(doc.name, DOC);
 
-    let [upload, read_back] = stub.requests().try_into().unwrap();
+    let (start, finish) = assert_upload_requests(stub.requests(), 9);
     assert_eq!(
-        upload.target,
-        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore?display_name=Q4%20memo"
+        start.json(),
+        json!({"displayName": "Q4 memo", "mimeType": "text/csv"})
     );
-    assert_eq!(upload.header("x-goog-upload-protocol"), Some("raw"));
-    assert_eq!(upload.header("x-goog-upload-file-name"), None);
-    assert_eq!(upload.header("content-type"), Some("text/csv"));
-    assert_eq!(upload.body, b"in memory");
-    assert_eq!(
-        read_back.target,
-        "/v1beta/fileSearchStores/abc/documents/doc-1"
-    );
+    assert_eq!(start.header("x-goog-upload-file-name"), None);
+    assert_eq!(finish.body, b"in memory");
 }
 
 #[tokio::test]
 async fn file_search_store_bytes_upload_without_a_display_name_sends_no_name_at_all() {
-    let stub = Stub::replying(vec![upload_operation(), document(None)]).await;
+    let stub = Stub::replying(vec![
+        upload_session("{base}/upload-session/doc"),
+        upload_operation(),
+        document(None),
+    ])
+    .await;
 
     stub.client()
         .file_search_stores()
@@ -2335,21 +2462,59 @@ async fn file_search_store_bytes_upload_without_a_display_name_sends_no_name_at_
         .await
         .unwrap();
 
-    let upload = &stub.requests()[0];
+    let (start, finish) = assert_upload_requests(stub.requests(), 7);
+    assert_eq!(start.json(), json!({"mimeType": "text/plain"}));
+    assert_eq!(start.header("x-goog-upload-file-name"), None);
+    assert_eq!(finish.body, b"unnamed");
+}
+
+/// Custom metadata and chunking ride the start request's JSON, camelCase.
+#[tokio::test]
+async fn file_search_store_upload_sends_custom_metadata_and_chunking() {
+    let stub = Stub::replying(vec![
+        upload_session("{base}/upload-session/doc"),
+        upload_operation(),
+        document(None),
+    ])
+    .await;
+
+    stub.client()
+        .file_search_stores()
+        .upload(
+            STORE,
+            DocumentUpload::new(FileUpload::from_bytes(b"memo".to_vec(), "text/plain"))
+                .add_custom_metadata(CustomMetadata::string("team", "search"))
+                .add_custom_metadata(CustomMetadata::numeric("year", 2026.0))
+                .add_custom_metadata(CustomMetadata::string_list("tags", ["a", "b"]))
+                .with_chunking_config(ChunkingConfig::white_space(200, 20)),
+        )
+        .await
+        .unwrap();
+
+    let (start, _) = assert_upload_requests(stub.requests(), 4);
     assert_eq!(
-        upload.target,
-        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
+        start.json(),
+        json!({
+            "mimeType": "text/plain",
+            "customMetadata": [
+                {"key": "team", "stringValue": "search"},
+                {"key": "year", "numericValue": 2026.0},
+                {"key": "tags", "stringListValue": {"values": ["a", "b"]}}
+            ],
+            "chunkingConfig": {"whiteSpaceConfig": {"maxTokensPerChunk": 200, "maxOverlapTokens": 20}}
+        })
     );
-    assert_eq!(upload.header("x-goog-upload-file-name"), None);
-    assert_eq!(upload.body, b"unnamed");
 }
 
 #[tokio::test]
 async fn file_search_store_upload_unresolved_operation_is_malformed_response() {
-    let stub = Stub::replying(vec![Reply::json(
-        200,
-        json!({"name": "fileSearchStores/abc/upload/operations/op-7", "done": false}),
-    )])
+    let stub = Stub::replying(vec![
+        upload_session("{base}/upload-session/doc"),
+        Reply::json(
+            200,
+            json!({"name": "fileSearchStores/abc/upload/operations/op-7", "done": false}),
+        ),
+    ])
     .await;
     let (_dir, path) = temp_file("notes.txt", b"hello");
 
@@ -2365,7 +2530,23 @@ async fn file_search_store_upload_unresolved_operation_is_malformed_response() {
         err.to_string().contains("operations/op-7"),
         "the operation name is the caller's only handle: {err}"
     );
-    assert_eq!(stub.requests().len(), 1, "nothing to read back");
+    assert_eq!(stub.requests().len(), 2, "nothing to read back");
+}
+
+#[tokio::test]
+async fn file_search_store_upload_without_a_session_url_is_malformed_response() {
+    let stub = Stub::replying(vec![Reply::json(200, json!({}))]).await;
+
+    let err = stub
+        .client()
+        .file_search_stores()
+        .upload(STORE, FileUpload::from_bytes(b"x".to_vec(), "text/plain"))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
+    assert!(err.to_string().contains("x-goog-upload-url"), "{err}");
+    assert_eq!(stub.requests().len(), 1);
 }
 
 #[tokio::test]
@@ -2385,7 +2566,12 @@ async fn file_search_store_upload_read_back_failure_names_the_document() {
     let (_dir, path) = temp_file("notes.txt", b"hello");
 
     for (read_back, status, retryable) in cases {
-        let stub = Stub::replying(vec![upload_operation(), read_back]).await;
+        let stub = Stub::replying(vec![
+            upload_session("{base}/upload-session/doc"),
+            upload_operation(),
+            read_back,
+        ])
+        .await;
         let err = stub
             .client()
             .file_search_stores()
@@ -2409,6 +2595,219 @@ async fn file_search_store_upload_read_back_failure_names_the_document() {
     }
 }
 
+/// The import answers with an unfinished operation and no document; `GET`
+/// on the operation reports it done with the document's bare ID (the shapes
+/// observed live 2026-11-05).
+fn import_operation(done: Option<bool>, document_id: Option<&str>) -> Reply {
+    let mut body = json!({
+        "name": "fileSearchStores/abc/operations/op-1",
+        "response": {"@type": "type.googleapis.com/google.ai.generativelanguage.v1main.ImportFileResponse"}
+    });
+    if let Some(done) = done {
+        body["done"] = json!(done);
+    }
+    if let Some(id) = document_id {
+        body["response"]["documentName"] = json!(id);
+        body["response"]["parent"] = json!("abc");
+    }
+    Reply::json(200, body)
+}
+
+/// An import with every option set, polling fast so the test is quick.
+fn full_import() -> DocumentImport {
+    DocumentImport::new("files/f1")
+        .add_custom_metadata(CustomMetadata::string("origin", "files-api"))
+        .with_chunking_config(ChunkingConfig::white_space(100, 10))
+        .with_poll_options(PollOptions::new().with_poll_interval(Duration::from_millis(1)))
+}
+
+#[tokio::test]
+async fn import_file_posts_the_file_polls_the_operation_and_reads_the_document_back() {
+    let stub = Stub::replying(vec![
+        import_operation(None, None),
+        import_operation(Some(false), None),
+        import_operation(Some(true), Some("doc-1")),
+        document(Some("STATE_ACTIVE")),
+    ])
+    .await;
+
+    let doc = stub
+        .client()
+        .file_search_stores()
+        .import_file(STORE, full_import())
+        .await
+        .unwrap();
+    assert_eq!(doc.name, DOC);
+
+    let [import, poll_1, poll_2, read_back] = stub.requests().try_into().unwrap();
+    assert_eq!(import.method, "POST");
+    assert_eq!(import.target, "/v1beta/fileSearchStores/abc:importFile");
+    assert_eq!(import.header("x-goog-api-key"), Some("test-key"));
+    assert_eq!(
+        import.json(),
+        json!({
+            "fileName": "files/f1",
+            "customMetadata": [{"key": "origin", "stringValue": "files-api"}],
+            "chunkingConfig": {"whiteSpaceConfig": {"maxTokensPerChunk": 100, "maxOverlapTokens": 10}}
+        })
+    );
+    for poll in [poll_1, poll_2] {
+        assert_eq!(poll.method, "GET");
+        assert_eq!(poll.target, "/v1beta/fileSearchStores/abc/operations/op-1");
+    }
+    assert_eq!(
+        read_back.target,
+        "/v1beta/fileSearchStores/abc/documents/doc-1"
+    );
+}
+
+/// A file's metadata imports by its name; an operation that already names
+/// its document (in full) needs no poll.
+#[tokio::test]
+async fn import_file_takes_file_metadata_and_skips_the_poll_when_done() {
+    let stub = Stub::replying(vec![
+        import_operation(Some(true), Some(DOC)),
+        document(None),
+    ])
+    .await;
+    let file: FileMetadata = serde_json::from_value(file("ACTIVE")).unwrap();
+
+    stub.client()
+        .file_search_stores()
+        .import_file(STORE, &file)
+        .await
+        .unwrap();
+
+    let [import, read_back] = stub.requests().try_into().unwrap();
+    assert_eq!(import.json(), json!({"fileName": "files/abc"}));
+    assert_eq!(
+        read_back.target,
+        "/v1beta/fileSearchStores/abc/documents/doc-1"
+    );
+}
+
+#[tokio::test]
+async fn import_file_reports_a_failed_or_unnamed_operation() {
+    let failed = Reply::json(
+        200,
+        json!({"name": "fileSearchStores/abc/operations/op-1", "done": true,
+               "error": {"code": 5, "message": "File not found."}}),
+    );
+    let stub = Stub::replying(vec![import_operation(None, None), failed]).await;
+    let err = stub
+        .client()
+        .file_search_stores()
+        .import_file(STORE, full_import())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    let message = err.to_string();
+    assert!(message.contains("files/f1"), "{message}");
+    assert!(message.contains("error 5: File not found."), "{message}");
+
+    let stub = Stub::replying(vec![import_operation(Some(true), None)]).await;
+    let err = stub
+        .client()
+        .file_search_stores()
+        .import_file(STORE, "files/f1")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
+    assert!(err.to_string().contains("operations/op-1"), "{err}");
+}
+
+/// An unfinished operation is polled by its name, which must belong to the
+/// store: anything else is not followed.
+#[tokio::test]
+async fn import_file_does_not_follow_an_operation_outside_the_store() {
+    let stub = Stub::replying(vec![Reply::json(
+        200,
+        json!({"name": "fileSearchStores/other/operations/op-1"}),
+    )])
+    .await;
+
+    let err = stub
+        .client()
+        .file_search_stores()
+        .import_file(STORE, "files/f1")
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
+    assert_eq!(stub.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn import_file_times_out_on_an_operation_that_never_finishes() {
+    let stub = Stub::start(|_, _| import_operation(Some(false), None)).await;
+
+    let err = stub
+        .client()
+        .file_search_stores()
+        .import_file(
+            STORE,
+            DocumentImport::new("files/f1").with_poll_options(
+                PollOptions::new()
+                    .with_poll_interval(Duration::from_millis(5))
+                    .with_timeout(Duration::from_millis(100)),
+            ),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    let message = err.to_string();
+    assert!(message.contains("Timeout"), "{message}");
+    // The import goes on, and a second one makes a second document: the
+    // error hands over the operation and the document, and does not say to
+    // try again.
+    assert!(
+        message.contains("operation 'fileSearchStores/abc/operations/op-1'"),
+        "{message}"
+    );
+    assert!(
+        message.contains("document 'fileSearchStores/abc/documents/op-1'"),
+        "{message}"
+    );
+    assert!(message.contains("second document"), "{message}");
+    assert!(!message.contains("try again"), "{message}");
+    assert!(stub.requests().len() >= 2, "{:?}", stub.requests().len());
+}
+
+/// A non-retryable error from the operation poll keeps its status and
+/// names the operation and the document the import creates.
+#[tokio::test]
+async fn import_file_poll_failure_names_the_operation_and_document() {
+    let stub = Stub::replying(vec![
+        import_operation(None, None),
+        Reply::json(
+            403,
+            json!({"error": {"code": 403, "message": "Permission denied", "status": "PERMISSION_DENIED"}}),
+        ),
+    ])
+    .await;
+
+    let err = stub
+        .client()
+        .file_search_stores()
+        .import_file(STORE, full_import())
+        .await
+        .unwrap_err();
+
+    let GenaiError::Api { status_code, .. } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(*status_code, 403);
+    let message = err.to_string();
+    for expected in [
+        "operation 'fileSearchStores/abc/operations/op-1'",
+        "document 'fileSearchStores/abc/documents/op-1'",
+        "Permission denied",
+    ] {
+        assert!(message.contains(expected), "{expected}: {message}");
+    }
+    assert!(!err.is_retryable(), "{err:?}");
+}
 #[tokio::test]
 async fn file_search_store_upload_rejects_bad_input_before_any_request() {
     let stub = Stub::replying(vec![]).await;
@@ -2460,6 +2859,31 @@ async fn file_search_store_upload_rejects_bad_input_before_any_request() {
             "bare store id for bytes",
             call(stores.upload("abc", FileUpload::from_bytes(b"x".to_vec(), "text/plain"))),
         ),
+        (
+            "bare store id for an import",
+            call(stores.import_file("abc", "files/f1")),
+        ),
+        // The API answers both with a 500 (live 2026-11-05).
+        (
+            "chunk overlap equal to the chunk",
+            call(
+                stores.upload(
+                    STORE,
+                    DocumentUpload::new(FileUpload::from_path(&text))
+                        .with_chunking_config(ChunkingConfig::white_space(100, 100)),
+                ),
+            ),
+        ),
+        (
+            "chunk overlap larger than the chunk, for an import",
+            call(
+                stores.import_file(
+                    STORE,
+                    DocumentImport::new("files/f1")
+                        .with_chunking_config(ChunkingConfig::white_space(100, 150)),
+                ),
+            ),
+        ),
     ];
     for (label, call) in cases {
         let err = call.await.unwrap_err();
@@ -2467,6 +2891,9 @@ async fn file_search_store_upload_rejects_bad_input_before_any_request() {
             matches!(err, GenaiError::InvalidInput(_)),
             "{label}: {err:?}"
         );
+        if label.starts_with("chunk overlap") {
+            assert!(err.to_string().contains("max_overlap_tokens"), "{err}");
+        }
     }
     assert!(stub.requests().is_empty());
 }
@@ -3329,12 +3756,13 @@ async fn files_upload_from_path_streams_the_file_from_disk_then_finalizes() {
         .await
         .unwrap();
     assert_eq!(file.name, "files/f1");
-    assert_eq!(file.size_bytes_as_u64(), Some(data.len() as u64));
+    assert_eq!(file.size_bytes, Some(data.len() as i64));
 
     let [start, finish] = stub.requests().try_into().unwrap();
     assert_eq!(start.method, "POST");
     assert_eq!(start.target, "/upload/v1beta/files");
     assert_eq!(start.header("x-goog-api-key"), Some("test-key"));
+    assert_eq!(start.header("api-revision"), Some(API_REVISION));
     assert_eq!(start.header("x-goog-upload-protocol"), Some("resumable"));
     assert_eq!(start.header("x-goog-upload-command"), Some("start"));
     assert_eq!(
@@ -3554,7 +3982,7 @@ async fn file_list_parses_metadata_and_preserves_unknown_states() {
     let clip = &list.files[0];
     assert!(clip.is_active());
     assert_eq!(clip.display_name.as_deref(), Some("clip.mp4"));
-    assert_eq!(clip.size_bytes_as_u64(), Some(1_048_576));
+    assert_eq!(clip.size_bytes, Some(1_048_576));
     assert!(clip.create_time.is_some() && clip.expiration_time.is_some());
     assert_eq!(
         clip.video_metadata
@@ -4463,6 +4891,7 @@ async fn base_url_prefix_applies_to_resource_and_upload_endpoints() {
         Reply::json(200, json!({})),
         Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/session/1"),
         Reply::json(200, json!({"files": []})),
+        upload_session("{base}/session/2"),
         upload_operation(),
         document(Some("STATE_PENDING")),
     ])
@@ -4498,6 +4927,7 @@ async fn base_url_prefix_applies_to_resource_and_upload_endpoints() {
             "/proxy/upload/v1beta/environments/env-1/files/a.txt",
             "/session/1",
             "/proxy/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore",
+            "/session/2",
             "/proxy/v1beta/fileSearchStores/abc/documents/doc-1",
         ]
     );

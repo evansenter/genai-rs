@@ -137,9 +137,9 @@ pub use errors::GenaiError;
 // Content types (Content and related)
 pub mod content;
 pub use content::{
-    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
-    VideoProcessing, VideoProcessingBuilder,
+    Annotation, CodeExecutionLanguage, Content, GoogleMapsResultItem, GoogleSearchResultItem,
+    Place, Resolution, ReviewSnippet, UrlContextResultItem, VideoProcessing,
+    VideoProcessingBuilder,
 };
 
 // Step types (revision 2026-05-20 response model)
@@ -149,7 +149,8 @@ pub use steps::{FunctionResultPayload, Step, StepDelta, StepError};
 // Request types (includes agent configuration)
 pub mod request;
 pub use request::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role,
     ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig,
     TranscriptionMode, TurnContent, VideoConfig, VideoTask, Visualization,
@@ -172,18 +173,20 @@ pub use triggers::{
 pub mod environments;
 pub use environments::{
     AllowlistEntry, CreateEnvironmentRequest, EnvVar, Environment, EnvironmentFile,
-    EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload, EnvironmentFiles,
-    EnvironmentListResponse, EnvironmentSource, EnvironmentSpec, EnvironmentStatus, Environments,
-    ListEnvironmentFiles, ListEnvironments, NetworkConfig, RemoteEnvironment, SourceType,
+    EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
+    EnvironmentFiles, EnvironmentListResponse, EnvironmentSource, EnvironmentSpec,
+    EnvironmentStatus, Environments, ListEnvironmentFiles, ListEnvironments, NetworkConfig,
+    RemoteEnvironment, SourceType,
 };
 
 // File Search Stores resource (/v1beta/fileSearchStores) — the documents
 // `Tool::FileSearch` retrieves over
 pub mod file_search_stores;
 pub use file_search_stores::{
-    CreateFileSearchStoreRequest, DocumentListResponse, DocumentState, FileSearchDocument,
-    FileSearchDocuments, FileSearchStore, FileSearchStoreListResponse, FileSearchStores,
-    ListFileSearchDocuments, ListFileSearchStores,
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentImport,
+    DocumentListResponse, DocumentState, DocumentUpload, FileSearchDocument, FileSearchDocuments,
+    FileSearchStore, FileSearchStoreListResponse, FileSearchStores, ListFileSearchDocuments,
+    ListFileSearchStores, StringList, WhiteSpaceConfig,
 };
 
 // Safety settings (request safety_settings field)
@@ -248,8 +251,8 @@ pub mod antigravity;
 // Files API (/v1beta/files)
 pub mod files;
 pub use files::{
-    FileError, FileMetadata, FileState, FileUpload, FileUploadResponse, Files, ListFiles,
-    ListFilesResponse, PollOptions, VideoMetadata,
+    FileError, FileMetadata, FileSource, FileState, FileUpload, FileUploadResponse, Files,
+    ListFiles, ListFilesResponse, PollOptions, VideoMetadata,
 };
 
 // =============================================================================

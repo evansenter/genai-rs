@@ -26,6 +26,7 @@ use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 use crate::environments::EnvironmentSpec;
+use crate::request::{AgentConfig, AntigravityConfig};
 use crate::tools::Tool;
 
 /// An agent definition for the `/v1beta/agents` resource.
@@ -59,6 +60,20 @@ pub struct Agent {
     /// The base agent to extend.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_agent: Option<String>,
+    /// The base agent's configuration: an
+    /// [`AntigravityConfig`] (its `model` and
+    /// `max_total_tokens`), set with
+    /// [`with_agent_config`](Self::with_agent_config).
+    ///
+    /// Stored and echoed back on create, get and list, with
+    /// `max_total_tokens` as a string int64 (`"50000"`). The agent keeps only
+    /// an Antigravity config: a config of another type is stored as
+    /// `{"type": "antigravity"}`, its settings dropped, and an unknown field
+    /// is `400 Unknown parameter` (live 2026-11-05). The field is the open
+    /// [`AgentConfig`] so that what the API echoes reads back whole; setting
+    /// it directly sends any JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_config: Option<AgentConfig>,
     /// System instruction for the agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
@@ -113,6 +128,36 @@ impl Agent {
             base_agent: Some(base_agent.into()),
             ..Default::default()
         }
+    }
+
+    /// Sets the base agent's configuration: the model the agent reasons
+    /// with, and its token cap.
+    ///
+    /// It takes an [`AntigravityConfig`], the only config the resource keeps:
+    /// another type is stored as a bare `{"type": "antigravity"}` and its
+    /// settings lost (live 2026-11-05).
+    ///
+    /// ```
+    /// use genai_rs::{Agent, AntigravityConfig};
+    ///
+    /// let agent = Agent::new("reviewer", genai_rs::DEFAULT_ANTIGRAVITY_AGENT).with_agent_config(
+    ///     AntigravityConfig::new()
+    ///         .with_model(genai_rs::DEFAULT_MODEL)
+    ///         .with_max_total_tokens(50_000),
+    /// );
+    /// assert_eq!(
+    ///     serde_json::to_value(&agent).unwrap()["agent_config"],
+    ///     serde_json::json!({
+    ///         "type": "antigravity",
+    ///         "model": genai_rs::DEFAULT_MODEL,
+    ///         "max_total_tokens": 50_000
+    ///     })
+    /// );
+    /// ```
+    #[must_use]
+    pub fn with_agent_config(mut self, config: AntigravityConfig) -> Self {
+        self.agent_config = Some(config.into());
+        self
     }
 
     /// Sets the system instruction for the agent.
@@ -606,5 +651,31 @@ mod tests {
             list.agents[0].extra.get("future"),
             Some(&serde_json::json!(1))
         );
+    }
+
+    /// The create echo observed live 2026-11-05: `agent_config` is modeled,
+    /// and the token cap comes back as a string, kept as sent.
+    #[test]
+    fn agent_config_is_sent_and_read_back() {
+        let agent = Agent::new("a1", crate::DEFAULT_ANTIGRAVITY_AGENT).with_agent_config(
+            crate::AntigravityConfig::new()
+                .with_model("m")
+                .with_max_total_tokens(50_000),
+        );
+        assert_eq!(
+            serde_json::to_value(&agent).unwrap()["agent_config"],
+            json!({"type": "antigravity", "model": "m", "max_total_tokens": 50_000})
+        );
+
+        let wire = json!({
+            "id": "genai-rs-wp2b-agentcfg",
+            "base_agent": crate::DEFAULT_ANTIGRAVITY_AGENT,
+            "agent_config": {"model": "m", "max_total_tokens": "50000", "type": "antigravity"}
+        });
+        let echoed: Agent = serde_json::from_value(wire.clone()).unwrap();
+        let config = echoed.agent_config.as_ref().expect("agent_config");
+        assert_eq!(config.config_type(), Some("antigravity"));
+        assert!(echoed.extra.is_empty(), "{:?}", echoed.extra);
+        assert_eq!(serde_json::to_value(&echoed).unwrap(), wire);
     }
 }

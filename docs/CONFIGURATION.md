@@ -94,10 +94,41 @@ A response cut off by `max_output_tokens` can be continued instead of
 regenerated, on `CONTINUATION_MODEL` only (every other model answers `400
 Decoding continuation is not enabled for this model`, verified live
 2026-11-01). The cut-off response is `Incomplete` and carries a
-`continuation_token`; send the same request again, with the token and a
-larger `max_output_tokens`, and the answer picks up mid-sentence. The cap
-counts across continuations, so reusing the first value is a 400 ("has
-already been exhausted"), and any different input is a 400 too.
+`continuation_token`.
+
+A stored interaction (the default) continues from its id and the token
+alone, with no input (verified live 2026-11-05). `continue_decode` builds
+that request: the response's model, its id as the previous interaction,
+and its token. It sends no `max_output_tokens`, and the continuation runs
+on to the end; a cap you add counts across continuations, so it must
+exceed what the decode already produced.
+
+```rust,no_run
+# use genai_rs::{Client, GenerationConfig};
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
+let first = client
+    .interaction()
+    .with_model(genai_rs::CONTINUATION_MODEL)
+    .with_text("Write a sixteen-line poem about the sea.")
+    .with_generation_config(GenerationConfig {
+        max_output_tokens: Some(30),
+        ..Default::default()
+    })
+    .create()
+    .await?;
+if first.continuation_token.is_some() {
+    let rest = client.interaction().continue_decode(&first).create().await?;
+    println!("{}{}", first.all_text(), rest.all_text());
+}
+# Ok(())
+# }
+```
+
+A `store: false` interaction has no id, so its continuation resends the
+same request with the token and a larger `max_output_tokens`. Reusing the
+first cap is a 400 ("has already been exhausted"), and any different input
+is a 400 too; without input the API answers `contents is not specified`
+(verified live 2026-11-05).
 
 ```rust,no_run
 # use genai_rs::{Client, GenerationConfig};
@@ -107,6 +138,7 @@ let ask = |max_output_tokens| {
         .interaction()
         .with_model(genai_rs::CONTINUATION_MODEL)
         .with_text("Write a sixteen-line poem about the sea.")
+        .with_store_disabled()
         .with_generation_config(GenerationConfig {
             max_output_tokens: Some(max_output_tokens),
             ..Default::default()
@@ -139,6 +171,7 @@ let client = Client::builder("api-key".to_string())
 | `with_connect_timeout(Duration)` | 30 s (`DEFAULT_CONNECT_TIMEOUT`) | Connection timeout: DNS, TCP and TLS. `Duration::MAX` turns it off, for tests on a paused tokio clock ([why](RELIABILITY.md#tests-on-a-paused-clock)) |
 | `with_read_timeout(Duration)` | None | Longest wait for the headers or the next chunk, reset by each one: bounds a stalled stream without capping a long one. Set it above the longest a call thinks before answering |
 | `with_base_url(String)` | The Gemini API host | Send requests to a proxy or mock server instead of `generativelanguage.googleapis.com` |
+| `with_api_version(String)` | `"v1beta"` | The version path segment. `"v1"` is the stable endpoint: it serves interactions in full (create, get, delete, cancel, streaming, continuation) and the Files and File Search Store APIs, and answers 404 for agents, environments, webhooks, credentials, voices and triggers (live 2026-11-05) |
 | `add_wire_inspector(Arc<dyn WireInspector>)` | None (`LOUD_WIRE` adds a printer) | Observe raw API traffic; see [Logging Strategy](LOGGING_STRATEGY.md#wire-inspection-api) |
 
 `Client::new(api_key)` is `Client::builder(api_key).build()`, panicking

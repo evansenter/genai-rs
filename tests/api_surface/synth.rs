@@ -4,7 +4,7 @@
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Surface, Ty};
+use super::{Field, Surface, Ty};
 
 /// What [`Surface::fixtures`] leaves out.
 #[derive(Default)]
@@ -196,6 +196,126 @@ impl Surface {
                     .insert((name.clone(), (!exact).then_some(depth)), out.clone());
                 out
             }
+        }
+    }
+
+    /// One body per class `bodies` reach, with every instance of that class
+    /// cut down to its required fields: a served object may leave out any
+    /// optional field, so the crate must read it without one. A field whose
+    /// type is a single closed literal stays, being the discriminator a
+    /// union is told apart by (`type`, `event_type`), which the API always
+    /// sends even where the bindings mark it optional ([`Self::optional`]).
+    ///
+    /// Returns `(class, index into bodies, cut body)`, in the order the
+    /// classes are first met; a class with no optional field to drop has
+    /// none. Classes in `done` are skipped, and every class met is added to
+    /// it, so a caller can share it across targets that reach the same
+    /// classes.
+    pub fn minimal_variants(
+        &self,
+        ty: &Ty,
+        bodies: &[Value],
+        done: &mut BTreeSet<String>,
+    ) -> Vec<(String, usize, Value)> {
+        let mut out = Vec::new();
+        for (index, body) in bodies.iter().enumerate() {
+            let mut classes = BTreeSet::new();
+            self.covered_sites(ty, body, "", &mut classes);
+            for class in classes {
+                let Some(fields) = self.classes.get(&class).map(|c| &c.fields) else {
+                    continue;
+                };
+                if !done.insert(class.clone()) {
+                    continue;
+                }
+                let mut reduced = body.clone();
+                let drop = |key: &str| fields.get(key).is_some_and(Self::optional);
+                if self.reduce(ty, &mut reduced, &class, &drop) {
+                    out.push((class, index, reduced));
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether [`Self::minimal_variants`] cuts a field: optional, and not a
+    /// constant discriminator.
+    pub fn optional(field: &Field) -> bool {
+        !field.required
+            && !matches!(&field.ty, Ty::Literal { values, open: false } if values.len() == 1)
+    }
+
+    /// `body` with `field` removed from every instance of `class`, or `None`
+    /// when no instance has it: to find which cut field a finding on a cut
+    /// body comes from.
+    pub fn without_field(&self, ty: &Ty, body: &Value, class: &str, field: &str) -> Option<Value> {
+        let mut out = body.clone();
+        self.reduce(ty, &mut out, class, &|key| key == field)
+            .then_some(out)
+    }
+
+    /// Removes the keys `drop` names from every instance of `class` in
+    /// `value`, walking `value` against `ty` as [`Self::covered_sites`]
+    /// does. Returns whether anything was removed.
+    fn reduce(&self, ty: &Ty, value: &mut Value, class: &str, drop: &dyn Fn(&str) -> bool) -> bool {
+        match ty {
+            Ty::List(item) => value
+                .as_array_mut()
+                .into_iter()
+                .flatten()
+                .fold(false, |cut, v| self.reduce(item, v, class, drop) | cut),
+            Ty::Map(inner) => value
+                .as_object_mut()
+                .into_iter()
+                .flat_map(Map::values_mut)
+                .fold(false, |cut, v| self.reduce(inner, v, class, drop) | cut),
+            Ty::Union(arms) => {
+                let mut picked: Vec<&Ty> = arms
+                    .iter()
+                    .filter(|a| self.discriminator_matches(a, value))
+                    .collect();
+                if picked.is_empty() {
+                    let scored: Vec<(usize, &Ty)> = arms
+                        .iter()
+                        .map(|a| (self.check_at(a, value, "$", "").len(), a))
+                        .collect();
+                    let best = scored.iter().map(|(n, _)| *n).min().unwrap_or(0);
+                    picked = scored
+                        .into_iter()
+                        .filter(|(n, _)| *n == best)
+                        .map(|(_, a)| a)
+                        .collect();
+                }
+                // Only the arm that is `class` itself drops keys; the others
+                // just walk on into their fields.
+                picked
+                    .into_iter()
+                    .fold(false, |cut, arm| self.reduce(arm, value, class, drop) | cut)
+            }
+            Ty::Ref(name) => {
+                if let Some(alias) = self.aliases.get(name) {
+                    return self.reduce(alias, value, class, drop);
+                }
+                let Some(object) = value.as_object_mut() else {
+                    return false;
+                };
+                let fields = &self.classes[name].fields;
+                let mut cut = false;
+                if name == class {
+                    object.retain(|key, _| {
+                        let keep = !drop(key);
+                        cut |= !keep;
+                        keep
+                    });
+                }
+                for (key, v) in object.iter_mut() {
+                    if let Some(field) = fields.get(key) {
+                        cut |= self.reduce(&field.ty, v, class, drop);
+                    }
+                }
+                cut
+            }
+            _ => false,
         }
     }
 

@@ -39,11 +39,24 @@ use std::collections::HashMap;
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Tool {
-    /// A custom function that the model can call
+    /// A custom function that the model can call.
+    ///
+    /// Build one with [`FunctionDeclaration::builder`] and
+    /// [`into_tool`](FunctionDeclaration::into_tool). Only `name` is needed
+    /// for the model to call it: the API accepts a function tool with no
+    /// `description` or `parameters`, and a stored interaction read back
+    /// serves it that way (live 2026-11-05).
     Function {
+        /// The function's name. Empty when the wire tool has none (the
+        /// bindings make every field optional), and then not written.
+        #[serde(skip_serializing_if = "String::is_empty")]
         name: String,
-        description: String,
-        parameters: FunctionParameters,
+        /// What the function does, for the model.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        /// The JSON Schema of the function's arguments.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parameters: Option<FunctionParameters>,
     },
     /// Built-in Google Search tool
     ///
@@ -76,6 +89,8 @@ pub enum Tool {
     /// on your behalf. Only use with trusted models and carefully review excluded functions.
     ComputerUse {
         /// The environment being operated. Known values: `browser`, `mobile`, `desktop`.
+        /// Empty when the wire tool has none, and then not written.
+        #[serde(skip_serializing_if = "String::is_empty")]
         environment: String,
         /// List of predefined functions to exclude from model access
         /// (wire: `excluded_predefined_functions`).
@@ -93,7 +108,13 @@ pub enum Tool {
     },
     /// Model Context Protocol (MCP) server
     McpServer {
+        /// The server's name, which prefixes its calls (`<name>:<tool>`).
+        /// Empty when the wire tool has none, and then not written.
+        #[serde(skip_serializing_if = "String::is_empty")]
         name: String,
+        /// The server's URL. Empty when the wire tool has none, and then not
+        /// written.
+        #[serde(skip_serializing_if = "String::is_empty")]
         url: String,
         /// Optional per-mode restrictions on which server tools the model may
         /// call (wire: `allowed_tools: [{mode, tools}]`).
@@ -105,8 +126,12 @@ pub enum Tool {
     },
     /// Built-in file search tool for semantic retrieval over document stores
     FileSearch {
-        /// Names of file search stores to query (wire: `file_search_store_names`)
-        #[serde(rename = "file_search_store_names")]
+        /// Names of file search stores to query (wire:
+        /// `file_search_store_names`; not written when empty)
+        #[serde(
+            rename = "file_search_store_names",
+            skip_serializing_if = "Vec::is_empty"
+        )]
         store_names: Vec<String>,
         /// Number of semantic retrieval chunks to retrieve
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -184,11 +209,16 @@ impl<'de> Deserialize<'de> for Tool {
         #[derive(Deserialize)]
         #[serde(tag = "type")]
         enum KnownTool {
+            // Every field a tool carries is optional in the bindings: a
+            // served tool that leaves one out is still that tool.
             #[serde(rename = "function")]
             Function {
+                #[serde(default)]
                 name: String,
-                description: String,
-                parameters: FunctionParameters,
+                #[serde(default)]
+                description: Option<String>,
+                #[serde(default)]
+                parameters: Option<FunctionParameters>,
             },
             #[serde(rename = "google_search")]
             GoogleSearch {
@@ -210,6 +240,7 @@ impl<'de> Deserialize<'de> for Tool {
             UrlContext,
             #[serde(rename = "computer_use")]
             ComputerUse {
+                #[serde(default)]
                 environment: String,
                 #[serde(default)]
                 excluded_predefined_functions: Vec<String>,
@@ -220,7 +251,9 @@ impl<'de> Deserialize<'de> for Tool {
             },
             #[serde(rename = "mcp_server")]
             McpServer {
+                #[serde(default)]
                 name: String,
+                #[serde(default)]
                 url: String,
                 #[serde(default)]
                 allowed_tools: Option<Vec<AllowedTools>>,
@@ -229,7 +262,7 @@ impl<'de> Deserialize<'de> for Tool {
             },
             #[serde(rename = "file_search")]
             FileSearch {
-                #[serde(rename = "file_search_store_names")]
+                #[serde(rename = "file_search_store_names", default)]
                 store_names: Vec<String>,
                 #[serde(default)]
                 top_k: Option<i32>,
