@@ -267,7 +267,8 @@ impl ClientBuilder {
     /// Measured live 2026-11-05: `/v1` serves interactions in full, the
     /// same protocol as `/v1beta` (create, get, delete, cancel, streaming,
     /// and decoding continuation, which the v1 spec leaves out), plus the
-    /// Files and File Search Store APIs. It answers `404` for agents,
+    /// Files API (uploads included, under `/upload/v1`) and the File Search
+    /// Store API. It answers `404` for agents,
     /// environments, webhooks, credentials, voices and triggers, so their
     /// handles fail on such a client. An interaction created on one version
     /// can be read on the other. `v1beta` stays the default because it has

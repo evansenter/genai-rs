@@ -103,10 +103,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   segment of every URL; `"v1"` selects the stable endpoint (#489). Measured
   live 2026-11-05: `/v1` serves interactions with the same protocol as
   `/v1beta` (create, get, delete, cancel, streaming, and decoding
-  continuation, which the v1 spec leaves out) and the Files and File Search
-  Store APIs, and answers 404 for agents, environments, webhooks,
-  credentials, voices and triggers. An interaction created on one version
-  reads on the other. `v1beta` stays the default, since only it has every
+  continuation, which the v1 spec leaves out), the Files API (uploads
+  included, under `/upload/v1`) and the File Search Store API, and answers
+  404 for agents, environments, webhooks, credentials, voices and triggers.
+  An interaction created on one version reads on the other. `v1beta` stays the default, since only it has every
   resource.
 - `CodeMenderConfig`, with `CodeMenderFindRequest`, `CodeMenderFixRequest`,
   `CodeMenderFile` and `CodeMenderMode`, builds the CodeMender agent config

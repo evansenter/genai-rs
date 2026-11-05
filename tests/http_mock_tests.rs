@@ -124,6 +124,11 @@ async fn api_version_replaces_the_path_segment() {
     let stub = Stub::replying(vec![
         Reply::json(200, text_response("int-1", "hi")),
         Reply::json(200, text_response("int-1", "hi")),
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/abc", "mimeType": "text/plain", "uri": "https://x/files/abc", "state": "ACTIVE"}}),
+        ),
     ])
     .await;
     let client = Client::builder("test-key".to_string())
@@ -140,9 +145,22 @@ async fn api_version_replaces_the_path_segment() {
         .await
         .unwrap();
     client.interactions().get("int-1").await.unwrap();
+    client
+        .files()
+        .upload(FileUpload::from_bytes(b"hello".to_vec(), "text/plain"))
+        .await
+        .unwrap();
 
     let targets: Vec<String> = stub.requests().into_iter().map(|r| r.target).collect();
-    assert_eq!(targets, ["/v1/interactions", "/v1/interactions/int-1"]);
+    assert_eq!(
+        targets,
+        [
+            "/v1/interactions",
+            "/v1/interactions/int-1",
+            "/upload/v1/files",
+            "/upload-session/1"
+        ]
+    );
 }
 
 #[tokio::test]
