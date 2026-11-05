@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `triggers::on_file_change`, and `AntigravityAgent::next_trigger_turn`,
     which drives a turn a trigger started and returns its response.
   - `ToolInvocation::new`, for unit-testing policy conditions and hooks.
+  - Examples `lifecycle_hooks` (a stop hook as a definition of done),
+    `file_watcher` (`on_file_change` with `next_trigger_turn`) and
+    `command_guard` (conditional policies), each run against harness
+    0.1.23 (2026-11-05).
 - `AgentBuilder::with_gemini_base_url(url)` points the Antigravity harness's
   model calls at another Gemini API host: a gateway, a recording proxy, or a
   scripted local server in tests. It needs a non-empty `with_api_key`.

@@ -99,9 +99,9 @@ Located in [`examples/real_world/`](../examples/real_world/):
 ### Antigravity Harness
 
 Located in [`examples/antigravity/`](../examples/antigravity/), grouped the
-way `src/antigravity/` is. All seven need the `antigravity` feature **and**
+way `src/antigravity/` is. All ten need the `antigravity` feature **and**
 the `localharness` binary (`pip install google-antigravity==0.1.23`), and
-all seven are smoke-run in CI:
+all ten are smoke-run in CI:
 
 | Example | Description | Difficulty |
 |---------|-------------|------------|
@@ -110,8 +110,11 @@ all seven are smoke-run in CI:
 | [`session_resume/`](../examples/antigravity/session_resume/) | Agent that remembers across process restarts — trajectory persistence, `conversation_id` round trip, `initial_history` | Advanced |
 | [`workspace_explorer/`](../examples/antigravity/workspace_explorer/) | Watching an agent work and gating it live — workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny | Advanced |
 | [`mcp_toolbelt/`](../examples/antigravity/mcp_toolbelt/) | Giving an agent tools it didn't ship with — `add_mcp_server` (stdio), `mcp_<server>_<tool>` policy targets, MCP alongside `Capabilities::none()` | Advanced |
-| [`proactive_agent/`](../examples/antigravity/proactive_agent/) | Work that starts without a user turn — `add_trigger`, observing deliveries via a wire inspector, the trigger/user-turn discard boundary | Advanced |
+| [`proactive_agent/`](../examples/antigravity/proactive_agent/) | Work that starts without a user turn — `add_trigger`, counting deliveries with a wire inspector, the trigger/user-turn discard boundary | Advanced |
 | [`cancellable_turn/`](../examples/antigravity/cancellable_turn/) | Stopping an agent mid-thought — `cancel_handle` from another task, partial output kept, contrast with `with_turn_timeout` | Advanced |
+| [`lifecycle_hooks/`](../examples/antigravity/lifecycle_hooks/) | A definition of done the agent cannot skip — `on_stop` keeping a turn going, the session and turn hooks in the order they fire | Advanced |
+| [`file_watcher/`](../examples/antigravity/file_watcher/) | An agent that reacts to files — `triggers::on_file_change`, `add_custom_trigger`, `next_trigger_turn` returning the trigger turn's response | Advanced |
+| [`command_guard/`](../examples/antigravity/command_guard/) | A shell that can read but not change anything — `Policy::when` conditions, `with_reason`, policy precedence, `ToolAction::Denied` | Advanced |
 
 ## Prerequisites
 

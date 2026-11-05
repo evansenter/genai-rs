@@ -124,7 +124,7 @@ jobs:
           # a hang is attributed by name and a slow-but-legal run is still ended
           # by the example itself. Already compiled by the nextest step above,
           # so no build runs under the timeout.
-          for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn repo_auditor; do
+          for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn lifecycle_hooks file_watcher command_guard repo_auditor; do
             case "$ex" in
               # 1 turn x 600s.
               repo_auditor) budget=660 ;;
@@ -134,6 +134,9 @@ jobs:
               proactive_agent) budget=360 ;;
               # 2 turns x 120s, plus a second harness spawn.
               session_resume) budget=360 ;;
+              # 1 turn x 180s (the stop hook keeps it going), plus shutdown's
+              # session-end hook.
+              lifecycle_hooks) budget=300 ;;
               # Single turn at 120s (cancellable_turn: 180s).
               *) budget=300 ;;
             esac
