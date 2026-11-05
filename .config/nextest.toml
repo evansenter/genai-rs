@@ -10,3 +10,14 @@
 [profile.default]
 slow-timeout = { period = "120s", terminate-after = 5 }
 fail-fast = false
+
+# The Antigravity tests start the harness and the processes it runs, and stop
+# them on drop by signalling their process groups without waiting. Under
+# load, a test process occasionally ended before that teardown let go of its
+# output, and nextest marked the test LEAK after its default 100 ms (seen
+# twice in wave A, 2026-11-04; not reproduced in 15 stress runs of every
+# offline test on 2026-11-05). A LEAK still passes; the longer window keeps
+# slow teardown from reading as one.
+[[profile.default.overrides]]
+filter = 'binary(antigravity_harness) | binary(antigravity_scripted) | (kind(lib) & test(/^antigravity::/))'
+leak-timeout = "1s"
