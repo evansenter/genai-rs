@@ -333,7 +333,7 @@ a `{"chunk_type": ..., "data": ...}` map and reads that map back.
 | `created` | `Created` | The `InteractionResponse` |
 | `status_update` | `StatusUpdate` | `status`, plus `interaction_id`, `usage` and `continuation_token` when set |
 | `step_start` | `StepStart` | `index`, `step` |
-| `step_delta` | `StepDelta` | `index`, `delta` |
+| `step_delta` | `StepDelta` | `index`, `delta`, plus `total_usage` when set (the wire event's `metadata.total_usage`; not seen live as of 2026-11-05) |
 | `step_stop` | `StepStop` | `index`, plus `usage` and `step_usage` when set |
 | `completed` | `Completed` | The `InteractionResponse` |
 | `error` | `Error` | `message`, `code` |

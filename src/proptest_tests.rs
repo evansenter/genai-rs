@@ -2288,8 +2288,16 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
         (any::<usize>(), arb_step())
             .prop_map(|(index, step)| StreamChunk::StepStart { index, step }),
         // StepDelta variant
-        (any::<usize>(), arb_step_delta())
-            .prop_map(|(index, delta)| StreamChunk::StepDelta { index, delta }),
+        (
+            any::<usize>(),
+            arb_step_delta(),
+            proptest::option::of(arb_usage_metadata())
+        )
+            .prop_map(|(index, delta, total_usage)| StreamChunk::StepDelta {
+                index,
+                delta,
+                total_usage
+            }),
         // StepStop variant
         (
             any::<usize>(),

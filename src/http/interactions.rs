@@ -93,7 +93,17 @@ pub(crate) fn dispatch_stream_event(
         "step.delta" => match (event.index, event.delta) {
             (Some(index), Some(delta)) => {
                 accumulator.apply_delta(index, &delta);
-                Some(StreamChunk::StepDelta { index, delta })
+                let total_usage = event.metadata.and_then(|metadata| metadata.total_usage);
+                // Like a step.stop's usage, a fallback for a terminal event
+                // that omits usage.
+                if let Some(usage) = &total_usage {
+                    accumulator.record_cumulative_usage(usage.clone());
+                }
+                Some(StreamChunk::StepDelta {
+                    index,
+                    delta,
+                    total_usage,
+                })
             }
             (index, delta) => {
                 warn!(
@@ -539,7 +549,9 @@ mod tests {
         )
         .unwrap();
         match &delta {
-            StreamChunk::StepDelta { index: 0, delta } => {
+            StreamChunk::StepDelta {
+                index: 0, delta, ..
+            } => {
                 assert_eq!(delta.as_text(), Some("Hello"));
             }
             other => panic!("Expected StepDelta, got {other:?}"),
@@ -692,6 +704,44 @@ mod tests {
         match completed {
             StreamChunk::Completed(response) => {
                 assert_eq!(response.total_tokens(), Some(42));
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_step_delta_keeps_its_total_usage() {
+        // The bindings' StepDelta.metadata.total_usage (not seen live as of
+        // 2026-11-05). It reaches the chunk, and a completed event without
+        // usage falls back to it.
+        let mut acc = StepAccumulator::new();
+        dispatch_stream_event(
+            parse_event(r#"{"event_type":"step.start","index":0,"step":{"type":"model_output"}}"#),
+            &mut acc,
+        );
+        let delta = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.delta","index":0,"delta":{"type":"text","text":"Hi"},"metadata":{"total_usage":{"total_tokens":21}}}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match &delta {
+            StreamChunk::StepDelta { total_usage, .. } => {
+                assert_eq!(total_usage.as_ref().and_then(|u| u.total_tokens), Some(21));
+            }
+            other => panic!("Expected StepDelta, got {other:?}"),
+        }
+        let completed = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.completed","interaction":{"id":"i1","status":"completed"}}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match completed {
+            StreamChunk::Completed(response) => {
+                assert_eq!(response.usage.and_then(|u| u.total_tokens), Some(21));
             }
             other => panic!("Expected Completed, got {other:?}"),
         }

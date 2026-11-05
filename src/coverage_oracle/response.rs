@@ -121,16 +121,6 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
 
 /// Fields and values the crate does not model yet.
 const GAPS: &[Allowed] = &[
-    (
-        "interactions.StepDelta.metadata",
-        "`StreamChunk::StepDelta` drops the event's `metadata.total_usage` (only \
-         `interaction.completed` reads it); WP2.",
-    ),
-    (
-        "StepDelta.metadata",
-        "`StreamChunk::StepDelta` drops the event's `metadata.total_usage` (only \
-         `interaction.completed` reads it); WP2.",
-    ),
     ("agents.Agent.agent_config", UNSEEN),
     ("Agent.agent_config", UNSEEN),
     ("interactions.Environment.environment_id", UNSEEN),
@@ -251,6 +241,12 @@ pub(super) fn probe_stream_event(value: Value) -> Result<(String, Value), String
     };
     if let Some(key) = wrap {
         data = json!({ key: data });
+    }
+    // A step.delta's usage rides in the event's `metadata`.
+    if event_type == "step.delta"
+        && let Some(usage) = data.as_object_mut().and_then(|d| d.remove("total_usage"))
+    {
+        data["metadata"] = json!({ "total_usage": usage });
     }
     let mut wire = data.as_object().cloned().unwrap_or_default();
     wire.insert("event_type".into(), json!(event_type));

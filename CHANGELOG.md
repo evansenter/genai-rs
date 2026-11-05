@@ -307,6 +307,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `response.extra["safety_settings"]`). The environment echo's `env`, a
   list of single-key maps on the wire, serializes back as the map a request
   sends.
+- **Breaking: `StreamChunk::StepDelta` has a new field, `total_usage`.**
+  It carries the `step.delta` event's `metadata.total_usage`, which the
+  google-genai 2.34.0 bindings and the spec define and the crate dropped.
+  Not observed live: text, TTS and agent streams sent no `metadata` on a
+  `step.delta` (2026-11-05). When it arrives it also serves as the usage
+  of a `Completed` event that carries none, like a `step.stop`'s. The
+  serialized chunk writes it as `data.total_usage`. Migration: add `..` to
+  a pattern that lists every field (`StreamChunk::StepDelta { index, delta,
+  .. }`), and `total_usage: None` to a hand-built chunk.
 
 ### Fixed
 
