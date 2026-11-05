@@ -634,7 +634,9 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 /// Loads a document file with an explicit MIME type.
 ///
 /// Use this when you need to override the auto-detected MIME type,
-/// such as for text-based documents or files with non-standard extensions.
+/// such as for files with non-standard extensions. The MIME type is sent
+/// as-is: the API rejects `text/plain` and `text/markdown` document content,
+/// so send text files with [`document_from_file`] or [`Content::text()`].
 ///
 /// # Example
 ///
