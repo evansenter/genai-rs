@@ -62,14 +62,15 @@ fn test_input_event_tool_confirmation_golden() {
 
 #[test]
 fn test_input_event_call_hook_response_golden() {
-    let event = InputEvent::CallHookResponse(CallHookResponse {
+    let event = InputEvent::CallHookResponse(Box::new(CallHookResponse {
         request_id: "r".to_string(),
         pre_tool_result: Some(HookVerdict {
             decision: Some(HookDecision::Allow),
             reason: Some("ok".to_string()),
+            modified_args: None,
         }),
         ..Default::default()
-    });
+    }));
     assert_eq!(
         serde_json::to_value(&event).unwrap(),
         json!({"callHookResponse": {"requestId": "r", "preToolResult": {"decision": "ALLOW", "reason": "ok"}}})
@@ -91,7 +92,7 @@ fn test_initialize_conversation_event_golden() {
                 response_json_schema: Some("{}".to_string()),
             }],
             harness_side_tools: Some(HarnessSideTools {
-                run_command: Some(ToolToggle::new(false)),
+                run_command: Some(ToolToggle::new(false).into()),
                 view_file: Some(ToolToggle::new(true)),
                 ..Default::default()
             }),
@@ -299,9 +300,10 @@ fn test_0_1_18_init_response_and_hook_args_golden() {
         hook_tool_name("lookup_widget_code", args.server_name.as_deref()),
         "mcp_widgets_lookup_widget_code"
     );
+    // Builtins keep their wire name; `start_subagent` is a policy alias.
     assert_eq!(
         hook_tool_name("invoke_subagent", Some("")),
-        "start_subagent"
+        "invoke_subagent"
     );
     assert_eq!(hook_tool_name("view_file", None), "view_file");
 }
@@ -421,11 +423,11 @@ fn test_input_event_roundtrip_all_variants() {
         }),
         InputEvent::HaltRequest(true),
         InputEvent::AutomatedTrigger("tick".to_string()),
-        InputEvent::CallHookResponse(CallHookResponse {
+        InputEvent::CallHookResponse(Box::new(CallHookResponse {
             request_id: "r".to_string(),
             empty_result: Some(EmptyResult {}),
             ..Default::default()
-        }),
+        })),
         InputEvent::SessionEndRequest(true),
         InputEvent::Unknown {
             event_type: "futureEvent".to_string(),
@@ -501,7 +503,7 @@ fn test_output_event_roundtrip_all_variants() {
             ..Default::default()
         },
         OutputEvent {
-            payload: Some(OutputPayload::CallHookRequest(CallHookRequest {
+            payload: Some(OutputPayload::CallHookRequest(Box::new(CallHookRequest {
                 request_id: Some("r".to_string()),
                 hook_type: Some(LifecycleHook::PreTool),
                 pre_tool_args: Some(PreToolArgs {
@@ -510,7 +512,7 @@ fn test_output_event_roundtrip_all_variants() {
                     ..Default::default()
                 }),
                 ..Default::default()
-            })),
+            }))),
             ..Default::default()
         },
         OutputEvent {

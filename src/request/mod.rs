@@ -529,7 +529,12 @@ pub struct InteractionRequest {
     /// written after the modeled fields, and for a key sent twice the API
     /// keeps the last (live 2026-11-04), so a key that collides with a
     /// modeled field overrides it: a way to send a modeled field in a shape
-    /// the crate gets wrong. The same typo cost as
+    /// the crate gets wrong. The exception is `stream`, which belongs to
+    /// the transport: [`Client::execute`](crate::Client::execute) and
+    /// [`Client::execute_stream`](crate::Client::execute_stream) drop a
+    /// `stream` key from here before sending, with a `warn!`, since a copy
+    /// here would override the [`stream`](Self::stream) they set (an SSE
+    /// answer to a non-streaming call). The same typo cost as
     /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams::extra)
     /// applies to a deserialized request: a misspelled key lands here and is
     /// sent as is. Clear this map before sending to drop every such key, as

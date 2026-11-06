@@ -266,7 +266,10 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// If `with_timeout()` was set, the timeout applies **per-chunk**, not to
     /// the total stream duration. Each `stream.next().await` call must complete
-    /// within the timeout, or a [`GenaiError::Timeout`] error is yielded.
+    /// within the timeout, or a [`GenaiError::Timeout`] error is yielded. The
+    /// poll after the terminal event, which reads the body's tail so the
+    /// stored interaction is readable once the stream ends, is not bounded by
+    /// it (the crate bounds that read itself).
     ///
     /// This is useful for detecting stalled connections (e.g., model stops
     /// responding mid-stream), but does **not** limit the total time to
@@ -342,12 +345,23 @@ impl<'a> InteractionBuilder<'a> {
         Box::pin(async_stream::try_stream! {
             let request = self.build()?;
             let mut stream = client.execute_stream(request);
+            let mut finished = false;
 
             loop {
-                let result = within(timeout, "Stream chunk", stream.next()).await?;
+                // After the terminal event the stream only reads the body's
+                // tail, under its own bound: the per-chunk timeout must not
+                // fail a finished stream.
+                let result = if finished {
+                    stream.next().await
+                } else {
+                    within(timeout, "Stream chunk", stream.next()).await?
+                };
 
                 match result {
-                    Some(Ok(event)) => yield event,
+                    Some(Ok(event)) => {
+                        finished = event.is_terminal();
+                        yield event;
+                    }
                     Some(Err(e)) => Err(e)?,
                     None => break,
                 }

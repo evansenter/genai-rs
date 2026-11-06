@@ -40,12 +40,19 @@ mod error;
 mod handshake;
 mod hook_mapping;
 mod hooks;
+mod instructions;
+mod lifecycle;
+mod mcp;
+mod options;
+mod policies;
 mod process;
 #[cfg(unix)]
 mod process_tree;
+mod prompt;
 pub mod protocol;
 mod session;
 mod streaming;
+mod subagent;
 mod tools;
 pub mod triggers;
 mod turn;
@@ -53,14 +60,22 @@ mod turn_requests;
 
 pub use agent::{AntigravityAgent, CancelHandle};
 pub use builder::{AgentBuilder, DEFAULT_TURN_TIMEOUT};
-pub use config::{
-    AgentBehavior, BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION, Subagent,
-};
+pub use config::{AgentBehavior, BuiltinTool, Capabilities, SUPPORTED_HARNESS_VERSION};
 pub use error::AntigravityError;
 pub use hooks::{
-    AgentQuestion, Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook,
-    QuestionAnswer, QuestionHook, QuestionReply, ToolInvocation, ToolOutcome, policy,
+    AgentQuestion, CompactionEvent, PostToolHook, PreToolDecision, PreToolHook, QuestionAnswer,
+    QuestionHook, QuestionReply, StopDecision, StopRequest, ToolFailure, ToolInvocation,
+    ToolOutcome, TurnDecision, TurnEnd, TurnStart,
 };
+pub use instructions::SystemInstructions;
+pub use mcp::McpServer;
+pub use options::{
+    Budget, BudgetScope, InlineSkill, RetryConfig, RunCommandOptions, SessionContinuation,
+    SubagentSkills,
+};
+pub use policies::{AskUserHandler, Policy, PolicyCondition, PolicyDecision, policy};
+pub use prompt::{Media, Prompt, SlashCommand};
 pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
-pub use triggers::TriggerConfig;
+pub use subagent::Subagent;
+pub use triggers::{TriggerConfig, TriggerContext};
 pub use turn::ChatResponse;

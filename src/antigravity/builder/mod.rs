@@ -1,20 +1,33 @@
-use super::hooks::PolicyEngine;
+//! [`AgentBuilder`]: configuration setters and `spawn()`. Hook setters live
+//! in `hooks.rs`, harness option setters in `options.rs`, spawn-time checks
+//! in `validate.rs`, and the translation to the harness's `HarnessConfig` in
+//! `wire.rs`.
+
+use super::hooks::LifecycleHooks;
+use super::policies::PolicyEngine;
 use super::process::{self, HarnessProcess};
-use super::protocol::{self, InputEvent};
+use super::protocol;
 use super::session::{Session, WireContext};
 use super::tools::ToolDispatcher;
+use super::triggers::CustomTrigger;
 use super::{
-    AgentBehavior, AgentQuestion, AntigravityAgent, AntigravityError, BuiltinTool, Capabilities,
-    McpServer, Policy, PostToolHook, PreToolDecision, PreToolHook, QuestionHook, QuestionReply,
-    Subagent, ToolInvocation, ToolOutcome, TriggerConfig, handshake, triggers,
+    AgentBehavior, AntigravityAgent, AntigravityError, Capabilities, McpServer, Policy,
+    PostToolHook, PreToolHook, QuestionHook, Subagent, SystemInstructions, TriggerConfig,
+    handshake, triggers,
 };
 use crate::wire::WireInspector;
 use crate::{FunctionDeclaration, ToolService};
 use serde_json::Value;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+
+mod hooks;
+mod options;
+mod validate;
+mod wire;
+
+use options::HarnessOptions;
 
 // =============================================================================
 // Builder
@@ -63,7 +76,7 @@ pub struct AgentBuilder {
     api_key: Option<String>,
     gemini_base_url: Option<String>,
     model: Option<String>,
-    system_instructions: Option<String>,
+    system_instructions: Option<SystemInstructions>,
     workspaces: Vec<String>,
     tools: Vec<FunctionDeclaration>,
     tool_services: Vec<Arc<dyn ToolService>>,
@@ -72,6 +85,7 @@ pub struct AgentBuilder {
     pre_tool: Option<PreToolHook>,
     pub(super) questions: Option<QuestionHook>,
     post_tool: Option<PostToolHook>,
+    lifecycle: LifecycleHooks,
     save_dir: Option<String>,
     conversation_id: Option<String>,
     capabilities: Capabilities,
@@ -81,6 +95,7 @@ pub struct AgentBuilder {
     turn_timeout: TurnBudget,
     inspectors: Vec<Arc<dyn WireInspector>>,
     triggers: Vec<TriggerConfig>,
+    custom_triggers: Vec<CustomTrigger>,
     subagents: Vec<Subagent>,
     /// Whether to announce workspace roots in the effective system
     /// instructions. `None` means the default (on); see
@@ -91,6 +106,8 @@ pub struct AgentBuilder {
     /// Whether to confine file tools to the workspaces. `None` means the
     /// default (on); see [`Self::with_workspace_containment`].
     workspace_containment: Option<bool>,
+    /// Model, subagent and harness options (`options.rs`).
+    options: HarnessOptions,
 }
 
 impl std::fmt::Debug for AgentBuilder {
@@ -105,8 +122,13 @@ impl std::fmt::Debug for AgentBuilder {
             .field("mcp_servers", &self.mcp_servers.len())
             .field("policies", &self.policies.len())
             .field("capabilities", &self.capabilities)
-            .field("triggers", &self.triggers.len())
+            .field(
+                "triggers",
+                &(self.triggers.len() + self.custom_triggers.len()),
+            )
             .field("subagents", &self.subagents.len())
+            .field("lifecycle", &self.lifecycle)
+            .field("options", &self.options)
             .finish_non_exhaustive()
     }
 }
@@ -160,9 +182,26 @@ impl AgentBuilder {
         self
     }
 
-    /// Sets custom system instructions for the agent.
+    /// Sets the agent's system instructions.
+    ///
+    /// A string is **added to** the harness's own prompt, under a
+    /// `<user_system_instructions>` section, as in the Python SDK: the
+    /// harness keeps its tool guidance, safety rules, workspace list,
+    /// skills list and built-in subagents.
+    /// [`SystemInstructions::custom`] replaces that prompt instead, and
+    /// [`SystemInstructions::harness_default`] lets you replace its
+    /// identity line and add sections of your own.
+    ///
+    /// ```rust,ignore
+    /// use genai_rs::antigravity::SystemInstructions;
+    ///
+    /// let added = AntigravityAgent::builder()
+    ///     .with_system_instructions("Review for security issues only.");
+    /// let replaced = AntigravityAgent::builder()
+    ///     .with_system_instructions(SystemInstructions::custom("You are a linter."));
+    /// ```
     #[must_use]
-    pub fn with_system_instructions(mut self, instructions: impl Into<String>) -> Self {
+    pub fn with_system_instructions(mut self, instructions: impl Into<SystemInstructions>) -> Self {
         self.system_instructions = Some(instructions.into());
         self
     }
@@ -183,18 +222,18 @@ impl AgentBuilder {
     }
 
     /// Controls whether the agent's configured workspace root(s) are
-    /// announced to the model. **On by default.**
+    /// announced to the model when its prompt is
+    /// [custom](SystemInstructions::custom). **On by default.**
     ///
-    /// The harness's own prompt lists the workspaces, but
-    /// [`Self::with_system_instructions`] replaces that prompt, and agents
-    /// that don't know the paths guess (`/workdir`, `/workspace`, …) and
-    /// wander. When on and at least one
-    /// workspace is configured, `spawn()` appends a short, clearly
-    /// delimited note listing the configured root(s) to the effective system
-    /// instructions (composed at send time — the string passed to
-    /// [`Self::with_system_instructions`] is never mutated). The same note
-    /// is appended to each subagent's instructions, since subagent
-    /// trajectories do not inherit the parent's context.
+    /// The harness's own prompt lists the workspaces ("Active Workspaces",
+    /// verified on 0.1.23 for agents and subagents), so instructions added
+    /// to it need no note. Custom instructions replace that prompt, and
+    /// agents that don't know the paths guess (`/workdir`, `/workspace`, …)
+    /// and wander. With custom instructions and at least one workspace,
+    /// `spawn()` adds a short, clearly delimited note listing the
+    /// configured root(s) as a final part (composed at send time — your
+    /// instructions are never mutated), and the same note to each subagent
+    /// with custom instructions.
     ///
     /// Turn it off to manage workspace grounding yourself:
     ///
@@ -274,86 +313,17 @@ impl AgentBuilder {
 
     /// Adds a tool policy. See [`policy`] for constructors.
     ///
-    /// Exact-name rules beat wildcard rules; within the same specificity
-    /// tier the first registered matching rule wins, so
-    /// `[deny_all(), allow("get_weather")]` allows only `get_weather`.
-    /// When no rule matches, the call is allowed (default open), subject
-    /// to the pre-tool hook.
+    /// A rule naming the tool beats a server-wide MCP rule, which beats the
+    /// wildcard; within a tier deny beats ask beats allow, whatever the
+    /// order (the harness evaluator's precedence; see the [`policy`] module
+    /// docs). So `[deny_all(), allow("get_weather")]` allows only
+    /// `get_weather`. When no rule matches, the call is allowed (default
+    /// open), subject to the pre-tool hook.
     ///
     /// [`policy`]: super::policy
     #[must_use]
     pub fn add_policy(mut self, policy: Policy) -> Self {
         self.policies.push(policy);
-        self
-    }
-
-    /// Sets a pre-tool hook, consulted before every tool dispatch and for
-    /// `confirm(...)` policies.
-    ///
-    /// Like every hook, it runs on a thread of its own and is bounded by the
-    /// turn deadline. A hook still running at the deadline is abandoned,
-    /// not stopped: its thread runs on until the hook returns, but holds up
-    /// neither runtime shutdown nor process exit. A call whose arguments the
-    /// harness sent as invalid JSON is denied without consulting the hook,
-    /// which would otherwise judge a placeholder.
-    #[must_use]
-    pub fn on_pre_tool(
-        mut self,
-        hook: impl Fn(&ToolInvocation) -> PreToolDecision + Send + Sync + 'static,
-    ) -> Self {
-        self.pre_tool = Some(Arc::new(hook));
-        self
-    }
-
-    /// Sets a questions hook, invoked when the agent asks the user
-    /// questions via the `ask_question` builtin.
-    ///
-    /// The hook receives the whole question batch and returns answers (or
-    /// cancels). Without a hook, every question is answered "unanswered"
-    /// so the harness never deadlocks — that fallback covers only the
-    /// *hookless* case.
-    ///
-    /// The hook is synchronous and the turn waits for it: **do not block in
-    /// it** waiting for a human. Answer from policy or pre-collected state
-    /// (e.g. a channel drained with `try_recv`). It runs on a thread of its
-    /// own, so the turn deadline still bounds it (see
-    /// [`on_pre_tool`](Self::on_pre_tool)), but every second it takes is
-    /// spent from that budget.
-    ///
-    /// The hook only fires if [`BuiltinTool::AskQuestion`] is enabled —
-    /// it is *not* in [`Capabilities::read_only()`] (the default), so on a
-    /// default builder this hook is a no-op: the agent never asks, and
-    /// `spawn()` emits a `warn!` for the hook-set-but-builtin-disabled
-    /// combination. Enable it with
-    /// `Capabilities::read_only().enable(BuiltinTool::AskQuestion)`, which
-    /// as a write-capable capability also needs a policy or
-    /// [`on_pre_tool`](Self::on_pre_tool) hook to pass the spawn-time
-    /// gate — and set
-    /// [`with_agent_behavior(AgentBehavior::Interactive)`](Self::with_agent_behavior),
-    /// without which the model is told nobody will answer.
-    ///
-    /// On harness 0.1.18 the `ask_question` call passes through the
-    /// pre-tool hook *before* its `questions_request` arrives, so policies
-    /// govern it like any other tool: `deny_all()` needs an
-    /// `allow("ask_question")` beside it, and `deny("ask_question")`
-    /// prevents questions. (On 0.1.10 question requests bypassed the policy
-    /// engine.)
-    #[must_use]
-    pub fn on_questions(
-        mut self,
-        hook: impl Fn(&[AgentQuestion]) -> QuestionReply + Send + Sync + 'static,
-    ) -> Self {
-        self.questions = Some(Arc::new(hook));
-        self
-    }
-
-    /// Sets a post-tool hook, observing completed custom tool calls.
-    ///
-    /// It runs on a thread of its own and is bounded by the turn deadline,
-    /// as [`on_pre_tool`](Self::on_pre_tool) describes.
-    #[must_use]
-    pub fn on_post_tool(mut self, hook: impl Fn(&ToolOutcome) + Send + Sync + 'static) -> Self {
-        self.post_tool = Some(Arc::new(hook));
         self
     }
 
@@ -385,11 +355,11 @@ impl AgentBuilder {
     /// Sets how the harness frames the agent's task (default: the
     /// harness's, which is [`AgentBehavior::Autonomous`]).
     ///
-    /// [`BuiltinTool::AskQuestion`] needs [`AgentBehavior::Interactive`]:
-    /// the default autonomous prompt tells the model the user will not
-    /// answer, so it asks in prose rather than calling the tool, and an
-    /// [`on_questions`](Self::on_questions) hook never fires. `spawn()`
-    /// warns about that combination.
+    /// [`BuiltinTool::AskQuestion`](super::BuiltinTool::AskQuestion) needs
+    /// [`AgentBehavior::Interactive`]: the default autonomous prompt tells
+    /// the model the user will not answer, so it asks in prose rather than
+    /// calling the tool, and an [`on_questions`](Self::on_questions) hook
+    /// never fires. `spawn()` warns about that combination.
     #[must_use]
     pub fn with_agent_behavior(mut self, behavior: AgentBehavior) -> Self {
         self.agent_behavior = Some(behavior);
@@ -413,7 +383,11 @@ impl AgentBuilder {
         self
     }
 
-    /// Adds a path to search for agent skills.
+    /// Adds a directory to search for agent skills (`SKILL.md` files). The
+    /// harness lists them in its own prompt, so custom
+    /// [`SystemInstructions`] hide them from the model; they cannot be
+    /// combined with [`Self::add_inline_skill`] (`spawn()` refuses, as the
+    /// harness does not support both).
     #[must_use]
     pub fn add_skills_path(mut self, path: impl Into<String>) -> Self {
         self.skills_paths.push(path.into());
@@ -434,6 +408,11 @@ impl AgentBuilder {
     /// (`#[tokio::main]` on a one-CPU host), it holds the timer's thread
     /// until it returns. Make such a tool `async`, or call `spawn_blocking`
     /// inside it.
+    ///
+    /// An abandoned blocking body keeps its worker thread until it returns,
+    /// so the runtime has one worker fewer meanwhile, and dropping the
+    /// runtime (the end of `#[tokio::main]`) waits for it. A tool that may
+    /// block for long should bound itself.
     #[must_use]
     pub fn with_turn_timeout(mut self, timeout: Duration) -> Self {
         self.turn_timeout = TurnBudget::Explicit(timeout);
@@ -482,10 +461,43 @@ impl AgentBuilder {
         self
     }
 
+    /// Adds a custom trigger (the Python SDK's `@trigger`): an async
+    /// function, started after `spawn()`, that sends the agent messages
+    /// through its [`TriggerContext`](triggers::TriggerContext) whenever it
+    /// decides to. [`triggers::on_file_change`] builds one that watches a
+    /// path. Deliveries wait while a turn runs; see [`triggers`].
+    ///
+    /// ```rust,ignore
+    /// let agent = AntigravityAgent::builder()
+    ///     .add_custom_trigger(|ctx| async move {
+    ///         while let Some(job) = queue.recv().await {
+    ///             ctx.send(format!("Process job {job}.")).await?;
+    ///         }
+    ///         Ok(())
+    ///     })
+    ///     // ...
+    ///     ;
+    /// ```
+    ///
+    /// An error the trigger returns is logged and ends that trigger only.
+    #[must_use]
+    pub fn add_custom_trigger<F, Fut>(mut self, trigger: F) -> Self
+    where
+        F: FnOnce(triggers::TriggerContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<(), AntigravityError>> + Send + 'static,
+    {
+        self.custom_triggers
+            .push(Box::new(move |context| Box::pin(trigger(context))));
+        self
+    }
+
     /// Adds a static subagent the parent agent can delegate to via the
-    /// `start_subagent` builtin (enable it with [`Self::with_capabilities`];
+    /// `invoke_subagent` builtin (enable it with [`Self::with_capabilities`];
     /// it is write-capable, so the safety gate requires a policy or
-    /// pre-tool hook).
+    /// pre-tool hook). Nesting, the allow-list and `define_subagent` are set
+    /// with [`Self::with_max_subagent_depth`],
+    /// [`Self::with_allowed_subagents`] and
+    /// [`Self::with_define_subagent_tool`].
     ///
     /// Custom tools listed on the subagent (by name) must also be
     /// registered on this builder (`add_tool` / `with_tool_service`);
@@ -510,118 +522,9 @@ impl AgentBuilder {
     /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
     ///   with the harness's stderr tail when startup fails.
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
-        // An explicit containment opt-in that can't be honored is an error,
-        // not a warning: without a workspace the harness has nothing to
-        // confine to, and the agent could read any file.
-        if self.workspace_containment == Some(true) && self.workspaces.is_empty() {
-            return Err(AntigravityError::Config(
-                "with_workspace_containment(true) needs a workspace: add one with \
-                 `.add_workspace(..)`, or drop the call to run unconfined"
-                    .to_string(),
-            ));
-        }
-        // Safety parity with the reference SDK: refuse to run write-capable
-        // agents with no policy and no pre-tool hook.
-        if (self.capabilities.has_write_tools() || !self.mcp_servers.is_empty())
-            && self.policies.is_empty()
-            && self.pre_tool.is_none()
-        {
-            return Err(AntigravityError::Config(
-                "write-capable built-in tools or MCP servers are enabled without a safety \
-                 policy. Add `.add_policy(policy::allow_all())` to approve all tool calls, \
-                 `.add_policy(policy::deny_all())` plus specific `policy::allow(..)` rules \
-                 to selectively allow tools, or an `.on_pre_tool(..)` hook."
-                    .to_string(),
-            ));
-        }
-        if self.model.is_some() && self.api_key().is_none() {
-            return Err(AntigravityError::Config(
-                "a model is configured without an API key; call with_api_key(..) with a \
-                 non-empty key"
-                    .to_string(),
-            ));
-        }
-        if self.gemini_base_url.is_some() && self.api_key().is_none() {
-            return Err(AntigravityError::Config(
-                "with_gemini_base_url(..) needs with_api_key(..) with a non-empty key: \
-                 without one the harness sends its environment's GEMINI_API_KEY to the \
-                 custom host"
-                    .to_string(),
-            ));
-        }
-        if let Some(trigger) = self.triggers.iter().find(|t| t.interval.is_zero()) {
-            return Err(AntigravityError::Config(format!(
-                "trigger '{}' has a zero interval; trigger intervals must be non-zero",
-                trigger.message
-            )));
-        }
-        // Not an error (the combination is harmless), but the likeliest
-        // first-time misconfiguration: a questions hook with the builtin
-        // disabled never fires, and without this there is no signal
-        // distinguishing "the agent chose not to ask" from "asking was
-        // never enabled".
-        if self.questions.is_some() && !self.capabilities.is_enabled(BuiltinTool::AskQuestion) {
-            tracing::warn!(
-                "on_questions hook set but BuiltinTool::AskQuestion is not enabled - the agent \
-                 will never ask questions and the hook will never run. Enable it with \
-                 Capabilities::read_only().enable(BuiltinTool::AskQuestion)."
-            );
-        }
-        // Same failure shape one layer down (reference-SDK parity): the
-        // tool is declared, but the default autonomous prompt tells the
-        // model nobody will answer, so it asks in prose instead.
-        if self.capabilities.is_enabled(BuiltinTool::AskQuestion)
-            && self.agent_behavior != Some(AgentBehavior::Interactive)
-        {
-            tracing::warn!(
-                "BuiltinTool::AskQuestion is enabled but agent behavior is not Interactive - \
-                 the harness's autonomous prompt tells the model the user will not respond, \
-                 so it rarely calls ask_question. Add \
-                 .with_agent_behavior(AgentBehavior::Interactive)."
-            );
-        }
-
-        // Subagent validation: unique names, and every referenced custom
-        // tool registered on the parent (the harness dispatches subagent
-        // custom-tool calls through the parent's registry).
         let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
-        {
-            let declared: HashSet<String> = dispatcher
-                .harness_declarations()
-                .into_iter()
-                .filter_map(|tool| tool.name)
-                .collect();
-            let mut subagent_names = HashSet::new();
-            for subagent in &self.subagents {
-                if !subagent_names.insert(subagent.name().to_string()) {
-                    return Err(AntigravityError::Config(format!(
-                        "duplicate subagent name '{}'; subagent names must be unique",
-                        subagent.name()
-                    )));
-                }
-                if let Some(missing) = subagent
-                    .tool_names()
-                    .iter()
-                    .find(|name| !declared.contains(name.as_str()))
-                {
-                    return Err(AntigravityError::Config(format!(
-                        "subagent '{}' references custom tool '{missing}' which is not \
-                         registered on the agent; custom tools used by subagents must also \
-                         be added via add_tool(..) or with_tool_service(..)",
-                        subagent.name()
-                    )));
-                }
-            }
-            if !self.subagents.is_empty()
-                && !self.capabilities.is_enabled(BuiltinTool::StartSubagent)
-            {
-                tracing::warn!(
-                    "Subagents are configured but the start_subagent builtin is disabled; \
-                     the parent agent cannot invoke them. Enable it with \
-                     with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))."
-                );
-            }
-        }
+        self.validate(&dispatcher)?;
+        let policy_engine = PolicyEngine::new(self.policies.clone());
 
         let binary = process::discover_harness(self.harness_path.as_deref())?;
 
@@ -641,6 +544,7 @@ impl AgentBuilder {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 language_version: env!("CARGO_PKG_RUST_VERSION").to_string(),
             }),
+            env: self.options.harness_env.clone(),
         };
         // With a custom host, the harness gets no key to fall back on: the
         // configured one is the only key it can send there.
@@ -664,6 +568,8 @@ impl AgentBuilder {
 
         // Conversation init.
         let config = self.build_harness_config(&dispatcher);
+        let sandbox_requested = self.capabilities.run_command().sandbox()
+            && self.capabilities.is_enabled(super::BuiltinTool::RunCommand);
         let init = protocol::InitializeConversationEvent {
             config: Some(config),
         };
@@ -672,12 +578,14 @@ impl AgentBuilder {
             harness,
             session,
             dispatcher,
-            policy_engine: Arc::new(PolicyEngine::new(self.policies)),
+            policy_engine: Arc::new(policy_engine),
             pre_tool: self.pre_tool,
             questions: self.questions,
             post_tool: self.post_tool,
+            lifecycle: self.lifecycle,
             conversation_id: None,
             initial_history: Vec::new(),
+            sandbox_status: None,
             turn_timeout: self.turn_timeout.resolve(),
             idle: Arc::new(tokio::sync::watch::channel(true).0),
             trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -685,32 +593,47 @@ impl AgentBuilder {
             trigger_tasks: triggers::TriggerTasks::default(),
         };
 
-        match agent.initialize(init).await {
+        let started = match agent.initialize(init).await {
+            Ok(()) => agent.start_session().await,
+            Err(e) => Err(e),
+        };
+        match started {
             Ok(()) => {
-                // Start trigger timers only once the conversation is live.
-                // Each task writes through the shared sink handle (the same
+                if sandbox_requested
+                    && let Some(status) = &agent.sandbox_status
+                    && status.available == Some(false)
+                {
+                    tracing::warn!(
+                        "run_command asked for the OS sandbox, which is unavailable ({}); \
+                         commands run unsandboxed",
+                        status
+                            .unavailable_reason
+                            .as_deref()
+                            .unwrap_or("no reason given")
+                    );
+                }
+                // Start triggers only once the conversation is live. Each
+                // task writes through the shared sink handle (the same
                 // out-of-band path CancelHandle uses) and watches the
                 // agent's idle flag.
                 for trigger in self.triggers {
-                    let sink = agent.session.sink_handle();
-                    let fired = Arc::clone(&agent.trigger_fired);
+                    let deliver = agent.trigger_delivery();
                     agent.trigger_tasks.push(triggers::spawn_trigger_task(
                         trigger,
                         agent.idle.subscribe(),
                         Arc::clone(&agent.turn_sync),
-                        move |message| {
-                            let sink = sink.clone();
-                            let fired = Arc::clone(&fired);
-                            async move {
-                                // Flag before sending so the next chat can
-                                // never miss an in-flight delivery (a false
-                                // positive on send failure only costs a
-                                // no-op drain).
-                                fired.store(true, std::sync::atomic::Ordering::SeqCst);
-                                sink.send(&InputEvent::AutomatedTrigger(message)).await
-                            }
-                        },
+                        move |message| deliver(message),
                     ));
+                }
+                for trigger in self.custom_triggers {
+                    let context = triggers::TriggerContext::new(
+                        agent.idle.subscribe(),
+                        Arc::clone(&agent.turn_sync),
+                        agent.trigger_delivery(),
+                    );
+                    agent
+                        .trigger_tasks
+                        .push(triggers::spawn_custom_trigger(trigger, context));
                 }
                 Ok(agent)
             }
@@ -732,143 +655,6 @@ impl AgentBuilder {
     /// Whether workspace announcement is enabled (default on).
     fn announce_workspaces(&self) -> bool {
         self.workspace_announcement.unwrap_or(true)
-    }
-
-    fn build_harness_config(&self, dispatcher: &ToolDispatcher) -> protocol::HarnessConfig {
-        let mut enabled_hooks = Vec::new();
-        if !self.policies.is_empty() || self.pre_tool.is_some() {
-            enabled_hooks.push(protocol::LifecycleHook::PreTool);
-        }
-        if self.post_tool.is_some() {
-            enabled_hooks.push(protocol::LifecycleHook::PostTool);
-        }
-
-        let models = self
-            .api_key()
-            .map(|api_key| {
-                vec![protocol::ModelConfig {
-                    // A real model id, not a placeholder: this is the id the
-                    // harness is actually asked to run when the caller never
-                    // called `with_model`.
-                    name: Some(
-                        self.model
-                            .clone()
-                            .unwrap_or_else(|| crate::DEFAULT_MODEL.to_string()),
-                    ),
-                    types: vec![protocol::ModelType::Text],
-                    gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
-                        api_key: Some(api_key.to_string()),
-                        base_url: self.gemini_base_url.clone(),
-                        ..Default::default()
-                    }),
-                    vertex_endpoint: None,
-                }]
-            })
-            .unwrap_or_default();
-
-        let tools = dispatcher.harness_declarations();
-        // Announce the workspace roots to the model (opt-outable). The note
-        // is composed here at send time; the stored `system_instructions`
-        // string is never mutated. Subagents get the same note appended
-        // (their trajectories don't inherit the parent's context).
-        let workspace_note = (self.announce_workspaces() && !self.workspaces.is_empty())
-            .then(|| workspace_announcement(&self.workspaces));
-        let custom_subagents = self
-            .subagents
-            .iter()
-            .map(|subagent| subagent.to_wire(&tools, workspace_note.as_deref()))
-            .collect();
-
-        protocol::HarnessConfig {
-            cascade_id: self.conversation_id.clone(),
-            system_instructions: build_system_instructions(
-                self.system_instructions.as_deref(),
-                workspace_note.as_deref(),
-            ),
-            tools,
-            harness_side_tools: Some(self.capabilities.to_harness_side_tools()),
-            compaction_threshold: None,
-            workspaces: self
-                .workspaces
-                .iter()
-                .map(protocol::Workspace::filesystem)
-                .collect(),
-            skills_paths: self.skills_paths.clone(),
-            finish_tool_schema_json: self.response_schema.as_ref().map(ToString::to_string),
-            initial_trajectory: None,
-            app_data_dir: self.app_data_dir.clone(),
-            mcp_servers: self.mcp_servers.iter().map(McpServer::to_wire).collect(),
-            models,
-            enabled_hooks,
-            custom_subagents,
-            agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
-            // spawn() rejects an explicit opt-in with no workspace.
-            policy_config: (self.workspace_containment.unwrap_or(true)
-                && !self.workspaces.is_empty())
-            .then(protocol::PolicyConfig::default),
-        }
-    }
-}
-
-/// Builds the workspace-announcement note (Item: announce workspace roots).
-/// A concise, clearly delimited block listing the configured root(s) so the
-/// model uses real paths instead of guessing. The roots are announced exactly
-/// as configured (the same strings the harness roots its tools at), so the
-/// wording makes no claim about them being absolute — a caller may pass a
-/// relative path, and the model must use the same string the harness does.
-fn workspace_announcement(workspaces: &[String]) -> String {
-    let roots = workspaces
-        .iter()
-        .map(|root| format!("- {root}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "=== Workspace ===\n\
-         Your workspace is rooted at the following path(s). Use these exact \
-         paths for all file and directory operations; do not guess or invent \
-         workspace paths, and stay within these root(s):\n{roots}\n\
-         === End Workspace ==="
-    )
-}
-
-/// Composes the effective parent system instructions from the user's
-/// instructions (never mutated) and an optional workspace-announcement note.
-///
-/// - With a note and user instructions: the note is a second `custom` part
-///   (keeps the user's text intact, still fully custom).
-/// - With a note and no user instructions: the note is an *appended* section
-///   so the harness's default instructions are preserved (not replaced).
-/// - With no note: the user's instructions as fully-custom text, or `None`.
-fn build_system_instructions(
-    user_instructions: Option<&str>,
-    workspace_note: Option<&str>,
-) -> Option<protocol::SystemInstructions> {
-    match (user_instructions, workspace_note) {
-        (Some(text), Some(note)) => Some(protocol::SystemInstructions {
-            custom: Some(protocol::CustomSystemInstructions {
-                part: vec![
-                    protocol::SystemInstructionPart {
-                        text: Some(text.to_string()),
-                    },
-                    protocol::SystemInstructionPart {
-                        text: Some(note.to_string()),
-                    },
-                ],
-            }),
-            appended: None,
-        }),
-        (Some(text), None) => Some(protocol::SystemInstructions::custom_text(text.to_string())),
-        (None, Some(note)) => Some(protocol::SystemInstructions {
-            custom: None,
-            appended: Some(protocol::AppendedSystemInstructions {
-                custom_identity: None,
-                appended_sections: vec![protocol::InstructionSection {
-                    title: Some("Workspace".to_string()),
-                    content: Some(note.to_string()),
-                }],
-            }),
-        }),
-        (None, None) => None,
     }
 }
 
