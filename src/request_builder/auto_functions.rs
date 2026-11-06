@@ -190,7 +190,8 @@ impl<'a> InteractionBuilder<'a> {
                     });
                 }
                 Round::Calls { response, calls } => {
-                    executions.extend(state.run_calls(response, &calls).await);
+                    executions.extend(state.run_calls(response.id.clone(), &calls).await);
+                    state.keep_last_response(response);
                 }
             }
         }
@@ -400,15 +401,22 @@ impl<'a> InteractionBuilder<'a> {
                         return;
                     }
                     Round::Calls { response, calls } => {
+                        let round_id = response.id.clone();
+                        // The event takes the response. The final round's is
+                        // also the MaxLoopsReached result, so only it is
+                        // cloned.
+                        if round == max_loops {
+                            state.keep_last_response(response.clone());
+                        }
                         // Client-generated events carry no API event id.
                         yield AutoFunctionStreamEvent::new(
                             AutoFunctionStreamChunk::ExecutingFunctions {
-                                response: Box::new(response.clone()),
+                                response: Box::new(response),
                                 pending_calls: calls.clone(),
                             },
                             None,
                         );
-                        let executions = state.run_calls(response, &calls).await;
+                        let executions = state.run_calls(round_id, &calls).await;
                         yield AutoFunctionStreamEvent::new(
                             AutoFunctionStreamChunk::FunctionResults(executions),
                             None,

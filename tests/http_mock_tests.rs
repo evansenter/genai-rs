@@ -837,6 +837,46 @@ async fn auto_functions_stop_at_max_loops() {
     assert_eq!(second["input"][0]["call_id"], "call-0");
 }
 
+/// The streaming loop hands each round's response to its
+/// `ExecutingFunctions` event and keeps only the final round's for
+/// `MaxLoopsReached` (#498).
+#[tokio::test]
+async fn streaming_auto_functions_stop_at_max_loops() {
+    let stub = Stub::start(|_, n| {
+        Reply::sse(&[&format!(
+            "data: {{\"event_type\":\"interaction.completed\",\"interaction\":{}}}\n\n",
+            function_call_response(&format!("int-{n}"), &format!("call-{n}"), "svc_fn")
+        )])
+    })
+    .await;
+
+    let events: Vec<_> = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("loop forever")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .with_max_function_call_loops(2)
+        .create_stream_with_auto_functions()
+        .map(|event| event.unwrap().chunk)
+        .collect()
+        .await;
+
+    let executing: Vec<_> = events
+        .iter()
+        .filter_map(|chunk| match chunk {
+            AutoFunctionStreamChunk::ExecutingFunctions { response, .. } => response.id.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(executing, ["int-0", "int-1"], "{events:?}");
+    let Some(AutoFunctionStreamChunk::MaxLoopsReached(last)) = events.last() else {
+        panic!("the stream ends with MaxLoopsReached: {events:?}");
+    };
+    assert_eq!(last.id.as_deref(), Some("int-1"));
+    assert_eq!(stub.requests().len(), 2);
+}
+
 /// Observed live 2026-10-01: on the second user turn of a non-streamed
 /// chain the API names a declared function's call `default_api:<name>`.
 #[tokio::test]

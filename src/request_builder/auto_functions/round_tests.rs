@@ -84,7 +84,7 @@ async fn test_a_round_chains_the_next_request_and_totals_usage() {
     else {
         panic!("a pending call continues the loop");
     };
-    let executions = state.run_calls(response, &calls).await;
+    let executions = state.run_calls(response.id, &calls).await;
     assert_eq!(executions.len(), 1);
     assert_eq!(executions[0].name, "get_time");
     assert_eq!(executions[0].call_id, "call-1");
@@ -121,7 +121,8 @@ async fn test_max_loops_response_is_the_last_round_with_total_usage() {
         else {
             panic!("a pending call continues the loop");
         };
-        state.run_calls(response, &calls).await;
+        state.run_calls(response.id.clone(), &calls).await;
+        state.keep_last_response(response);
     }
     let last = state.max_loops_response(2).unwrap();
     assert_eq!(last.id.as_deref(), Some("i2"));

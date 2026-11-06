@@ -51,8 +51,8 @@ pub(super) struct AutoFunctionLoop {
     /// The API may report 0 input tokens on the final response, so the loop
     /// totals every round's usage itself.
     usage: UsageMetadata,
-    /// The response of the last round that ran calls, returned when the loop
-    /// reaches its maximum.
+    /// The last kept round's response, which
+    /// [`max_loops_response`](Self::max_loops_response) returns.
     last_response: Option<InteractionResponse>,
 }
 
@@ -117,11 +117,11 @@ impl AutoFunctionLoop {
     }
 
     /// Runs a round's calls in order and chains the next request on the
-    /// round: the results become its input, the response its previous
-    /// interaction. Returns each call's execution.
+    /// round: the results become its input, and `round_id` (the round's
+    /// response id) its previous interaction. Returns each call's execution.
     pub(super) async fn run_calls(
         &mut self,
-        response: InteractionResponse,
+        round_id: Option<String>,
         calls: &[OwnedFunctionCallInfo],
     ) -> Vec<FunctionExecutionResult> {
         debug!("Executing {} function call(s)", calls.len());
@@ -153,10 +153,17 @@ impl AutoFunctionLoop {
                 result,
             ));
         }
-        self.request.previous_interaction_id = response.id.clone();
+        self.request.previous_interaction_id = round_id;
         self.request.input = Some(InteractionInput::Steps(results));
-        self.last_response = Some(response);
         executions
+    }
+
+    /// Keeps a round that ran calls for
+    /// [`max_loops_response`](Self::max_loops_response), which returns the
+    /// last one kept. Only the final round's is needed, so the streaming
+    /// loop, which must clone it, keeps no other.
+    pub(super) fn keep_last_response(&mut self, response: InteractionResponse) {
+        self.last_response = Some(response);
     }
 
     /// The last round's response, with every round's usage, once the loop
@@ -164,7 +171,8 @@ impl AutoFunctionLoop {
     ///
     /// # Errors
     ///
-    /// [`GenaiError::InvalidInput`] when no round ran: `max_loops` was 0.
+    /// [`GenaiError::InvalidInput`] when no response was kept, because no
+    /// round ran: `max_loops` was 0.
     pub(super) fn max_loops_response(
         mut self,
         max_loops: usize,
