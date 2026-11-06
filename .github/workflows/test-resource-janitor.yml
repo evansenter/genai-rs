@@ -17,7 +17,7 @@ name: Test Resource Janitor
 # The janitor takes a sourceless environment when it holds no files and
 # was not created, updated or used in the last six hours, whoever made it:
 # OPTING IN DELETES EVERY EMPTY, IDLE, SOURCELESS ENVIRONMENT ON THE KEY,
-# not only the tests' (D-032). A sourceless one that holds files is kept
+# not only the tests' (D-033). A sourceless one that holds files is kept
 # and listed in the summary for a person to check.
 #
 # Deleting is the key owner's opt-in. A scheduled run is a dry run, listing

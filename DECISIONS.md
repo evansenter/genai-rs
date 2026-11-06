@@ -1087,7 +1087,7 @@ would otherwise be an empty final turn.
 
 ---
 
-## D-032 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
+## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
 
 **Context.** The leaked-resource janitor (#492) deletes only resources
 that carry a live test's marker, but environments cannot carry one except
