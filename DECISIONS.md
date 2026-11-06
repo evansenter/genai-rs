@@ -475,8 +475,10 @@ implementation module `src/steps/mod.rs` 774; the largest test files
 an audit finding: `tests/module_size.rs` fails on any file over its bar and
 names the file, its count and the limit. It measures as this entry does:
 an implementation module in `src/` or `genai-rs-macros/src/` by its lines
-before its own `#[cfg(test)]` test module (`mod tests` or
-`mod <name>_tests`), at most 800; a unit-test file in `src/` (`*_tests.rs`,
+outside its own `#[cfg(test)]` test modules (`mod tests` or
+`mod <name>_tests`), at most 800 (each sits at the end of its file, so
+these are the lines before it; one declared earlier would not hide the code
+after it); a unit-test file in `src/` (`*_tests.rs`,
 `tests.rs`, `proptest_*.rs`) at most 1,500; the shared test modules
 `tests/common/` and `tests/live_verbs/` at most 800; and every other file
 under `tests/` at most 2,000. "Roughly" is gone: the bar is the number.
