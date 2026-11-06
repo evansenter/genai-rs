@@ -179,8 +179,8 @@ Prompted voices must be stored (`store: true`, the default for
 `CreateVoiceRequest::prompted`) and expire after a year. A voice's
 `sample_audio` is output only: the API generates it and ignores a value
 sent on create. A custom voice worked on the 3.8 and 2.5-pro TTS models;
-`gemini-3.1-flash-tts-preview` returned 500. The dated record is under
-Voices in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#voices).
+`gemini-3.1-flash-tts-preview` returned 500. The record is under Models
+in the [gap tracker](INTERACTIONS_API_GAP.md#models).
 
 ### Multi-speaker
 

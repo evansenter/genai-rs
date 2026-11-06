@@ -1091,7 +1091,11 @@ state the current behavior without a date and link there. Rustdoc keeps
 what a caller needs at the call site, without the date history.
 
 Left where they are: dated comments in tests and fixtures, which are each
-test's evidence; the reasons in the coverage oracle's exception lists, which
+test's evidence; `//` comments in `src/` beside the code a dated
+observation justifies (why a stream event needs no id, why a key is
+scrubbed from the harness's environment), which are that code's evidence in
+the same way and change only with it; the reasons in the coverage oracle's
+exception lists, which
 D-010 asks to be dated; `CHANGELOG.md` and this file, which are history; and
 the API revision `2026-05-20`, which is a version name. Antigravity harness
 behavior is keyed by the harness version, not a date: the guide and the

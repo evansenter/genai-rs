@@ -94,7 +94,7 @@ Stateless conversations need the manual loop; see
 | An uploaded file is not usable yet | `client.files().wait_until_active(&file.name, PollOptions::new()).await?` returns the ready `FileMetadata` (by default it polls every 2 s for up to 2 min; `PollOptions` changes both); `client.files().get(&file.name)` and `is_active()` / `is_processing()` / `is_failed()` show the state |
 | Image generation returns text | Use `genai_rs::DEFAULT_IMAGE_MODEL` and `.with_image_output()` |
 | File Search finds nothing right after an upload | Wait with `client.file_search_stores().documents().wait_until_active(&doc.name, PollOptions::new())` (by default up to 60 s, polling every 500 ms); a pending document just returns no matches |
-| No retrieved chunks in the File Search step | Expected: the `file_search_result` step carries only `call_id` and `signature` (live 2026-11-05). The chunks are folded into the answer, cited by `file_citation` annotations (`all_annotations()`); `has_file_search_results()` says whether a search ran (#429) |
+| No retrieved chunks in the File Search step | Expected: the `file_search_result` step carries only `call_id` and `signature` (see [File Search](docs/ENUM_WIRE_FORMATS.md#file-search)). The chunks are folded into the answer, cited by `file_citation` annotations (`all_annotations()`); `has_file_search_results()` says whether a search ran (#429) |
 | `'google_search' and 'file_search' cannot be combined` | File Search can't be combined with Google Search or URL Context in one request |
 
 ## Other questions

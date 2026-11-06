@@ -20,7 +20,9 @@ values, steps and deltas, resource bodies, paging); this one holds what the
 API accepts, rejects and does, and what the crate models because of it. The
 guides, the README and the rustdoc state the current behavior without dates
 and link here. When a fact changes, update it here and in the one guide
-sentence that states it.
+sentence that states it. Antigravity harness findings concern a local
+binary, not the API: they are keyed by harness version, and their dated
+record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 
 ## How to verify API surface
 
@@ -108,10 +110,13 @@ from here rather than repeated.
 ### Models
 
 - **`DEFAULT_MODEL` (`gemini-3.8-flash`)** rejects `thinking_level:
-  "minimal"` with a 400 (2026-09-24 and 2026-10-01; the message is under
-  ThinkingLevel in `docs/ENUM_WIRE_FORMATS.md`). Omitting the level does not
-  turn thinking off. One short arithmetic puzzle (2026-09-24) spent these
-  thought tokens:
+  "minimal"` with a 400. On 2026-09-24 the message was `'minimal' is not a
+  supported thinking level for this model. Allowed values are: high, low,
+  medium.`; after the server changes of late September it read `Thinking
+  level THINKING_LEVEL_MINIMAL is not supported for this model.` (recorded
+  2026-09-30, #469), and the request was a 400 again on 2026-10-01. Omitting
+  the level does not turn thinking off. One short arithmetic puzzle
+  (2026-09-24) spent these thought tokens:
 
   | Level sent | Thought tokens |
   |------------|----------------|
@@ -161,7 +166,7 @@ from here rather than repeated.
   document content` (2026-11-05). A `.txt` or `.md` file uploaded to the
   Files API still works as a document by URI (2026-11-05).
 - **Content after history** is accepted: see InteractionInput in
-  `docs/ENUM_WIRE_FORMATS.md` (2026-11-06, D-031).
+  `docs/ENUM_WIRE_FORMATS.md` (D-031).
 
 ### Streaming
 
@@ -187,12 +192,14 @@ from here rather than repeated.
 ### Tools
 
 - **MCP:** the call and result shapes, and how they changed, are under MCP
-  identity in `docs/ENUM_WIRE_FORMATS.md` (latest 2026-11-05). An
+  identity in `docs/ENUM_WIRE_FORMATS.md`. An
   interaction can end in `requires_action` after every MCP call was
   answered (see [Server-side changes](#server-side-changes-live-2026-10-01)).
 - **File search** can't be combined with `google_search` or `url_context`
-  (2026-08-16), and its result steps carry no chunks (2026-11-05); see File
-  Search in `docs/ENUM_WIRE_FORMATS.md`.
+  (2026-08-16: `400 '<other>' and 'file_search' cannot be combined in the
+  same request. Please choose one to continue.`); `code_execution` is
+  accepted. What its steps carry is under File Search in
+  `docs/ENUM_WIRE_FORMATS.md`.
 - **Structured output:** the `application/json` schema form is enforced on
   the output (2026-07); see ResponseFormat in
   `docs/ENUM_WIRE_FORMATS.md`.
