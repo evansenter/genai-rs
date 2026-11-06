@@ -371,9 +371,10 @@ impl TranscriptionConfig {
 /// form.
 ///
 /// Variant order is load-bearing. `SpeechConfig`'s fields are all optional
-/// and serde ignores unknown keys, so `{"speakers": [...]}` matches the
-/// `Single` arm perfectly well — yielding an all-`None` config and
-/// **silently discarding the speakers**. `Speakers` must therefore be tried
+/// and its `extra` map takes every key it does not model, so
+/// `{"speakers": [...]}` matches the `Single` arm perfectly well — yielding
+/// a config whose modeled fields are all `None`, with **the speakers left
+/// unparsed in `extra`**. `Speakers` must therefore be tried
 /// first, and its field must stay required so a genuine single object still
 /// falls through to `Single`.
 fn deserialize_speech_configs<'de, D>(

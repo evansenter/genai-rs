@@ -130,8 +130,11 @@ Unknown {
 
 with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 (reference: `Content` in `src/content/`). Response and resource structs are
-`#[non_exhaustive]` (D-002, guarded by `tests/non_exhaustive_responses.rs`)
-and keep unmodeled fields in a `#[serde(flatten)] extra` map; the known
+`#[non_exhaustive]` (D-002) and keep unmodeled fields in a
+`#[serde(flatten)] extra` map, as do request-side types the API echoes on a
+stored interaction and the types read from the Antigravity harness (D-034);
+`tests/non_exhaustive_responses.rs` guards both, with each exemption named
+and reasoned. The known
 variants of `Step`, `StepDelta`, `Content` and `Annotation` do the same with
 an `extra` field, through `src/wire_fields.rs` (#491). Polling
 continues on unknown statuses, bounded by timeouts. Strict mode, the
