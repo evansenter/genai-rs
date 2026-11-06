@@ -438,6 +438,36 @@ surface landed: `src/file_search_stores.rs` 592 lines (963 before),
 `src/http/file_search_stores.rs` 526. Both modules leave the oversized list
 of WP8 and #504.
 
+**And WP8's structure pass (2026-11-06, #504).** After WP8's API changes,
+`src/streaming.rs` was the one implementation module over the bar (841
+lines before its tests). Test files get the same treatment, with guides
+sized for test code, which is longer per behavior: a unit-test file past
+about 1,500 lines, an integration-test file past about 2,000, and the
+shared `tests/common/mod.rs` at 800. Each splits by the feature its tests
+verify (D-008), usually into the sibling test file of the module that
+defines what they test. Pure moves, public paths unchanged:
+
+| From | To |
+|------|----|
+| `Serialize` and `Deserialize` for `AutoFunctionStreamChunk` and `AutoFunctionStreamEvent` in `src/streaming.rs`, with their round-trip tests | `src/streaming/serde_impls.rs`, `serde_impls_tests.rs` |
+| `src/proptest_tests.rs` (3,098 lines) | The root keeps the shared helpers and primitive strategies; the rest, each strategy with its properties, go to `src/proptest_content.rs`, `proptest_steps.rs`, `proptest_request.rs`, `proptest_tools.rs`, `proptest_response.rs` and `proptest_resources.rs` (declared with `#[path]`, as `proptest_unknown_fields.rs` was). The root re-exports the strategies the coverage oracle samples |
+| The step wire-format tests in `src/content/content_tests.rs` (the tool steps that were `Content` variants before revision 2026-05-20) | `src/steps/step_serde_tests.rs` |
+| The annotation and `VideoProcessing` tests in `content_tests.rs` | `src/content/annotation_tests.rs`, `src/content/video_processing_tests.rs` |
+| The built-in tool accessor tests in `src/response/response_tests.rs` | `src/response/tool_steps_tests.rs` |
+| The usage, step-summary and view-type tests in `response_tests.rs` | `usage_tests.rs`, `step_summary_tests.rs`, `views_tests.rs` beside them |
+| `src/request_builder/tests.rs` (2,056 lines) | `input_tests.rs`, `tools_tests.rs`, `output_tests.rs` and `generation_tests.rs` beside the files they test; `tests.rs` keeps the core setters and `build()` |
+| The retry, stream, semantic and fixture helpers in `tests/common/mod.rs` | `tests/common/retry.rs`, `streams.rs`, `semantic.rs`, `fixtures.rs`, re-exported from `mod.rs` |
+| The tests in `tests/http_mock_resources.rs` (4,934 lines) | `tests/http_mock_resources/<resource>.rs`, plus `paging.rs`, `ids.rs` and `errors.rs`; the file keeps the harness |
+
+Test names in the split binaries gain their module
+(`http_mock_resources`'s `credentials::loud_wire_redacts_credential_secrets`,
+the library's `proptest_tests::steps::step_roundtrip`); nextest's
+`test(/name/)` filters still match. Counted afterwards, before any
+`#[cfg(test)]` module: `src/streaming.rs` 609 lines, the largest
+implementation module `src/steps/mod.rs` 774; the largest test files
+`src/content/content_tests.rs` 1,336, `src/response/response_tests.rs`
+1,258 and `tests/http_mock_resources/file_search_stores.rs` 1,052.
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)

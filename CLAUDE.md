@@ -78,7 +78,7 @@ installs a `tracing` subscriber.
 | `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `interaction()`, `execute`/`execute_stream`, `InteractionBuilder` (one file per concern: `input`, `tools`, `output`, `generation`; `ConversationBuilder` in `conversation.rs`), the auto-function loops (`auto_functions.rs`) and the round they share (`auto_functions/round.rs`) |
 | `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
 | `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
-| `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types |
+| `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types (theirs in `streaming/serde_impls.rs`) |
 | `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`) |
 | `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
 | `src/paging.rs`, `src/poll.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()`, and the `list_builder!` macro that defines the builders; `PollOptions` and the wait behind every `wait_until_active` |
@@ -86,13 +86,16 @@ installs a `tracing` subscriber.
 | `src/wire/` | `WireInspector`, `LOUD_WIRE` printer and `WireFilter` (`printer.rs`), `TracingForwarder` |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
+| `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `request`, `tools`, `response`, `resources`, `unknown_fields`) |
 | `fuzz/`, `src/fuzzing.rs` | cargo-fuzz targets (own workspace and lockfile, nightly; `fuzz/README.md`) and their entry points, the `#[doc(hidden)] __fuzz` module, compiled only under `cfg(fuzzing)` and in tests (`fuzzing_tests.rs` replays past crashes) |
 
 Submodules are private; a directory's `mod.rs` re-exports its public items
 explicitly, so public paths do not depend on file layout. Keep implementation
 modules under roughly 800 lines excluding tests: add a module rather than
-growing a large file (D-014). When a module or directory moves, record it in
-`DECISIONS.md` (D-011).
+growing a large file (D-014). Split a unit-test file past about 1,500 lines,
+an integration-test file past about 2,000 and a shared test module past 800,
+by the feature its tests verify (D-008). When a module or directory moves,
+record it in `DECISIONS.md` (D-011).
 
 ## Rules
 
@@ -184,7 +187,8 @@ reaches the wire must use a real id.
   behavior is tested against a local stub (`tests/common/http_stub.rs`) via
   `ClientBuilder::with_base_url`: client behavior in
   `tests/http_mock_tests.rs`, resource endpoints in
-  `tests/http_mock_resources.rs`, and timeouts, cut-off streams and poll
+  `tests/http_mock_resources/` (one file per resource; the harness is
+  `tests/http_mock_resources.rs`), and timeouts, cut-off streams and poll
   retries in `tests/reliability_tests.rs` (paused clock; see
   `docs/TESTING.md`). Real responses, captured with their dates, replay in
   `tests/captured_fixtures.rs`.

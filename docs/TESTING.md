@@ -8,8 +8,8 @@ follow.
 | Kind | Where | Needs a key | Run with |
 |------|-------|-------------|----------|
 | Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
-| Property (proptest) | `src/proptest_tests.rs` | No | `make test` (or `cargo test proptest`) |
-| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs`, `tests/reliability_tests.rs` | No | `make test` |
+| Property (proptest) | `src/proptest_tests.rs` and `src/proptest_<feature>.rs` | No | `make test` (or `cargo test proptest`) |
+| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` (and `tests/http_mock_resources/`), `tests/reliability_tests.rs` | No | `make test` |
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
 | Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
@@ -59,7 +59,10 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
-  success, failure and timeout paths. Files API uploads are left out.
+  success, failure and timeout paths. The file is the shared harness; the
+  tests are one file per resource in `tests/http_mock_resources/` (plus
+  `paging.rs`, `ids.rs` and `errors.rs`), declared from it with `#[path]`
+  so they build into the one binary.
 - **Known bugs**, when there are any, go in
   `tests/http_mock_resources/known_bugs.rs` as failing tests ignored with a
   `known bug: ...` reason until fixed. A subdirectory, because
@@ -275,7 +278,11 @@ async fn test_feature_name() {
 }
 ```
 
-### Helpers (`tests/common/mod.rs`)
+### Helpers (`tests/common/`)
+
+`mod.rs` re-exports its submodules, so every helper is `common::<name>`:
+the retry helpers are in `retry.rs`, the stream consumers in `streams.rs`,
+the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 
 | Helper | Purpose |
 |--------|---------|
@@ -407,7 +414,7 @@ Serialization is tested twice, on purpose:
 
 | Layer | Where | Purpose |
 |-------|-------|---------|
-| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain. `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491) |
+| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491) |
 | Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
 Keep both: the examples are documentation, and they run fast. Both take
