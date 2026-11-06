@@ -13,7 +13,7 @@ fn test_deserialize_streaming_text_delta() {
         StepDelta::Text { text, .. } => {
             assert_eq!(text, "Hello world");
         }
-        other => panic!("Expected Text delta, got {:?}", other),
+        other => panic!("Expected Text delta, got {other:?}"),
     }
 
     assert_eq!(delta.as_text(), Some("Hello world"));
@@ -30,7 +30,7 @@ fn test_deserialize_streaming_thought_signature_delta() {
         StepDelta::ThoughtSignature { signature, .. } => {
             assert_eq!(signature.as_deref(), Some("EosFCogFAXLI2..."));
         }
-        other => panic!("Expected ThoughtSignature delta, got {:?}", other),
+        other => panic!("Expected ThoughtSignature delta, got {other:?}"),
     }
 
     // as_text() returns None for non-text deltas
@@ -47,7 +47,7 @@ fn test_deserialize_streaming_arguments_delta() {
         StepDelta::ArgumentsDelta { arguments, .. } => {
             assert_eq!(arguments, "{\"city\": \"Par");
         }
-        other => panic!("Expected ArgumentsDelta delta, got {:?}", other),
+        other => panic!("Expected ArgumentsDelta delta, got {other:?}"),
     }
 
     assert_eq!(delta.as_arguments_delta(), Some("{\"city\": \"Par"));

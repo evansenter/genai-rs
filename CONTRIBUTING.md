@@ -82,7 +82,8 @@ When adding or changing an enum or request/response field:
       `unknown_<context>_type()`, `unknown_data()` (D-001)
 - [ ] Round-trip test: unknown data survives deserialize → serialize
 - [ ] A new `Step`, `StepDelta`, `Content` or `Annotation` variant gets an
-      `extra` field, an arm in its `src/proptest_tests.rs` strategy and an
+      `extra` field, an arm in its strategy (`src/proptest_steps.rs`,
+      `src/proptest_content.rs`) and an
       ordinal in `src/proptest_unknown_fields.rs`
 - [ ] Update `docs/ENUM_WIRE_FORMATS.md` with the **verified** format and
       the date it was verified

@@ -9,7 +9,7 @@
 //!   and restores the ambient value. It lives here rather than beside either
 //!   mutator because both `client.rs` and `wire.rs` need it (#418).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use tracing::span;
 
 /// Minimal subscriber recording one extracted string per event.
@@ -138,7 +138,9 @@ impl LoudWireGuard {
     /// unrelated failures.
     pub(crate) fn acquire() -> Self {
         Self::with_lock(Some(
-            LOUD_WIRE_LOCK.lock().unwrap_or_else(|e| e.into_inner()),
+            LOUD_WIRE_LOCK
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
         ))
     }
 

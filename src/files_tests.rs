@@ -323,18 +323,15 @@ async fn test_upload_file_unknown_extension_error() {
     let err_string = err.to_string();
     assert!(
         err_string.contains("Could not determine MIME type"),
-        "Error should mention MIME type issue: {}",
-        err_string
+        "Error should mention MIME type issue: {err_string}"
     );
     assert!(
         err_string.contains("data.xyz"),
-        "Error should include filename: {}",
-        err_string
+        "Error should include filename: {err_string}"
     );
     assert!(
         err_string.contains("FileUpload::with_mime_type()"),
-        "Error should name the setter: {}",
-        err_string
+        "Error should name the setter: {err_string}"
     );
 }
 
@@ -353,8 +350,7 @@ async fn test_upload_file_nonexistent_file_error() {
     let err_string = err.to_string();
     assert!(
         err_string.contains("Failed to read file"),
-        "Error should mention file read failure: {}",
-        err_string
+        "Error should mention file read failure: {err_string}"
     );
 }
 
@@ -373,8 +369,7 @@ async fn test_upload_file_bytes_empty_file_error() {
     let err_string = err.to_string();
     assert!(
         err_string.contains("Cannot upload empty file"),
-        "Error should mention empty file: {}",
-        err_string
+        "Error should mention empty file: {err_string}"
     );
 }
 
@@ -393,8 +388,7 @@ async fn test_upload_file_bytes_validates_before_network() {
     let err_string = result.unwrap_err().to_string();
     assert!(
         err_string.contains("Cannot upload empty file"),
-        "Should fail validation before hitting network: {}",
-        err_string
+        "Should fail validation before hitting network: {err_string}"
     );
 }
 
@@ -588,7 +582,7 @@ mod proptest_tests {
                 (FileState::Active, FileState::Active) => {}
                 (FileState::Failed, FileState::Failed) => {}
                 (FileState::Unknown { .. }, FileState::Unknown { .. }) => {}
-                _ => panic!("State changed during roundtrip: {:?} -> {:?}", state, parsed),
+                _ => panic!("State changed during roundtrip: {state:?} -> {parsed:?}"),
             }
         }
 

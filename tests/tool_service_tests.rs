@@ -70,11 +70,11 @@ impl CallableFunction for CalculatorTool {
                 .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'operation'".into()))?;
             let a = args
                 .get("a")
-                .and_then(|v| v.as_f64())
+                .and_then(serde_json::Value::as_f64)
                 .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'a'".into()))?;
             let b = args
                 .get("b")
-                .and_then(|v| v.as_f64())
+                .and_then(serde_json::Value::as_f64)
                 .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'b'".into()))?;
 
             let result = match op {
@@ -212,7 +212,7 @@ async fn test_tool_service_streaming() {
         );
 
         let text = response.as_text().unwrap_or(&result.collected_text);
-        println!("Final response: {}", text);
+        println!("Final response: {text}");
 
         // Should mention 150 (the result of 50 * 3)
         assert!(
@@ -302,7 +302,7 @@ async fn test_tool_service_overrides_global_registry() {
 
         // Verify the custom service's response was used
         let exec_result = &result.executions[0].result;
-        println!("Execution result: {}", exec_result);
+        println!("Execution result: {exec_result}");
 
         // The result should come from our custom tool (has "source": "custom_service")
         assert!(
@@ -347,8 +347,8 @@ async fn test_tool_service_streaming_with_multiple_functions() {
 
             fn call(&self, args: serde_json::Value) -> FunctionFuture<'_> {
  Box::pin(async move {
-                let a = args.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let b = args.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let a = args.get("a").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+                let b = args.get("b").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
                 Ok(json!({ "sum": a + b }))
             })
 }
@@ -368,8 +368,8 @@ async fn test_tool_service_streaming_with_multiple_functions() {
 
             fn call(&self, args: serde_json::Value) -> FunctionFuture<'_> {
  Box::pin(async move {
-                let a = args.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let b = args.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let a = args.get("a").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+                let b = args.get("b").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
                 Ok(json!({ "product": a * b }))
             })
 }

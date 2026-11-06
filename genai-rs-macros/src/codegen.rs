@@ -154,13 +154,25 @@ pub fn generate_declaration_function(
         quote! { #original_fn_ident(#fn_call_args) }
     };
 
+    // The generated items are public, so each carries a doc comment: a crate
+    // that warns or denies `missing_docs` would otherwise report every tool.
+    let struct_doc = format!(
+        "The `CallableFunction` that `#[tool]` generated for `{func_name}`, \
+         registered for the auto-function loop."
+    );
+    let declaration_doc =
+        format!("The `FunctionDeclaration` of `{func_name}`, as the model sees it.");
+    let factory_doc = format!("A boxed `{callable_struct_name_str}`, for the function registry.");
+
     let output = quote! {
         #func
 
+        #[doc = #struct_doc]
         #[derive(Debug, Clone, Copy)]
         pub struct #callable_struct_name;
 
         impl #callable_struct_name {
+            /// Creates the callable.
             pub const fn new() -> Self {
                 Self
             }
@@ -201,6 +213,7 @@ pub fn generate_declaration_function(
             }
         }
 
+        #[doc = #declaration_doc]
         pub fn #generated_fn_name() -> ::genai_rs::FunctionDeclaration {
              // Fully qualified, so the expansion site needs no
              // `CallableFunction` import.
@@ -208,6 +221,7 @@ pub fn generate_declaration_function(
                  ::declaration(&#callable_struct_name::new())
         }
 
+        #[doc = #factory_doc]
         pub fn #generated_callable_factory_fn_name() -> Box<dyn ::genai_rs::function_calling::CallableFunction> {
             Box::new(#callable_struct_name::new())
         }

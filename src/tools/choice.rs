@@ -193,7 +193,7 @@ impl<'de> Deserialize<'de> for ToolChoice {
                     value
                 );
                 Ok(Self::Unknown {
-                    choice_type: format!("<unrecognized: {}>", value),
+                    choice_type: format!("<unrecognized: {value}>"),
                     data: value,
                 })
             }

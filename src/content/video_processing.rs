@@ -321,7 +321,7 @@ impl<'de> Deserialize<'de> for VideoProcessing {
             });
         }
 
-        let processing_type = format!("<non-string: {}>", value);
+        let processing_type = format!("<non-string: {value}>");
         tracing::warn!(
             "VideoProcessing received an unsupported value: {}. \
              Preserving in Unknown variant.",
@@ -341,7 +341,11 @@ impl fmt::Display for VideoProcessing {
             Self::Agentic => write!(f, "agentic"),
             Self::Unknown {
                 processing_type, ..
-            } => write!(f, "{}", processing_type),
+            } => write!(f, "{processing_type}"),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "video_processing_tests.rs"]
+mod tests;

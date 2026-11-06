@@ -232,3 +232,81 @@ fn a_modality_entry_without_a_count_reads_as_zero() {
         serde_json::json!({"tokens": 3})
     );
 }
+
+// --- UsageMetadata Tests ---
+
+#[test]
+fn test_deserialize_usage_metadata_partial() {
+    // Test that partial usage responses deserialize correctly with #[serde(default)]
+    let partial_json = r#"{"total_tokens": 42}"#;
+    let usage: UsageMetadata = serde_json::from_str(partial_json).expect("Deserialization failed");
+
+    assert_eq!(usage.total_tokens, Some(42));
+    assert_eq!(usage.total_input_tokens, None);
+    assert_eq!(usage.total_output_tokens, None);
+    assert_eq!(usage.total_cached_tokens, None);
+    assert_eq!(usage.total_thought_tokens, None);
+    assert_eq!(usage.total_tool_use_tokens, None);
+}
+
+#[test]
+fn test_deserialize_usage_metadata_empty() {
+    // Test that empty usage object deserializes to defaults
+    let empty_json = r#"{}"#;
+    let usage: UsageMetadata = serde_json::from_str(empty_json).expect("Deserialization failed");
+
+    assert_eq!(usage.total_tokens, None);
+    assert_eq!(usage.total_input_tokens, None);
+    assert_eq!(usage.total_output_tokens, None);
+}
+
+#[test]
+fn test_usage_metadata_has_data() {
+    // Empty usage has no data
+    let empty = UsageMetadata::default();
+    assert!(!empty.has_data());
+
+    // Usage with only total_tokens
+    let with_total = UsageMetadata {
+        total_tokens: Some(100),
+        ..Default::default()
+    };
+    assert!(with_total.has_data());
+
+    // Usage with only cached tokens
+    let with_cached = UsageMetadata {
+        total_cached_tokens: Some(50),
+        ..Default::default()
+    };
+    assert!(with_cached.has_data());
+}
+
+#[test]
+fn test_usage_metadata_grounding_tool_count() {
+    // grounding_tool_count is new in revision 2026-05-20
+    let json = r#"{
+        "total_tokens": 100,
+        "grounding_tool_count": [
+            {"type": "google_search", "count": 2},
+            {"type": "google_maps", "count": 1}
+        ]
+    }"#;
+    let usage: UsageMetadata = serde_json::from_str(json).expect("Deserialization failed");
+
+    assert!(usage.has_data());
+    let counts = usage.grounding_tool_count.as_ref().expect("Should exist");
+    assert_eq!(counts.len(), 2);
+    assert_eq!(counts[0].tool_type.as_deref(), Some("google_search"));
+    assert_eq!(counts[0].count, Some(2));
+
+    assert_eq!(usage.grounding_count_for_tool("google_search"), Some(2));
+    assert_eq!(usage.grounding_count_for_tool("google_maps"), Some(1));
+    assert_eq!(usage.grounding_count_for_tool("retrieval"), None);
+
+    // The wire field is "type" (snake_case)
+    let reserialized = serde_json::to_value(&usage).unwrap();
+    assert_eq!(
+        reserialized["grounding_tool_count"][0]["type"],
+        "google_search"
+    );
+}

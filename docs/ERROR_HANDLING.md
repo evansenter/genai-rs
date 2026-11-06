@@ -65,7 +65,7 @@ what Google support needs to find a specific failed request.
 `is_retryable()` covers transport errors, timeouts, 429 and 5xx. The
 integration suite also retries three error classes that `is_retryable()`
 deliberately leaves out, because they are matched on message text rather than
-status (`tests/common/mod.rs`, `is_transient_error`):
+status (`tests/common/retry.rs`, `is_transient_error`):
 
 | Error | Notes |
 |-------|-------|

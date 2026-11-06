@@ -112,6 +112,10 @@ pub struct CancelHandle {
 
 impl CancelHandle {
     /// Sends a halt request for the current turn.
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::WebSocket`] when the halt request cannot be sent.
     pub async fn cancel(&self) -> Result<(), AntigravityError> {
         self.sink.send(&InputEvent::HaltRequest(true)).await
     }
@@ -178,6 +182,10 @@ impl AntigravityAgent {
 
     /// Cancels the current turn (equivalent to
     /// [`CancelHandle::cancel`]).
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::WebSocket`] when the halt request cannot be sent.
     pub async fn cancel(&self) -> Result<(), AntigravityError> {
         self.session.send(&InputEvent::HaltRequest(true)).await
     }
@@ -190,6 +198,17 @@ impl AntigravityAgent {
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::Config`] for an empty [`Prompt`];
+    /// [`AntigravityError::Turn`] when the turn fails (a model backend error,
+    /// a cancellation by the harness, or a pre-turn denial);
+    /// [`AntigravityError::Timeout`] past the turn timeout;
+    /// [`AntigravityError::ConnectionClosed`] or
+    /// [`AntigravityError::WebSocket`] when the connection to the harness
+    /// fails; and [`AntigravityError::Protocol`] when the turn ends without a
+    /// `Finished` event.
     ///
     /// [`Media`]: super::Media
     pub async fn chat(
@@ -221,6 +240,13 @@ impl AntigravityAgent {
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::Config`] for an empty [`Prompt`], and
+    /// [`AntigravityError::WebSocket`] when the message cannot be sent. The
+    /// turn's own failures, as listed for [`chat`](Self::chat), arrive as the
+    /// stream's items.
     pub async fn send_streaming(
         &mut self,
         prompt: impl Into<Prompt>,
@@ -248,6 +274,11 @@ impl AntigravityAgent {
     /// Gracefully shuts down: closes the WebSocket (the harness serializes
     /// its trajectory), closes stdin (EOF triggers the harness's clean
     /// exit), then escalates to SIGTERM and SIGKILL if it lingers.
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::HarnessExited`] when the harness exits with a
+    /// failure status, which usually means it did not save the trajectory.
     pub async fn shutdown(mut self) -> Result<(), AntigravityError> {
         // Summarize protocol drift once, at the natural end of a session.
         // Individual `warn!`s scroll past mid-run; the aggregate is what
@@ -287,6 +318,12 @@ impl AntigravityAgent {
     /// The next `chat`/`send_streaming` still makes sure no other trigger
     /// turn is running before it sends (a halt, which does nothing when no
     /// turn runs, and up to half a second of draining).
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::ConnectionClosed`] when the harness closes the
+    /// connection while this waits, and a failed turn's errors, as for
+    /// [`chat`](Self::chat).
     ///
     /// ```rust,ignore
     /// // React to whatever the triggers start, between user turns.
@@ -476,7 +513,7 @@ impl AntigravityAgent {
             };
             match event.payload {
                 Some(OutputPayload::InitializeConversationResponse(response)) => {
-                    self.conversation_id = response.cascade_id.clone();
+                    self.conversation_id.clone_from(&response.cascade_id);
                     self.initial_history = response.history;
                     self.sandbox_status = response.sandbox_status;
                     return Ok(());

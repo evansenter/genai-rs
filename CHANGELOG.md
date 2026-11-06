@@ -688,9 +688,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build()` used to refuse the pair, a rule left from when content went on
   the wire as a bare array; the API takes the composed form like any
   history (verified live 2026-11-06).
+- `detect_mime_type`, `FunctionDeclaration::new` and
+  `FunctionParameters::new` are `#[must_use]`, so a call that discards the
+  result warns.
 
 ### Fixed
 
+- `#[tool]` documents everything it generates: the `<Name>Callable`
+  struct, its `new`, and the `<name>_declaration` and
+  `<name>_callable_factory` functions. They are public, so a crate that
+  warns on or denies `missing_docs` reported each of them for every tool.
 - Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
   variants now survive a deserialize/re-serialize round trip, and so do
   unknown fields on the result items, review snippets, step errors and

@@ -285,7 +285,7 @@ impl Annotation {
             }
             Self::Unknown { data, .. } => data
                 .get("start_index")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as usize),
         }
     }
@@ -300,7 +300,7 @@ impl Annotation {
             Self::SpeechMetadata { end_index, .. } | Self::WordInfo { end_index, .. } => *end_index,
             Self::Unknown { data, .. } => data
                 .get("end_index")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as usize),
         }
     }

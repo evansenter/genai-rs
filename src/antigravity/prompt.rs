@@ -229,9 +229,12 @@ impl Media {
     }
 
     /// Reads a file, taking the MIME type from its extension (the Python
-    /// SDK's `from_file`). Fails with [`AntigravityError::Config`] when the
-    /// extension names no known type, and with [`AntigravityError::Io`]
-    /// when the file cannot be read.
+    /// SDK's `from_file`).
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::Config`] when the extension names no known type,
+    /// and [`AntigravityError::Io`] when the file cannot be read.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, AntigravityError> {
         let path = path.as_ref();
         let mime_type = crate::detect_mime_type(path).ok_or_else(|| {

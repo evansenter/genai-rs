@@ -1,3 +1,6 @@
+//! [`InteractionBuilder`], which builds and sends an interaction request,
+//! and [`ConversationBuilder`] for multi-turn input.
+
 mod auto_functions;
 mod conversation;
 mod generation;
@@ -499,8 +502,7 @@ impl<'a> InteractionBuilder<'a> {
             }
             (Some(model), Some(agent)) => {
                 return Err(GenaiError::InvalidInput(format!(
-                    "Cannot specify both model ('{}') and agent ('{}') - use one or the other",
-                    model, agent
+                    "Cannot specify both model ('{model}') and agent ('{agent}') - use one or the other"
                 )));
             }
             _ => {} // Valid: exactly one is set

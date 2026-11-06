@@ -1,3 +1,6 @@
+//! Compile-time tests (trybuild): what `#[tool]` and the response types
+//! must reject, and what they must accept without extra imports.
+
 #[test]
 fn ui() {
     let t = trybuild::TestCases::new();

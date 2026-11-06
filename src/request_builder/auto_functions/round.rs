@@ -14,8 +14,8 @@ use crate::function_calling::{CallableFunction, FunctionRegistry, get_global_fun
 use crate::request::InteractionRequest;
 use crate::streaming::FunctionExecutionResult;
 use crate::{
-    GenaiError, InteractionInput, InteractionResponse, OwnedFunctionCallInfo, Step, ToolService,
-    UsageMetadata,
+    FunctionCallInfo, GenaiError, InteractionInput, InteractionResponse, OwnedFunctionCallInfo,
+    Step, ToolService, UsageMetadata,
 };
 
 /// Default maximum iterations for auto function calling.
@@ -107,7 +107,7 @@ impl AutoFunctionLoop {
         let calls: Vec<_> = response
             .pending_function_calls()
             .iter()
-            .map(|call| call.to_owned())
+            .map(FunctionCallInfo::to_owned)
             .collect();
         if calls.is_empty() {
             debug!("No function calls in response, completing the auto-function loop");

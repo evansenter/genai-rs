@@ -1,3 +1,5 @@
+//! [`Client`], the entry point, and [`ClientBuilder`] for its settings.
+
 use crate::GenaiError;
 use crate::http::context::HttpContext;
 use crate::wire::WireInspector;
@@ -808,19 +810,17 @@ mod tests {
     #[test]
     fn test_client_debug_redacts_api_key() {
         let client = Client::new("super_secret_api_key_12345".to_string());
-        let debug_output = format!("{:?}", client);
+        let debug_output = format!("{client:?}");
 
         // API key should NOT appear in debug output
         assert!(
             !debug_output.contains("super_secret_api_key_12345"),
-            "API key was exposed in debug output: {}",
-            debug_output
+            "API key was exposed in debug output: {debug_output}"
         );
         // Should show [REDACTED] instead
         assert!(
             debug_output.contains("[REDACTED]"),
-            "Debug output should contain [REDACTED]: {}",
-            debug_output
+            "Debug output should contain [REDACTED]: {debug_output}"
         );
     }
 
@@ -881,19 +881,17 @@ mod tests {
     fn test_client_builder_debug_redacts_api_key() {
         let builder = Client::builder("another_secret_key_67890".to_string())
             .with_timeout(Duration::from_secs(60));
-        let debug_output = format!("{:?}", builder);
+        let debug_output = format!("{builder:?}");
 
         // API key should NOT appear in debug output
         assert!(
             !debug_output.contains("another_secret_key_67890"),
-            "API key was exposed in builder debug output: {}",
-            debug_output
+            "API key was exposed in builder debug output: {debug_output}"
         );
         // Should show [REDACTED] instead
         assert!(
             debug_output.contains("[REDACTED]"),
-            "Builder debug output should contain [REDACTED]: {}",
-            debug_output
+            "Builder debug output should contain [REDACTED]: {debug_output}"
         );
     }
 }

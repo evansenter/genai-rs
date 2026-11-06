@@ -150,7 +150,7 @@ fn test_tool_retrieval_roundtrip() {
             assert_eq!(exa_ai_search_config, None);
             assert_eq!(parallel_ai_search_config, None);
         }
-        other => panic!("Expected Retrieval variant, got {:?}", other),
+        other => panic!("Expected Retrieval variant, got {other:?}"),
     }
 }
 

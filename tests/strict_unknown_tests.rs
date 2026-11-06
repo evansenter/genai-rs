@@ -298,8 +298,7 @@ mod strict_mode {
         // Verify the type name is in the error message
         assert!(
             err_msg.contains("experimental_api_type"),
-            "Error message should contain the unknown type name. Got: {}",
-            err_msg
+            "Error message should contain the unknown type name. Got: {err_msg}"
         );
     }
 
@@ -314,8 +313,7 @@ mod strict_mode {
         // Verify strict mode is mentioned
         assert!(
             err_msg.contains("strict") || err_msg.contains("Strict"),
-            "Error message should mention strict mode. Got: {}",
-            err_msg
+            "Error message should mention strict mode. Got: {err_msg}"
         );
     }
 
@@ -331,15 +329,13 @@ mod strict_mode {
         // The error message should mention how to resolve the issue
         assert!(
             err_msg.contains("genai_strict_unknown"),
-            "Error message should mention the feature flag. Got: {}",
-            err_msg
+            "Error message should mention the feature flag. Got: {err_msg}"
         );
 
         // Should also mention updating the library or disabling strict mode
         assert!(
             err_msg.contains("update") || err_msg.contains("disable"),
-            "Error message should provide actionable guidance. Got: {}",
-            err_msg
+            "Error message should provide actionable guidance. Got: {err_msg}"
         );
     }
 
@@ -421,18 +417,15 @@ mod strict_mode {
 
         assert!(
             err_msg.contains("experimental_step_type"),
-            "Error message should contain the unknown step type. Got: {}",
-            err_msg
+            "Error message should contain the unknown step type. Got: {err_msg}"
         );
         assert!(
             err_msg.contains("strict") || err_msg.contains("Strict"),
-            "Error message should mention strict mode. Got: {}",
-            err_msg
+            "Error message should mention strict mode. Got: {err_msg}"
         );
         assert!(
             err_msg.contains("genai_strict_unknown"),
-            "Error message should mention the feature flag. Got: {}",
-            err_msg
+            "Error message should mention the feature flag. Got: {err_msg}"
         );
     }
 

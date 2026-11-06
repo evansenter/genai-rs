@@ -484,3 +484,7 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 }
+
+#[cfg(test)]
+#[path = "tools_tests.rs"]
+mod tests;

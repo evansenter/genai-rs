@@ -35,6 +35,7 @@ impl FunctionDeclaration {
     /// This is primarily intended for internal use by the macro system.
     /// For manual construction, prefer using `FunctionDeclaration::builder()`.
     #[doc(hidden)]
+    #[must_use]
     pub fn new(name: String, description: String, parameters: FunctionParameters) -> Self {
         Self {
             name,
@@ -84,6 +85,7 @@ impl FunctionParameters {
     /// This is primarily intended for internal use by the macro system.
     /// For manual construction, prefer using `FunctionDeclaration::builder()`.
     #[doc(hidden)]
+    #[must_use]
     pub fn new(type_: String, properties: serde_json::Value, required: Vec<String>) -> Self {
         Self {
             type_,

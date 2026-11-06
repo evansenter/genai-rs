@@ -121,7 +121,7 @@ async fn read_error_parts(response: Response) -> ErrorParts {
     let body = response
         .text()
         .await
-        .unwrap_or_else(|e| format!("Failed to read error body: {}", e));
+        .unwrap_or_else(|e| format!("Failed to read error body: {e}"));
 
     ErrorParts {
         status_code,
@@ -158,7 +158,7 @@ fn parse_retry_after(value: &str) -> Option<std::time::Duration> {
 /// Formats a JSON parse error with a preview of the raw JSON.
 pub fn format_json_parse_error(json_str: &str, error: serde_json::Error) -> String {
     let preview = truncate_for_context(json_str, ERROR_BODY_PREVIEW_LENGTH);
-    format!("JSON parse error: {} | Context: {}", error, preview)
+    format!("JSON parse error: {error} | Context: {preview}")
 }
 
 /// Deserializes a successful response body.
@@ -309,14 +309,12 @@ mod tests {
         // Should include the type context
         assert!(
             err_str.contains("InteractionResponse"),
-            "Error should mention the type: {}",
-            err_str
+            "Error should mention the type: {err_str}"
         );
         // Should include JSON preview
         assert!(
             err_str.contains("wrong_field"),
-            "Error should include JSON preview: {}",
-            err_str
+            "Error should include JSON preview: {err_str}"
         );
     }
 
@@ -330,7 +328,7 @@ mod tests {
 
         // Create JSON longer than 200 chars
         let long_value = "x".repeat(300);
-        let json = format!(r#"{{"long_field": "{}"}}"#, long_value);
+        let json = format!(r#"{{"long_field": "{long_value}"}}"#);
 
         let result: Result<TestData, _> = deserialize_with_context(&json, "test");
         assert!(result.is_err());
@@ -341,8 +339,7 @@ mod tests {
         // Should be truncated (contains "...")
         assert!(
             err_str.contains("..."),
-            "Long JSON should be truncated: {}",
-            err_str
+            "Long JSON should be truncated: {err_str}"
         );
     }
 

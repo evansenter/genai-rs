@@ -153,6 +153,7 @@ use std::path::Path;
 /// assert_eq!(detect_mime_type(Path::new("audio.mp3")), Some("audio/mp3"));
 /// assert_eq!(detect_mime_type(Path::new("unknown.xyz")), None);
 /// ```
+#[must_use]
 pub fn detect_mime_type(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     match ext.as_str() {
@@ -267,7 +268,7 @@ fn get_extension_info(path: &Path) -> Result<String, GenaiError> {
         ))
     })?;
 
-    ext_osstr.to_str().map(|s| s.to_lowercase()).ok_or_else(|| {
+    ext_osstr.to_str().map(str::to_lowercase).ok_or_else(|| {
         GenaiError::InvalidInput(format!(
             "File extension for '{}' contains invalid UTF-8. \
              Use the *_with_mime() variant to specify the type explicitly.",
@@ -382,6 +383,11 @@ pub async fn image_from_file(path: impl AsRef<Path>) -> Result<Content, GenaiErr
 ///
 /// Use this when you need to override the auto-detected MIME type.
 ///
+/// # Errors
+///
+/// Returns [`GenaiError::InvalidInput`] if the file cannot be read (with a
+/// suggestion based on the error type).
+///
 /// # Example
 ///
 /// ```no_run
@@ -465,6 +471,11 @@ pub async fn audio_from_file(path: impl AsRef<Path>) -> Result<Content, GenaiErr
 /// Use this when you need to override the auto-detected MIME type,
 /// such as for files with non-standard extensions.
 ///
+/// # Errors
+///
+/// Returns [`GenaiError::InvalidInput`] if the file cannot be read (with a
+/// suggestion based on the error type).
+///
 /// # Example
 ///
 /// ```no_run
@@ -547,6 +558,11 @@ pub async fn video_from_file(path: impl AsRef<Path>) -> Result<Content, GenaiErr
 ///
 /// Use this when you need to override the auto-detected MIME type,
 /// such as for files with non-standard extensions.
+///
+/// # Errors
+///
+/// Returns [`GenaiError::InvalidInput`] if the file cannot be read (with a
+/// suggestion based on the error type).
 ///
 /// # Example
 ///
@@ -701,6 +717,11 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 /// document content and rejects the rest, `text/plain` and `text/markdown`
 /// included, so send text files with [`document_from_file`] or
 /// [`Content::text()`].
+///
+/// # Errors
+///
+/// Returns [`GenaiError::InvalidInput`] if the file cannot be read (with a
+/// suggestion based on the error type).
 ///
 /// # Example
 ///

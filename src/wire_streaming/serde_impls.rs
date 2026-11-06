@@ -180,7 +180,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
 
         fn index_of(data: &serde_json::Value) -> usize {
             data.get("index")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as usize)
                 .unwrap_or_else(|| {
                     tracing::warn!(
@@ -203,8 +203,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 let interaction: Box<InteractionResponse> = serde_json::from_value(data_of(&value))
                     .map_err(|e| {
                         serde::de::Error::custom(format!(
-                            "Failed to deserialize StreamChunk::Created data: {}",
-                            e
+                            "Failed to deserialize StreamChunk::Created data: {e}"
                         ))
                     })?;
                 Ok(Self::Created { interaction })
@@ -236,8 +235,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                     .transpose()
                     .map_err(|e| {
                         serde::de::Error::custom(format!(
-                            "Failed to deserialize StreamChunk::StatusUpdate status: {}",
-                            e
+                            "Failed to deserialize StreamChunk::StatusUpdate status: {e}"
                         ))
                     })?
                     .unwrap_or_else(|| {
@@ -259,8 +257,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 )
                 .map_err(|e| {
                     serde::de::Error::custom(format!(
-                        "Failed to deserialize StreamChunk::StepStart step: {}",
-                        e
+                        "Failed to deserialize StreamChunk::StepStart step: {e}"
                     ))
                 })?;
                 Ok(Self::StepStart { index, step })
@@ -275,8 +272,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 )
                 .map_err(|e| {
                     serde::de::Error::custom(format!(
-                        "Failed to deserialize StreamChunk::StepDelta delta: {}",
-                        e
+                        "Failed to deserialize StreamChunk::StepDelta delta: {e}"
                     ))
                 })?;
                 let total_usage = data
@@ -316,8 +312,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 let response: Box<InteractionResponse> = serde_json::from_value(data_of(&value))
                     .map_err(|e| {
                         serde::de::Error::custom(format!(
-                            "Failed to deserialize StreamChunk::Completed data: {}",
-                            e
+                            "Failed to deserialize StreamChunk::Completed data: {e}"
                         ))
                     })?;
                 Ok(Self::Completed(response))

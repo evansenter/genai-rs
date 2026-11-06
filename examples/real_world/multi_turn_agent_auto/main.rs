@@ -142,7 +142,7 @@ impl SupportSession {
         if result.reached_max_loops {
             return Err("the agent was still calling tools when the loop limit hit".into());
         }
-        self.last_interaction_id = result.response.id.clone();
+        self.last_interaction_id.clone_from(&result.response.id);
         Ok(result
             .response
             .as_text()

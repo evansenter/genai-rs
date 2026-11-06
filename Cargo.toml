@@ -9,12 +9,32 @@ exclude = ["fuzz"]
 # A new `unsafe` is a reviewed decision: each existing site carries an
 # explicit `#[allow(unsafe_code)]` and a SAFETY comment.
 unsafe_code = "deny"
+# Every public item is documented: docs.rs is the API reference. Test and
+# example crates need a crate doc too, saying what they cover (#501).
+missing_docs = "warn"
 # No source currently branches on cfg(docsrs); this allowance keeps the
 # docs.rs rustdoc-arg below lint-clean if a #[cfg(docsrs)] is ever added.
 # `cargo fuzz` sets cfg(fuzzing), which compiles `__fuzz` (src/fuzzing.rs).
 # `--cfg genai_strict_unknown` turns on strict mode for unknown API values
 # (D-030): a cfg rather than a Cargo feature, because it is not additive.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)", "cfg(genai_strict_unknown)"] }
+
+# Pedantic lints chosen one by one, beyond clippy's defaults (#501).
+# `make clippy` and CI run with `-D warnings`, so each is enforced in src/,
+# tests/ and examples/. Groups (`pedantic`) are left off: most of their
+# lints are noise here, and a group grows with every clippy release.
+[workspace.lints.clippy]
+# `format!("{name}")`, not `format!("{}", name)`.
+uninlined_format_args = "warn"
+# `a.clone_from(&b)` reuses `a`'s allocation where `a = b.clone()` drops it.
+assigning_clones = "warn"
+# `.and_then(Value::as_u64)`, not `.and_then(|v| v.as_u64())`.
+redundant_closure_for_method_calls = "warn"
+# CLAUDE.md's `#[must_use]` rule for getters, handles and boolean checks,
+# applied to every public function whose result is the point of calling it.
+must_use_candidate = "warn"
+# A public function returning `Result` says when it fails, under `# Errors`.
+missing_errors_doc = "warn"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

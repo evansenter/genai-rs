@@ -271,7 +271,7 @@ mod tool_choice {
                 assert!(matches!(allowed.mode, Some(FunctionCallingMode::Auto)));
                 assert_eq!(allowed.tools, vec!["a".to_string(), "b".to_string()]);
             }
-            other => panic!("Expected AllowedTools, got {:?}", other),
+            other => panic!("Expected AllowedTools, got {other:?}"),
         }
     }
 

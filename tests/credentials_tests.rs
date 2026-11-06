@@ -380,7 +380,8 @@ async fn test_credentials_reach_sandbox_and_egress() {
                         .map(|r| r.result)
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let step_types: Vec<_> = done.steps.iter().map(|s| s.step_type()).collect();
+                    let step_types: Vec<_> =
+                        done.steps.iter().map(genai_rs::Step::step_type).collect();
                     assert!(
                         output.contains(&format!("FIXTURE=[{file_nonce}]")),
                         "the script did not run inside the environment (fixture file \
