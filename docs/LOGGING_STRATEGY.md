@@ -2,26 +2,40 @@
 
 `genai-rs` has two observability channels:
 
-- **Library logs** through [`tracing`](https://docs.rs/tracing), controlled
-  with `RUST_LOG`.
 - **Wire inspection**: every request, response, SSE frame and upload as a
-  structured `wire::WireEvent`. `LOUD_WIRE=1` prints them; you can also
-  install your own inspector.
+  structured `wire::WireEvent`. `LOUD_WIRE=1` prints them, with no setup:
+  it works in any program built on the crate, the examples and tests
+  included. You can also install your own inspector.
+- **Library logs** through [`tracing`](https://docs.rs/tracing). `RUST_LOG`
+  filters them only in a program that installs a `tracing` subscriber,
+  which your application does.
+
+**What works where.** `LOUD_WIRE` works out of the box. `RUST_LOG` needs a
+subscriber the application installs, and none of this repository's
+examples or tests installs one, so `RUST_LOG` does nothing there; use
+`LOUD_WIRE` with them.
 
 ## Library logs
 
-Install a subscriber in your application. The library itself emits nothing
-until one is installed.
+The library emits `tracing` events and spans; nothing prints them until the
+application installs a subscriber. With
+[`tracing-subscriber`](https://docs.rs/tracing-subscriber) (its
+`env-filter` feature), this one reads `RUST_LOG`:
 
+<!-- ignore: needs the tracing-subscriber crate, which genai-rs does not depend on -->
 ```rust,ignore
-tracing_subscriber::fmt()
-    .with_env_filter("genai_rs=debug")
-    .init();
+use tracing_subscriber::EnvFilter;
+
+fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+    // ... build the Client and run
+}
 ```
 
-Then run your program with `RUST_LOG=genai_rs=debug`. The bundled examples
-install no subscriber, so `RUST_LOG` does nothing for them; use `LOUD_WIRE=1`
-there.
+Then run the program with `RUST_LOG=genai_rs=debug` for the library's
+logs, or a narrower target such as `RUST_LOG=genai_rs::antigravity=debug`.
 
 | Level | Used for |
 |-------|----------|
@@ -66,15 +80,15 @@ LOUD_WIRE=1 cargo run --example simple_interaction
 ### LOUD_WIRE output format
 
 ```text
-[LOUD_WIRE] 2026-09-24T10:30:45Z [REQ#1] >>> POST https://generativelanguage.googleapis.com/v1beta/interactions
-[LOUD_WIRE] 2026-09-24T10:30:45Z [REQ#1] Body:
-[LOUD_WIRE] 2026-09-24T10:30:45Z [REQ#1] {
-[LOUD_WIRE] 2026-09-24T10:30:45Z [REQ#1]   "model": "gemini-3.8-flash",
-[LOUD_WIRE] 2026-09-24T10:30:45Z [REQ#1]   "input": "Hello!"
-[LOUD_WIRE] 2026-09-24T10:30:45Z [REQ#1] }
-[LOUD_WIRE] 2026-09-24T10:30:46Z [RES#1] <<< 200 OK
-[LOUD_WIRE] 2026-09-24T10:30:46Z [RES#1] Response:
-[LOUD_WIRE] 2026-09-24T10:30:46Z [RES#1] { ...pretty-printed JSON... }
+[LOUD_WIRE] 2026-01-01T10:30:45Z [REQ#1] >>> POST https://generativelanguage.googleapis.com/v1beta/interactions
+[LOUD_WIRE] 2026-01-01T10:30:45Z [REQ#1] Body:
+[LOUD_WIRE] 2026-01-01T10:30:45Z [REQ#1] {
+[LOUD_WIRE] 2026-01-01T10:30:45Z [REQ#1]   "model": "gemini-3.8-flash",
+[LOUD_WIRE] 2026-01-01T10:30:45Z [REQ#1]   "input": "Hello!"
+[LOUD_WIRE] 2026-01-01T10:30:45Z [REQ#1] }
+[LOUD_WIRE] 2026-01-01T10:30:46Z [RES#1] <<< 200 OK
+[LOUD_WIRE] 2026-01-01T10:30:46Z [RES#1] Response:
+[LOUD_WIRE] 2026-01-01T10:30:46Z [RES#1] { ...pretty-printed JSON... }
 ```
 
 Streaming responses print one `SSE event: <type>` line plus an `SSE:` body per
@@ -156,9 +170,10 @@ let client = Client::builder("api-key".to_string())
 # }
 ```
 
-In a program with a subscriber and a `TracingForwarder` registered,
-`RUST_LOG=genai_rs::wire=debug` selects the wire events alone, and
-`RUST_LOG=genai_rs=debug,genai_rs::wire=debug` adds the library logs.
+In a program that installs a subscriber (above) and registers a
+`TracingForwarder`, `RUST_LOG=genai_rs::wire=debug` selects the wire events
+alone, and `RUST_LOG=genai_rs=debug` shows the library logs and the wire
+events together (the `genai_rs::wire` target sits under `genai_rs`).
 
 ## Guidelines for contributors
 

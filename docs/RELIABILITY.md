@@ -101,8 +101,9 @@ retry only the API call.
 ### Streams
 
 A stream cannot be retried mid-flight: re-sending the request starts a new
-generation. A dropped foreground stream is cancelled server-side (verified
-live 2026-11-01), so only a **background** interaction can be resumed: pick
+generation. A dropped foreground stream is cancelled server-side (see
+Streaming in the [gap tracker](INTERACTIONS_API_GAP.md#streaming)), so only
+a **background** interaction can be resumed: pick
 up the *same* generation from the last `event_id` with
 `client.interactions().resume_stream(interaction_id, last_event_id)`; see
 [Stream Resume](STREAMING_API.md#stream-resume).
@@ -152,10 +153,11 @@ The stored interaction is readable once the stream has ended, unless the
 read of its tail was cut short (below). After
 `interaction.completed` the API sends `event: done` / `data: [DONE]` and
 closes the connection about a second later, and finishes storing the
-interaction during that tail (verified live 2026-11-05): a `GET` sent right
-after closing the connection at `interaction.completed` answered
-`500 Internal error encountered`, the same `GET` ten seconds later `200`,
-and one sent after reading to the end `200` at once. So to `get` a streamed
+interaction during that tail: a `GET` sent right after closing the
+connection at `interaction.completed` has answered `500 Internal error
+encountered`, while one sent after reading to the end answers `200` at once
+(dated under Streaming in the
+[gap tracker](INTERACTIONS_API_GAP.md#streaming)). So to `get` a streamed
 interaction or chain on it with `previous_interaction_id` right away, read
 the stream until `next()` returns `None`; dropping it at `Completed` races
 the server. `create_stream_with_auto_functions()` reads each round to its
@@ -222,7 +224,7 @@ let client = Client::builder("test-key".to_string())
 
 ### Why only a connect timeout by default
 
-Decided 2026-11-04 (#500). Connecting takes well under a second to Google's
+Decided in #500. Connecting takes well under a second to Google's
 front ends, so 30 s only ever fires on a broken path. It rides out four lost
 SYNs on Linux (retransmits at 1, 3, 7 and 15 s) and a slow mobile or
 satellite link, and fails a black-holed route in 30 s instead of the OS
@@ -231,8 +233,9 @@ default (about 75 s on macOS, about 127 s on Linux).
 A default read or total timeout can't be chosen safely. A non-streaming
 request's response headers arrive only after generation finishes, so the
 read timeout's wait for the headers is the whole generation, and there is no
-upper bound on that: a long think, a 4K image (the measured stream took 24 s,
-2026-11-04), a deep context, a background agent between status updates. Any
+upper bound on that: a long think, a 4K image (a measured stream took 24 s;
+see the [gap tracker](INTERACTIONS_API_GAP.md#streaming)), a deep context, a
+background agent between status updates. Any
 default short enough to catch a hung connection cuts off some legitimate
 request, and a generous one (say 10 minutes) catches almost nothing useful.
 So the bound is yours to set once you know your workload: a read timeout for

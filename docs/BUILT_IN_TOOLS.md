@@ -35,7 +35,8 @@ Ground responses in real-time web data.
 
 ### Basic Usage
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -60,15 +61,18 @@ if response.has_google_search_calls() {
         println!("Source: {}", annotation.source().unwrap_or("<none>"));
     }
 }
+# Ok(())
+# }
 ```
 
 ### Search Types
 
 Restrict or extend the kinds of search performed with `GoogleSearchConfig`:
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{GoogleSearchConfig, SearchType};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -79,6 +83,9 @@ let response = client
     ]))
     .create()
     .await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
 | Variant | Wire value |
@@ -91,7 +98,8 @@ let response = client
 
 Annotations are a discriminated union (`UrlCitation`, `FileCitation`, `PlaceCitation`, plus an `Unknown` fallback). Use the accessor methods rather than matching fields directly:
 
-```rust,ignore
+```rust,no_run
+# fn show(response: &genai_rs::InteractionResponse) {
 if response.has_annotations() {
     let text = response.all_text();
     for annotation in response.all_annotations() {
@@ -104,6 +112,7 @@ if response.has_annotations() {
         }
     }
 }
+# }
 ```
 
 **Example**: `cargo run --example google_search` (also streams).
@@ -114,7 +123,8 @@ Runs Python in a sandbox.
 
 ### Basic Usage
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -140,11 +150,15 @@ if response.has_code_execution_calls() {
         }
     }
 }
+# Ok(())
+# }
 ```
 
 Code execution appears in `response.steps` as `Step::CodeExecutionCall { id, language, code, .. }` followed by `Step::CodeExecutionResult { call_id, result, is_error, .. }`. The `CodeExecutionLanguage` wire format is lowercase (`"python"`).
 
-`response.successful_code_output()` returns the first non-error result. Python is the only language (`CodeExecutionLanguage::Python`).
+`response.successful_code_output()` returns the first non-error result.
+The models run Python (`CodeExecutionLanguage::Python`); the spec's `Bash`
+is modeled but has not been seen.
 
 **Example**: `cargo run --example code_execution`
 
@@ -152,7 +166,8 @@ Code execution appears in `response.steps` as `Step::CodeExecutionCall { id, lan
 
 Fetches the URLs in the prompt.
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -172,6 +187,8 @@ for result in response.url_context_results() {
         println!("URL: {} - status: {}", item.url, item.status);
     }
 }
+# Ok(())
+# }
 ```
 
 Each `UrlContextResultItem` has a `status` string. The known values are
@@ -187,9 +204,10 @@ Browser, mobile or desktop automation, configured with `ComputerUseConfig`.
 The model emits its actions as `function_call` steps, and **your** loop
 performs them against a browser or device and returns the results.
 
-```rust,ignore
+```rust,no_run
 use genai_rs::ComputerUseConfig;
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let config = ComputerUseConfig::new()
     // Operating environment: "browser" (default), "mobile", or "desktop"
     .with_environment("browser")
@@ -207,6 +225,9 @@ let response = client
     .add_tool(config)
     .create()
     .await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
 `ComputerUseConfig::new()` defaults to the `"browser"` environment. Computer
@@ -256,7 +277,7 @@ A document can carry custom metadata and its own chunking, and a file
 already in the Files API can be imported instead of uploaded again. A store
 can also pick its embedding model when it is created
 (`CreateFileSearchStoreRequest::with_embedding_model("models/gemini-embedding-2")`;
-unset, the API uses `models/gemini-embedding-001`, live 2026-11-05):
+unset, the API uses `models/gemini-embedding-001`):
 
 ```rust,no_run
 use genai_rs::{ChunkingConfig, CustomMetadata, DocumentImport, DocumentUpload, FileUpload};
@@ -306,9 +327,10 @@ stores and documents (`.send()` for one page, `.items()` for all), and
 `force_delete` removes a store or document with its contents.
 `examples/file_search.rs` shows the full lifecycle, including cleanup.
 
-```rust,ignore
+```rust,no_run
 use genai_rs::FileSearchConfig;
 
+# async fn run(client: genai_rs::Client, store: genai_rs::FileSearchStore) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -319,14 +341,17 @@ let response = client
 
 // The answer itself is the reliable output.
 println!("{}", response.as_text().unwrap_or_default());
+# Ok(())
+# }
 ```
 
 `FileSearchConfig` also takes `.with_top_k(n)` (maximum retrieved chunks) and
 `.with_metadata_filter("category:technical")`.
 
 > **The `file_search_result` step carries no chunks.** It has only `call_id`
-> and `signature`, in the bindings, the spec and on the wire (live
-> 2026-11-05, streamed and stored). Retrieved chunks are folded into the
+> and `signature`, in the bindings, the spec and on the wire, streamed and
+> stored (see File Search in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#file-search)).
+> Retrieved chunks are folded into the
 > answer, which cites them with `file_citation` annotations
 > (`all_annotations()`); `has_file_search_results()` says whether a search
 > ran (#429).
@@ -338,8 +363,9 @@ datastores, Vertex RAG Store corpora, or third-party search APIs (Exa.ai,
 Parallel.ai). Configure via `RetrievalConfig`, which keeps the enabled
 `retrieval_types` in sync with the per-backend configs.
 
-> **Vertex-only.** The Gemini API rejects the `retrieval` tool: live probing
-> (2026-07) returned "allowed on the Gemini Enterprise Agent Platform", and
+> **Vertex-only.** The Gemini API rejects the `retrieval` tool as "allowed
+> on the Gemini Enterprise Agent Platform"
+> ([Enum Wire Formats](ENUM_WIRE_FORMATS.md#toolretrieval)), and
 > the Gemini tool types are `google_maps`, `mcp_server`, `function`,
 > `google_search`, `file_search`, `computer_use`, `code_execution` and
 > `url_context`. The types below are modeled for spec parity and compile, but
@@ -384,7 +410,8 @@ Treat request logs as sensitive when a third-party key is configured.
 
 Grounds responses in place data.
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -403,6 +430,8 @@ for result in response.google_maps_results() {
         }
     }
 }
+# Ok(())
+# }
 ```
 
 `add_tool(GoogleMapsConfig::new().with_location(lat, lng).with_widget())`
@@ -417,10 +446,11 @@ name, URL, review snippets) to the text.
 The API calls tools on a remote MCP (Model Context Protocol) server for the
 model.
 
-```rust,ignore
+```rust,no_run
 use genai_rs::McpServerConfig;
 use std::collections::HashMap;
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -436,6 +466,9 @@ let response = client
     )
     .create()
     .await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
 For a restriction with a mode, pass `AllowedTools` entries to
@@ -443,45 +476,47 @@ For a restriction with a mode, pass `AllowedTools` entries to
 `AllowedTools::new(vec!["read_file".into()]).with_mode(FunctionCallingMode::Auto)`.
 
 **MCP calls arrive with their result in the same response.** The API runs
-each MCP call server-side. Since 2026-11-05 it returns an
-`mcp_server_tool_call` step (with `server_name`) and its
-`mcp_server_tool_result`; from 2026-10-01 to 2026-11-04 it returned an
-answered `function_call` / `function_result` pair. Either way the call is
-named `<server>:<tool>`, where `<server>` is the name you gave
-`McpServerConfig` (for example `deepwiki:read_wiki_structure`).
-`response.mcp_calls()` reads them back with the server, tool, arguments and
-result separated:
+each MCP call server-side and returns an `mcp_server_tool_call` step (with
+`server_name`) and its `mcp_server_tool_result`. Before that shape it
+returned an answered `function_call` / `function_result` pair. Either way
+the call is named `<server>:<tool>`, where `<server>` is the name you gave
+`McpServerConfig` (for example `deepwiki:read_wiki_structure`); how the shape
+changed, with dates, is under MCP identity in
+[Enum Wire Formats](ENUM_WIRE_FORMATS.md#step). `response.mcp_calls()` reads
+both back with the server, tool, arguments and result separated:
 
-```rust,ignore
+```rust,no_run
+# fn show(response: &genai_rs::InteractionResponse) {
 for call in response.mcp_calls() {
     println!("{}/{} -> {:?}", call.server, call.tool, call.result);
 }
+# }
 ```
 
-It counts a `<server>:<tool>` call only when its result is in the same
-response, because a function you declare may contain a colon too (the API
-accepted `weather:get` on 2026-11-04). The result is an object holding the
-tool's text (`result`), the raw MCP `CallToolResult` as a JSON string
-(`call_tool_result_json`), and `structured_content` on success or
-`is_error: true` on failure. A failed call's step still says
-`is_error: false` (2026-11-04), so read `call.is_error`, which checks both. `response.function_calls()` includes
-MCP calls, and `pending_function_calls()` leaves them out, so the
-auto-function loops don't try to run them. Before 2026-10-01 (verified
-2026-08-16) they arrived as generic `Step::ToolCall { id, signature, .. }`
-steps that name neither server nor tool, which `tool_calls()` and
-`step_summary().tool_call_count` still count. `Step::McpServerToolCall` /
-`McpServerToolResult` have never been observed; `mcp_calls()` reads them
-too, should they appear (#459).
+In the `function_call` shape it counts a `<server>:<tool>` call only when
+its result is in the same response, because a function you declare may
+contain a colon too (the API accepts `weather:get`). The result is an
+object holding the tool's text (`result`), the raw MCP `CallToolResult` as
+a JSON string (`call_tool_result_json`), and `structured_content` on
+success or `is_error: true` on failure. A failed call's step can still say
+`is_error: false`, so read `call.is_error`, which checks both.
+`response.function_calls()` includes MCP calls in the `function_call` shape,
+and `pending_function_calls()` leaves them out, so the auto-function loops
+don't try to run them. The oldest shape, a generic
+`Step::ToolCall { id, signature, .. }` that names neither server nor tool,
+is counted by `tool_calls()` and `step_summary().tool_call_count`, not by
+`mcp_calls()` (#459).
 
-An MCP interaction can end in `RequiresAction` even after every call was
-answered (a server bug, #473; not reproduced in three MCP interactions on
-2026-11-04, which all ended `Completed`). Treat `RequiresAction` with an empty
-`pending_function_calls()` and a text answer as finished.
+An MCP interaction has ended in `RequiresAction` even after every call was
+answered (a server bug, #473, not reproduced in the latest checks; see
+[Server-side changes](INTERACTIONS_API_GAP.md#server-side-changes-live-2026-10-01)).
+Treat `RequiresAction` with an empty `pending_function_calls()` and a text
+answer as finished.
 
 ## Combining Tools
 
-Tools can be combined in one request, with two exceptions (verified live
-2026-08-16 against `gemini-3.7-flash`):
+Tools can be combined in one request, with two exceptions (the live record
+is under File Search in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#file-search)):
 
 | Combination | Result |
 |-------------|--------|
@@ -497,7 +532,12 @@ Built-in tools also combine with your own functions. With
 because setting any tool switches off registry discovery (see
 [Function Calling](FUNCTION_CALLING.md#automatic-execution-create_with_auto_functions)):
 
-```rust,ignore
+```rust,no_run
+# use genai_rs_macros::tool;
+# /// Returns the user's stored preferences.
+# #[tool]
+# fn get_user_prefs() -> String { String::new() }
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 // get_user_prefs is a #[tool] function
 let result = client
     .interaction()
@@ -507,6 +547,9 @@ let result = client
     .add_function(get_user_prefs_declaration())
     .create_with_auto_functions()
     .await?;
+# let _ = result;
+# Ok(())
+# }
 ```
 
 ## Response Helpers Reference
@@ -531,8 +574,8 @@ let result = client
 | `google_maps_results()` | Google Maps | `Vec<GoogleMapsResultInfo>` |
 | `function_calls()` | MCP (`<server>:<tool>`) and your functions | `Vec<FunctionCallInfo>` |
 | `mcp_calls()` | MCP, with server and tool split out | `Vec<McpCallInfo>` |
-| `has_tool_calls()` | Generic server-side tools (MCP before 2026-10) | `bool` |
-| `tool_calls()` | Generic server-side tools (MCP before 2026-10) | `Vec<ToolCallInfo>` |
+| `has_tool_calls()` | Generic server-side tools (the oldest MCP shape) | `bool` |
+| `tool_calls()` | Generic server-side tools (the oldest MCP shape) | `Vec<ToolCallInfo>` |
 | `has_annotations()` | Any grounded | `bool` |
 | `all_annotations()` | Any grounded | `Vec<&Annotation>` |
 | `step_summary()` | All | `StepSummary` (per-step-type counts) |

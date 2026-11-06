@@ -22,7 +22,7 @@ wildcard arm.
 | `PollTimeout { timeout, message }` | A `wait_until_active` (or a file search store import's wait) reached its `PollOptions` timeout; the resource may still be processing | No: wait again rather than re-send |
 | `ProcessingFailed(String)` | A file or file search document failed processing, or an import's operation reported an error | No: only a new upload recovers |
 | `Stream { message, code }` | The server sent an in-stream `error` event (auto-function streaming loop only; plain streams yield `StreamChunk::Error`) | No |
-| `Internal(String)` | The client failed in a way that is neither the API's answer nor your input (a request body that would not serialize) | No |
+| `Internal(String)` | The client failed in a way that is neither the API's answer nor your input: a request body that would not serialize, or an unexpected failure reading back a document an upload or import already made (the message names it) | No |
 | `ClientBuild(reqwest::Error)` | The HTTP client could not be built (TLS backend init); the reqwest error is the `source()` | No |
 
 ```rust

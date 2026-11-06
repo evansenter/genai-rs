@@ -71,7 +71,7 @@ with_content() set?
 
 A `Content` input is sent on the wire as a single `user_input` step, so
 content after history is the same request as a history whose last step is
-`Step::user_input(content)` (accepted live 2026-11-06):
+`Step::user_input(content)`, which the API accepts (D-031):
 
 ```rust,no_run
 use genai_rs::{Content, Step};
@@ -102,7 +102,7 @@ every `create*()`), before any request is sent:
 | Neither or both of `with_model()` and `with_agent()` | Exactly one target is required |
 | `with_agent_config()` without `with_agent()` | Agent config only applies to agents |
 | `with_content(vec![])` with no `with_text()` | An empty turn; the API would refuse it too (`400 Request has empty input.`) |
-| No input at all, outside a continuation | Nothing to send; without input the API answers a misleading `404 Model ... not found` (live 2026-11-05) |
+| No input at all, outside a continuation | Nothing to send; without input the API answers a misleading `404 Model ... not found` |
 | A continuation token with no input and no `with_previous_interaction()` | A continuation without input continues a stored interaction by its id (a `store: false` one resends its input) |
 | `with_store_disabled()` + `with_previous_interaction()` | Chaining needs the previous interaction stored |
 | `with_store_disabled()` + `with_background(true)` | Background results are fetched by id, so they must be stored |

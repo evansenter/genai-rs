@@ -17,14 +17,17 @@ each modality.
 
 ## Text and structured JSON
 
-```rust,ignore
+```rust,no_run
+# fn show(response: &genai_rs::InteractionResponse) {
 let text = response.as_text(); // Option<&str>: the model_output text
+# let _ = text;
+# }
 ```
 
 Pass a JSON schema to `with_response_format()` to constrain the output. A raw
 `serde_json::Value` schema becomes the typed
 `{"type": "text", "mime_type": "application/json", "schema": ...}` form, and the
-API validates the output against it (verified live 2026-07).
+API validates the output against it.
 
 ```rust,no_run
 use serde_json::json;
@@ -53,13 +56,15 @@ println!("{} is {}", data["name"], data["age"]);
 ```
 
 There is no `with_response_mime_type()`. The API rejects any request that
-sets `response_mime_type`, even alongside `response_format` (live 2026-07:
-400 "responseFormat must be set when responseMimeType is set"), so the field
-was removed. `examples/structured_output.rs` is runnable.
+sets `response_mime_type`, even alongside `response_format` (400
+"responseFormat must be set when responseMimeType is set"; see the
+[gap tracker](INTERACTIONS_API_GAP.md#requests)), so the field was removed.
+`examples/structured_output.rs` is runnable.
 
 ## Images
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), Box<dyn std::error::Error>> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_IMAGE_MODEL)
@@ -75,6 +80,8 @@ for (i, image) in response.images().into_iter().enumerate() {
     // mime_type() e.g. Some("image/png"); extension() "png", "jpeg", ...
     std::fs::write(format!("image_{i}.{}", image.extension()), image.bytes()?)?;
 }
+# Ok(())
+# }
 ```
 
 Image output is a separate model family: `DEFAULT_MODEL` does not produce
@@ -82,7 +89,8 @@ images. `examples/image_generation.rs` is runnable.
 
 ## Speech (text-to-speech)
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), Box<dyn std::error::Error>> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_TTS_MODEL)
@@ -96,9 +104,12 @@ let response = client
 if let Some(audio) = response.first_audio() {
     std::fs::write(format!("output.{}", audio.extension()), audio.bytes()?)?;
 }
+# Ok(())
+# }
 ```
 
-The output format depends on the model (verified live 2026-09-24):
+The output format depends on the model (see Audio response in
+[Enum Wire Formats](ENUM_WIRE_FORMATS.md#audio-response-tts-output)):
 
 | Model | `mime_type` | Notes |
 |-------|-------------|-------|
@@ -135,7 +146,7 @@ for voice in &page.voices {
 
 // Design a voice from a prompt; its id works anywhere a prebuilt name does.
 // The discovery fields are optional: stored, echoed, and matched by the
-// list filters (verified live 2026-11-05).
+// list filters.
 let voice = client
     .voices()
     .create(
@@ -162,14 +173,14 @@ The list filters are `with_search`, `with_voice_type`, `with_gender`,
 `with_context` and `with_pitch`. `.items()` streams every match across
 pages, resending the filters with each page, which the API requires.
 `client.voices().get(id)` finds stored custom voices only: a prebuilt id is
-a 404 there (2026-09-27), though it works as a voice name.
+a 404 there, though it works as a voice name.
 
 Prompted voices must be stored (`store: true`, the default for
 `CreateVoiceRequest::prompted`) and expire after a year. A voice's
 `sample_audio` is output only: the API generates it and ignores a value
-sent on create (live 2026-11-05). A custom voice
-worked on the 3.8 and 2.5-pro TTS models; `gemini-3.1-flash-tts-preview`
-returned 500.
+sent on create. A custom voice worked on the 3.8 and 2.5-pro TTS models;
+`gemini-3.1-flash-tts-preview` returned 500. The dated record is under
+Voices in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#voices).
 
 ### Multi-speaker
 
@@ -177,9 +188,10 @@ returned 500.
 each text turn must name its speaker with a `speech_metadata` annotation, which
 `Content::speaker_text()` builds:
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{Content, InteractionInput, SpeechConfig};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_TTS_MODEL)
@@ -194,9 +206,13 @@ let response = client
     ])
     .create()
     .await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
-The API returns one combined audio stream. Rules observed live 2026-09-24:
+The API returns one combined audio stream. The rules it enforces (dated
+under SpeechConfig in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#speechconfig-generation_config)):
 
 | Request | Result |
 |---------|--------|
@@ -219,8 +235,9 @@ list. The accepted `speech_config` wire forms are in
 `generation_config.video_config.task`. The API validates the task (`TextToVideo`,
 `ImageToVideo`, `ReferenceToVideo`, `Edit`, `Extend`).
 
-**No model generates video through the Interactions API today** (live
-2026-07). Veo models return 404 (they list only the legacy
+**No model generates video through the Interactions API today** (see
+VideoConfig in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#videoconfig-and-videotask)).
+Veo models return 404 (they list only the legacy
 `predictLongRunning` method), and Gemini models reject
 `response_modalities: ["video"]`. The video `ResponseFormat`'s `gcs_uri` is
 Vertex-only. The types are modeled for when this opens up.
@@ -229,7 +246,8 @@ Vertex-only. The types are modeled for when this opens up.
 
 `response_format` is a union tagged by `type` (`text`, `audio`, `image`,
 `video`). `with_response_formats(vec![...])` sends the list form, one entry per
-modality. On the Gemini API only some options are accepted (live 2026-07):
+modality. On the Gemini API only some options are accepted (see
+ResponseFormat in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#responseformat)):
 
 | Variant | Accepted | Rejected |
 |---------|----------|----------|
@@ -238,9 +256,10 @@ modality. On the Gemini API only some options are accepted (live 2026-07):
 | `ResponseFormat::Audio { mime_type, delivery, sample_rate, bit_rate }` | `sample_rate` | Any `mime_type`, any `delivery` |
 | `ResponseFormat::Video { .. }` | — | `gcs_uri` (Vertex-only); no model serves video |
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{ImageAspectRatio, ImageSize, ResponseFormat};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let image = ResponseFormat::Image {
     mime_type: Some("image/jpeg".to_string()),
     delivery: None,
@@ -255,6 +274,9 @@ let response = client
     .with_response_formats(vec![ResponseFormat::text_plain(), image])
     .create()
     .await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
 Unknown format types and delivery modes are preserved in `Unknown` variants.

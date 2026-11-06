@@ -24,9 +24,12 @@ as `Step::user_input(...)`. See [Builder API](BUILDER_API.md#input-methods).
 
 ## Images
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{Content, image_from_file};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+# let base64_string = String::new();
+# let file_metadata: genai_rs::FileMetadata = unimplemented!();
 // Inline base64
 let response = client
     .interaction()
@@ -43,6 +46,9 @@ let photo = image_from_file("photo.jpg").await?;
 
 // By URI (for example a Files API upload)
 let uploaded = Content::image_uri(&file_metadata.uri, "image/png");
+# let _ = (response, photo, uploaded);
+# Ok(())
+# }
 ```
 
 Pass several `Content::image_*` blocks in one `with_content()` call to compare
@@ -50,9 +56,11 @@ images.
 
 ## Audio
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{Content, audio_from_file};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+# let base64_audio = String::new();
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -65,6 +73,9 @@ let response = client
 
 // Or inline
 let clip = Content::audio_data(base64_audio, "audio/mp3");
+# let _ = (response, clip);
+# Ok(())
+# }
 ```
 
 Speech recognition is tunable via
@@ -85,9 +96,11 @@ compatibility. `examples/audio_input.rs` is a runnable demo.
 
 ## Video
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{Content, FileUpload, PollOptions, video_from_file};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+# let base64_video = String::new();
 // From the filesystem
 let clip = video_from_file("clip.mp4").await?;
 
@@ -101,6 +114,9 @@ let inline = Content::video_data(base64_video, "video/mp4");
 let file = client.files().upload(FileUpload::from_path("large_video.mp4")).await?;
 let file = client.files().wait_until_active(&file.name, PollOptions::new()).await?;
 let by_uri = Content::video_uri(&file.uri, "video/mp4");
+# let _ = (clip, inline, by_uri);
+# Ok(())
+# }
 ```
 
 ### Video processing
@@ -131,12 +147,11 @@ let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clip
 
 - **Offsets** are decimal seconds with an `s` suffix (`"10.5s"`). `end_offset`
   must be greater than `start_offset`.
-- **Cost.** Measured 2026-08-18 on one source video (`gemini-3.7-flash`),
-  the window was what moved video input tokens among the `static` forms
-  (57,778 → 16,198). `fps` alone did not move them. `Agentic` reported no
-  video tokens at all and billed a varying `image` count instead. The figures
-  have changed between measurements, so treat them as dated observations.
-  The token table in the `VideoProcessing` rustdoc has the details.
+- **Cost.** The window is what moves video input tokens among the
+  `static` forms; `fps` alone does not. `Agentic` reports no video tokens at
+  all and bills a varying `image` count instead. The figures have changed
+  between measurements; the measured token counts, with their dates, are
+  under VideoProcessing in [Enum Wire Formats](ENUM_WIRE_FORMATS.md#videoprocessing).
 - **Sub-second clips** need a higher `fps` to yield a frame at all (see the
   note above).
 - **Input shape.** The API accepts `processing` only when the video sits
@@ -146,40 +161,44 @@ let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clip
 
 ## Documents
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{Content, document_from_file};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+# let base64_pdf = String::new();
 let pdf = document_from_file("report.pdf").await?;
 let sheet = document_from_file("inventory.csv").await?; // text/csv document
 let notes = document_from_file("notes.md").await?; // sent as Content::text
 let inline_pdf = Content::document_data(base64_pdf, "application/pdf");
+# let _ = (pdf, sheet, notes, inline_pdf);
+# Ok(())
+# }
 ```
 
 `document_from_file` sends `.pdf` files as `application/pdf` document
 content, and `.txt` / `.md` files as text content with the file's UTF-8
-contents. Since 2026-11-04 the API rejects `text/plain` and `text/markdown`
-document content with a 400 ("Only application/pdf, text/csv, and supported
-Office/OpenDocument MIME types are supported", #514).
+contents, because the API rejects `text/plain` and `text/markdown`
+document content with a 400 (#514).
 
 It also sends CSV (`.csv`) and Office/OpenDocument files (`.docx`, `.xlsx`,
 `.pptx`, `.odt`, `.ods`, `.odp`, and the legacy `.doc`, `.xls`, `.ppt`) as
-document content: with PDF, these are the types the API accepts inline
-(verified live 2026-11-05 by reading back a real file of each; the legacy
-`.doc`, `.xls` and `.ppt` only passed the API's MIME check with plain-text
-bytes, so parsing a real legacy file is unverified). Their MIME types are in
-the [table below](#mime-types-the-file-helpers-detect).
+document content: with PDF, these are the types the API accepts inline (for
+the legacy `.doc`, `.xls` and `.ppt` only the MIME type was checked, not
+that a real legacy file parses). Their MIME types are in the
+[table below](#mime-types-the-file-helpers-detect).
 
-The API rejects every other inline document type with the same 400
-(`Unsupported mime_type '...' in document content`): `text/html`,
-`application/json`, `application/xml` and `application/rtf` included
-(verified live 2026-11-05). `document_from_file` rejects `.json`, `.html` and
-`.xml` locally with a pointer to `Content::text()`;
-`document_from_file_with_mime` sends any MIME type as-is.
+The API rejects every other inline document type with a 400
+(`Unsupported mime_type '...' in document content`), `text/html`,
+`application/json`, `application/xml` and `application/rtf` included.
+`document_from_file` rejects `.json`, `.html` and `.xml` locally with a
+pointer to `Content::text()`; `document_from_file_with_mime` sends any MIME
+type as-is.
 
 The restriction is on inline document content only: a `.txt` or `.md` file
 uploaded to the [Files API](#files-api) still works as a `text/plain` or
-`text/markdown` document by URI (`Content::from_file`, verified live
-2026-11-05).
+`text/markdown` document by URI (`Content::from_file`). The live record of
+these rules is under Requests in the
+[gap tracker](INTERACTIONS_API_GAP.md#requests).
 
 `examples/pdf_input.rs` is a runnable demo.
 
@@ -284,10 +303,9 @@ The constructors leave them unset; the API fills them in on audio it returns.
 | Text | `txt` → `text/plain`, `md` → `text/markdown`, `json`, `html`, `xml` |
 
 Detection doesn't guarantee the API accepts a format inline:
-`document_from_file` sends the Document row as document content (verified
-live 2026-11-05; for `doc`, `xls` and `ppt` only the MIME type was checked,
-not parsing of a real legacy file), sends `.txt` / `.md` files as text
-(above), and rejects `json`, `html` and `xml`. `FileUpload::from_path` uses
+`document_from_file` sends the Document row as document content, sends
+`.txt` / `.md` files as text (above), and rejects `json`, `html` and
+`xml`. `FileUpload::from_path` uses
 the same detection for every row. Always pass full MIME types (`"image/png"`,
 not `"png"`).
 

@@ -136,13 +136,15 @@ fields the API checks on replay:
 
 - `Step::Thought { signature, .. }` carries the thought signature.
 - `Step::FunctionCall { signature, .. }` carries its own signature, which the
-  API **requires** when a function call is replayed statelessly (verified live
-  2026-07). This is why stateless function calling should extend history
-  with `output_steps()`, not rebuild calls with `Step::function_call()`.
+  API **requires** when a function call is replayed statelessly. This is why
+  stateless function calling should extend history with `output_steps()`,
+  not rebuild calls with `Step::function_call()`.
 - `Step::ProcessingCall { signature, .. }`, emitted for video sent with
   `VideoProcessing::Agentic`, carries a ~36KB signature that is also required
-  (`400 Processing call step is missing signature` without it; verified
-  2026-09-24).
+  (`400 Processing call step is missing signature` without it).
+
+Both requirements are recorded under Step in
+[Enum Wire Formats](ENUM_WIRE_FORMATS.md#step).
 
 Replaying thought signatures is accepted (`test_stateless_with_thinking_function_calling`).
 These signatures are in different places from the ones the
