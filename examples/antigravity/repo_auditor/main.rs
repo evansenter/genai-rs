@@ -29,10 +29,10 @@
 //!   them, and workspace containment: in the run below it read `.env`,
 //!   which the hook had just denied the parent. Its read-only capabilities
 //!   are what bound it.
-//! - Cost: a run makes ~35 model calls and uses roughly 300–650K prompt
-//!   tokens on harness 0.1.18, because every call resends the trajectory and
-//!   the harness's requests get almost no implicit cache hits (4K of 274K
-//!   cached, measured 2026-09-24). A 0.1.23 run used 125K (2026-11-05).
+//! - Cost: every model call resends the trajectory, and the harness's
+//!   requests get almost no implicit cache hits, so a run is expensive. The
+//!   harness 0.1.23 run below used about 125K prompt tokens; 0.1.18 runs
+//!   used 300–650K.
 //!
 //! ## Running
 //!
@@ -43,7 +43,7 @@
 //! LOUD_WIRE=1 cargo run --example repo_auditor --features antigravity  # wire trace
 //! ```
 //!
-//! ## Sample output (trimmed from a real run against harness 0.1.23, 2026-11-05)
+//! ## Sample output (trimmed from a real run against harness 0.1.23)
 //!
 //! ```text
 //! === Repo Auditor (Antigravity harness) ===

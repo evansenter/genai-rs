@@ -64,8 +64,8 @@ LOUD_WIRE=1 cargo run --example repo_auditor --features antigravity
 
 ## Sample output
 
-Trimmed from a real run against harness 0.1.23 (2026-11-05; paths and the
-report's longer lines are cut):
+Trimmed from a real run against harness 0.1.23 (paths and the report's
+longer lines are cut):
 
 ```text
 === Repo Auditor (Antigravity harness) ===

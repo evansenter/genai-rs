@@ -15,8 +15,9 @@ This example asks for a long essay and halts once 200 characters of
 
 ## The part worth reading twice
 
-**A cancelled turn does not fail.** On harness 0.1.10 and 0.1.18 a halt takes the
-trajectory to the same terminal state a natural completion does, so the
+**A cancelled turn does not fail.** From harness 0.1.10 through the pinned
+0.1.23 a halt takes the trajectory to the same terminal state a natural
+completion does, so the
 turn resolves normally, carrying whatever text it had produced. Nothing in
 the response distinguishes a halted turn from a finished one — record that
 on your side if it matters.

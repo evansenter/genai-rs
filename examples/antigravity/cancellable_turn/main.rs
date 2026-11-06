@@ -6,9 +6,10 @@
 //! mutably for the duration, so the streaming loop itself cannot call
 //! `cancel()`.
 //!
-//! **The part worth reading twice**: a cancelled turn does *not* fail. On
-//! harness 0.1.10 and 0.1.18 a halt takes the trajectory to the same terminal state a
-//! natural completion does, so the turn resolves normally, carrying
+//! **The part worth reading twice**: a cancelled turn does *not* fail. From
+//! harness 0.1.10 through the pinned 0.1.23 a halt takes the trajectory to
+//! the same terminal state a natural completion does, so the turn resolves
+//! normally, carrying
 //! whatever text it had produced. Treat `cancel()` as "stop early and keep
 //! what you have" — and record the cancellation yourself, because nothing
 //! in the response distinguishes a halted turn from a finished one.

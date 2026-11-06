@@ -28,7 +28,12 @@ run it before committing a change to it. A subset is smoke-run in CI
   prose.
 - **Explain in the `//!` header**: what the example shows, the constraints a
   reader would otherwise trip over, and the run command. Keep comments to the
-  why; `LOUD_WIRE=1` shows the wire, so don't describe it by hand.
+  why; `LOUD_WIRE=1` shows the wire, so don't describe it by hand. Examples
+  install no `tracing` subscriber, so `RUST_LOG` does nothing in them.
+- **State behavior, not its history.** A header says what the API does now;
+  the dated observation behind it goes in `docs/INTERACTIONS_API_GAP.md` or
+  `docs/ENUM_WIRE_FORMATS.md` (D-032). Antigravity headers name the harness
+  version (`0.1.23`), not a date.
 - Slice text with `chars()`, never byte ranges.
 - The base64 fixtures (`*_BASE64` constants) are checked against
   `tests/common` by `tests/temp_file_tests.rs`; every canonical fixture must
