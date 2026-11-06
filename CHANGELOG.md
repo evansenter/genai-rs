@@ -664,8 +664,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   early is logged at `warn` too; either way the stored interaction may not
   be readable yet.
 - One SSE event may hold up to 64 MiB. Past that, the stream fails with
-  `GenaiError::Parse`; before, a body that never sent a newline was buffered
-  without bound. The largest real events, measured live 2026-11-04 on
+  `GenaiError::MalformedResponse`; before, a body that never sent a newline
+  was buffered without bound. The largest real events, measured live 2026-11-04 on
   `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
   and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
 - The published crate holds the library, its examples and the guides its
