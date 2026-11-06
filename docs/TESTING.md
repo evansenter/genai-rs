@@ -333,8 +333,20 @@ still there in November. `test-resource-janitor.yml` runs
 carry a live test's marker and are more than six hours old: credentials
 and agents whose id starts with `genai-rs-test`, triggers, file search
 stores (with their documents) and prompted voices whose display name does,
-webhooks on the test endpoint, and environments with no sources or only
-fixture sources. Anything else on the key is left alone. To see what it
+webhooks on the test endpoint, and environments whose sources are all
+test fixtures. Anything else on the key is left alone, with one exception.
+
+Environments have no name, label or metadata a test can set (the
+bindings' `Environment` and the live listing, 2026-11-06), so only their
+inline sources carry a marker. A test's environment with no sources (an
+agent interaction run without one, a fork, a network-only create) looks
+exactly like anyone else's. The janitor takes a sourceless environment
+when it holds no files and has not been created, updated or used within
+the six hours, **whoever made it**: opting in deletes every empty, idle,
+sourceless environment on the key, not only the tests'. A sourceless
+environment that holds files, such as a leaked fork, is kept and listed in
+the summary for a person to check. On 2026-11-06 the key held 35
+sourceless environments, all empty, 34 of them from July. To see what it
 would delete:
 
 ```bash
@@ -345,13 +357,15 @@ Deleting is the key owner's opt-in. A scheduled run is a dry run that
 lists what it would delete in the job summary, unless the repository
 variable `JANITOR_DELETE` is `true` (Settings, Secrets and variables,
 Actions, Variables); the first deleting run on the shared key would remove
-about 112 environments and 3 credentials (2026-11-05). A manual run
-follows its `mode` input whatever the variable says, and is a dry run
-unless `mode` is `delete`. The harness,
+112 environments (77 holding only fixture sources, 35 sourceless and
+empty) and 3 credentials (dry run, 2026-11-06). A manual run follows its
+`mode` input whatever the variable says, and is a dry run unless `mode` is
+`delete`. The harness,
 `.github/scripts/tests/test_cleanup_test_resources.sh`, replays recorded
 listings through a local fake API and asserts the exact set of deletes in
 each mode, including that a scheduled run deletes nothing without the
-opt-in.
+opt-in, and that a sourceless environment that holds files or was used
+within the floor survives.
 
 ## Assertions on model output
 

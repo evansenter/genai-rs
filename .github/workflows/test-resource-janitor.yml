@@ -11,13 +11,23 @@ name: Test Resource Janitor
 # than six hours old, so a running test never loses its own. Its harness,
 # test_cleanup_test_resources.sh, replays recorded listings on every PR.
 #
+# One rule is not a marker. Environments have no name, label or metadata a
+# test could set, so a test's environment with no sources (an agent
+# interaction's own, a fork, a network-only create) looks like anyone's.
+# The janitor takes a sourceless environment when it holds no files and
+# was not created, updated or used in the last six hours, whoever made it:
+# OPTING IN DELETES EVERY EMPTY, IDLE, SOURCELESS ENVIRONMENT ON THE KEY,
+# not only the tests'. A sourceless one that holds files is kept and listed
+# in the summary for a person to check.
+#
 # Deleting is the key owner's opt-in. A scheduled run is a dry run, listing
 # what it would delete in the job summary, unless the repository variable
 # JANITOR_DELETE is `true` (Settings > Secrets and variables > Actions >
-# Variables): its first deleting run would remove about 112 environments
-# and 3 credentials from the shared key (2026-11-05). A manual run follows
-# its `mode` input whatever the variable says, and is a dry run unless
-# `mode` is `delete`.
+# Variables): its first deleting run would remove 112 environments (77
+# holding only fixture sources, 35 sourceless and empty) and 3 credentials
+# from the shared key (dry run, 2026-11-06). A manual run follows its
+# `mode` input whatever the variable says, and is a dry run unless `mode`
+# is `delete`.
 
 on:
   schedule:
