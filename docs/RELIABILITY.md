@@ -196,7 +196,7 @@ out:
   `wait_until_active`, which bounds each status request with its deadline.
 - Or stop the auto-advance while I/O is in flight: a
   `tokio::task::spawn_blocking` task that is still running holds the clock.
-  `tests/reliability_tests.rs` (`hold_clock`) releases it once the mock
+  `hold_clock` in `tests/common/http_stub.rs` releases it once the mock
   server has the request, which keeps the client's real defaults. For code
   that sends several requests, such as `wait_until_active`, a wire
   inspector can hold the clock per request: `ClockHold` in

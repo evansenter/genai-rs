@@ -7,8 +7,9 @@
 
 set -euo pipefail
 
-BASELINE_FILE=".github/last-swept-sdk-version"
-TRACKER="docs/INTERACTIONS_API_GAP.md"
+# Env-overridable so the harness can point it at a fixture tree (#457).
+BASELINE_FILE="${BASELINE_FILE:-.github/last-swept-sdk-version}"
+TRACKER="${TRACKER:-docs/INTERACTIONS_API_GAP.md}"
 
 for file in "$BASELINE_FILE" "$TRACKER"; do
   if [ ! -f "$file" ]; then

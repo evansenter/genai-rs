@@ -17,7 +17,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use common::http_stub::{Recorded, Reply, Stub};
+use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
     Agent, AllowlistEntry, ChunkingConfig, CreateCredentialRequest, CreateEnvironmentRequest,
@@ -4054,24 +4054,34 @@ async fn wait_until_active_polls_through_a_retryable_error() {
 
 /// A status request that never answers is cut off at the deadline, not
 /// left to hang (the default client has no HTTP timeout).
-#[tokio::test]
+///
+/// On the paused clock (#501), held until the stub has the request: from
+/// then on the only timers are the wait's deadline and the stub's 60 s
+/// delay, so the request is cut off at exactly the 200 ms deadline.
+#[tokio::test(start_paused = true)]
 async fn wait_until_active_bounds_a_stalled_request() {
-    let stub =
-        Stub::start(|_, _| Reply::json(200, file("PROCESSING")).delayed(Duration::from_secs(60)))
-            .await;
+    let (gate, release) = hold_clock();
+    let stub = Stub::start(move |_, _| {
+        release();
+        Reply::json(200, file("PROCESSING")).delayed(Duration::from_secs(60))
+    })
+    .await;
 
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let err = wait_for_file(&stub, Duration::from_millis(200))
         .await
         .unwrap_err();
+    gate.await.unwrap();
 
     assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
-    assert!(err.to_string().contains("Timeout"), "{err}");
+    let message = err.to_string();
+    assert!(message.contains("Timeout"), "{message}");
     assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "the wait outlived its deadline: {:?}",
-        started.elapsed()
+        message.contains("cut off by the wait's deadline"),
+        "{message}"
     );
+    assert_eq!(started.elapsed(), Duration::from_millis(200), "{message}");
+    assert_eq!(stub.requests().len(), 1, "{message}");
 }
 
 #[cfg(not(feature = "strict-unknown"))]
@@ -4842,29 +4852,36 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
     }
 }
 
-#[tokio::test]
+/// On the paused clock (#501), held until the stub has the request: the
+/// client's 100 ms total timeout then fires in virtual time against the
+/// stub's 5 s delay, on any runner.
+#[tokio::test(start_paused = true)]
 async fn client_timeout_applies_to_resource_calls() {
-    let stub =
-        Stub::start(|_, _| Reply::json(200, json!({"id": "wh-1"})).delayed(Duration::from_secs(5)))
-            .await;
+    let (gate, release) = hold_clock();
+    let stub = Stub::start(move |_, _| {
+        release();
+        Reply::json(200, json!({"id": "wh-1"})).delayed(Duration::from_secs(5))
+    })
+    .await;
     let client = genai_rs::Client::builder("test-key".to_string())
         .with_base_url(&stub.base_url)
         .with_timeout(Duration::from_millis(100))
         .build()
         .unwrap();
 
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let err = client.webhooks().get("wh-1").await.unwrap_err();
+    gate.await.unwrap();
 
     assert!(
         matches!(err, GenaiError::Http(ref e) if e.is_timeout()),
         "{err:?}"
     );
     assert!(err.is_retryable());
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "the reply was never awaited in full: {:?}",
-        started.elapsed()
+    assert_eq!(
+        started.elapsed(),
+        Duration::from_millis(100),
+        "the reply was awaited past the timeout"
     );
 }
 

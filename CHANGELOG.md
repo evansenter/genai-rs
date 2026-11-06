@@ -252,6 +252,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content type); a directory comes back as a tar archive
   (`is_tar_archive()`). It is `GET` on the listing's path with `alt=media`
   (verified live 2026-11-05).
+- Three crate features, `http2`, `system-proxy` and `charset`, each turning
+  on reqwest's feature of the same name. All three are on by default; see
+  Changed.
 
 ### Changed
 
@@ -536,6 +539,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Migration: none for callers; a test double that answered the `raw`
   request must answer the start request with an `x-goog-upload-url`
   header.
+- **Breaking: genai-rs no longer forces reqwest's default features on.**
+  It depends on reqwest with `default-features = false`, and reqwest's
+  `http2`, `system-proxy` and `charset` come through genai-rs's own default
+  features of the same names, so a consumer can turn them off. TLS is
+  rustls with the OS trust store, as before. With genai-rs's default
+  features nothing changes. A crate that sets `default-features = false` on
+  genai-rs (to drop `wire-color`) now also drops HTTP/2, the system proxy
+  settings (`HTTPS_PROXY` and the OS configuration) and charset decoding.
+  Migration: add `features = ["http2", "system-proxy", "charset"]` to keep
+  them.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
@@ -616,6 +629,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Api-Revision`, as every other API request does; the request that sends
   the file goes to the session URL and still carries neither it nor the
   key.
+- The published crate holds the library, its examples and the guides its
+  doctests include, and no longer the integration tests, their fixtures, CI
+  files, scripts or the library's unit-test sources: 184 files and about
+  2.6 MiB unpacked, down from 383 files and 5.5 MiB.
 
 ### Fixed
 

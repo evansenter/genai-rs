@@ -482,21 +482,119 @@ mod mcp_server {
     /// A public MCP server, so this is a real round trip rather than a mock.
     const PUBLIC_MCP_SERVER: &str = "https://mcp.deepwiki.com/mcp";
 
+    /// What a failed MCP create means for the round trip below.
+    #[derive(Debug, PartialEq)]
+    enum McpCreateFailure {
+        /// Ours to fix: the API rejected the request.
+        Regression,
+        /// The third-party server, or the API's connection to it, failed:
+        /// what a deepwiki outage looks like.
+        ServerUnavailable,
+    }
+
+    /// Classifies a failed create. Live 2026-11-05: an unreachable MCP
+    /// server is `500 "An internal error occurred while connecting to the
+    /// MCP server."`, a URL that is not an MCP server is `501 "MCP server
+    /// returned an error..."`, and a malformed tool is `400 "Unknown
+    /// parameter ..."`. So a 4xx (other than 429) is the request's fault,
+    /// as is any answer saying MCP is unsupported or not enabled; a 5xx, a
+    /// 429 or a transport failure is the server's availability (#501).
+    fn classify_mcp_create_error(e: &GenaiError) -> McpCreateFailure {
+        let msg = format!("{e:?}").to_lowercase();
+        // Both halves required: an availability phrase alone matches any
+        // rejection, and `mcp` alone matches the echoed URL.
+        let unsupported = [
+            "not supported",
+            "unsupported",
+            "not enabled",
+            "not available",
+        ]
+        .iter()
+        .any(|phrase| msg.contains(phrase))
+            && (msg.contains("mcp_server") || msg.contains("mcp server"));
+        match e {
+            _ if unsupported => McpCreateFailure::Regression,
+            GenaiError::Api { status_code, .. }
+                if (400..500).contains(status_code) && *status_code != 429 =>
+            {
+                McpCreateFailure::Regression
+            }
+            _ => McpCreateFailure::ServerUnavailable,
+        }
+    }
+
+    fn api_error(status_code: u16, message: &str) -> GenaiError {
+        GenaiError::Api {
+            status_code,
+            message: message.to_string(),
+            request_id: None,
+            retry_after: None,
+        }
+    }
+
+    /// A malformed request used to be tolerated as a skip, so a wire
+    /// regression in the MCP tool only ever showed as a warning (#501).
+    #[test]
+    fn mcp_malformed_request_400_is_a_regression() {
+        for e in [
+            api_error(
+                400,
+                "invalid_request: Unknown parameter 'bogus_key' at 'tools[0]'.",
+            ),
+            api_error(400, "INVALID_ARGUMENT: Invalid value at 'tools[0].url'"),
+            api_error(404, "not_found: model not found"),
+            // A rejection of MCP itself, whatever its status.
+            api_error(
+                501,
+                "unimplemented: mcp_server tools are not supported on this model",
+            ),
+        ] {
+            assert_eq!(
+                classify_mcp_create_error(&e),
+                McpCreateFailure::Regression,
+                "{e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unavailable_mcp_server_is_not_a_regression() {
+        for e in [
+            api_error(
+                500,
+                "api_error: An internal error occurred while connecting to the MCP server.",
+            ),
+            api_error(
+                501,
+                "unimplemented: MCP server returned an error. Please check the server configuration.",
+            ),
+            api_error(503, "UNAVAILABLE: The service is currently unavailable."),
+            api_error(429, "RESOURCE_EXHAUSTED: quota"),
+        ] {
+            assert_eq!(
+                classify_mcp_create_error(&e),
+                McpCreateFailure::ServerUnavailable,
+                "{e:?}"
+            );
+        }
+    }
+
     /// Remote MCP works on the default model (#265 once recorded it as
     /// unsupported on Gemini 3).
     ///
-    /// Loud failures are the ones that are ours: the API rejecting the tool,
-    /// an interaction left waiting on a call nobody answered, or a call the
-    /// server ran that `mcp_calls()` cannot attribute to its server and tool
-    /// (#459). Since
+    /// Loud failures are the ones that are ours: the API rejecting the
+    /// request (any 4xx but 429, or an "MCP unsupported" answer;
+    /// [`classify_mcp_create_error`]), an interaction left waiting on a call
+    /// nobody answered, or a call the server ran that `mcp_calls()` cannot
+    /// attribute to its server and tool (#459). Since
     /// 2026-10-01 the API ends an MCP interaction in `requires_action` even
     /// after running every MCP call and producing the answer
     /// (`docs/INTERACTIONS_API_GAP.md`), so that status passes only when no
-    /// call is pending. The two ambiguous outcomes (an error this
-    /// guard cannot classify, and a completed turn with no evidence the server
-    /// was called) are both what a dead third-party server and a silent
-    /// regression look like, so they print `LIVE_TOOL_EVIDENCE_SKIPPED` for
-    /// CI to count rather than failing on deepwiki's uptime.
+    /// call is pending. Two outcomes are what a dead third-party server
+    /// looks like (a 5xx from the API's connection to it, and a completed
+    /// turn with no evidence the server was called), so they print
+    /// `LIVE_TOOL_EVIDENCE_SKIPPED` for CI to count rather than failing on
+    /// deepwiki's uptime.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_mcp_server_tool_round_trip() {
@@ -516,28 +614,18 @@ mod mcp_server {
 
         let response = match result {
             Ok(response) => response,
-            Err(e) => {
-                let msg = format!("{e:?}").to_lowercase();
-                // Both halves required: an availability phrase alone matches
-                // any rejection, and `mcp` alone matches the echoed URL.
-                let rejected = [
-                    "not supported",
-                    "unsupported",
-                    "not enabled",
-                    "not available",
-                ]
-                .iter()
-                .any(|phrase| msg.contains(phrase));
-                let about_mcp = msg.contains("mcp_server") || msg.contains("mcp server");
-                if about_mcp && rejected {
-                    panic!("API rejected the MCP tool — this is a regression: {e:?}");
+            Err(e) => match classify_mcp_create_error(&e) {
+                McpCreateFailure::Regression => {
+                    panic!("API rejected the MCP request — this is a regression: {e:?}")
                 }
-                println!(
-                    "LIVE_TOOL_EVIDENCE_SKIPPED: MCP call failed for an unrecognised \
-                     reason (server down, or a rejection this guard did not match): {e:?}"
-                );
-                return;
-            }
+                McpCreateFailure::ServerUnavailable => {
+                    println!(
+                        "LIVE_TOOL_EVIDENCE_SKIPPED: the MCP server or the API's connection \
+                         to it failed: {e:?}"
+                    );
+                    return;
+                }
+            },
         };
 
         let step_types: Vec<&str> = response

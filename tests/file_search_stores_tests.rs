@@ -23,7 +23,7 @@
 
 mod common;
 
-use common::{get_client, stateful_builder};
+use common::{get_client, stateful_builder, test_resource_name};
 use futures_util::{FutureExt, StreamExt};
 use genai_rs::wire::{WireEvent, WireInspector};
 use genai_rs::{
@@ -588,7 +588,7 @@ async fn test_store_embedding_model() {
         .file_search_stores()
         .create(
             &CreateFileSearchStoreRequest::new()
-                .with_display_name("genai-rs-test-bogus-model")
+                .with_display_name(test_resource_name("bogus-model"))
                 .with_embedding_model("models/not-an-embedding-model"),
         )
         .await;
@@ -671,7 +671,7 @@ async fn test_custom_metadata_chunking_and_import() {
                         b"Vega support hours are 9 to 5.\n".to_vec(),
                         "text/plain",
                     )
-                    .with_display_name("genai-rs-test-import"),
+                    .with_display_name(test_resource_name("import")),
                 )
                 .await
                 .expect("files.upload failed");

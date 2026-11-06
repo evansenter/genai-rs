@@ -1,0 +1,56 @@
+Test Suite (antigravity)	Run unit tests with antigravity feature	﻿2026-11-05T09:46:29.0253438Z ##[group]Run cargo nextest run --workspace --features antigravity
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0253751Z ^[[36;1mcargo nextest run --workspace --features antigravity^[[0m
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0271207Z shell: /usr/bin/bash -e {0}
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0271360Z env:
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0271484Z   CARGO_TERM_COLOR: always
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0271620Z   RUST_BACKTRACE: 1
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0271747Z   CARGO_HOME: /home/runner/.cargo
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0272029Z   CARGO_INCREMENTAL: 0
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0272197Z   CACHE_ON_FAILURE: false
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:46:29.0272332Z ##[endgroup]
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:49:20.9620101Z ^[[32;1m    Starting^[[0m ^[[1m1676^[[0m tests across ^[[1m37^[[0m binaries (^[[1m224^[[0m tests ^[[33;1mskipped^[[0m)
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:49:20.9709956Z ^[[32;1m        PASS^[[0m [   0.007s] (   1/1676) ^[[35;1mgenai-rs^[[0m ^[[36magents::tests^[[0m^[[36m::^[[0m^[[34;1magent_without_unknown_fields_has_empty_extra^[[0m
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:49:20.9733350Z ^[[32;1m        PASS^[[0m [   0.008s] (   2/1676) ^[[35;1mgenai-rs^[[0m ^[[36magents::tests^[[0m^[[36m::^[[0m^[[34;1magent_preserves_unknown_response_fields^[[0m
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:49:20.9746664Z ^[[32;1m        PASS^[[0m [   0.009s] (   3/1676) ^[[35;1mgenai-rs^[[0m ^[[36magents::tests^[[0m^[[36m::^[[0m^[[34;1magent_extra_survives_a_list_response^[[0m
+Test Suite (antigravity)	Run unit tests with antigravity feature	2026-11-05T09:49:43.1453055Z ^[[32;1m     Summary^[[0m [  22.183s] ^[[1m1676^[[0m tests run: ^[[1m1676^[[0m ^[[32;1mpassed^[[0m, ^[[1m224^[[0m ^[[33;1mskipped^[[0m
+Test Suite (antigravity)	Run scripted harness tests (no API key)	﻿2026-11-05T09:49:43.1505929Z ##[group]Run cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_scripted)'
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1506394Z ^[[36;1mcargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_scripted)'^[[0m
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1522881Z shell: /usr/bin/bash -e {0}
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523028Z env:
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523148Z   CARGO_TERM_COLOR: always
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523288Z   RUST_BACKTRACE: 1
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523422Z   CARGO_HOME: /home/runner/.cargo
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523573Z   CARGO_INCREMENTAL: 0
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523706Z   CACHE_ON_FAILURE: false
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523859Z   GEMINI_API_KEY: 
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:49:43.1523983Z ##[endgroup]
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:52:24.8767762Z ^[[32;1m    Starting^[[0m ^[[1m15^[[0m tests across ^[[1m1^[[0m binary (^[[1m35^[[0m binaries ^[[33;1mskipped^[[0m)
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:52:25.4365809Z ^[[32;1m        PASS^[[0m [   0.558s] ( 1/15) ^[[35;1mgenai-rs::antigravity_scripted^[[0m ^[[34;1mtest_scripted_builtin_call_allowed_by_the_pre_tool_hook_runs^[[0m
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:52:25.4371657Z ^[[32;1m        PASS^[[0m [   0.558s] ( 2/15) ^[[35;1mgenai-rs::antigravity_scripted^[[0m ^[[34;1mtest_scripted_builtin_call_denied_by_the_pre_tool_hook_never_runs^[[0m
+Test Suite (antigravity)	Run scripted harness tests (no API key)	2026-11-05T09:52:28.5330938Z ^[[32;1m     Summary^[[0m [   3.658s] ^[[1m15^[[0m tests run: ^[[1m15^[[0m ^[[32;1mpassed^[[0m, ^[[1m0^[[0m ^[[33;1mskipped^[[0m
+Test Suite (antigravity)	Run harness integration tests	﻿2026-11-05T09:52:28.5485844Z ##[group]Run set -eo pipefail
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5486104Z ^[[36;1mset -eo pipefail^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5486318Z ^[[36;1m# Fail on an empty key: these tests self-skip without one. Whitespace^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5486594Z ^[[36;1m# is stripped to match the tests' `!key.trim().is_empty()` gate.^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5486840Z ^[[36;1mif [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5487225Z ^[[36;1m  echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5487552Z ^[[36;1m  exit 1^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5487681Z ^[[36;1mfi^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5487938Z ^[[36;1mcargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5537762Z shell: /usr/bin/bash -e {0}
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5537919Z env:
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5538042Z   CARGO_TERM_COLOR: always
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5538181Z   RUST_BACKTRACE: 1
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5538359Z   CARGO_HOME: /home/runner/.cargo
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5538505Z   CARGO_INCREMENTAL: 0
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5538640Z   CACHE_ON_FAILURE: false
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5541033Z   GEMINI_API_KEY: ***
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.5541166Z ##[endgroup]
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.9050515Z ^[[32;1m    Starting^[[0m ^[[1m24^[[0m tests across ^[[1m1^[[0m binary (^[[1m35^[[0m binaries ^[[33;1mskipped^[[0m)
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.9105342Z ^[[32;1m        PASS^[[0m [   0.005s] ( 1/24) ^[[35;1mgenai-rs::antigravity_harness^[[0m ^[[34;1mdrift_detector_flags_a_missing_enum_and_ignores_retired_values^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.9106486Z ^[[32;1m        PASS^[[0m [   0.005s] ( 2/24) ^[[35;1mgenai-rs::antigravity_harness^[[0m ^[[34;1mfield_drift_detector_catches_the_usage_rename^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:28.9107625Z ^[[32;1m        PASS^[[0m [   0.005s] ( 3/24) ^[[35;1mgenai-rs::antigravity_harness^[[0m ^[[34;1mdrift_detector_catches_the_0_1_10_rename^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:33.0000000Z ^[[35;1m  TRY 1 FAIL^[[0m [   2.100s] (───) ^[[35;1mgenai-rs::antigravity_harness^[[0m ^[[34;1mtest_antigravity_chat_basic^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:52:33.0000000Z ^[[33;1m  TRY 2 PASS^[[0m [   2.400s] (4/24) ^[[35;1mgenai-rs::antigravity_harness^[[0m ^[[34;1mtest_antigravity_chat_basic^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:53:03.0971518Z ^[[32;1m     Summary^[[0m [  34.192s] ^[[1m24^[[0m tests run: ^[[1m24^[[0m ^[[32;1mpassed^[[0m (^[[1m1^[[0m ^[[33;1mflaky^[[0m), ^[[1m0^[[0m ^[[33;1mskipped^[[0m
+Test Suite (antigravity)	Run harness integration tests	2026-11-05T09:53:03.1000000Z ^[[33;1m   FLAKY 2/3^[[0m [   2.400s] (4/24) ^[[35;1mgenai-rs::antigravity_harness^[[0m ^[[34;1mtest_antigravity_chat_basic^[[0m

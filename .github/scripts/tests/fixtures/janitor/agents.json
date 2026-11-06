@@ -1,0 +1,8 @@
+{
+  "agents": [
+    {"id": "genai-rs-test-agent-1793800000-123456789", "base_agent": "antigravity-preview-09-2026"},
+    {"id": "genai-rs-test-agent-1793869200-1", "base_agent": "antigravity-preview-09-2026"},
+    {"id": "genai-rs-test-agent-287338089", "base_agent": "antigravity-preview-09-2026"},
+    {"id": "support-bot", "base_agent": "antigravity-preview-09-2026", "description": "Not a test's"}
+  ]
+}

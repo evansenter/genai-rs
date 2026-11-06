@@ -173,6 +173,31 @@ impl Stub {
     }
 }
 
+/// Holds a paused clock still until `release` is called, typically from the
+/// stub's handler once the request is in. Spawn it before sending.
+///
+/// While the client connects, tokio would auto-advance a paused clock to
+/// any timer the request armed and fire it early. Released once the stub
+/// has the request, the clock advances only on the timers left: a timeout
+/// under test then fires at its exact virtual time against a reply the stub
+/// delays, with no wall-clock bound in the test.
+pub fn hold_clock() -> (
+    tokio::task::JoinHandle<()>,
+    impl Fn() + Send + Sync + 'static,
+) {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let gate = tokio::task::spawn_blocking(move || {
+        let _ = rx.recv();
+    });
+    let tx = Mutex::new(Some(tx));
+    let release = move || {
+        if let Some(tx) = tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+    };
+    (gate, release)
+}
+
 /// Holds a paused tokio clock still while each request is in flight.
 ///
 /// Tokio advances a paused clock to the next timer whenever the runtime is

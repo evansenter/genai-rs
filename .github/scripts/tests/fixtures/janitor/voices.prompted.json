@@ -1,0 +1,29 @@
+{
+  "voices": [
+    {
+      "id": "voice_p5gdvkkj5mvw",
+      "model": "models/gemini-3.8-flash-tts",
+      "type": "prompted",
+      "expire_time": "2027-11-05T09:17:07.050936110Z",
+      "display_name": "genai-rs-test-voice-probe-1793770214-1",
+      "prompted": {"input": "A calm narrator.", "base_voice": "achird"}
+    },
+    {
+      "id": "voice_legacytestname",
+      "model": "models/gemini-3.8-flash-tts",
+      "type": "prompted",
+      "expire_time": "2027-11-01T09:17:07.050936110Z",
+      "display_name": "genai-rs-test",
+      "prompted": {"input": "A calm, low-pitched narrator.", "base_voice": "achird"}
+    },
+    {
+      "id": "voice_brandnarrator",
+      "model": "models/gemini-3.8-flash-tts",
+      "type": "prompted",
+      "expire_time": "2027-07-01T00:00:00Z",
+      "display_name": "Brand narrator",
+      "prompted": {"input": "Warm and upbeat.", "base_voice": "achird"}
+    }
+  ],
+  "next_page_token": "v2"
+}

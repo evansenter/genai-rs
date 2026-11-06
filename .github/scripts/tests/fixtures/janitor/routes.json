@@ -1,0 +1,12 @@
+{
+  "GET /v1beta/environments?page_size=100": "environments.page1.json",
+  "GET /v1beta/environments?page_size=100&page_token=p2": "environments.page2.json",
+  "GET /v1beta/credentials?page_size=100": "credentials.json",
+  "GET /v1beta/webhooks?page_size=100": "webhooks.json",
+  "GET /v1beta/agents?page_size=100": "agents.json",
+  "GET /v1beta/triggers?page_size=100": "triggers.json",
+  "GET /v1beta/fileSearchStores?pageSize=20": "fileSearchStores.json",
+  "GET /v1beta/voices?page_size=50&type=prompted": "voices.prompted.json",
+  "GET /v1beta/voices?page_size=50&page_token=v2&type=prompted": "voices.prompted.page2.json",
+  "GET /v1beta/voices?page_size=50&type=replicated": {"body": {}}
+}

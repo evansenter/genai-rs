@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use common::http_stub::{Reply, Stub};
+use common::http_stub::{Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, CallableFunction, FunctionDeclaration, FunctionError, GenaiError,
@@ -89,25 +89,6 @@ fn sse_with_tail(events: &[&str], after: Duration) -> Reply {
     let mut reply = Reply::sse(&parts);
     reply.parts.last_mut().unwrap().0 = after;
     reply
-}
-
-/// Holds the paused clock still until `release` is called (from the stub's
-/// handler, once the request is in). Spawn it before sending.
-fn hold_clock() -> (
-    tokio::task::JoinHandle<()>,
-    impl Fn() + Send + Sync + 'static,
-) {
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let gate = tokio::task::spawn_blocking(move || {
-        let _ = rx.recv();
-    });
-    let tx = Mutex::new(Some(tx));
-    let release = move || {
-        if let Some(tx) = tx.lock().unwrap().take() {
-            let _ = tx.send(());
-        }
-    };
-    (gate, release)
 }
 
 // =============================================================================

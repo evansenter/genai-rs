@@ -2,5 +2,22 @@
 # live test stuck on a silent connection held its runner until the job's
 # 6-hour default. 120s x 5 is well above the longest legitimate test (the
 # live suite's own budgets top out at 300s), so only a hang is killed.
+#
+# fail-fast off: the first failure used to cancel the rest of a run, which
+# hid how far one break reached (the Windows CRLF break, #486, showed as one
+# failure in `cross-platform`). Every CI job reads this profile, so none can
+# stop early (#501; tests/ci_coverage.rs, `nextest_runs_do_not_fail_fast`).
 [profile.default]
 slow-timeout = { period = "120s", terminate-after = 5 }
+fail-fast = false
+
+# The Antigravity tests start the harness and the processes it runs, and stop
+# them on drop by signalling their process groups without waiting. Under
+# load, a test process occasionally ended before that teardown let go of its
+# output, and nextest marked the test LEAK after its default 100 ms (seen
+# twice in wave A, 2026-11-04; not reproduced in 15 stress runs of every
+# offline test on 2026-11-05). A LEAK still passes; the longer window keeps
+# slow teardown from reading as one.
+[[profile.default.overrides]]
+filter = 'binary(antigravity_harness) | binary(antigravity_scripted) | (kind(lib) & test(/^antigravity::/))'
+leak-timeout = "1s"

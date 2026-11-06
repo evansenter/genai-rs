@@ -1,0 +1,12 @@
+{
+  "voices": [
+    {
+      "id": "voice_youngtestvoice",
+      "model": "models/gemini-3.8-flash-tts",
+      "type": "prompted",
+      "expire_time": "2027-11-05T11:00:00Z",
+      "display_name": "genai-rs-test-voice-1793876400-5",
+      "prompted": {"input": "A bright voice.", "base_voice": "achird"}
+    }
+  ]
+}

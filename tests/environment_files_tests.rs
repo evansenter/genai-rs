@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::get_client;
+use common::{get_client, test_source_content};
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use genai_rs::{
     Client, CreateEnvironmentRequest, EnvironmentFileType, EnvironmentFileUpload,
@@ -49,11 +49,14 @@ async fn test_upload_list_and_fork() {
     with_environments(&client, |ids| {
         let client = client.clone();
         async move {
+            // Marked, so the leaked-resource janitor can delete the
+            // environment (and its fork) if the cleanup above never runs.
+            let motd = test_source_content("hello");
             let env = client
                 .environments()
                 .create(
                     &CreateEnvironmentRequest::new()
-                        .add_source(EnvironmentSource::inline("/etc/motd", "hello")),
+                        .add_source(EnvironmentSource::inline("/etc/motd", &motd)),
                 )
                 .await
                 .expect("environments.create failed");
@@ -117,12 +120,69 @@ async fn test_upload_list_and_fork() {
                 "directory missing from {:?}",
                 root.files
             );
-            let motd = root
+            let listed_motd = root
                 .files
                 .iter()
                 .find(|f| f.path.as_deref() == Some("etc/motd"))
                 .unwrap_or_else(|| panic!("source file missing from {:?}", root.files));
-            assert_eq!(motd.size_bytes, Some("hello".len() as i64));
+            assert_eq!(listed_motd.size_bytes, Some(motd.len() as i64));
+
+            // A download hands back the bytes written and their type; a
+            // directory comes back as a tar archive (live 2026-11-05).
+            let downloaded = client
+                .environments()
+                .files()
+                .download(&env_id, "genai-rs/hello.txt")
+                .await
+                .expect("download failed");
+            assert_eq!(downloaded.data, content);
+            assert!(
+                downloaded
+                    .mime_type
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("text/plain")),
+                "{downloaded:?}"
+            );
+            assert!(!downloaded.is_tar_archive());
+            let directory = client
+                .environments()
+                .files()
+                .download(&env_id, "genai-rs")
+                .await
+                .expect("directory download failed");
+            assert!(directory.is_tar_archive(), "{directory:?}");
+            // A tar archive: 512-byte blocks, its first header naming the
+            // file, which the archive then carries.
+            assert_eq!(directory.data.len() % 512, 0, "{directory:?}");
+            assert!(
+                directory.data[..100].starts_with(b"hello.txt")
+                    || directory.data[..100].starts_with(b"./hello.txt")
+                    || directory.data[..100].starts_with(b"genai-rs/hello.txt"),
+                "unexpected first entry: {:?}",
+                String::from_utf8_lossy(&directory.data[..100])
+            );
+            assert!(
+                directory
+                    .data
+                    .windows(content.len())
+                    .any(|window| window == content.as_slice()),
+                "the archive does not carry the file"
+            );
+            let missing_download = client
+                .environments()
+                .files()
+                .download(&env_id, "no/such/path")
+                .await;
+            assert!(
+                matches!(
+                    missing_download,
+                    Err(GenaiError::Api {
+                        status_code: 404,
+                        ..
+                    })
+                ),
+                "{missing_download:?}"
+            );
 
             // A download hands back the bytes written and their type; a
             // directory comes back as a tar archive (live 2026-11-05).
@@ -238,13 +298,13 @@ async fn test_file_list_streams_follow_every_page() {
         let client = client.clone();
         async move {
             // A directory and three files: four entries under a recursive
-            // root listing.
+            // root listing. Marked content, for the leaked-resource janitor.
             let request = ["a", "b", "c"].into_iter().fold(
                 CreateEnvironmentRequest::new(),
                 |request, name| {
                     request.add_source(EnvironmentSource::inline(
                         format!("/paging/{name}.txt"),
-                        name,
+                        test_source_content(name),
                     ))
                 },
             );

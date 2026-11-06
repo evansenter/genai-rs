@@ -11,7 +11,12 @@
 //! (`tests/fixtures/api_surface/`) to the crate: every endpoint maps to the
 //! handle verbs that call it, and every verb of every resource handle is
 //! called by a live test on that handle (`tests/live_verbs/`).
+//!
+//! The workflows themselves are guarded in `tests/ci_workflows/`: no nextest
+//! run fails fast, trybuild's `ui_tests` stay off beta, and every scheduled
+//! workflow escalates its failures.
 
+mod ci_workflows;
 mod live_verbs;
 
 use std::collections::BTreeSet;

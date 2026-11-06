@@ -1,0 +1,24 @@
+{
+  "captured": "2026-11-05",
+  "note": "A create with a field the API does not know: the 400 envelope.",
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "model": "gemini-3.8-flash",
+      "input": "hi",
+      "store": false,
+      "genai_rs_test_unknown": 1
+    }
+  },
+  "response": {
+    "status": 400,
+    "content_type": "application/json",
+    "json": {
+      "error": {
+        "message": "Unknown parameter 'genai_rs_test_unknown'.",
+        "code": "invalid_request"
+      }
+    }
+  }
+}

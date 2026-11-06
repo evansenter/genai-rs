@@ -32,13 +32,21 @@ jobs:
 
           DAYS_BACK=7
           WORKFLOW_NAME="Rust"
+          # The jobs that run nextest with --retries, whose green runs can
+          # hide a flake: the live integration groups and the antigravity
+          # job's harness step. count_retried_flakes.sh counts only the
+          # steps that retry, so the antigravity job's offline suite, in
+          # the same log, stays out of the rate.
+          RETRY_JOBS='^(Integration Tests \(.*\)|Test Suite \(antigravity\))$'
 
           END_DATE=$(date -u +"%Y-%m-%d")
           START_DATE=$(date -u -d "$DAYS_BACK days ago" +"%Y-%m-%d")
 
           echo "Analyzing CI runs from $START_DATE to $END_DATE"
-          echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
-          echo "end_date=$END_DATE" >> $GITHUB_OUTPUT
+          {
+            echo "start_date=$START_DATE"
+            echo "end_date=$END_DATE"
+          } >> "$GITHUB_OUTPUT"
 
           TOTAL_RUNS=0
           FAILED_RUNS=0
@@ -53,6 +61,10 @@ jobs:
           ASSERTION_FAILURES=0
           PANIC=0
           UNKNOWN=0
+
+          LOG_DIR=$(mktemp -d)
+          LOGS_READ=0
+          LOGS_MISSED=0
 
           echo "Fetching workflow runs..."
           RUNS_JSON=$(gh run list \
@@ -92,29 +104,83 @@ jobs:
                 while IFS= read -r test_name; do
                   if [ -n "$test_name" ] && [ "$test_name" != "null" ]; then
                     if [ -n "${TEST_FAILURES[$test_name]:-}" ]; then
-                      TEST_FAILURES[$test_name]=$((TEST_FAILURES[$test_name] + 1))
+                      TEST_FAILURES[$test_name]=$((${TEST_FAILURES[$test_name]} + 1))
                     else
                       TEST_FAILURES[$test_name]=1
                       TEST_CATEGORIES[$test_name]="$category"
                     fi
                   fi
-                done < <(echo "$CATEGORIZED" | jq -r ".categories.$category[]?" 2>/dev/null || true)
+                done < <(echo "$CATEGORIZED" | jq -r ".categories.${category}[]?" 2>/dev/null || true)
+              done
+            fi
+
+            # A test nextest retried to a pass leaves its job green, so the
+            # retry jobs' logs are read on every finished run, not only the
+            # failed ones (#492). A log that cannot be fetched is counted and
+            # reported, not silently dropped.
+            if [ "$CONCLUSION" = "success" ] || [ "$CONCLUSION" = "failure" ]; then
+              JOB_IDS=$(gh run view "$RUN_ID" --json jobs 2>/dev/null \
+                | jq -r --arg re "$RETRY_JOBS" '.jobs[]
+                    | select((.name | test($re)) and (.conclusion == "success" or .conclusion == "failure"))
+                    | .databaseId' || true)
+              for JOB_ID in $JOB_IDS; do
+                if gh run view --job "$JOB_ID" --log > "$LOG_DIR/$RUN_ID-$JOB_ID.log" 2>/dev/null; then
+                  LOGS_READ=$((LOGS_READ + 1))
+                else
+                  LOGS_MISSED=$((LOGS_MISSED + 1))
+                  rm -f "$LOG_DIR/$RUN_ID-$JOB_ID.log"
+                fi
               done
             fi
           done < <(echo "$RUNS_JSON" | jq -c '.[]')
 
+          echo "Read $LOGS_READ retry-job logs ($LOGS_MISSED could not be fetched)"
+          if [ "$LOGS_MISSED" -gt 0 ]; then
+            echo "::warning::$LOGS_MISSED job log(s) could not be fetched, so their retried flakes are not counted"
+          fi
+          if [ "$LOGS_READ" -gt 0 ]; then
+            .github/scripts/count_retried_flakes.sh "$LOG_DIR"/*.log > retried.json
+          else
+            echo '{"tests_run": 0, "flaky": 0, "tests": []}' > retried.json
+          fi
+          rm -rf "$LOG_DIR"
+          RETRIED_FLAKES=$(jq -r '.flaky' retried.json)
+          LIVE_TEST_RUNS=$(jq -r '.tests_run' retried.json)
+
+          # Flakes are named by test; nextest names the binary too, which
+          # locates the file without a grep.
+          declare -A TEST_RETRIED=()
+          while IFS=$'\t' read -r test_name binary count; do
+            [ -n "$test_name" ] || continue
+            TEST_RETRIED[$test_name]=$((${TEST_RETRIED[$test_name]:-0} + count))
+            if [ "$binary" = "lib" ]; then
+              TEST_FILES[$test_name]="src/"
+            else
+              TEST_FILES[$test_name]="tests/$binary.rs"
+            fi
+            if [ -z "${TEST_FAILURES[$test_name]:-}" ]; then
+              TEST_FAILURES[$test_name]=0
+              TEST_CATEGORIES[$test_name]="passed on retry"
+            fi
+          done < <(jq -r '.tests[] | [.name, .binary, (.flaky | tostring)] | @tsv' retried.json)
+
           UNIQUE_FLAKY=${#TEST_FAILURES[@]}
 
-          echo "total_runs=$TOTAL_RUNS" >> $GITHUB_OUTPUT
-          echo "failed_runs=$FAILED_RUNS" >> $GITHUB_OUTPUT
-          echo "unique_flaky=$UNIQUE_FLAKY" >> $GITHUB_OUTPUT
-          echo "api_errors=$API_ERRORS" >> $GITHUB_OUTPUT
-          echo "rate_limit=$RATE_LIMIT" >> $GITHUB_OUTPUT
-          echo "assertion_failures=$ASSERTION_FAILURES" >> $GITHUB_OUTPUT
-          echo "panic=$PANIC" >> $GITHUB_OUTPUT
+          {
+            echo "total_runs=$TOTAL_RUNS"
+            echo "failed_runs=$FAILED_RUNS"
+            echo "unique_flaky=$UNIQUE_FLAKY"
+            echo "retried_flakes=$RETRIED_FLAKES"
+            echo "live_test_runs=$LIVE_TEST_RUNS"
+            echo "api_errors=$API_ERRORS"
+            echo "rate_limit=$RATE_LIMIT"
+            echo "assertion_failures=$ASSERTION_FAILURES"
+            echo "panic=$PANIC"
+          } >> "$GITHUB_OUTPUT"
 
           echo "Locating test files..."
           for test_name in "${!TEST_FAILURES[@]}"; do
+            [ -n "${TEST_FILES[$test_name]:-}" ] && continue
             FILE=$(grep -rlE "fn $test_name|fn ${test_name#*::}" tests/ src/ 2>/dev/null | head -1 || echo "unknown")
             if [ -n "$FILE" ] && [ "$FILE" != "unknown" ]; then
               TEST_FILES[$test_name]=$(basename "$FILE")
@@ -127,6 +193,8 @@ jobs:
             --argjson total_runs "$TOTAL_RUNS" \
             --argjson failed_runs "$FAILED_RUNS" \
             --argjson unique_flaky "$UNIQUE_FLAKY" \
+            --argjson retried_flakes "$RETRIED_FLAKES" \
+            --argjson live_test_runs "$LIVE_TEST_RUNS" \
             --argjson api_errors "$API_ERRORS" \
             --argjson rate_limit "$RATE_LIMIT" \
             --argjson assertion_failures "$ASSERTION_FAILURES" \
@@ -137,6 +205,8 @@ jobs:
               total_runs: $total_runs,
               failed_runs: $failed_runs,
               unique_flaky: $unique_flaky,
+              retried_flakes: $retried_flakes,
+              live_test_runs: $live_test_runs,
               api_errors: $api_errors,
               rate_limit: $rate_limit,
               assertion_failures: $assertion_failures,
@@ -150,9 +220,10 @@ jobs:
             ITEM_JSON=$(jq -n \
               --arg name "$test_name" \
               --argjson failures "${TEST_FAILURES[$test_name]}" \
+              --argjson retried "${TEST_RETRIED[$test_name]:-0}" \
               --arg category "${TEST_CATEGORIES[$test_name]:-unknown}" \
               --arg file "${TEST_FILES[$test_name]:-unknown}" \
-              '{name: $name, failures: $failures, category: $category, file: $file}') || continue
+              '{name: $name, failures: $failures, retried: $retried, category: $category, file: $file}') || continue
             jq --argjson new "$ITEM_JSON" '. + [$new]' tests.json > tests.json.tmp \
               && mv tests.json.tmp tests.json
           done
@@ -242,6 +313,8 @@ jobs:
               gh issue comment "$EXISTING_ISSUE" --body "$(
                 echo "**Newly flaky since the last report:**"
                 echo
+                # Backticks in sed's own script, not a shell expansion.
+                # shellcheck disable=SC2016
                 sed 's/^/- `/; s/$/`/' <<<"$NEW_NAMES"
                 echo
                 echo "New to the rolling 7-day window — a test that had gone"

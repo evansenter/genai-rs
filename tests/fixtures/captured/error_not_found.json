@@ -1,0 +1,18 @@
+{
+  "captured": "2026-11-05",
+  "note": "A read of the interaction above after deleting it: the 404 envelope.",
+  "request": {
+    "method": "GET",
+    "path": "/v1beta/interactions/v1_ChdTRkRzYXVYZElKN3p2ZElQdHRhN29BVRIXU0ZEc2F1WGRJSjd6dmRJUHR0YTdvQVU"
+  },
+  "response": {
+    "status": 404,
+    "content_type": "application/json",
+    "json": {
+      "error": {
+        "message": "Requested entity was not found.",
+        "code": "not_found"
+      }
+    }
+  }
+}

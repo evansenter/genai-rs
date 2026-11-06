@@ -305,6 +305,8 @@ jobs:
           # nothing and file a fresh one with the same title every morning
           # until the baseline moves — the duplicate accumulation the fixed
           # title exists to prevent, just gated on a close instead of a date.
+          # `$ENV` is jq's own variable: single quotes on purpose.
+          # shellcheck disable=SC2016
           EXISTING=$(gh issue list \
             --label "api-sweep" \
             --state all \
@@ -414,6 +416,8 @@ jobs:
           # so the next clean run is the right place to act on it. This also
           # covers the other clean path: SDK moved, Interactions bindings
           # unchanged. Nothing to report there either.
+          # `$ENV` is jq's own variable: single quotes on purpose.
+          # shellcheck disable=SC2016
           EXISTING=$(gh issue list \
             --label "api-sweep" \
             --state open \
@@ -468,3 +472,30 @@ jobs:
             echo "::error file=tests/fixtures/api_surface/bindings.json::The committed bindings snapshot does not match a fresh dump of the baseline release. Run .github/scripts/refresh_api_snapshot.sh and commit the result."
             exit 1
           fi
+
+      # Scheduled failures otherwise only email the last committer (#431).
+      # New surface is reported on the sweep's own issue and leaves the run
+      # green, so a red run means the sweep itself broke.
+      - name: Escalate a failing scheduled run
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: it is the join key between reporter
+          # and resolver.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "**This is not a new-surface notice.** New google-genai bindings are
+          reported on the sweep's own \`api-sweep\` issue and leave this run
+          green. A red run means the sweep could not complete: PyPI or the wheel
+          download failed, the bindings dump could not read a wheel, or the
+          committed snapshot no longer matches the baseline release (the last
+          step names it). Check the run log."
+
+      - name: Clear the failure issue once the run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"

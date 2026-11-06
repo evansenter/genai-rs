@@ -17,7 +17,16 @@ a wrong flag, or a command that fails at runtime. It catches exactly the
 class of defect above, which is the class that survives review.
 
 It also parse-checks the standalone scripts under `.github/scripts/`,
-which are invoked only from schedule-only jobs and carry the same latency.
+which are invoked only from schedule-only jobs and carry the same latency,
+and the `run:` steps of the composite actions under `.github/actions/`
+(`runs.steps`), which run wherever a job uses them — including a
+schedule-only job (#457).
+
+A repo script a `run:` block runs directly (`.github/scripts/x.sh args`,
+not `bash .github/scripts/x.sh`) must be executable: committed without the
+bit, it fails with exit 126 only when the step runs, which for a
+schedule-only workflow is days later (the flake counter shipped that way,
+#492).
 
 Limits worth stating, so a green check is not read as broader coverage than
 it is:
@@ -32,26 +41,37 @@ it is:
   (`[[ ]]`, process substitution, arrays) that dash rejects at runtime.
   Nothing in this repo sets `shell: sh` today, so it is not reachable —
   but a pass on such a step is weaker than it looks.
-- Only `.github/workflows/*.y*ml` and `.github/scripts/*.sh` are scanned.
-  A shell script living anywhere else is not covered.
+- Only `.github/workflows/*.y*ml`, `.github/actions/*/action.y*ml` and
+  `.github/scripts/*.sh` are scanned. A shell script living anywhere else
+  (`scripts/`, the harnesses under `.github/scripts/tests/`) is covered by
+  `make test-scripts`'s shellcheck instead, and a composite action nested
+  deeper than `.github/actions/<name>/` is not covered.
 - A step with no explicit `shell:` in a job whose matrix includes Windows
   runs under pwsh on the Windows leg and bash elsewhere. Such steps are
   still parsed as bash — all of them are plain `cargo ...` invocations
   today — and the summary line counts them, so the assumption is stated
   rather than hidden.
 
-Exit status: 0 when every block parses, 1 otherwise.
+Exit status: 0 when every block parses and every script run directly is
+executable, 1 otherwise.
 """
 
 from __future__ import annotations
 
 import glob
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
 import yaml
+
+# A repo script path in a `run:` block, at a command position or anywhere a
+# word starts. Whether it is run directly is decided by the word before it.
+SCRIPT_PATH = re.compile(r"(?:^|(?<=[\s;&|(`]))((?:\./)?(?:\.github|scripts)/[\w./-]+\.(?:sh|py))")
+# Words that run a script themselves, so its own mode does not matter.
+INTERPRETERS = {"bash", "sh", "zsh", "python", "python3", "source", ".", "exec"}
 
 # `run:` defaults to bash on Linux; other explicit interpreters are skipped.
 # Matched on the leading word, so `bash -euo pipefail {0}` stays covered.
@@ -121,15 +141,72 @@ def iter_run_steps(path: str):
             yield job_name, index, step.get("name", "(unnamed)"), run, assumed_bash
 
 
-def check(path: str) -> tuple[int, int, int]:
+def iter_action_run_steps(path: str):
+    """Yield the same tuples as `iter_run_steps` for a composite action.
+
+    A composite action's steps sit under `runs.steps`, not `jobs.*.steps`,
+    and each `run:` step must name its `shell:` (GitHub rejects a composite
+    step without one), so nothing is assumed. The "job" is `runs`. Other
+    action kinds (`docker`, `node20`) have no shell steps.
+    """
+    with open(path, encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    runs = document.get("runs") or {}
+    if runs.get("using") != "composite":
+        return
+    for index, step in enumerate(runs.get("steps") or []):
+        run = step.get("run")
+        if not run:
+            continue
+        shell = str(step.get("shell") or "bash")
+        if shell.split(maxsplit=1)[0] not in SHELLS:
+            continue
+        yield "runs", index, step.get("name", "(unnamed)"), run, False
+
+
+def directly_run_scripts(run: str) -> list[str]:
+    """The repo scripts `run` executes as commands rather than through an
+    interpreter. Comment lines are skipped, and flags between an interpreter
+    and the path (`python3 -I x.py`) are passed over."""
+    found = []
+    for line in run.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for match in SCRIPT_PATH.finditer(line):
+            words = line[: match.start(1)].split()
+            while words and words[-1].startswith("-"):
+                words.pop()
+            if words and words[-1].lstrip("$(`") in INTERPRETERS:
+                continue
+            found.append(match.group(1))
+    return found
+
+
+def check_modes(path: str, job_name: str, step_name: str, run: str) -> int:
+    """Fails each existing repo script `run` executes directly without the
+    executable bit. Returns the failure count."""
+    failures = 0
+    for script in directly_run_scripts(run):
+        if os.path.isfile(script) and not os.access(script, os.X_OK):
+            failures += 1
+            print(
+                f"::error file={path}::{job_name} / {step_name}: {script} is run "
+                "directly but is not executable (git update-index --chmod=+x)"
+            )
+            print(f"FAIL {path} :: {job_name} :: {step_name}: {script} is not executable")
+    return failures
+
+
+def check(path: str, steps=iter_run_steps) -> tuple[int, int, int]:
     """Returns (blocks checked, blocks assumed bash, failures)."""
     checked = 0
     assumed = 0
     failures = 0
-    for job_name, index, step_name, run, assumed_bash in iter_run_steps(path):
+    for job_name, index, step_name, run, assumed_bash in steps(path):
         checked += 1
         if assumed_bash:
             assumed += 1
+        failures += check_modes(path, job_name, step_name, run)
         handle = tempfile.NamedTemporaryFile(
             "w", suffix=".sh", delete=False, encoding="utf-8"
         )
@@ -195,6 +272,17 @@ def main() -> int:
         assumed += path_assumed
         failures += path_failures
 
+    # Composite actions: their steps run inside whichever job uses them.
+    actions = sorted(
+        glob.glob(".github/actions/*/action.yml")
+        + glob.glob(".github/actions/*/action.yaml")
+    )
+    action_checked = 0
+    for action in actions:
+        path_checked, _, path_failures = check(action, iter_action_run_steps)
+        action_checked += path_checked
+        failures += path_failures
+
     # Scripts too: they have the same discovery latency. Counted separately, so
     # the inert-gate check below still fires if run-block extraction yields
     # nothing.
@@ -204,10 +292,10 @@ def main() -> int:
         script_checked += 1
         failures += check_script(script)
 
-    total = checked + script_checked
+    total = checked + action_checked + script_checked
 
     if failures:
-        print(f"\n{failures} of {total} shell block(s) failed to parse.")
+        print(f"\n{failures} problem(s) in {total} shell block(s).")
         return 1
 
     # Fail on zero: an inert gate must not look like a pass.
@@ -221,7 +309,8 @@ def main() -> int:
     summary = (
         f"All {total} shell blocks parse "
         f"({checked} workflow `run:` block(s) across {len(paths)} file(s), "
-        f"{script_checked} script(s))"
+        f"{action_checked} composite action step(s) across {len(actions)} "
+        f"action(s), {script_checked} script(s))"
     )
     print(
         f"{summary}; {assumed} assumed bash on a Windows-capable job."

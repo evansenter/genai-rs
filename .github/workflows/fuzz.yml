@@ -56,6 +56,15 @@ jobs:
           workspaces: fuzz
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # The corpus a run grows is kept, so each run starts from everything
+      # earlier runs found rather than from the committed seeds alone. The
+      # newest saved corpus for the target is restored (on a PR, main's).
+      - name: Restore the corpus earlier runs grew
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
       - name: Fuzz for a bounded time
         working-directory: fuzz
         env:
@@ -72,6 +81,16 @@ jobs:
           # the scratch corpus. -timeout flags a hang on one input.
           cargo +nightly fuzz run "$TARGET" "corpus/$TARGET" "seeds/$TARGET" -- \
             -max_total_time="$SECONDS_PER_TARGET" -timeout=10
+      # Saved under a fresh key per run, from scheduled and manual runs only:
+      # a PR's corpus grew on code that may not merge. Not after a crash, so
+      # the next run does not start from the crashing input's neighbourhood
+      # before it is fixed.
+      - name: Save the grown corpus
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
       - name: Upload the failing input
         if: failure()
         uses: actions/upload-artifact@v4

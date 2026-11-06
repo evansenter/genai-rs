@@ -1,0 +1,110 @@
+name: Test Resource Janitor
+
+# Deletes the resources the live tests leaked on the shared test key (#492).
+#
+# Every live test deletes what it creates, but one that dies first (a
+# timeout, a cancelled job) leaves it, and nothing expires on its own: on
+# 2026-11-03 the key held 99 test-created environments, some from July.
+# .github/scripts/cleanup_test_resources.py deletes only resources carrying
+# a live test's marker (the `genai-rs-test` prefix, the test webhook
+# endpoint, or an environment holding only fixture sources) that are more
+# than six hours old, so a running test never loses its own. Its harness,
+# test_cleanup_test_resources.sh, replays recorded listings on every PR.
+#
+# Deleting is the key owner's opt-in. A scheduled run is a dry run, listing
+# what it would delete in the job summary, unless the repository variable
+# JANITOR_DELETE is `true` (Settings > Secrets and variables > Actions >
+# Variables): its first deleting run would remove about 112 environments
+# and 3 credentials from the shared key (2026-11-05). A manual run follows
+# its `mode` input whatever the variable says, and is a dry run unless
+# `mode` is `delete`.
+
+on:
+  schedule:
+    - cron: '37 4 * * *' # Daily 04:37 UTC, clear of the weekly live run (Wed 05:23)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run lists what would be deleted; delete deletes it"
+        type: choice
+        options: [dry-run, delete]
+        default: dry-run
+      min_age_hours:
+        description: "Only delete test resources at least this many hours old"
+        required: false
+        default: "6"
+
+permissions:
+  contents: read
+
+# One janitor at a time: two overlapping runs would race to delete the
+# same resources and report each other's 404s.
+concurrency:
+  group: test-resource-janitor
+  cancel-in-progress: false
+
+jobs:
+  janitor:
+    name: Delete leaked test resources
+    runs-on: ubuntu-latest
+    # The secret exists only on the owner's repository.
+    if: github.repository_owner == 'evansenter'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # The escalation steps open and close a `ci-health-escalation` issue.
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete test resources older than the floor
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
+          # Through env, not inline: a dispatch input is free text.
+          INPUT_MODE: ${{ inputs.mode }}
+          MIN_AGE_HOURS: ${{ inputs.min_age_hours || '6' }}
+          # Read by `--scheduled`: only `true` lets a scheduled run delete.
+          JANITOR_DELETE: ${{ vars.JANITOR_DELETE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset, so the janitor cannot list anything"
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = schedule ]; then
+            mode=scheduled
+          else
+            case "$INPUT_MODE" in
+              dry-run|delete) mode="$INPUT_MODE" ;;
+              *) echo "::error::mode must be dry-run or delete, got '$INPUT_MODE'"; exit 1 ;;
+            esac
+          fi
+          # The script writes the summary: what it deleted or would delete,
+          # and the per-kind table.
+          python3 .github/scripts/cleanup_test_resources.py "--$mode" \
+            --min-age-hours "$MIN_AGE_HOURS" --summary "$GITHUB_STEP_SUMMARY"
+
+      # Scheduled failures otherwise only email the last committer (#431).
+      - name: Escalate a failing scheduled run
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: it is the join key between reporter
+          # and resolver.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "The daily janitor could not list or delete some of the live tests'
+          leaked resources on the shared key. The run log names each one
+          (\`::error::<kind>/<id>\`). Left alone, leaks accumulate: environments
+          never expire. A listing that fails for every kind is usually the key
+          or the API, not the janitor."
+
+      - name: Clear the failure issue once the run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"

@@ -17,24 +17,41 @@
 #
 # Depends on bash, and on python3 only for the TOML parse — which is the
 # assertion that would otherwise be a `grep` proving nothing about structure.
+#
+# Runs against a temp copy of `.cargo/` through `SETUP_DEV_CARGO_DIR`, never
+# the checkout's own: `.cargo/config.toml` is gitignored, so a run killed
+# mid-way could not have been restored by git (#455).
 
 set -euo pipefail
+
+# Preflighted here, not left to `make test-scripts`: this harness is
+# documented as runnable directly, and without python3 the TOML assertion
+# would fail as a confusing assertion rather than a named missing tool.
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 is required to run this harness (brew install python3 / apt install python3)" >&2
+  exit 1
+}
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 SCRIPT="$ROOT/scripts/setup-dev.sh"
-CONFIG="$ROOT/.cargo/config.toml"
 WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 
-# The script writes into the real checkout, so restore whatever was there.
-had_config=0
-[ -f "$CONFIG" ] && { had_config=1; cp "$CONFIG" "$WORK/pre-existing"; }
-restore() {
-  rm -f "$CONFIG"
-  [ "$had_config" -eq 1 ] && cp "$WORK/pre-existing" "$CONFIG"
-  rm -rf "$WORK"
+# The tree the script writes to: the real example, in a temp `.cargo`.
+# Absolute, because the script `cd`s to the repo root before reading it.
+export SETUP_DEV_CARGO_DIR="$WORK/cargo"
+mkdir -p "$SETUP_DEV_CARGO_DIR"
+cp "$ROOT/.cargo/config.toml.example" "$SETUP_DEV_CARGO_DIR/"
+CONFIG="$SETUP_DEV_CARGO_DIR/config.toml"
+
+# The checkout's own config, fingerprinted so the last case can show it was
+# never touched. Absent is a fingerprint too.
+REAL_CONFIG="$ROOT/.cargo/config.toml"  # read, never written
+fingerprint() {
+  if [ -f "$REAL_CONFIG" ]; then cksum < "$REAL_CONFIG"; else echo absent; fi
 }
-trap restore EXIT
+real_before=$(fingerprint)
 
 failures=0
 
@@ -114,6 +131,12 @@ else
   pass "probe fails: writes no config"
 fi
 
+# --- A directory without the example is an error that names it, not a
+#     silent pass that wrote nothing.
+run env SETUP_DEV_CARGO_DIR="$WORK/empty" CC=/bin/false
+expect_rc "no example: exits 1" 1
+check     "no example: names the missing file" "$WORK/empty/config.toml.example not found"
+
 if [ -z "$REAL_CC" ]; then
   echo "skip - no cc on PATH; the stub-driven cases below need a compiler"
   echo
@@ -189,6 +212,14 @@ elif grep -q "^linker" "$CONFIG"; then
   fail "default CC: pinned a linker it did not need to"
 else
   pass "default CC: config written, no linker pin (probe used the driver cargo will)"
+fi
+
+# --- Every case above wrote to the temp tree: the checkout's own
+#     (gitignored) config is exactly as it was, present or absent.
+if [ "$(fingerprint)" = "$real_before" ]; then
+  pass "the checkout's .cargo/config.toml was not touched"
+else
+  fail "the checkout's .cargo/config.toml changed during the run"
 fi
 
 echo

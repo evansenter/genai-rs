@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use common::http_stub::{Recorded, Reply, Stub};
+use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, CallableFunction, Client, FileUpload, FunctionDeclaration,
@@ -941,12 +941,18 @@ async fn auto_functions_with_zero_loops_is_an_error_without_a_request() {
     assert!(stub.requests().is_empty());
 }
 
-#[tokio::test]
+/// On the paused clock (#501), held until the stub has the request: the
+/// only timers left are the 100 ms timeout and the stub's 2 s delay, so the
+/// call ends at exactly 100 ms of virtual time.
+#[tokio::test(start_paused = true)]
 async fn auto_functions_timeout_applies_per_call() {
-    let stub = Stub::replying(vec![
-        Reply::json(200, text_response("int-1", "late")).delayed(Duration::from_secs(2)),
-    ])
+    let (gate, release) = hold_clock();
+    let stub = Stub::start(move |_, _| {
+        release();
+        Reply::json(200, text_response("int-1", "late")).delayed(Duration::from_secs(2))
+    })
     .await;
+    let started = tokio::time::Instant::now();
     let err = stub
         .client()
         .interaction()
@@ -956,10 +962,12 @@ async fn auto_functions_timeout_applies_per_call() {
         .create_with_auto_functions()
         .await
         .unwrap_err();
+    gate.await.unwrap();
     assert!(
         matches!(err, GenaiError::Timeout(d) if d == Duration::from_millis(100)),
         "{err:?}"
     );
+    assert_eq!(started.elapsed(), Duration::from_millis(100), "{err:?}");
 }
 
 #[tokio::test]
@@ -1061,12 +1069,24 @@ async fn streaming_auto_functions_surface_in_stream_errors() {
 /// `with_read_timeout` ends a stream whose connection goes quiet: the first
 /// event arrives, then nothing, and the stream fails instead of waiting
 /// forever.
-#[tokio::test]
+///
+/// On the paused clock (#501). The clock is held until the first event is
+/// in hand, so no timer can fire while it travels over localhost (under
+/// load, auto-advance used to fire the read timeout before it was read).
+/// Once released, the only timers are the stub's 30 s stall and the read
+/// timeout, so the timeout fires first, in virtual time, on any runner.
+/// (reqwest ends it about 550 ms after the first event, not 300: when its
+/// read timer starts is reqwest's business, so only the bounds are
+/// asserted.)
+#[tokio::test(start_paused = true)]
 async fn read_timeout_ends_a_stalled_stream() {
+    let (gate, release) = hold_clock();
     let mut reply = Reply::sse(&[
         &format!("data: {}\n\n", delta_event("first")),
         &format!("data: {}\n\n", delta_event("never")),
     ]);
+    // No delay before the first part: the held clock would never pass it.
+    reply.parts[0].0 = Duration::ZERO;
     reply.parts[1].0 = Duration::from_secs(30);
     let stub = Stub::replying(vec![reply]).await;
     let client = Client::builder("test-key".to_string())
@@ -1081,18 +1101,28 @@ async fn read_timeout_ends_a_stalled_stream() {
         .build()
         .unwrap();
 
-    let started = std::time::Instant::now();
-    let events: Vec<_> = client.execute_stream(request).collect().await;
+    let mut stream = client.execute_stream(request);
+    let first = stream.next().await;
+    release();
+    let started = tokio::time::Instant::now();
+    let rest: Vec<_> = stream.collect().await;
+    gate.await.unwrap();
 
-    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(matches!(first, Some(Ok(_))), "{first:?}");
+    // At least the read timeout, and long before the stalled part's 30 s.
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(300) && elapsed < Duration::from_secs(30),
+        "ended {elapsed:?} after the first event: {rest:?}"
+    );
     // A stall mid-body is a cut-off stream like any other, with the
     // timed-out transport error as its source.
     assert!(
         matches!(
-            events.as_slice(),
-            [Ok(_), Err(GenaiError::StreamInterrupted { source: Some(e), .. })] if e.is_timeout()
+            rest.as_slice(),
+            [Err(GenaiError::StreamInterrupted { source: Some(e), .. })] if e.is_timeout()
         ),
-        "{events:?}"
+        "{rest:?}"
     );
-    assert!(events[1].as_ref().unwrap_err().is_retryable());
+    assert!(rest[0].as_ref().unwrap_err().is_retryable());
 }
