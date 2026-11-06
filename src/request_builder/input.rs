@@ -391,3 +391,7 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 }
+
+#[cfg(test)]
+#[path = "input_tests.rs"]
+mod tests;
