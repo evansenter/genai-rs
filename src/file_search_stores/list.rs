@@ -78,8 +78,8 @@ paging::list_builder! {
     /// [`pages`](Self::pages) / [`items`](Self::items) to follow
     /// `nextPageToken` to the end of the list. The page size is sent with every
     /// page. A store name that is not `fileSearchStores/<id>` fails with
-    /// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
-    /// the streams' only item).
+    /// [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput) before
+    /// any request (from `.send()`, or as the streams' only item).
     ///
     /// # Example
     ///
@@ -133,9 +133,9 @@ paging::list_builder! {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, and
-    /// an API or network error if the request fails or response parsing
-    /// fails.
+    /// Returns [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput)
+    /// for a malformed store name, and an API or network error if the
+    /// request fails or response parsing fails.
     fn send;
 
     /// Streams every document across pages, oldest first. Same rules as

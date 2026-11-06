@@ -195,8 +195,8 @@ paging::list_builder! {
     /// [`pages`](Self::pages) / [`items`](Self::items) to follow
     /// `next_page_token` to the end of the list. The page size is sent with
     /// every page. An empty or dot-segment trigger ID fails with
-    /// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
-    /// the streams' only item).
+    /// [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput) before
+    /// any request (from `.send()`, or as the streams' only item).
     ///
     /// # Example
     ///

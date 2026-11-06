@@ -109,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extensions (#516).
 - `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
   send a request field the crate doesn't model yet, flat beside the modeled
-  ones, as `TriggerCreateParams::extra` already allowed. A repeated key
+  ones, as `CreateTriggerRequest::extra` already allowed. A repeated key
   replaces its value, as with `add_label`. The server validates the field
   like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
   that names a modeled field overrides it, since the API keeps the last of a
@@ -251,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps the whole object. Examples: a non-object `arguments`, a non-string
   element in `urls` or `queries`. These used to be read leniently, dropping
   the bad value. A static video `processing` object with a mistyped field
-  becomes `VideoProcessing::Unknown`. Under `strict-unknown`, a malformed
+  becomes `VideoProcessing::Unknown`. In strict mode, a malformed
   `Step` or `Content` is an error that names the field and why
   (``field `arguments`: expected an object``) instead of calling the type
   unknown; that includes an unrecognized `language` on
@@ -392,7 +392,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: a deserialized `InteractionRequest` keeps the keys it doesn't
   model, in `extra`, and sends them.** 0.13.0 dropped them silently. This
   covers a request loaded from JSON or a config file, and the nested
-  `interaction` of a deserialized `TriggerCreateParams`. A stale, misplaced
+  `interaction` of a deserialized `CreateTriggerRequest`. A stale, misplaced
   or misspelled key, such as a top-level `temperature` that belongs in
   `generation_config`, now reaches the server, which rejects a name it
   doesn't know with `400 Unknown parameter '<name>'`. Migration: remove the
@@ -433,8 +433,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that list every field stop compiling. Migration: add
   `..Default::default()`, or build them with `RemoteEnvironment::new()` and
   `CreateVoiceRequest`'s constructors and `with_*` setters.
-- **Breaking: `FileSearchDocument` and `DocumentListResponse` no longer
-  implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration: `==`
+- **Breaking: `FileSearchDocument` and `FileSearchDocumentListResponse` no
+  longer implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration: `==`
   still works (`PartialEq`); drop `Eq` bounds that required it.
 - **Breaking: `FileSearchStores::upload` takes `impl Into<DocumentUpload>`
   and uses the resumable upload protocol.** A `FileUpload` converts, so
@@ -501,7 +501,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `input` optional, and a decoding continuation of a stored interaction
   sends none (#489). `None` is left out of the body. A deserialized
   `InteractionRequest` without `input` now reads as `None` instead of
-  failing; a `TriggerCreateParams` config file still fails on a missing (or
+  failing; a `CreateTriggerRequest` config file still fails on a missing (or
   misspelled `inputs`) input, since a trigger never fires a continuation,
   and a malformed `input` value is still a parse error. A stored trigger's
   interaction without an input, or with one that does not parse, reads as
@@ -752,7 +752,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serializing. It now carries `"unknown": true` and stays unknown; chunks
   serialized by 0.13.0 read back as before (`docs/ENUM_WIRE_FORMATS.md`).
   Found by the new fuzz targets.
-- The `TriggerCreateParams::extra` docs said a colliding key wins because
+- The `CreateTriggerRequest::extra` docs said a colliding key wins because
   the request path uses `serde_json::to_value`. In fact the body carries
   both keys, with the `extra` one last, and it wins because the API keeps
   the last of a repeated key (verified live 2026-11-04).
