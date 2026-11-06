@@ -2,12 +2,15 @@
 //!
 //! # Version coupling with `genai-rs`
 //!
-//! The code `#[tool]` generates references `genai_rs::__private`, so this
-//! crate requires a matching-or-newer `genai-rs`. Being a proc-macro crate it
-//! declares no dependency on `genai-rs`, so Cargo cannot enforce that —
-//! pinning the two independently with this crate ahead of the library fails
-//! at every `#[tool]` site with `could not find __private in genai_rs`.
-//! Bump them together.
+//! The code `#[tool]` generates names `genai_rs::__private` (its
+//! `inventory` registration and `serde_json`) and
+//! `genai_rs::function_calling::FunctionFuture`, so this crate requires the
+//! `genai-rs` release it ships with. Being a proc-macro crate it declares no
+//! dependency on `genai-rs`, so Cargo cannot enforce that: a 0.13
+//! `genai-rs-macros` names `genai_rs::function_calling::submit`, which 0.14
+//! removed, and a 0.14 one names `__private::submit` and `FunctionFuture`,
+//! which 0.13 lacks. Either mismatch fails at every `#[tool]` site. Bump
+//! them together.
 
 use proc_macro::TokenStream;
 use syn::Pat;

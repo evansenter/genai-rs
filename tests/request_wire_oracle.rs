@@ -19,14 +19,14 @@ use api_surface::Surface;
 use common::http_stub::{Recorded, Reply, Stub};
 use genai_rs::{
     Agent, AllowlistEntry, AntigravityConfig, ChunkingConfig, CreateCredentialRequest,
-    CreateEnvironmentRequest, CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig,
-    CredentialType, CredentialUpdate, CustomMetadata, DeepResearchConfig, DocumentImport,
-    DocumentUpload, EnvVar, EnvironmentSource, FileUpload, GenerationConfig, HarmCategory,
-    InjectionLocation, InteractionInput, InteractionRequest, NetworkConfig, RemoteEnvironment,
-    ResponseFormat, ResponseFormatSpec, RevocationBehavior, SafetySetting, SafetyThreshold,
-    SigningSecret, SpeechConfig, ThinkingLevel, Tool, TriggerCreateParams, TriggerStatus,
-    TriggerUpdate, VoiceAudio, VoicePitch, Webhook, WebhookConfig, WebhookEvent, WebhookState,
-    WebhookUpdate,
+    CreateEnvironmentRequest, CreateFileSearchStoreRequest, CreateTriggerRequest,
+    CreateVoiceRequest, CredentialConfig, CredentialType, CredentialUpdate, CustomMetadata,
+    DeepResearchConfig, DocumentImport, DocumentUpload, EnvVar, EnvironmentSource, FileUpload,
+    GenerationConfig, HarmCategory, InjectionLocation, InteractionInput, InteractionRequest,
+    NetworkConfig, RemoteEnvironment, ResponseFormat, ResponseFormatSpec, RevocationBehavior,
+    SafetySetting, SafetyThreshold, SigningSecret, SpeechConfig, ThinkingLevel, Tool,
+    TriggerStatus, TriggerUpdate, VoiceAudio, VoicePitch, Webhook, WebhookConfig, WebhookEvent,
+    WebhookState, WebhookUpdate,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -254,7 +254,7 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
     client
         .triggers()
         .create(
-            &TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction(true))
+            &CreateTriggerRequest::new("0 5 1 1 *", "UTC", interaction(true))
                 .with_display_name("daily")
                 .with_environment_id("environments/e")
                 .with_max_consecutive_failures(3)

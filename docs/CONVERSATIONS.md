@@ -123,8 +123,10 @@ let response = client.interaction()
 # }
 ```
 
-`with_text()` composes with `with_history()`: the text is appended as a final
-user step. `with_content()` does not; for multimodal history, use
+`with_text()` and `with_content()` compose with `with_history()`: this turn
+is appended as a final user step, `Step::user_text(text)` or
+`Step::user_input(content)` (with any text as the content's first block).
+Earlier multimodal turns go in the history as
 `Step::user_input(vec![Content::text(..), Content::image_data(..)])`.
 
 ### Replay model output verbatim

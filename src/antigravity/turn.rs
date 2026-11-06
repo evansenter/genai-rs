@@ -430,6 +430,10 @@ pub(super) struct TurnState {
     /// throwaway drain states, which run *inside* a caller that already
     /// holds the real guard.
     _turn_guard: Option<TurnGuard>,
+    /// The turn is being halted and drained, with no one to consume it:
+    /// its per-turn lifecycle hooks get the answer they would get with no
+    /// hook set, instead of running user code.
+    pub(super) draining: bool,
 }
 
 impl TurnState {
@@ -455,6 +459,16 @@ impl TurnState {
             timeout,
             deadline: timeout.map(|t| tokio::time::Instant::now() + t),
             _turn_guard: turn_guard,
+            draining: false,
+        }
+    }
+
+    /// The throwaway state `halt_and_drain` answers a stale turn's requests
+    /// with.
+    pub(super) fn draining() -> Self {
+        Self {
+            draining: true,
+            ..Self::new(None, None)
         }
     }
 

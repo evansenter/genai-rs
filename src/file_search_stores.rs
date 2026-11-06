@@ -85,9 +85,9 @@ pub(crate) use document_input::DocumentOptions;
 pub use document_input::{DocumentImport, DocumentUpload};
 pub use list::{ListFileSearchDocuments, ListFileSearchStores};
 pub use types::{
-    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentListResponse,
-    DocumentState, FileSearchDocument, FileSearchStore, FileSearchStoreListResponse, StringList,
-    WhiteSpaceConfig,
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentState,
+    FileSearchDocument, FileSearchDocumentListResponse, FileSearchStore,
+    FileSearchStoreListResponse, StringList, WhiteSpaceConfig,
 };
 
 use crate::client::Client;
@@ -192,11 +192,7 @@ impl<'a> FileSearchStores<'a> {
     /// [`pages`](ListFileSearchStores::pages) /
     /// [`items`](ListFileSearchStores::items) to stream them all.
     pub fn list(self) -> ListFileSearchStores<'a> {
-        ListFileSearchStores {
-            client: self.client,
-            page_size: None,
-            page_token: None,
-        }
+        ListFileSearchStores::new(self.client)
     }
 
     /// Deletes an empty file search store.
@@ -364,8 +360,9 @@ impl<'a> FileSearchStores<'a> {
     /// name that is not `fileSearchStores/<id>` or a white-space chunking
     /// overlap not smaller than its chunk. Returns an API or network
     /// error if the import is refused (a file that does not exist, for
-    /// instance), [`GenaiError::Internal`] if the operation reports an error
-    /// or the wait times out, and [`GenaiError::MalformedResponse`] if the
+    /// instance), [`GenaiError::ProcessingFailed`] if the operation reports an
+    /// error, [`GenaiError::PollTimeout`] if the wait times out, and
+    /// [`GenaiError::MalformedResponse`] if the
     /// operation finishes without naming a document. If reading the document
     /// back fails, the error names the imported document.
     ///
@@ -455,12 +452,7 @@ impl<'a> FileSearchDocuments<'a> {
     /// [`pages`](ListFileSearchDocuments::pages) /
     /// [`items`](ListFileSearchDocuments::items) to stream them all.
     pub fn list(self, store_name: &str) -> ListFileSearchDocuments<'a> {
-        ListFileSearchDocuments {
-            client: self.client,
-            store_name: store_name.to_owned(),
-            page_size: None,
-            page_token: None,
-        }
+        ListFileSearchDocuments::new(self.client, store_name.to_owned())
     }
 
     /// Gets a document, for example to check its indexing
@@ -524,9 +516,9 @@ impl<'a> FileSearchDocuments<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::Internal`] if the document reaches
-    /// [`Failed`](DocumentState::Failed) or if the wait times out (neither is
-    /// retryable, and the two are told apart by their message),
+    /// Returns [`GenaiError::ProcessingFailed`] if the document reaches
+    /// [`Failed`](DocumentState::Failed) and [`GenaiError::PollTimeout`] if
+    /// the wait times out (neither is retryable),
     /// [`GenaiError::InvalidInput`] for a malformed name, or the error of a
     /// failed status request.
     ///
@@ -564,9 +556,8 @@ impl<'a> FileSearchDocuments<'a> {
                 match &current.state {
                     Some(DocumentState::Active) => return Ok(PollStep::Ready(current)),
                     Some(DocumentState::Failed) => {
-                        // `Internal`: terminal, and a 5xx `Api` would read as
-                        // retryable.
-                        return Err(GenaiError::Internal(format!(
+                        // Terminal, and a 5xx `Api` would read as retryable.
+                        return Err(GenaiError::ProcessingFailed(format!(
                             "Document '{document_name}' failed to index. This is \
                              terminal — re-uploading is the only recovery."
                         )));

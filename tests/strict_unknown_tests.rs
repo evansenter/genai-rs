@@ -1,15 +1,15 @@
-//! Tests for strict-unknown feature flag behavior
+//! Tests for `genai_strict_unknown` cfg behavior
 //!
-//! These tests verify that the `strict-unknown` feature flag correctly modifies
+//! These tests verify that the `genai_strict_unknown` cfg correctly modifies
 //! deserialization behavior for unknown content and step types.
 //!
-//! When `strict-unknown` is DISABLED (default):
+//! When `genai_strict_unknown` is DISABLED (default):
 //! - Unknown content types are captured in `Content::Unknown` variants
 //! - Unknown step types are captured in `Step::Unknown` variants
 //! - Deserialization succeeds even for unrecognized types
 //! - Unknown variants can be serialized back (round-trip support)
 //!
-//! When `strict-unknown` is ENABLED:
+//! When `genai_strict_unknown` is ENABLED:
 //! - Unknown content types cause deserialization errors
 //! - Unknown step types cause deserialization errors
 //! - Error messages clearly indicate the unknown type and strict mode
@@ -17,8 +17,8 @@
 //! # Test Organization
 //!
 //! Tests are organized into three modules:
-//! - `graceful_handling`: Tests for default mode (strict-unknown DISABLED)
-//! - `strict_mode`: Tests for strict mode (strict-unknown ENABLED)
+//! - `graceful_handling`: Tests for default mode (strict mode DISABLED)
+//! - `strict_mode`: Tests for strict mode (strict mode ENABLED)
 //! - `common`: Tests that work in BOTH modes
 //!
 //! # Running Tests
@@ -30,17 +30,17 @@
 //!
 //! Strict mode (fail on unknown):
 //! ```sh
-//! cargo test --test strict_unknown_tests --features strict-unknown
+//! RUSTFLAGS='--cfg genai_strict_unknown' cargo test --test strict_unknown_tests
 //! ```
 
 use genai_rs::{Content, Step};
 use serde_json::json;
 
 // =============================================================================
-// Module: graceful_handling - Tests for DEFAULT behavior (strict-unknown DISABLED)
+// Module: graceful_handling - Tests for DEFAULT behavior (strict mode DISABLED)
 // =============================================================================
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 mod graceful_handling {
     use super::*;
 
@@ -269,10 +269,10 @@ mod graceful_handling {
 }
 
 // =============================================================================
-// Module: strict_mode - Tests for STRICT behavior (strict-unknown ENABLED)
+// Module: strict_mode - Tests for STRICT behavior (strict mode ENABLED)
 // =============================================================================
 
-#[cfg(feature = "strict-unknown")]
+#[cfg(genai_strict_unknown)]
 mod strict_mode {
     use super::*;
 
@@ -330,7 +330,7 @@ mod strict_mode {
         // Verify the error message contains actionable guidance
         // The error message should mention how to resolve the issue
         assert!(
-            err_msg.contains("strict-unknown") || err_msg.contains("feature"),
+            err_msg.contains("genai_strict_unknown"),
             "Error message should mention the feature flag. Got: {}",
             err_msg
         );
@@ -396,7 +396,7 @@ mod strict_mode {
     }
 
     // -------------------------------------------------------------------------
-    // Step strict handling (revision 2026-05-20): strict-unknown applies to
+    // Step strict handling (revision 2026-05-20): strict mode applies to
     // unknown Step types the same way it applies to Content.
     // -------------------------------------------------------------------------
 
@@ -430,7 +430,7 @@ mod strict_mode {
             err_msg
         );
         assert!(
-            err_msg.contains("strict-unknown") || err_msg.contains("feature"),
+            err_msg.contains("genai_strict_unknown"),
             "Error message should mention the feature flag. Got: {}",
             err_msg
         );
@@ -491,7 +491,7 @@ mod strict_mode {
             err.to_string(),
             "Step 'code_execution_call' has a field this crate cannot read: \
              field `arguments.language`: Unknown CodeExecutionLanguage 'javascript'. \
-             Strict mode is enabled via the 'strict-unknown' feature flag. \
+             Strict mode is enabled via the 'genai_strict_unknown' cfg flag. \
              Either update the library or disable strict mode."
         );
 
@@ -506,7 +506,7 @@ mod strict_mode {
             err.to_string(),
             "Step 'url_context_call' has a field this crate cannot read: \
              field `arguments`: expected an object, got \"https://a.example\". \
-             Strict mode is enabled via the 'strict-unknown' feature flag, which \
+             Strict mode is enabled via the 'genai_strict_unknown' cfg flag, which \
              rejects what would otherwise be kept whole as Step::Unknown. \
              Either update the library or disable strict mode."
         );
@@ -530,7 +530,7 @@ mod strict_mode {
             err.to_string(),
             "StepDelta 'thought_summary' has a field this crate cannot read: \
              field `content`: Unknown Content type 'hologram'. Strict mode is \
-             enabled via the 'strict-unknown' feature flag. Either update the \
+             enabled via the 'genai_strict_unknown' cfg flag. Either update the \
              library or disable strict mode."
         );
 
@@ -553,7 +553,7 @@ mod strict_mode {
     fn malformed_known_content_error_names_the_field() {
         let content_error = "Content 'text' has a field this crate cannot read: \
              field `text`: invalid type: integer `7`, expected a string. \
-             Strict mode is enabled via the 'strict-unknown' feature flag, which \
+             Strict mode is enabled via the 'genai_strict_unknown' cfg flag, which \
              rejects what would otherwise be kept whole as Content::Unknown. \
              Either update the library or disable strict mode.";
         let err = serde_json::from_value::<Content>(json!({"type": "text", "text": 7}))
@@ -765,7 +765,7 @@ mod common {
         .unwrap();
 
         // ToolCall — the generic server-side call the API emits for MCP.
-        // Under `strict-unknown` an unmodeled type is a hard error rather
+        // Under `genai_strict_unknown` an unmodeled type is a hard error rather
         // than a silent Unknown, so this list is what asserts it stays known.
         let _: Step = serde_json::from_value(json!({
             "type": "tool_call",

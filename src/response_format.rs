@@ -411,7 +411,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn test_response_delivery_unknown_roundtrip() {
         let unknown: ResponseDelivery = serde_json::from_str("\"multipart\"").unwrap();

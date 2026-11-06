@@ -1144,7 +1144,7 @@ async fn test_trigger_lifecycle() {
     };
 
     use genai_rs::{
-        InteractionRequest, TriggerCreateParams, TriggerExecutionStatus, TriggerStatus,
+        CreateTriggerRequest, InteractionRequest, TriggerExecutionStatus, TriggerStatus,
         TriggerUpdate,
     };
 
@@ -1165,7 +1165,7 @@ async fn test_trigger_lifecycle() {
         ..Default::default()
     };
     // Once a year, so the schedule never fires during a run.
-    let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction())
+    let params = CreateTriggerRequest::new("0 5 1 1 *", "UTC", interaction())
         .with_display_name(&display_name)
         .with_max_consecutive_failures(3)
         .with_execution_timeout_seconds(300);
@@ -1324,8 +1324,8 @@ async fn test_trigger_lifecycle() {
         }
 
         // `store` in the nested request is rejected, which is why
-        // TriggerCreateParams warns about it.
-        let with_store = TriggerCreateParams::new(
+        // CreateTriggerRequest warns about it.
+        let with_store = CreateTriggerRequest::new(
             "0 5 1 1 *",
             "UTC",
             InteractionRequest {
@@ -1344,7 +1344,7 @@ async fn test_trigger_lifecycle() {
                     let _ = client.triggers().delete(id).await;
                 }
                 panic!(
-                    "a trigger with `store` set was accepted; update the TriggerCreateParams warning"
+                    "a trigger with `store` set was accepted; update the CreateTriggerRequest warning"
                 );
             }
             Err(e) => panic!("expected the `store` 400, got {e}"),

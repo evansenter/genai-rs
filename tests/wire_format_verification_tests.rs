@@ -636,9 +636,9 @@ mod interaction_content {
         // rejects unknown enum values, so the field names must match exactly.
         let content = Content::video_uri("gs://bucket/video.mp4", "video/mp4").with_processing(
             VideoProcessing::segment()
-                .start_offset("5s")
-                .end_offset("10s")
-                .fps(1.0)
+                .with_start_offset("5s")
+                .with_end_offset("10s")
+                .with_fps(1.0)
                 .build(),
         );
         let json = serde_json::to_value(&content).unwrap();

@@ -322,7 +322,7 @@ fn test_step_mcp_server_tool_call_roundtrip() {
 }
 
 #[test]
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 fn test_step_unknown_preserves_data_and_roundtrips() {
     let json_str = r#"{"type":"quantum_step","novel_field":42}"#;
     let step: Step = serde_json::from_str(json_str).unwrap();

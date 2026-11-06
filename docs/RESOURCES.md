@@ -78,7 +78,7 @@ become `with_*` setters.
 | `client.webhooks.delete(id)` | `client.webhooks().delete(id)` |
 | `client.webhooks.ping(id)` | `client.webhooks().ping(id)` |
 | `client.webhooks.rotate_signing_secret(id, revocation_behavior=)` | `client.webhooks().rotate_signing_secret(id, Some(behavior))` |
-| `client.triggers.create(schedule=, time_zone=, interaction=, display_name=, ...)` | `client.triggers().create(&TriggerCreateParams::new(schedule, time_zone, interaction).with_display_name(n))` |
+| `client.triggers.create(schedule=, time_zone=, interaction=, display_name=, ...)` | `client.triggers().create(&CreateTriggerRequest::new(schedule, time_zone, interaction).with_display_name(n))` |
 | `client.triggers.get(id)` | `client.triggers().get(id)` |
 | `client.triggers.list(page_size=, page_token=)` | `client.triggers().list().with_page_size(n).with_page_token(t).send()` |
 | `client.triggers.list(filter_=)` | Not modeled: the API parses the filter, but every expression tried (`status = "ACTIVE"`, `status:ACTIVE`, `display_name = "x"`, `environment_id = "abc"`, ...) is a `400 Invalid filter expression`, and the syntax is not documented (live 2026-11-05) |

@@ -42,7 +42,6 @@ use crate::paging;
 use crate::serde_util::{ResourceName, deserialize_lenient_timestamp};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 struct ForCredential;
@@ -510,11 +509,7 @@ impl<'a> Credentials<'a> {
     /// [`pages`](ListCredentials::pages) / [`items`](ListCredentials::items)
     /// to stream them all.
     pub fn list(self) -> ListCredentials<'a> {
-        ListCredentials {
-            client: self.client,
-            page_size: None,
-            page_token: None,
-        }
+        ListCredentials::new(self.client)
     }
 
     /// Updates a credential with the fields set on `update`, sending its
@@ -568,51 +563,42 @@ impl<'a> Credentials<'a> {
     }
 }
 
-/// A `GET /v1beta/credentials` request, from [`Credentials::list`].
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `next_page_token` to the end of the list. The page size is sent with
-/// every page.
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // One page
-/// let page = client.credentials().list().with_page_size(50).send().await?;
-/// println!("{} credentials, more: {}", page.credentials.len(), page.next_page_token.is_some());
-///
-/// // Every credential, across pages
-/// let all: Vec<genai_rs::Credential> = client.credentials().list().items().try_collect().await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListCredentials<'a> {
-    client: &'a Client,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
+paging::list_builder! {
+    /// A `GET /v1beta/credentials` request, from [`Credentials::list`].
+    ///
+    /// End it with [`send`](Self::send) for one page, or
+    /// [`pages`](Self::pages) / [`items`](Self::items) to follow
+    /// `next_page_token` to the end of the list. The page size is sent with
+    /// every page.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use futures_util::TryStreamExt;
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// // One page
+    /// let page = client.credentials().list().with_page_size(50).send().await?;
+    /// println!("{} credentials, more: {}", page.credentials.len(), page.next_page_token.is_some());
+    ///
+    /// // Every credential, across pages
+    /// let all: Vec<genai_rs::Credential> = client.credentials().list().items().try_collect().await?;
+    /// # let _ = all;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub struct ListCredentials<'a> {
+    }
+    page: CredentialListResponse => Credential;
+    label: "credentials";
 
-impl<'a> ListCredentials<'a> {
     /// Sets the maximum number of credentials per page. Sent with every
     /// page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
+    fn with_page_size;
 
     /// Starts from this page token, from a previous page's
     /// `next_page_token`.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
+    fn with_page_token;
 
     /// Sends the request and returns one page.
     ///
@@ -622,50 +608,17 @@ impl<'a> ListCredentials<'a> {
     /// # Errors
     ///
     /// Returns an error if the HTTP request fails or response parsing fails.
-    pub async fn send(self) -> Result<CredentialListResponse, GenaiError> {
-        crate::http::credentials::list_credentials(
-            &self.client.http,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<CredentialListResponse, GenaiError>> {
-        let Self {
-            client,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("credentials", page_token, move |token| {
-            let client = client.clone();
-            async move {
-                crate::http::credentials::list_credentials(
-                    &client.http,
-                    page_size,
-                    token.as_deref(),
-                )
-                .await
-            }
-        })
-    }
+    fn send;
 
     /// Streams every credential across pages, in server order. Same rules
     /// as [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<Credential, GenaiError>> {
-        paging::items(self.pages())
-    }
+    fn items;
+
+    fetch: |http, page_size, token| crate::http::credentials::list_credentials(
+        http,
+        page_size,
+        token.as_deref(),
+    ),
 }
 
 #[cfg(test)]

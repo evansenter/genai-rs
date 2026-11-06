@@ -18,14 +18,14 @@
 #[path = "../../tests/api_surface/mod.rs"]
 mod api_surface;
 mod request;
-// Under `strict-unknown` an unmodeled enum value fails a whole body instead
+// Under `genai_strict_unknown` an unmodeled enum value fails a whole body instead
 // of showing as `Unknown`; the default build is the one the response side
 // measures.
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 mod response;
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 mod response_minimal;
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 mod response_targets;
 
 use api_surface::{Finding, Surface};
@@ -116,7 +116,7 @@ fn assert_clean(
 
 /// Binding classes no request case or response target reaches, each with
 /// its reason. (Like the response side, checked in the default build only.)
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 const UNMAPPED: &[Allowed] = &[
     (
         "interactions.Empty",
@@ -160,7 +160,7 @@ const UNMAPPED: &[Allowed] = &[
 /// or listed in [`UNMAPPED`] with its reason. The checks only see classes
 /// those tables reach, so a class a baseline bump adds (a new resource, a
 /// new request body) fails here until it is mapped.
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn every_binding_class_is_mapped() {
     let surface = Surface::bindings();

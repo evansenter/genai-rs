@@ -312,8 +312,8 @@ fn malformed_known_steps_are_kept_whole_as_unknown() {
     // A non-object `arguments` cannot be modeled, so the step stays whole.
     let wire = json!({"type": "url_context_call", "id": "c1", "arguments": "https://a.example"});
     let parsed = serde_json::from_value::<Step>(wire.clone());
-    if cfg!(feature = "strict-unknown") {
-        // strict-unknown rejects what would be `Unknown`.
+    if cfg!(genai_strict_unknown) {
+        // strict mode rejects what would be `Unknown`.
         assert!(parsed.is_err());
     } else {
         let step = parsed.unwrap();

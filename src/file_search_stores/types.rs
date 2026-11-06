@@ -202,7 +202,7 @@ pub struct FileSearchDocument {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
-pub struct DocumentListResponse {
+pub struct FileSearchDocumentListResponse {
     /// The documents on this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually.
     #[serde(
@@ -221,7 +221,7 @@ pub struct DocumentListResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-paging::impl_list_page!(DocumentListResponse, documents: FileSearchDocument);
+paging::impl_list_page!(FileSearchDocumentListResponse, documents: FileSearchDocument);
 
 wire_enum! {
     /// Indexing state of a document in a file search store.

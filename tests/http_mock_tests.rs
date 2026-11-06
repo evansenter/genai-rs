@@ -10,12 +10,11 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, CallableFunction, Client, FileUpload, FunctionDeclaration,
-    FunctionError, GenaiError, PollOptions, StreamChunk, StreamEvent, ToolService,
+    FunctionFuture, GenaiError, PollOptions, StreamChunk, StreamEvent, ToolService,
 };
 use serde_json::{Value, json};
 
@@ -64,7 +63,6 @@ struct ServiceTool {
     name: &'static str,
 }
 
-#[async_trait]
 impl CallableFunction for ServiceTool {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder(self.name)
@@ -72,8 +70,8 @@ impl CallableFunction for ServiceTool {
             .build()
     }
 
-    async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-        Ok(json!({"source": "service"}))
+    fn call(&self, _args: Value) -> FunctionFuture<'_> {
+        Box::pin(async move { Ok(json!({"source": "service"})) })
     }
 }
 
@@ -203,6 +201,61 @@ async fn execute_stream_sends_stream_true() {
     let [request] = stub.requests().try_into().unwrap();
     assert_eq!(request.target, "/v1beta/interactions?alt=sse");
     assert_eq!(request.json()["stream"], json!(true));
+}
+
+/// The create streams own a clone of the client, like `interactions().stream()`
+/// (D-017), so a task can drive one after the client and the builder are
+/// gone (#498).
+#[tokio::test]
+async fn create_stream_can_be_spawned() {
+    let completed = "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n";
+    let stub = Stub::replying(vec![
+        Reply::sse(&[completed]),
+        Reply::sse(&[completed]),
+        Reply::sse(&[completed]),
+    ])
+    .await;
+
+    let (create, execute, auto) = {
+        let client = stub.client();
+        let request = client
+            .interaction()
+            .with_model("test-model")
+            .with_text("Hi")
+            .build()
+            .unwrap();
+        (
+            client
+                .interaction()
+                .with_model("test-model")
+                .with_text("Hi")
+                .create_stream(),
+            client.execute_stream(request),
+            client
+                .interaction()
+                .with_model("test-model")
+                .with_text("Hi")
+                .create_stream_with_auto_functions(),
+        )
+        // `client` is dropped here.
+    };
+
+    let create = tokio::spawn(create.collect::<Vec<_>>()).await.unwrap();
+    assert!(
+        matches!(create.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed(_))),
+        "{create:?}"
+    );
+    let execute = tokio::spawn(execute.collect::<Vec<_>>()).await.unwrap();
+    assert!(
+        matches!(execute.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed(_))),
+        "{execute:?}"
+    );
+    let auto = tokio::spawn(auto.collect::<Vec<_>>()).await.unwrap();
+    assert!(
+        matches!(auto.as_slice(), [Ok(e)] if matches!(e.chunk, AutoFunctionStreamChunk::Complete(_))),
+        "{auto:?}"
+    );
+    assert_eq!(stub.requests().len(), 3);
 }
 
 /// `stream` belongs to the transport. `extra` is written after the modeled
@@ -448,7 +501,7 @@ async fn sse_step_accumulation_fills_the_completed_response() {
 /// The `Completed` response the accumulator assembles from a stream.
 async fn completed_from(chunks: &[String]) -> genai_rs::InteractionResponse {
     let chunks: Vec<&str> = chunks.iter().map(String::as_str).collect();
-    stream_events(&chunks)
+    *stream_events(&chunks)
         .await
         .into_iter()
         .find_map(|event| match event.expect("stream event").chunk {
@@ -523,6 +576,7 @@ async fn sse_images_in_separate_steps_as_streamed_live() {
     }
     let images: Vec<Vec<u8>> = response
         .images()
+        .into_iter()
         .map(|image| image.bytes().expect("each image decodes"))
         .collect();
     assert_eq!(images.len(), 2);
@@ -560,6 +614,7 @@ async fn sse_two_images_in_one_step_stay_two_blocks() {
     // mid-way, did not.
     let images: Vec<Vec<u8>> = response
         .images()
+        .into_iter()
         .map(|image| image.bytes().expect("each image decodes"))
         .collect();
     assert_eq!(images.len(), 2, "two images, two blocks");
@@ -741,7 +796,7 @@ async fn wait_until_active_failure_is_terminal_not_retryable() {
         .wait_until_active("files/abc", poll)
         .await
         .unwrap_err();
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::ProcessingFailed(_)), "{err:?}");
     assert!(!err.is_retryable(), "a failed file never recovers: {err:?}");
     assert!(err.to_string().contains("transcoding failed"), "{err}");
 }
@@ -780,6 +835,46 @@ async fn auto_functions_stop_at_max_loops() {
     assert_eq!(second["previous_interaction_id"], "int-0");
     assert_eq!(second["input"][0]["type"], "function_result");
     assert_eq!(second["input"][0]["call_id"], "call-0");
+}
+
+/// The streaming loop hands each round's response to its
+/// `ExecutingFunctions` event and keeps only the final round's for
+/// `MaxLoopsReached` (#498).
+#[tokio::test]
+async fn streaming_auto_functions_stop_at_max_loops() {
+    let stub = Stub::start(|_, n| {
+        Reply::sse(&[&format!(
+            "data: {{\"event_type\":\"interaction.completed\",\"interaction\":{}}}\n\n",
+            function_call_response(&format!("int-{n}"), &format!("call-{n}"), "svc_fn")
+        )])
+    })
+    .await;
+
+    let events: Vec<_> = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("loop forever")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .with_max_function_call_loops(2)
+        .create_stream_with_auto_functions()
+        .map(|event| event.unwrap().chunk)
+        .collect()
+        .await;
+
+    let executing: Vec<_> = events
+        .iter()
+        .filter_map(|chunk| match chunk {
+            AutoFunctionStreamChunk::ExecutingFunctions { response, .. } => response.id.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(executing, ["int-0", "int-1"], "{events:?}");
+    let Some(AutoFunctionStreamChunk::MaxLoopsReached(last)) = events.last() else {
+        panic!("the stream ends with MaxLoopsReached: {events:?}");
+    };
+    assert_eq!(last.id.as_deref(), Some("int-1"));
+    assert_eq!(stub.requests().len(), 2);
 }
 
 /// Observed live 2026-10-01: on the second user turn of a non-streamed

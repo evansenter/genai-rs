@@ -592,7 +592,7 @@ impl AntigravityAgent {
             tracing::warn!("Failed to send halt request while {why}: {e}");
             return;
         }
-        let mut state = TurnState::new(None, None);
+        let mut state = TurnState::draining();
         let deadline = tokio::time::Instant::now() + HALT_DRAIN_BUDGET;
         loop {
             let silence = tokio::time::Instant::now() + HALT_DRAIN_SILENCE;

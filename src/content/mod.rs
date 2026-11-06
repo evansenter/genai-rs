@@ -664,7 +664,7 @@ impl Content {
     ///
     /// // Sample only the first 10 seconds, one frame per second.
     /// let video = Content::video_uri("files/abc123", "video/mp4")
-    ///     .with_processing(VideoProcessing::segment().end_offset("10s").fps(1.0).build());
+    ///     .with_processing(VideoProcessing::segment().with_end_offset("10s").with_fps(1.0).build());
     /// ```
     #[must_use]
     pub fn with_processing(mut self, processing: VideoProcessing) -> Self {

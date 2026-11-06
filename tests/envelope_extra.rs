@@ -50,9 +50,12 @@ fn list_envelopes_keep_unknown_fields() {
     assert_envelope_keeps_unknown_fields!(genai_rs::WebhookListResponse, "next_page_token");
     // camelCase on the wire (see the module docs of each).
     assert_envelope_keeps_unknown_fields!(genai_rs::FileSearchStoreListResponse, "nextPageToken");
-    assert_envelope_keeps_unknown_fields!(genai_rs::DocumentListResponse, "nextPageToken");
-    assert_envelope_keeps_unknown_fields!(genai_rs::ListFilesResponse, "nextPageToken");
-    assert_envelope_keeps_unknown_fields!(genai_rs::EnvironmentFileList, "next_page_token");
+    assert_envelope_keeps_unknown_fields!(
+        genai_rs::FileSearchDocumentListResponse,
+        "nextPageToken"
+    );
+    assert_envelope_keeps_unknown_fields!(genai_rs::FileListResponse, "nextPageToken");
+    assert_envelope_keeps_unknown_fields!(genai_rs::EnvironmentFileListResponse, "next_page_token");
 }
 
 #[test]

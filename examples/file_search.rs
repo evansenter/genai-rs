@@ -12,6 +12,11 @@
 //! timed out: its document already exists, and a second import makes a
 //! second copy.
 //!
+//! The store's display name starts with `genai-rs-test`, the marker of
+//! this repository's test-resource janitor, so a store left behind by a run
+//! killed before its cleanup is recognizable and swept. Name your own stores
+//! for what they hold.
+//!
 //! Run with: cargo run --example file_search
 
 use genai_rs::{
@@ -53,9 +58,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 1. Provision a store. The returned `name` is the full resource name
     //    (e.g. "fileSearchStores/my-docs-4kws71n2ybpr") — that is what the
     //    File Search tool takes, not the display name.
+    let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+    let display_name = format!(
+        "genai-rs-test-example-file-search-{}-{}",
+        created.as_secs(),
+        created.subsec_nanos()
+    );
     let store = client
         .file_search_stores()
-        .create(&CreateFileSearchStoreRequest::new().with_display_name("genai-rs-example"))
+        .create(&CreateFileSearchStoreRequest::new().with_display_name(display_name))
         .await?;
     println!("Created store: {}", store.name);
 

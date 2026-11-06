@@ -30,8 +30,8 @@ fn get_time(timezone: String) -> String {
     format!(r#"{{"timezone": "{}", "time": "14:30"}}"#, timezone)
 }
 
-// Note what is *not* imported: `#[tool]` needs no `async-trait` or
-// `serde_json` dependency and no `CallableFunction` in scope. This snippet
+// Note what is *not* imported: `#[tool]` needs no `serde_json` dependency
+// and no `CallableFunction` in scope. This snippet
 // is compiled as a doctest, so it is the in-repo proof of that, alongside
 // `tests/ui/pass_no_consumer_imports.rs`.
 //
@@ -121,12 +121,12 @@ The streaming variant, `create_stream_with_auto_functions()`, is covered in
 ## `ToolService` for stateful functions
 
 Implement `CallableFunction` for each tool that needs state, and return them
-from a `ToolService`. Implementing the trait by hand needs `async-trait` and
-`serde_json` as direct dependencies.
+from a `ToolService`. `call` returns a `FunctionFuture`, a boxed future:
+write its body as `Box::pin(async move { ... })`. Implementing the trait by
+hand needs `serde_json` as a direct dependency, for `Value`.
 
 ```rust,no_run
-use async_trait::async_trait;
-use genai_rs::{CallableFunction, FunctionDeclaration, FunctionError, ToolService};
+use genai_rs::{CallableFunction, FunctionDeclaration, FunctionFuture, ToolService};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -135,7 +135,6 @@ struct NextTicket {
     counter: Arc<AtomicU64>,
 }
 
-#[async_trait]
 impl CallableFunction for NextTicket {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("next_ticket")
@@ -143,8 +142,8 @@ impl CallableFunction for NextTicket {
             .build()
     }
 
-    async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-        Ok(json!({"ticket": self.counter.fetch_add(1, Ordering::SeqCst)}))
+    fn call(&self, _args: Value) -> FunctionFuture<'_> {
+        Box::pin(async move { Ok(json!({"ticket": self.counter.fetch_add(1, Ordering::SeqCst)})) })
     }
 }
 

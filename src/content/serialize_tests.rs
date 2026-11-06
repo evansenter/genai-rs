@@ -273,7 +273,7 @@ fn test_unknown_content_sentinel_type_is_sent_verbatim() {
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_malformed_known_content_resends_under_its_own_type() {
     // A known tag with a mistyped field falls back to Unknown, and goes

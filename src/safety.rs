@@ -113,7 +113,7 @@ wire_enum! {
 /// All three enums here are open (Evergreen): an unrecognized wire value
 /// deserializes into `Unknown` and re-serializes faithfully, a string as
 /// that string and a non-string value (e.g. a numeric `type` in a config
-/// file feeding [`TriggerCreateParams`](crate::TriggerCreateParams)) as the
+/// file feeding [`CreateTriggerRequest`](crate::CreateTriggerRequest)) as the
 /// original JSON. Only a hand-built `Unknown` serializes its type string,
 /// so build one with the exact wire value you mean.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -177,7 +177,7 @@ mod tests {
         assert!(json.get("method").is_none());
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn unknown_values_roundtrip() {
         let json = serde_json::json!({

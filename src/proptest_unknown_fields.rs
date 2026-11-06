@@ -5,7 +5,7 @@
 //! its content blocks, their annotations, result items, places and review
 //! snippets), and the injected wire must come back out of
 //! deserialize/re-serialize unchanged. This runs under the default features
-//! and under `strict-unknown`, which rejects unknown *types* but must keep
+//! and under `genai_strict_unknown`, which rejects unknown *types* but must keep
 //! unknown *fields*.
 //!
 //! The strategies are `prop_oneof!` lists, which nothing checks for

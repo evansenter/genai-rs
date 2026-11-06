@@ -23,12 +23,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GenaiError {
+    /// A transport failure before a response arrived: connect (including
+    /// the default 30 s connect timeout), TLS, a client-level timeout, or a
+    /// non-streamed body that failed while it was read.
     #[error("HTTP request error: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("SSE parsing error: {0}")]
-    Parse(String),
-    #[error("JSON deserialization error: {0}")]
-    Json(#[from] serde_json::Error),
+    /// A response body was not valid UTF-8.
     #[error("UTF-8 decoding error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
     /// API error with structured context for debugging and automated handling.
@@ -56,8 +56,13 @@ pub enum GenaiError {
         /// This field is typically only populated for 429 (Too Many Requests) errors.
         retry_after: Option<std::time::Duration>,
     },
+    /// The client failed in a way that is neither the API's answer nor your
+    /// input: a request body that would not serialize, or an unexpected
+    /// failure reading back a resource a create already made (the message
+    /// then names the resource). Not retryable.
     #[error("Internal client error: {0}")]
     Internal(String),
+    /// The builder or a handle rejected the request before sending it.
     #[error("Invalid input: {0}")]
     InvalidInput(String),
     /// API returned a successful response but with unexpected or invalid content.
@@ -65,7 +70,8 @@ pub enum GenaiError {
     /// This indicates the API response didn't match the expected schema,
     /// possibly due to API evolution or an undocumented response format.
     /// Unlike `InvalidInput` (user's fault), this represents an issue with
-    /// the API response itself.
+    /// the API response itself. It includes a streamed SSE event that does
+    /// not parse, and one that grows past 64 MiB without ending.
     ///
     /// A stream cut off before its terminal event is
     /// [`StreamInterrupted`](Self::StreamInterrupted), not this.
@@ -114,6 +120,28 @@ pub enum GenaiError {
     /// enforced by the HTTP client instead and surfaces as [`GenaiError::Http`].
     #[error("Request timed out after {0:?}")]
     Timeout(std::time::Duration),
+    /// A wait for a resource to become ready reached its
+    /// [`PollOptions`](crate::PollOptions) timeout: a `wait_until_active`,
+    /// or the wait inside a file search store import.
+    ///
+    /// The resource may still be processing, so this is not
+    /// [`is_retryable`](Self::is_retryable): waiting again is your call, and
+    /// re-sending an import would make a second document. `message` says
+    /// what was awaited, how long, its last state, and what to do next.
+    #[error("{message}")]
+    PollTimeout {
+        /// The wait's timeout.
+        timeout: std::time::Duration,
+        /// What was awaited and what to do next.
+        message: String,
+    },
+    /// Server-side processing of a resource reached a terminal failure: an
+    /// uploaded file that failed processing, a file search document that
+    /// failed to index, or an import whose operation reported an error.
+    ///
+    /// Not retryable: the resource will never become ready. Upload it again.
+    #[error("Processing failed: {0}")]
+    ProcessingFailed(String),
     /// The server reported an error inside a stream (an SSE `error` event)
     /// after the HTTP status had already succeeded.
     ///
@@ -130,9 +158,10 @@ pub enum GenaiError {
     /// Failed to build the HTTP client.
     ///
     /// This typically only occurs in exceptional circumstances such as
-    /// TLS backend initialization failures.
+    /// TLS backend initialization failures. The reqwest error is the
+    /// [`source`](std::error::Error::source).
     #[error("Failed to build HTTP client: {0}")]
-    ClientBuild(String),
+    ClientBuild(#[source] reqwest::Error),
 }
 
 impl GenaiError {
@@ -148,9 +177,12 @@ impl GenaiError {
     ///
     /// Errors that return `false` are typically permanent and retrying won't help:
     /// - **Client errors (4xx except 429)**: Bad request, unauthorized, not found
-    /// - **Parse/JSON errors**: Response format issues
     /// - **Invalid input**: Request validation failures
-    /// - **Malformed response**: API contract violations
+    /// - **Malformed response**: API contract violations, including a
+    ///   stream event that does not parse
+    /// - **Processing failures**: a resource the server will never finish
+    /// - **Poll timeouts** ([`PollTimeout`](Self::PollTimeout)): the
+    ///   resource may still be processing; wait again rather than re-send
     ///
     /// # Cut-off streams
     ///
@@ -239,13 +271,15 @@ impl GenaiError {
             // A cut-off stream is a connection failure (see the docs above)
             GenaiError::StreamInterrupted { .. } => true,
 
-            // These are permanent errors - retrying won't help
-            GenaiError::Parse(_)
-            | GenaiError::Json(_)
-            | GenaiError::Utf8(_)
+            // These are permanent errors - retrying won't help. A poll
+            // timeout's resource may still be processing: re-sending the
+            // request (an import) would duplicate it.
+            GenaiError::Utf8(_)
             | GenaiError::Internal(_)
             | GenaiError::InvalidInput(_)
             | GenaiError::MalformedResponse(_)
+            | GenaiError::PollTimeout { .. }
+            | GenaiError::ProcessingFailed(_)
             | GenaiError::Stream { .. }
             | GenaiError::ClientBuild(_) => false,
         }
@@ -290,12 +324,34 @@ impl GenaiError {
 mod tests {
     use super::*;
 
+    /// A `reqwest::Error` from `ClientBuilder::build`: a header value with a
+    /// newline is rejected there, not when it is set.
+    fn client_build_error() -> reqwest::Error {
+        reqwest::Client::builder()
+            .user_agent("bad\nagent")
+            .build()
+            .expect_err("a newline in a header value fails the build")
+    }
+
     #[test]
-    fn test_genai_error_parse_display() {
-        let error = GenaiError::Parse("Invalid SSE format".to_string());
-        let display = format!("{}", error);
-        assert!(display.contains("SSE parsing error"));
-        assert!(display.contains("Invalid SSE format"));
+    fn test_genai_error_poll_timeout_display_is_its_message() {
+        let error = GenaiError::PollTimeout {
+            timeout: std::time::Duration::from_secs(60),
+            message: "Timeout waiting for file 'files/x' to become active".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Timeout waiting for file 'files/x' to become active"
+        );
+    }
+
+    #[test]
+    fn test_genai_error_processing_failed_display() {
+        let error = GenaiError::ProcessingFailed("File 'files/x' failed processing".to_string());
+        assert_eq!(
+            error.to_string(),
+            "Processing failed: File 'files/x' failed processing"
+        );
     }
 
     #[test]
@@ -338,15 +394,6 @@ mod tests {
         let display = format!("{}", error);
         assert!(display.contains("Invalid input"));
         assert!(display.contains("Missing model or agent"));
-    }
-
-    #[test]
-    fn test_genai_error_json_from() {
-        let json_str = "not valid json";
-        let json_err = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
-        let genai_err: GenaiError = json_err.into();
-        let display = format!("{}", genai_err);
-        assert!(display.contains("JSON deserialization error"));
     }
 
     #[test]
@@ -455,18 +502,27 @@ mod tests {
 
     #[test]
     fn test_genai_error_client_build_display() {
-        let error = GenaiError::ClientBuild("TLS initialization failed".to_string());
+        let error = GenaiError::ClientBuild(client_build_error());
         let display = format!("{}", error);
-        assert!(display.contains("Failed to build HTTP client"));
-        assert!(display.contains("TLS initialization failed"));
+        assert!(
+            display.starts_with("Failed to build HTTP client: "),
+            "{display}"
+        );
     }
 
     #[test]
     fn test_genai_error_client_build_debug() {
-        let error = GenaiError::ClientBuild("some error".to_string());
+        let error = GenaiError::ClientBuild(client_build_error());
         let debug = format!("{:?}", error);
         assert!(debug.contains("ClientBuild"));
-        assert!(debug.contains("some error"));
+    }
+
+    #[test]
+    fn test_client_build_preserves_source() {
+        use std::error::Error as _;
+        let error = GenaiError::ClientBuild(client_build_error());
+        let source = error.source().expect("ClientBuild keeps the reqwest error");
+        assert!(source.downcast_ref::<reqwest::Error>().is_some());
     }
 
     // =============================================================================
@@ -549,20 +605,20 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retryable_parse_error_not_retryable() {
-        let error = GenaiError::Parse("Invalid SSE".to_string());
-        assert!(
-            !error.is_retryable(),
-            "Parse errors should NOT be retryable"
-        );
+    fn test_is_retryable_poll_timeout_not_retryable() {
+        // The resource may still be processing; re-sending an import would
+        // make a second document.
+        let error = GenaiError::PollTimeout {
+            timeout: std::time::Duration::from_secs(60),
+            message: "waited".to_string(),
+        };
+        assert!(!error.is_retryable());
     }
 
     #[test]
-    fn test_is_retryable_json_error_not_retryable() {
-        let json_str = "not valid json";
-        let json_err = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
-        let error: GenaiError = json_err.into();
-        assert!(!error.is_retryable(), "JSON errors should NOT be retryable");
+    fn test_is_retryable_processing_failed_not_retryable() {
+        let error = GenaiError::ProcessingFailed("failed to index".to_string());
+        assert!(!error.is_retryable());
     }
 
     #[test]
@@ -594,7 +650,7 @@ mod tests {
 
     #[test]
     fn test_is_retryable_client_build_not_retryable() {
-        let error = GenaiError::ClientBuild("TLS init failed".to_string());
+        let error = GenaiError::ClientBuild(client_build_error());
         assert!(
             !error.is_retryable(),
             "ClientBuild errors should NOT be retryable"

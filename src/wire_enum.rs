@@ -3,7 +3,7 @@
 //! Emits a `#[non_exhaustive]` enum whose known variants map to wire strings,
 //! plus an `Unknown { <field>, data }` variant, the three Unknown helpers,
 //! `Display` (the wire string), `Serialize`, and a `Deserialize` that never
-//! fails on an unrecognized value — unless the `strict-unknown` feature is
+//! fails on an unrecognized value — unless the `genai_strict_unknown` cfg is
 //! on, when it errors instead. `|`-listed aliases are accepted on
 //! deserialize and normalized to the first spelling.
 //!
@@ -100,16 +100,16 @@ macro_rules! wire_enum {
                     Some(other) => other.to_string(),
                     None => $crate::wire_enum::non_string_descriptor(&value),
                 };
-                #[cfg(feature = "strict-unknown")]
+                #[cfg(genai_strict_unknown)]
                 {
                     Err(<D::Error as serde::de::Error>::custom(format!(
-                        "Unknown {} '{}'. Strict mode is enabled via the 'strict-unknown' \
-                         feature flag. Either update the library or disable strict mode.",
+                        "Unknown {} '{}'. Strict mode is enabled via the 'genai_strict_unknown' \
+                         cfg flag. Either update the library or disable strict mode.",
                         stringify!($name),
                         $field
                     )))
                 }
-                #[cfg(not(feature = "strict-unknown"))]
+                #[cfg(not(genai_strict_unknown))]
                 {
                     tracing::warn!(
                         "Encountered unknown {} '{}' - using Unknown variant (Evergreen)",
@@ -164,16 +164,16 @@ mod tests {
         assert_eq!(serde_json::to_value(&unknown).unwrap(), "gamma");
     }
 
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     #[test]
     fn strict_mode_rejects_unknown_and_non_string() {
         for value in [serde_json::json!("gamma"), serde_json::json!(7)] {
             let err = serde_json::from_value::<Sample>(value).unwrap_err();
-            assert!(err.to_string().contains("strict-unknown"), "{err}");
+            assert!(err.to_string().contains("genai_strict_unknown"), "{err}");
         }
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn unknown_and_non_string() {
         let other: Sample = serde_json::from_value(serde_json::json!("gamma")).unwrap();
@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(number.unknown_data(), Some(&serde_json::json!(7)));
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn a_non_string_value_round_trips() {
         for value in [

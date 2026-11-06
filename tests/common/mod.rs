@@ -441,7 +441,7 @@ pub async fn consume_stream(
                     result.saw_thought = true;
                 }
             }
-            StreamChunk::Completed(response) => result.final_response = Some(response),
+            StreamChunk::Completed(response) => result.final_response = Some(*response),
             StreamChunk::Error { message, code } => panic!(
                 "stream sent an error event after {} delta(s): {message} (code {code:?})",
                 result.delta_count
@@ -569,10 +569,10 @@ pub async fn consume_auto_function_stream(
                     record(&mut result.executed_function_names, &r.name);
                 }
             }
-            AutoFunctionStreamChunk::Complete(response) => result.final_response = Some(response),
+            AutoFunctionStreamChunk::Complete(response) => result.final_response = Some(*response),
             AutoFunctionStreamChunk::MaxLoopsReached(response) => {
                 result.reached_max_loops = true;
-                result.final_response = Some(response);
+                result.final_response = Some(*response);
             }
             other => panic!("unexpected auto-function chunk: {other:?}"),
         }

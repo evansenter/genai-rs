@@ -162,7 +162,7 @@ async fn wait_gives_up_now_when_retry_after_passes_the_deadline() {
     let err = result.unwrap_err();
     assert_eq!(reads, secs(&[0]), "no poll before the server's delay");
     assert_eq!(start.elapsed(), Duration::ZERO, "no sleep it can't finish");
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("retry after 60s"), "{message}");
     assert!(message.contains("429"), "{message}");
@@ -242,7 +242,7 @@ async fn wait_shorter_than_one_round_trip_reports_the_cut_off() {
         let err = result.unwrap_err();
         assert_eq!(reads, secs(&[0]), "timeout {timeout:?}");
         assert_eq!(start.elapsed(), timeout, "cut off at the deadline");
-        assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+        assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
         let message = err.to_string();
         assert!(
             message.contains(

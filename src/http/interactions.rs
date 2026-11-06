@@ -89,7 +89,9 @@ pub(crate) fn dispatch_stream_event(
         "interaction.created" => {
             // Interaction accepted - provides early access to interaction ID
             if let Some(interaction) = event.interaction {
-                Some(StreamChunk::Created { interaction })
+                Some(StreamChunk::Created {
+                    interaction: Box::new(interaction),
+                })
             } else {
                 warn!("interaction.created event missing interaction field - event dropped");
                 None
@@ -101,7 +103,7 @@ pub(crate) fn dispatch_stream_event(
             Some(status) => Some(StreamChunk::StatusUpdate {
                 interaction_id: event.interaction_id,
                 status,
-                usage: event.usage,
+                usage: event.usage.map(Box::new),
                 continuation_token: event.continuation_token,
             }),
             None => {
@@ -135,7 +137,7 @@ pub(crate) fn dispatch_stream_event(
                 Some(StreamChunk::StepDelta {
                     index,
                     delta,
-                    total_usage,
+                    total_usage: total_usage.map(Box::new),
                 })
             }
             (index, delta) => {
@@ -157,8 +159,8 @@ pub(crate) fn dispatch_stream_event(
                 }
                 Some(StreamChunk::StepStop {
                     index,
-                    usage: event.usage,
-                    step_usage: event.step_usage,
+                    usage: event.usage.map(Box::new),
+                    step_usage: event.step_usage.map(Box::new),
                 })
             } else {
                 warn!("step.stop event missing index field - event dropped");
@@ -184,7 +186,7 @@ pub(crate) fn dispatch_stream_event(
                 if interaction.steps.is_empty() && !accumulator.is_empty() {
                     interaction.steps = std::mem::take(accumulator).finish();
                 }
-                Some(StreamChunk::Completed(interaction))
+                Some(StreamChunk::Completed(Box::new(interaction)))
             } else {
                 warn!("interaction.completed event missing interaction field - event dropped");
                 None
@@ -213,7 +215,8 @@ pub(crate) fn dispatch_stream_event(
             );
             Some(StreamChunk::Unknown {
                 chunk_type: other.to_string(),
-                data: event.raw,
+                // Unknown types always keep their JSON.
+                data: event.raw.unwrap_or_default(),
             })
         }
     }
@@ -225,10 +228,11 @@ pub(crate) fn dispatch_stream_event(
 /// Yields a [`StreamEvent`] per surfaced SSE event (revision 2026-05-20
 /// lifecycle: `Created`, `StatusUpdate`, `StepStart`, `StepDelta`,
 /// `StepStop`, then `Completed` or `Error`).
-pub fn create_interaction_stream<'a>(
-    ctx: &'a HttpContext,
+/// The stream owns a clone of `ctx`, so it can outlive the client.
+pub fn create_interaction_stream(
+    ctx: &HttpContext,
     mut request: InteractionRequest,
-) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'a {
+) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'static {
     request.stream = Some(true);
     drop_transport_keys(&mut request);
     let url = with_query(interactions_url(ctx), &[("alt", Some("sse"))]);
@@ -241,7 +245,7 @@ pub fn create_interaction_stream<'a>(
         ctx.serialize_wire_body(&request).as_ref(),
     );
     let builder = api_request(ctx, reqwest::Method::POST, &url).json(&request);
-    stream_events(ctx, request_id, builder)
+    stream_events(ctx.clone(), request_id, builder)
 }
 
 /// Sends a streaming request and turns its SSE body into [`StreamEvent`]s,
@@ -253,8 +257,9 @@ pub fn create_interaction_stream<'a>(
 /// error (a reset while the server closes, a stray frame) can't follow a
 /// finished interaction and undo it, in particular a finished auto-function
 /// round, and once the stream has ended the server has stored the
-/// interaction, so a `get` or a chained request finds it (see
-/// [`STREAM_TAIL_LIMIT`], which bounds that read).
+/// interaction, so a `get` or a chained request finds it, unless the read
+/// was cut short: by [`STREAM_TAIL_LIMIT`], which bounds it, or by a
+/// client-level timeout. Either is logged at `warn`.
 ///
 /// A body that ends before a terminal event yields
 /// [`GenaiError::StreamInterrupted`] last, so a cut-off stream can't pass for
@@ -263,11 +268,12 @@ pub fn create_interaction_stream<'a>(
 /// doesn't recognize: that may be a new terminal event, so it ends cleanly,
 /// with a `warn!` (Evergreen).
 fn stream_events(
-    ctx: &HttpContext,
+    ctx: HttpContext,
     request_id: u64,
     builder: reqwest::RequestBuilder,
-) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + '_ {
+) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'static {
     try_stream! {
+        let ctx = &ctx;
         let response = send_checked(ctx, request_id, builder).await?;
         // The API answers `text/event-stream` (live 2026-11-04). Another
         // declared type is a body that was never a stream (a captive
@@ -317,6 +323,16 @@ async fn drain_tail(body: impl Stream<Item = Result<bytes::Bytes, reqwest::Error
         while let Some(chunk) = body.next().await {
             match chunk {
                 Ok(chunk) => len += chunk.len(),
+                // A client-level read or total timeout cuts the read short,
+                // as the limit does: the server may not have stored the
+                // interaction yet.
+                Err(error) if error.is_timeout() => {
+                    warn!(
+                        "a client timeout ended the read of the stream's tail after its terminal \
+                         event: {error}. The stored interaction may not be readable for a moment"
+                    );
+                    break;
+                }
                 Err(error) => {
                     debug!("the body failed after the terminal event (ignored): {error}");
                     break;
@@ -449,7 +465,7 @@ pub fn get_interaction_stream<'a>(
         ctx.emit_request(request_id, &method, &url, None);
 
         let builder = api_request(ctx, reqwest::Method::GET, &url);
-        let events = stream_events(ctx, request_id, builder);
+        let events = stream_events(ctx.clone(), request_id, builder);
         futures_util::pin_mut!(events);
         while let Some(event) = events.next().await {
             yield event?;

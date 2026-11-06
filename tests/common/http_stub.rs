@@ -158,8 +158,9 @@ impl Stub {
     /// A client whose requests each hold a paused clock while in flight
     /// (see [`ClockHold`]), with every timeout at its default: for
     /// `start_paused` tests of code that sends several requests, such as a
-    /// poll. The replies must not be `delayed`, since no time passes while a
-    /// request holds the clock.
+    /// poll or the auto-function loop. The replies must not be `delayed`,
+    /// and a stream's parts up to its terminal event must have no delay,
+    /// since no time passes while a request holds the clock.
     pub fn paused_clock_client(&self) -> Client {
         Client::builder("test-key".to_string())
             .with_base_url(&self.base_url)
@@ -202,11 +203,14 @@ pub fn hold_clock() -> (
 ///
 /// Tokio advances a paused clock to the next timer whenever the runtime is
 /// idle, even with localhost I/O in flight, so a timer armed around a
-/// request (the 30 s connect timeout, a poll's deadline) can fire before the
-/// stub answers. A running `spawn_blocking` task stops the auto-advance, so
-/// this starts one when a request is sent and ends it once the response
-/// body is read. Between requests the clock advances as usual: a poll's
-/// sleeps take no real time, and a request takes no paused time.
+/// request (the 30 s connect timeout, a poll's deadline, a per-chunk
+/// timeout) can fire before the stub answers. A running `spawn_blocking`
+/// task stops the auto-advance, so this starts one when a request is sent
+/// and ends it once the response is in: its body, or a stream's terminal
+/// event (`interaction.completed` or an error). Between requests, and while
+/// a stream's tail is read after its terminal event, the clock advances as
+/// usual: a poll's sleeps take no real time, and a request takes no paused
+/// time.
 #[derive(Default)]
 pub struct ClockHold {
     /// Dropping the sender ends the current hold's blocking task.
@@ -228,8 +232,22 @@ impl WireInspector for ClockHold {
             WireEvent::ResponseBody { .. } | WireEvent::ErrorBody { .. } => {
                 self.current.lock().unwrap().take();
             }
+            WireEvent::SseFrame { data, .. } if is_terminal_frame(data) => {
+                self.current.lock().unwrap().take();
+            }
             _ => {}
         }
+    }
+}
+
+/// Whether an SSE frame's data is a stream's terminal event.
+fn is_terminal_frame(data: &str) -> bool {
+    let Ok(event) = serde_json::from_str::<Value>(data) else {
+        return false;
+    };
+    match event.get("event_type").and_then(Value::as_str) {
+        Some(event_type) => matches!(event_type, "interaction.completed" | "error"),
+        None => event.get("error").is_some(),
     }
 }
 

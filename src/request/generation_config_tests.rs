@@ -276,7 +276,7 @@ fn test_image_aspect_ratio_deserialization_roundtrip() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_image_aspect_ratio_unknown_roundtrip() {
     let unknown: ImageAspectRatio = serde_json::from_str("\"7:3\"").unwrap();
@@ -326,7 +326,7 @@ fn test_image_size_deserialization_roundtrip() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_image_size_unknown_roundtrip() {
     let unknown: ImageSize = serde_json::from_str("\"8K\"").unwrap();

@@ -324,9 +324,7 @@ impl ClientBuilder {
     /// happen in exceptional circumstances such as TLS backend initialization failures.
     pub fn build(self) -> Result<Client, GenaiError> {
         let (builder, connect_timeout) = self.reqwest_builder();
-        let http_client = builder
-            .build()
-            .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
+        let http_client = builder.build().map_err(GenaiError::ClientBuild)?;
         Ok(self.finish(http_client, connect_timeout))
     }
 
@@ -583,6 +581,9 @@ impl Client {
     /// - `event_id`: Optional ID for resuming; only background interactions
     ///   carry it (a foreground stream can't be resumed)
     ///
+    /// The stream owns a clone of the client, so it can be stored or
+    /// `tokio::spawn`ed. Nothing is sent until it is polled.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -619,7 +620,7 @@ impl Client {
     pub fn execute_stream(
         &self,
         request: crate::InteractionRequest,
-    ) -> futures_util::stream::BoxStream<'_, Result<crate::StreamEvent, GenaiError>> {
+    ) -> futures_util::stream::BoxStream<'static, Result<crate::StreamEvent, GenaiError>> {
         use futures_util::StreamExt;
 
         tracing::debug!("Creating streaming interaction");

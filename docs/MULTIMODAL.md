@@ -18,9 +18,9 @@ Under API revision 2026-05-20, `Content` is purely *data*: `Text`, `Image`,
 thoughts are `Step` variants in `response.steps`, not `Content`. Check kinds
 with `content.is_image()`, `is_audio()`, `is_video()` and `is_document()`.
 
-`with_content(vec![...])` sends one multimodal turn. To combine media with
-conversation history, put the content in a `Step::user_input(...)` and use
-`with_history()`; see [Builder API](BUILDER_API.md#input-methods).
+`with_content(vec![...])` sends one multimodal turn. With `with_history()`
+it is the turn after the history; earlier multimodal turns go in the history
+as `Step::user_input(...)`. See [Builder API](BUILDER_API.md#input-methods).
 
 ## Images
 
@@ -120,9 +120,9 @@ use genai_rs::{Content, VideoProcessing};
 
 // Clip a 5-second window and sample one frame per second
 let clipped = VideoProcessing::segment()
-    .start_offset("5s")
-    .end_offset("10s")
-    .fps(1.0)
+    .with_start_offset("5s")
+    .with_end_offset("10s")
+    .with_fps(1.0)
     .build();
 
 let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clipped);

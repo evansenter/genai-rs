@@ -4,180 +4,25 @@
 //! `create_stream_with_auto_functions()` methods that handle
 //! automatic function discovery, execution, and multi-turn orchestration.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
+mod round;
 
 use super::within;
-use crate::{InteractionInput, InteractionResponse, StreamChunk, UsageMetadata};
+use crate::{GenaiError, StreamChunk};
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use serde_json::{Value, json};
-use tracing::{debug, warn};
+use tracing::debug;
 
-use crate::GenaiError;
-use crate::Step;
-use crate::ToolService;
-use crate::function_calling::{CallableFunction, FunctionRegistry, get_global_function_registry};
-use crate::streaming::{
-    AutoFunctionResult, AutoFunctionStreamChunk, AutoFunctionStreamEvent, FunctionExecutionResult,
-};
+use crate::streaming::{AutoFunctionResult, AutoFunctionStreamChunk, AutoFunctionStreamEvent};
+pub(crate) use round::DEFAULT_MAX_FUNCTION_CALL_LOOPS;
+use round::{AutoFunctionLoop, Round};
 
 use super::InteractionBuilder;
-
-/// Default maximum iterations for auto function calling.
-pub(crate) const DEFAULT_MAX_FUNCTION_CALL_LOOPS: usize = 5;
 
 /// Reads a round's stream to its end after its `Completed` event. The HTTP
 /// layer then only reads the body's tail, bounded and with errors
 /// swallowed, so nothing more is yielded.
 async fn read_to_end<S: futures_util::Stream + Unpin>(stream: &mut S) {
     while stream.next().await.is_some() {}
-}
-
-/// Builds a map of callable functions from a ToolService for efficient lookup.
-fn build_service_function_map(
-    tool_service: &Option<Arc<dyn ToolService>>,
-) -> HashMap<String, Arc<dyn CallableFunction>> {
-    tool_service
-        .as_ref()
-        .map(|svc| {
-            svc.tools()
-                .into_iter()
-                .map(|f| (f.declaration().name().to_string(), f))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Declares the functions the auto-function loop can execute.
-///
-/// A tool service was set on purpose, so its functions are always declared,
-/// next to any tools set explicitly (skipping a name already declared).
-/// The global `#[tool]` registry is only consulted when no tools were set;
-/// a service function shadows a registry one of the same name.
-fn auto_discover_tools(
-    request: &mut crate::request::InteractionRequest,
-    service_functions: &HashMap<String, Arc<dyn CallableFunction>>,
-) {
-    let mut service_declarations: Vec<_> = service_functions
-        .values()
-        .map(|f| f.declaration())
-        .collect();
-    // HashMap order is arbitrary; keep the wire deterministic.
-    service_declarations.sort_by(|a, b| a.name().cmp(b.name()));
-
-    let mut declarations = match &request.tools {
-        Some(_) => Vec::new(),
-        None => {
-            let mut registry = get_global_function_registry().all_declarations();
-            registry.retain(|decl| {
-                let shadowed = service_functions.contains_key(decl.name());
-                if shadowed {
-                    warn!(
-                        "Tool service function '{}' shadows global registry function with same name",
-                        decl.name()
-                    );
-                }
-                !shadowed
-            });
-            registry.sort_by(|a, b| a.name().cmp(b.name()));
-            registry
-        }
-    };
-    declarations.extend(service_declarations);
-    if declarations.is_empty() {
-        return;
-    }
-
-    let tools = request.tools.get_or_insert_with(Vec::new);
-    for declaration in declarations {
-        let declared = tools.iter().any(
-            |tool| matches!(tool, crate::Tool::Function { name, .. } if name == declaration.name()),
-        );
-        if !declared {
-            tools.push(declaration.into_tool());
-        }
-    }
-}
-
-/// The prefix the API puts on a declared function's name on some turns:
-/// `default_api:get_weather` for `get_weather` on the second user turn of a
-/// non-streamed multi-turn chain (observed live 2026-10-01).
-const DECLARED_FUNCTION_NAMESPACE: &str = "default_api:";
-
-/// Executes the function a call names. A `default_api:`-prefixed name that
-/// matches no function falls back to its bare form.
-///
-/// Returns the name of the function that ran (the call's own name when none
-/// matched) and its result as JSON. The function result sent back to the API
-/// must still carry the call's name.
-async fn execute_function<'n>(
-    name: &'n str,
-    args: Value,
-    service_functions: &HashMap<String, Arc<dyn CallableFunction>>,
-    function_registry: &FunctionRegistry,
-) -> (&'n str, Value) {
-    let declared =
-        |name: &str| service_functions.contains_key(name) || function_registry.get(name).is_some();
-    let name = match name.strip_prefix(DECLARED_FUNCTION_NAMESPACE) {
-        Some(bare) if !declared(name) && declared(bare) => {
-            debug!("Resolved namespaced function call '{name}' to '{bare}'");
-            bare
-        }
-        _ => name,
-    };
-    let result = call_function(name, args, service_functions, function_registry).await;
-    (name, result)
-}
-
-/// Calls a function by looking it up in the service map first, then the global registry.
-///
-/// Returns the function result as JSON. Errors are converted to JSON error objects
-/// rather than failing the entire operation, allowing the model to recover gracefully.
-async fn call_function(
-    name: &str,
-    args: Value,
-    service_functions: &HashMap<String, Arc<dyn CallableFunction>>,
-    function_registry: &FunctionRegistry,
-) -> Value {
-    // Function lookup order: tool service first (for dependency-injected functions),
-    // then global registry (for #[tool] macro functions).
-    if let Some(function) = service_functions.get(name) {
-        // Found in tool service (dependency-injected)
-        match function.call(args).await {
-            Ok(result) => result,
-            Err(e) => {
-                warn!(
-                    "Function execution failed (recoverable): function='{}', error='{}'. \
-                     The error will be sent to the model, which may retry or adapt.",
-                    name, e
-                );
-                json!({ "error": e.to_string() })
-            }
-        }
-    } else if let Some(function) = function_registry.get(name) {
-        // Found in global registry (#[tool] macro)
-        match function.call(args).await {
-            Ok(result) => result,
-            Err(e) => {
-                warn!(
-                    "Function execution failed (recoverable): function='{}', error='{}'. \
-                     The error will be sent to the model, which may retry or adapt.",
-                    name, e
-                );
-                json!({ "error": e.to_string() })
-            }
-        }
-    } else {
-        // Function not found anywhere - could be a typo in declarations or missing #[tool] macro.
-        // We inform the model rather than failing, allowing it to adapt or use other functions.
-        warn!(
-            "Function not found in registry or tool service: function='{}'. Informing model.",
-            name
-        );
-        json!({ "error": format!("Function '{}' is not available or not found.", name) })
-    }
 }
 
 impl<'a> InteractionBuilder<'a> {
@@ -237,8 +82,9 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// # Serialization
     ///
-    /// Both [`AutoFunctionResult`] and its contained [`InteractionResponse`]
-    /// implement `Serialize`, enabling logging, caching, and persistence of complete
+    /// Both [`AutoFunctionResult`] and its contained
+    /// [`InteractionResponse`](crate::InteractionResponse) implement
+    /// `Serialize`, enabling logging, caching, and persistence of complete
     /// execution histories for debugging and evaluation workflows.
     ///
     /// # Max Loops Behavior
@@ -316,156 +162,44 @@ impl<'a> InteractionBuilder<'a> {
     ///   a partial `AutoFunctionResult`. Use `previous_interaction_id` to continue.
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
     pub async fn create_with_auto_functions(self) -> Result<AutoFunctionResult, GenaiError> {
-        // Runtime validation: auto-functions require storage
+        // Auto-functions chain rounds on stored interactions.
         self.validate_for_auto_functions()?;
 
         let client = self.client;
         let timeout = self.timeout;
         let max_loops = self.max_function_call_loops;
         let tool_service = self.tool_service.clone();
-        let mut request = self.build()?;
+        let mut state = AutoFunctionLoop::new(self.build()?, tool_service.as_ref());
+        let mut executions = Vec::new();
 
-        // Track all function executions for the result
-        let mut all_executions: Vec<FunctionExecutionResult> = Vec::new();
-
-        // Build a map of service-provided functions for lookup during execution
-        let service_functions = build_service_function_map(&tool_service);
-
-        // Auto-discover functions from registry and tool service if not explicitly provided
-        auto_discover_tools(&mut request, &service_functions);
-        let function_registry = get_global_function_registry();
-
-        // Track the last response for returning partial results if max loops is reached
-        let mut last_response: Option<InteractionResponse> = None;
-
-        // Accumulate usage across all loop iterations.
-        // The API may report 0 input tokens on the final response, so we track
-        // total usage ourselves for accurate reporting.
-        let mut accumulated_usage = UsageMetadata::default();
-
-        // Main auto-function loop (configurable iterations to prevent infinite loops)
-        for loop_count in 0..max_loops {
-            debug!(
-                "Auto-function loop iteration {}/{}",
-                loop_count + 1,
-                max_loops
-            );
-
-            // Apply per-API-call timeout if set (function execution time not included)
+        for round in 1..=max_loops {
+            debug!("Auto-function round {round}/{max_loops}");
+            // Per API call: function execution time is not included.
             let response = within(
                 timeout,
                 "Auto-function API call",
-                client.execute(request.clone()),
+                client.execute(state.request.clone()),
             )
             .await??;
-
-            // When store != false (validated at function entry), the API should always
-            // return an interaction ID. Return an error if the API violates this contract,
-            // as continuing would silently lose conversation context.
-            if response.id.is_none() {
-                return Err(GenaiError::MalformedResponse(
-                    "Response missing interaction ID. Auto-function calling requires stored \
-                     interactions (store != false) to maintain conversation context."
-                        .to_string(),
-                ));
+            match state.read_round(response)? {
+                Round::Done(response) => {
+                    return Ok(AutoFunctionResult {
+                        response,
+                        executions,
+                        reached_max_loops: false,
+                    });
+                }
+                Round::Calls { response, calls } => {
+                    executions.extend(state.run_calls(response.id.clone(), &calls).await);
+                    state.keep_last_response(response);
+                }
             }
-
-            // Accumulate usage from this response
-            if let Some(ref usage) = response.usage {
-                accumulated_usage.accumulate(usage);
-            }
-
-            // Calls the server already answered (MCP) are not ours to run.
-            let function_calls = response.pending_function_calls();
-
-            // If no function calls, we're done!
-            if function_calls.is_empty() {
-                debug!("No function calls in response, completing auto-function loop");
-                // Create final response with accumulated usage across all API calls
-                let final_response = InteractionResponse {
-                    usage: Some(accumulated_usage),
-                    ..response
-                };
-                return Ok(AutoFunctionResult {
-                    response: final_response,
-                    executions: all_executions,
-                    reached_max_loops: false,
-                });
-            }
-
-            // Build function results for next iteration
-            let mut function_results = Vec::new();
-            debug!("Executing {} function call(s)", function_calls.len());
-
-            for call in function_calls {
-                let call_id = call.id.to_string();
-
-                // Execute the function with timing
-                let start = Instant::now();
-                let (function_name, result) = execute_function(
-                    call.name,
-                    call.args.clone(),
-                    &service_functions,
-                    function_registry,
-                )
-                .await;
-                let duration = start.elapsed();
-                debug!("Function '{}' executed in {:?}", function_name, duration);
-
-                // Track execution for the result
-                all_executions.push(FunctionExecutionResult::new(
-                    function_name,
-                    &call_id,
-                    call.args.clone(),
-                    result.clone(),
-                    duration,
-                ));
-
-                // Add function result step (only the result, not the call -
-                // the server has the call via previous_interaction_id)
-                function_results.push(Step::function_result(
-                    call.name.to_string(),
-                    call_id,
-                    result,
-                ));
-            }
-
-            // Save this response before moving to next iteration
-            // (in case we hit max loops, we want to return the last response)
-            last_response = Some(response.clone());
-
-            // Create new request with function results
-            // The server maintains function call context via previous_interaction_id
-            request.previous_interaction_id = response.id;
-            request.input = Some(InteractionInput::Steps(function_results));
         }
 
-        // Max loops reached - return partial result with whatever we have
-        // This preserves execution history for debugging instead of discarding it
-        warn!(
-            "Reached maximum function call loops ({max_loops}). \
-             Returning partial result with {} executions. \
-             The model may be stuck in a loop.",
-            all_executions.len()
-        );
-
-        // If we never made it through even one iteration (shouldn't happen with max_loops > 0),
-        // return an error since we have no response to return
-        let response = last_response.ok_or_else(|| {
-            GenaiError::InvalidInput(format!(
-                "max_function_call_loops ({max_loops}) must be at least 1"
-            ))
-        })?;
-
-        // Create final response with accumulated usage across all API calls
-        let final_response = InteractionResponse {
-            usage: Some(accumulated_usage),
-            ..response
-        };
-
+        // The partial result keeps the executions for debugging a stuck loop.
         Ok(AutoFunctionResult {
-            response: final_response,
-            executions: all_executions,
+            response: state.max_loops_response(max_loops)?,
+            executions,
             reached_max_loops: true,
         })
     }
@@ -586,293 +320,123 @@ impl<'a> InteractionBuilder<'a> {
     ///   sent, and before this stream ends, since the server stores an
     ///   interaction only once its stream is done.
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
+    ///
+    /// The stream owns a clone of the client, so it can be stored or
+    /// `tokio::spawn`ed.
     pub fn create_stream_with_auto_functions(
         self,
-    ) -> BoxStream<'a, Result<AutoFunctionStreamEvent, GenaiError>> {
-        // Runtime validation: auto-functions require storage
-        // We do this early so errors are returned immediately, not mid-stream
-        if let Err(e) = self.validate_for_auto_functions() {
-            return Box::pin(futures_util::stream::once(async move { Err(e) }));
-        }
-
-        let client = self.client;
-        let max_loops = self.max_function_call_loops;
+    ) -> BoxStream<'static, Result<AutoFunctionStreamEvent, GenaiError>> {
+        // The stream owns its client, so it can be spawned. The request is
+        // validated and built now; an error is the stream's only item, and
+        // nothing is sent.
+        let client = self.client.clone();
+        let (timeout, max_loops) = (self.timeout, self.max_function_call_loops);
         let tool_service = self.tool_service.clone();
-        let timeout = self.timeout;
+        let request = self
+            .validate_for_auto_functions()
+            .and_then(|()| self.build());
 
         Box::pin(async_stream::try_stream! {
-            let mut request = self.build()?;
+            let mut state = AutoFunctionLoop::new(request?, tool_service.as_ref());
 
-            // Build a map of service-provided functions for lookup during execution
-            let service_functions = build_service_function_map(&tool_service);
-
-            // Auto-discover functions from registry and tool service if not explicitly provided
-            auto_discover_tools(&mut request, &service_functions);
-            let function_registry = get_global_function_registry();
-
-            // Track the last response for returning partial results if max loops is reached
-            let mut last_response: Option<InteractionResponse> = None;
-
-            // Accumulate usage across all loop iterations.
-            // The API may report 0 input tokens on the final response (especially in
-            // streaming), so we track total usage ourselves for accurate reporting.
-            let mut accumulated_usage = UsageMetadata::default();
-
-            // Main auto-function streaming loop
-            for loop_count in 0..max_loops {
-                debug!("Auto-function streaming loop iteration {}/{}", loop_count + 1, max_loops);
-
-                // Stream this iteration's response
-                let mut stream = client.execute_stream(request.clone());
-                let mut complete_response: Option<InteractionResponse> = None;
-                // Track last event_id for resume support
+            for round in 1..=max_loops {
+                debug!("Auto-function streaming round {round}/{max_loops}");
+                let mut stream = client.execute_stream(state.request.clone());
+                let mut completed = None;
+                // The last event id, for resume support.
                 let mut last_event_id: Option<String> = None;
 
-                // Apply per-chunk timeout if set (function execution time not included)
-                loop {
-                    let result = within(timeout, "Auto-function stream chunk", stream.next()).await?;
-
-                    let Some(result) = result else { break };
-                    let event = result?;
-                    // Track event_id for resume support
+                // Per chunk: function execution time is not included.
+                while let Some(event) =
+                    within(timeout, "Auto-function stream chunk", stream.next()).await?
+                {
+                    let event = event?;
                     if event.event_id.is_some() {
                         last_event_id = event.event_id.clone();
                     }
                     match event.chunk {
+                        // Every delta, including the arguments_delta
+                        // fragments of a streamed function call.
                         StreamChunk::StepDelta { delta, .. } => {
-                            // Forward all step deltas, including arguments_delta
-                            // fragments for streaming function-call arguments.
                             yield AutoFunctionStreamEvent::new(
                                 AutoFunctionStreamChunk::Delta(delta),
                                 event.event_id,
                             );
                         }
+                        // The HTTP layer assembles the steps into the
+                        // Completed response, so its function calls are
+                        // whole. The tail is read below, outside the
+                        // per-chunk timeout, which must not fail a finished
+                        // round.
                         StreamChunk::Completed(response) => {
-                            // The HTTP layer accumulates step.start/delta/stop
-                            // events into the Completed response's steps, so
-                            // response.function_calls() is fully populated here.
-                            // The stream's tail is read below, outside the
-                            // per-chunk timeout, which must not fail a
-                            // finished round.
-                            complete_response = Some(response);
+                            completed = Some(*response);
                             break;
                         }
                         StreamChunk::Error { message, code } => {
                             Err(GenaiError::Stream { message, code })?;
                         }
-                        // Log unknown chunk types for observability, but continue for forward compatibility
                         StreamChunk::Unknown { chunk_type, .. } => {
                             tracing::warn!(
-                                "Received unknown StreamChunk type '{}' during auto-function streaming. \
-                                 This may indicate a new API feature.",
-                                chunk_type
+                                "Received unknown StreamChunk type '{chunk_type}' during \
+                                 auto-function streaming. This may indicate a new API feature."
                             );
                         }
-                        // Wildcard for future non-exhaustive variants
                         _ => {}
                     }
                 }
-
-                // Get the complete response (should always be present after stream ends)
-                let response = complete_response.ok_or_else(|| {
-                    GenaiError::MalformedResponse(
-                        "Stream ended without Complete event".to_string()
-                    )
+                let response = completed.ok_or_else(|| {
+                    GenaiError::MalformedResponse("Stream ended without Complete event".to_string())
                 })?;
 
-                // Accumulate usage from this response
-                if let Some(ref usage) = response.usage {
-                    accumulated_usage.accumulate(usage);
+                match state.read_round(response)? {
+                    Round::Done(response) => {
+                        yield AutoFunctionStreamEvent::new(
+                            AutoFunctionStreamChunk::Complete(Box::new(response)),
+                            last_event_id,
+                        );
+                        // Read the round's stream to its end before this one
+                        // ends, so a caller that gets the interaction or
+                        // chains on it then finds it stored.
+                        read_to_end(&mut stream).await;
+                        return;
+                    }
+                    Round::Calls { response, calls } => {
+                        let round_id = response.id.clone();
+                        // The event takes the response. The final round's is
+                        // also the MaxLoopsReached result, so only it is
+                        // cloned.
+                        if round == max_loops {
+                            state.keep_last_response(response.clone());
+                        }
+                        // Client-generated events carry no API event id.
+                        yield AutoFunctionStreamEvent::new(
+                            AutoFunctionStreamChunk::ExecutingFunctions {
+                                response: Box::new(response),
+                                pending_calls: calls.clone(),
+                            },
+                            None,
+                        );
+                        let executions = state.run_calls(round_id, &calls).await;
+                        yield AutoFunctionStreamEvent::new(
+                            AutoFunctionStreamChunk::FunctionResults(executions),
+                            None,
+                        );
+                        // The next round chains on this one's id, and the
+                        // server stores an interaction only once its stream
+                        // is done. The tail usually arrived while the
+                        // functions ran.
+                        read_to_end(&mut stream).await;
+                    }
                 }
-
-                // When store != false (validated at function entry), the API should always
-                // return an interaction ID. Return an error if the API violates this contract,
-                // as continuing would silently lose conversation context.
-                if response.id.is_none() {
-                    Err(GenaiError::MalformedResponse(
-                        "Response missing interaction ID. Auto-function calling requires stored \
-                         interactions (store != false) to maintain conversation context."
-                            .to_string(),
-                    ))?;
-                }
-
-                // Function calls come from the Completed response's steps
-                // (assembled by the HTTP layer from step.start/step.delta
-                // events, including streamed arguments_delta fragments).
-                // Calls the server already answered (MCP) are not ours to run.
-                let response_function_calls = response.pending_function_calls();
-                let has_function_calls = !response_function_calls.is_empty();
-
-                // If no function calls, we're done!
-                if !has_function_calls {
-                    debug!("No function calls in response, completing auto-function streaming loop");
-                    // Create final response with accumulated usage across all API calls
-                    let final_response = InteractionResponse {
-                        usage: Some(accumulated_usage),
-                        ..response
-                    };
-                    yield AutoFunctionStreamEvent::new(
-                        AutoFunctionStreamChunk::Complete(final_response),
-                        last_event_id.clone(),
-                    );
-                    // Read the round's stream to its end before this one
-                    // ends, so a caller that gets the interaction or chains
-                    // on it then finds it stored.
-                    read_to_end(&mut stream).await;
-                    return;
-                }
-
-                let calls_to_execute: Vec<(String, String, serde_json::Value)> = response_function_calls
-                    .iter()
-                    .map(|call| (call.id.to_string(), call.name.to_string(), call.args.clone()))
-                    .collect();
-
-                // Signal that we're executing functions with pending call info
-                debug!("Executing {} function call(s)", calls_to_execute.len());
-                let pending_calls: Vec<_> =
-                    response_function_calls.iter().map(|call| call.to_owned()).collect();
-                // ExecutingFunctions is client-generated, no API event_id
-                yield AutoFunctionStreamEvent::new(
-                    AutoFunctionStreamChunk::ExecutingFunctions {
-                        response: response.clone(),
-                        pending_calls,
-                    },
-                    None,
-                );
-
-                // Build function result steps for next iteration
-                let mut function_result_steps = Vec::new();
-                let mut execution_results = Vec::new();
-
-                for (call_id, name, args) in &calls_to_execute {
-                    // Execute the function with timing
-                    let start = Instant::now();
-                    let (function_name, result) = execute_function(
-                        name,
-                        args.clone(),
-                        &service_functions,
-                        function_registry,
-                    )
-                    .await;
-                    let duration = start.elapsed();
-                    debug!(
-                        "Function '{}' executed in {:?}",
-                        function_name, duration
-                    );
-
-                    // Track result for yielding
-                    execution_results.push(FunctionExecutionResult::new(
-                        function_name,
-                        call_id.clone(),
-                        args.clone(),
-                        result.clone(),
-                        duration,
-                    ));
-
-                    // Add function result step for the API
-                    function_result_steps.push(Step::function_result(
-                        name.clone(),
-                        call_id.clone(),
-                        result,
-                    ));
-                }
-
-                // Yield function results (client-generated, no API event_id)
-                yield AutoFunctionStreamEvent::new(
-                    AutoFunctionStreamChunk::FunctionResults(execution_results),
-                    None,
-                );
-
-                // Save this response before moving to next iteration
-                // (in case we hit max loops, we want to return the last response)
-                last_response = Some(response.clone());
-
-                // Read the round's stream to its end before chaining on its
-                // id: the server stores the interaction only once the stream
-                // is done. Its tail usually arrived while the functions ran.
-                read_to_end(&mut stream).await;
-
-                // Create new request with function results
-                request.previous_interaction_id = response.id;
-                request.input = Some(InteractionInput::Steps(function_result_steps));
             }
 
-            // Max loops reached - yield partial result with the last response
-            // This preserves all prior FunctionResults chunks that were already yielded
-            warn!(
-                "Reached maximum function call loops ({max_loops}). \
-                 Yielding MaxLoopsReached with last response. \
-                 The model may be stuck in a loop."
-            );
-
-            // If we never made it through even one iteration (shouldn't happen with max_loops > 0),
-            // return an error since we have no response to return
-            let response = last_response.ok_or_else(|| {
-                GenaiError::InvalidInput(format!(
-                    "max_function_call_loops ({max_loops}) must be at least 1"
-                ))
-            })?;
-
-            // Create final response with accumulated usage across all API calls
-            let final_response = InteractionResponse {
-                usage: Some(accumulated_usage),
-                ..response
-            };
-
-            // MaxLoopsReached is client-generated (loop limit hit), no API event_id
+            // Earlier FunctionResults chunks already carried the executions.
             yield AutoFunctionStreamEvent::new(
-                AutoFunctionStreamChunk::MaxLoopsReached(final_response),
+                AutoFunctionStreamChunk::MaxLoopsReached(Box::new(
+                    state.max_loops_response(max_loops)?,
+                )),
                 None,
             );
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // NOTE: The old validate_call_id() helper was removed in the 2026-05-20
-    // revision: function-call ids are now required on the wire (Step::FunctionCall
-    // carries `id: String`), so there is no Option to validate. These tests cover
-    // the remaining pure helpers in this module instead.
-
-    #[test]
-    fn test_build_service_function_map_without_service() {
-        let map = build_service_function_map(&None);
-        assert!(map.is_empty(), "No tool service should yield an empty map");
-    }
-
-    #[tokio::test]
-    async fn test_execute_function_not_found_returns_error_json() {
-        // A function missing from both the service map and the global registry
-        // must produce a recoverable JSON error (sent back to the model),
-        // not a hard failure.
-        let service_functions: HashMap<String, Arc<dyn CallableFunction>> = HashMap::new();
-        let registry = get_global_function_registry();
-
-        let (_, result) = execute_function(
-            "__genai_rs_test_nonexistent_function__",
-            json!({"arg": 1}),
-            &service_functions,
-            registry,
-        )
-        .await;
-
-        let error = result
-            .get("error")
-            .and_then(|v| v.as_str())
-            .expect("Missing function should produce an error object");
-        assert!(
-            error.contains("__genai_rs_test_nonexistent_function__"),
-            "Error should name the missing function: {}",
-            error
-        );
-    }
-
-    #[test]
-    fn test_default_max_function_call_loops() {
-        // Documented default used by with_max_function_call_loops() tests
-        assert_eq!(DEFAULT_MAX_FUNCTION_CALL_LOOPS, 5);
     }
 }

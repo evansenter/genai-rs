@@ -32,7 +32,7 @@ use serde_json::{Map, Value};
 ///
 /// Every error names the field, with its path from the tagged object
 /// (`arguments.language`), so the cause survives into the warning and the
-/// `strict-unknown` error for a known type that falls back to `Unknown`.
+/// `genai_strict_unknown` error for a known type that falls back to `Unknown`.
 pub(crate) struct WireFields<'a> {
     object: &'a Map<String, Value>,
     /// This object's path inside the tagged one, ending in `.`, or empty.
@@ -128,7 +128,7 @@ impl<'a> WireFields<'a> {
 
 /// Why a tagged union's value did not read as a known variant. The union
 /// keeps the value whole as its `Unknown` variant, or, where
-/// `strict-unknown` applies (`Step`, `Content`), fails with the cause.
+/// `genai_strict_unknown` applies (`Step`, `Content`), fails with the cause.
 /// `StepDelta` fails only on a strict rejection nested in a known delta
 /// (`is_strict_rejection`).
 #[derive(Debug)]
@@ -169,25 +169,25 @@ impl Fallback {
     /// Whether a known type's field failed because strict mode rejected a
     /// value nested in it (an unknown enum value or content type), rather
     /// than because the field is malformed.
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     pub(crate) fn is_strict_rejection(&self) -> bool {
         matches!(self, Self::Malformed(error) if Self::is_strict_cause(&error.to_string()))
     }
 
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     fn is_strict_cause(cause: &str) -> bool {
-        cause.contains("'strict-unknown'")
+        cause.contains("'genai_strict_unknown'")
     }
 
-    /// The `strict-unknown` error: an unknown type, or a known one with a
+    /// The `genai_strict_unknown` error: an unknown type, or a known one with a
     /// field the crate cannot read, with that field and why.
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     pub(crate) fn strict_message(&self, union: &str, type_name: &str) -> String {
         const GUIDANCE: &str = "Either update the library or disable strict mode.";
         match self {
             Self::UnknownType => format!(
                 "Unknown {union} type '{type_name}'. Strict mode is enabled via the \
-                 'strict-unknown' feature flag. {GUIDANCE}"
+                 'genai_strict_unknown' cfg flag. {GUIDANCE}"
             ),
             Self::Malformed(error) => {
                 let cause = error.to_string();
@@ -197,7 +197,7 @@ impl Fallback {
                     self.describe(union, type_name)
                 } else {
                     format!(
-                        "{}. Strict mode is enabled via the 'strict-unknown' feature \
+                        "{}. Strict mode is enabled via the 'genai_strict_unknown' cfg \
                          flag, which rejects what would otherwise be kept whole as \
                          {union}::Unknown. {GUIDANCE}",
                         self.describe(union, type_name)

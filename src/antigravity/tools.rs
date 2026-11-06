@@ -202,11 +202,9 @@ impl<T> Drop for AbortOnDrop<T> {
 mod tests {
     use super::*;
     use crate::FunctionParameters;
-    use async_trait::async_trait;
 
     struct EchoTool;
 
-    #[async_trait]
     impl CallableFunction for EchoTool {
         fn declaration(&self) -> FunctionDeclaration {
             FunctionDeclaration::new(
@@ -220,14 +218,13 @@ mod tests {
             )
         }
 
-        async fn call(&self, args: Value) -> Result<Value, FunctionError> {
-            Ok(json!({"echo": args["value"]}))
+        fn call(&self, args: Value) -> crate::FunctionFuture<'_> {
+            Box::pin(async move { Ok(json!({"echo": args["value"]})) })
         }
     }
 
     struct ScalarTool;
 
-    #[async_trait]
     impl CallableFunction for ScalarTool {
         fn declaration(&self) -> FunctionDeclaration {
             FunctionDeclaration::new(
@@ -237,14 +234,13 @@ mod tests {
             )
         }
 
-        async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-            Ok(json!(42))
+        fn call(&self, _args: Value) -> crate::FunctionFuture<'_> {
+            Box::pin(async move { Ok(json!(42)) })
         }
     }
 
     struct FailingTool;
 
-    #[async_trait]
     impl CallableFunction for FailingTool {
         fn declaration(&self) -> FunctionDeclaration {
             FunctionDeclaration::new(
@@ -254,8 +250,8 @@ mod tests {
             )
         }
 
-        async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-            Err(FunctionError::ArgumentMismatch("bad input".to_string()))
+        fn call(&self, _args: Value) -> crate::FunctionFuture<'_> {
+            Box::pin(async move { Err(FunctionError::ArgumentMismatch("bad input".to_string())) })
         }
     }
 
@@ -350,7 +346,6 @@ mod tests {
         release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
     }
 
-    #[async_trait]
     impl CallableFunction for BlockingTool {
         fn declaration(&self) -> FunctionDeclaration {
             FunctionDeclaration::new(
@@ -360,14 +355,16 @@ mod tests {
             )
         }
 
-        async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-            let _ = self.started.send(());
-            let _ = self
-                .release
-                .lock()
-                .unwrap()
-                .recv_timeout(std::time::Duration::from_secs(30));
-            Ok(json!("released"))
+        fn call(&self, _args: Value) -> crate::FunctionFuture<'_> {
+            Box::pin(async move {
+                let _ = self.started.send(());
+                let _ = self
+                    .release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(30));
+                Ok(json!("released"))
+            })
         }
     }
 
@@ -489,7 +486,6 @@ mod tests {
 
     struct PanickingTool;
 
-    #[async_trait]
     impl CallableFunction for PanickingTool {
         fn declaration(&self) -> FunctionDeclaration {
             FunctionDeclaration::new(
@@ -499,8 +495,10 @@ mod tests {
             )
         }
 
-        async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-            panic!("tool panic 4417");
+        fn call(&self, _args: Value) -> crate::FunctionFuture<'_> {
+            Box::pin(async move {
+                panic!("tool panic 4417");
+            })
         }
     }
 

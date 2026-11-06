@@ -980,30 +980,81 @@ fn test_store_disabled_preserves_history_and_current_message() {
 }
 
 #[test]
-fn test_with_content_cannot_combine_with_history() {
+fn test_with_content_composes_after_history() {
     use crate::{Content, Step};
 
     let client = create_test_client();
     let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
-    let content = vec![Content::Text {
-        text: Some("test".to_string()),
-        annotations: None,
-        extra: Default::default(),
-    }];
+    let content = vec![Content::image_data("aGk=", "image/png")];
 
-    let result = client
+    let request = client
         .interaction()
         .with_model(crate::DEFAULT_MODEL)
-        .with_history(history)
-        .with_content(content)
-        .build();
+        .with_content(content.clone())
+        .with_history(history.clone())
+        .build()
+        .expect("content after history is a conversation (#454)");
 
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let mut expected = history;
+    expected.push(Step::user_input(content));
+    assert_eq!(request.input, Some(InteractionInput::Steps(expected)));
+}
+
+#[test]
+fn test_with_text_content_and_history_compose() {
+    use crate::{Content, Step};
+
+    let client = create_test_client();
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
+    let image = Content::image_data("aGk=", "image/png");
+
+    let request = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_history(history.clone())
+        .with_text("What is this?")
+        .with_content(vec![image.clone()])
+        .build()
+        .unwrap();
+
+    // The text leads this turn's content, as without history.
+    let mut expected = history;
+    expected.push(Step::user_input(vec![
+        Content::text("What is this?"),
+        image,
+    ]));
+    assert_eq!(request.input, Some(InteractionInput::Steps(expected)));
+    let wire = serde_json::to_value(&request).unwrap();
+    assert_eq!(wire["input"][2]["type"], "user_input");
+    assert_eq!(wire["input"][2]["content"][0]["text"], "What is this?");
+    assert_eq!(wire["input"][2]["content"][1]["type"], "image");
+}
+
+#[test]
+fn test_interaction_builder_build_empty_content() {
+    let client = create_test_client();
+    let err = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_content(vec![])
+        .build()
+        .unwrap_err();
     assert!(
-        err.to_string().contains("with_content()"),
-        "Error should mention with_content(): {}",
-        err
+        matches!(&err, crate::GenaiError::InvalidInput(message) if message.contains("with_content()")),
+        "{err:?}"
+    );
+
+    // Text fills an empty content list: it is the turn's one block.
+    let request = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_content(vec![])
+        .with_text("x")
+        .build()
+        .expect("with_text() gives the content a block");
+    assert_eq!(
+        request.input,
+        Some(InteractionInput::Content(vec![crate::Content::text("x")]))
     );
 }
 

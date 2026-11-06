@@ -9,7 +9,9 @@ use super::common::{
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
-use crate::environments::{EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileUpload};
+use crate::environments::{
+    EnvironmentFileDownload, EnvironmentFileListResponse, EnvironmentFileUpload,
+};
 use crate::errors::GenaiError;
 
 /// Percent-encodes each segment of a relative file path, keeping the `/`
@@ -81,11 +83,11 @@ pub async fn list_files(
     recursive: bool,
     page_size: Option<u32>,
     page_token: Option<&str>,
-) -> Result<EnvironmentFileList, GenaiError> {
+) -> Result<EnvironmentFileListResponse, GenaiError> {
     tracing::debug!("Listing environment files: env={environment_id}, path={path:?}");
     let url = list_url(ctx, environment_id, path, recursive, page_size, page_token)?;
     let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
-    deserialize_with_context(&text, "EnvironmentFileList")
+    deserialize_with_context(&text, "EnvironmentFileListResponse")
 }
 
 /// Downloads a file, or a directory as a tar archive
@@ -126,7 +128,7 @@ pub async fn upload_file(
     environment_id: &str,
     path: &str,
     upload: EnvironmentFileUpload,
-) -> Result<EnvironmentFileList, GenaiError> {
+) -> Result<EnvironmentFileListResponse, GenaiError> {
     let EnvironmentFileUpload {
         data,
         mime_type,
@@ -176,7 +178,7 @@ pub async fn upload_file(
     let response = send_checked(ctx, request_id, finish).await?;
     let text = response.text().await?;
     ctx.emit_response_body(request_id, &text);
-    deserialize_with_context(&text, "EnvironmentFileList from upload")
+    deserialize_with_context(&text, "EnvironmentFileListResponse from upload")
 }
 
 #[cfg(test)]

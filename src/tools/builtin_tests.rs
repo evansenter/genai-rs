@@ -11,7 +11,7 @@ fn test_search_type_roundtrip() {
     assert_eq!(parsed, types);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_search_type_unknown_roundtrip() {
     let json = r#""future_search""#;

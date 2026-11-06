@@ -40,7 +40,7 @@ let response = client.execute(request.clone()).await?;
 | `Timeout(_)` (request-level timeout) | Yes |
 | `StreamInterrupted { .. }` (a stream cut off before its terminal event) | Yes; see [Cut-off streams](#cut-off-streams) |
 | Any other `Api` status (400, 401, 403, 404, ...) | No |
-| `Parse`, `Json`, `Utf8`, `Internal`, `InvalidInput`, `MalformedResponse`, `Stream`, `ClientBuild` | No |
+| `Utf8`, `Internal`, `InvalidInput`, `MalformedResponse`, `PollTimeout`, `ProcessingFailed`, `Stream`, `ClientBuild` | No |
 
 A few 400s are transient in practice but are **not** covered by
 `is_retryable()`; see
@@ -148,7 +148,8 @@ already arrived.
 
 ### Read a stream to its end
 
-The stored interaction is readable once the stream has ended. After
+The stored interaction is readable once the stream has ended, unless the
+read of its tail was cut short (below). After
 `interaction.completed` the API sends `event: done` / `data: [DONE]` and
 closes the connection about a second later, and finishes storing the
 interaction during that tail (verified live 2026-11-05): a `GET` sent right
@@ -164,7 +165,9 @@ The read is bounded at 5 s, since the default client has no read timeout: a
 connection left half-open after the terminal event is closed then, with a
 `warn!`, and the stream ends cleanly. The request-level per-chunk timeout
 (`with_timeout()`) doesn't apply to it; a client-level read or total
-timeout does, and is swallowed like any other error there.
+timeout does, and ends the read early with a `warn!` (the stream still
+ends cleanly). Either way the server may not have stored the interaction
+yet, so a `get` right after can still see `500`.
 
 ## Timeouts
 
@@ -312,8 +315,10 @@ default, polling every 2 s and 500 ms):
 - **`Retry-After` is honored.** When that error carries one (a 429), the
   next poll waits at least that long. If that is past the deadline, the
   wait gives up at once, saying so.
-- The deadline error is `Internal`, so `is_retryable()` is false: the
-  resource may still be processing, and whether to wait again is yours.
+- The deadline error is `PollTimeout`, whose `is_retryable()` is false:
+  the resource may still be processing, and whether to wait again is yours.
+  A resource that fails processing is `ProcessingFailed`, also not
+  retryable: only a new upload recovers.
 
 The wait runs on tokio time. Against a server on a paused clock, though,
 its deadline is a timer that tokio's auto-advance fires while a status

@@ -8,7 +8,7 @@ use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
 use crate::triggers::{
-    Trigger, TriggerCreateParams, TriggerExecution, TriggerExecutionListResponse,
+    CreateTriggerRequest, Trigger, TriggerExecution, TriggerExecutionListResponse,
     TriggerListResponse, TriggerUpdate,
 };
 
@@ -27,7 +27,7 @@ fn trigger_executions_url(ctx: &HttpContext, trigger_id: &str) -> String {
 /// Creates a trigger (`POST /v1beta/triggers`).
 pub async fn create_trigger(
     ctx: &HttpContext,
-    params: &TriggerCreateParams,
+    params: &CreateTriggerRequest,
 ) -> Result<Trigger, GenaiError> {
     tracing::debug!("Creating trigger: schedule={}", params.schedule);
     // Also covers params mutated after construction (every field is pub).

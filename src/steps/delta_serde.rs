@@ -477,7 +477,7 @@ impl<'de> Deserialize<'de> for StepDelta {
                 // summary) fails as it does in a `Step`, naming the field,
                 // instead of turning the delta into `Unknown`, which the
                 // accumulator would leave out of the step it builds.
-                #[cfg(feature = "strict-unknown")]
+                #[cfg(genai_strict_unknown)]
                 if fallback.is_strict_rejection() {
                     use serde::de::Error as _;
                     return Err(D::Error::custom(

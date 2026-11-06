@@ -77,9 +77,9 @@ use std::fmt;
 /// # fn example(client: &Client) {
 /// // Clip a 5-second window and sample one frame per second.
 /// let clipped = VideoProcessing::segment()
-///     .start_offset("5s")
-///     .end_offset("10s")
-///     .fps(1.0)
+///     .with_start_offset("5s")
+///     .with_end_offset("10s")
+///     .with_fps(1.0)
 ///     .build();
 ///
 /// let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clipped);
@@ -144,7 +144,7 @@ impl VideoProcessing {
     /// ```
     /// use genai_rs::VideoProcessing;
     ///
-    /// let processing = VideoProcessing::segment().start_offset("5s").fps(2.0).build();
+    /// let processing = VideoProcessing::segment().with_start_offset("5s").with_fps(2.0).build();
     /// ```
     #[must_use]
     pub const fn segment() -> VideoProcessingBuilder {
@@ -199,21 +199,21 @@ pub struct VideoProcessingBuilder {
 impl VideoProcessingBuilder {
     /// Sets the segment start time (e.g. `"10.5s"`).
     #[must_use]
-    pub fn start_offset(mut self, start_offset: impl Into<String>) -> Self {
+    pub fn with_start_offset(mut self, start_offset: impl Into<String>) -> Self {
         self.start_offset = Some(start_offset.into());
         self
     }
 
     /// Sets the segment end time (e.g. `"30s"`).
     #[must_use]
-    pub fn end_offset(mut self, end_offset: impl Into<String>) -> Self {
+    pub fn with_end_offset(mut self, end_offset: impl Into<String>) -> Self {
         self.end_offset = Some(end_offset.into());
         self
     }
 
     /// Sets the frame-rate sampling density.
     #[must_use]
-    pub const fn fps(mut self, fps: f64) -> Self {
+    pub const fn with_fps(mut self, fps: f64) -> Self {
         self.fps = Some(fps);
         self
     }

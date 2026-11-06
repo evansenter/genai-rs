@@ -62,7 +62,7 @@ mod files;
 mod spec;
 
 pub use files::{
-    EnvironmentFile, EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileType,
+    EnvironmentFile, EnvironmentFileDownload, EnvironmentFileListResponse, EnvironmentFileType,
     EnvironmentFileUpload, EnvironmentFiles, ListEnvironmentFiles,
 };
 pub use spec::{
@@ -78,7 +78,6 @@ use crate::serde_util::{
 };
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 wire_enum! {
@@ -199,7 +198,7 @@ pub struct CreateEnvironmentRequest {
     /// unmodeled create-request field be set without a crate release.
     ///
     /// The inherent cost (same as
-    /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams)): a
+    /// [`CreateTriggerRequest::extra`](crate::CreateTriggerRequest)): a
     /// *typo'd optional* key in a deserialized config (`netwrok`, ...) is
     /// silently absorbed here and forwarded to the server verbatim rather
     /// than rejected.
@@ -355,11 +354,7 @@ impl<'a> Environments<'a> {
     /// [`pages`](ListEnvironments::pages) /
     /// [`items`](ListEnvironments::items) to stream them all.
     pub fn list(self) -> ListEnvironments<'a> {
-        ListEnvironments {
-            client: self.client,
-            page_size: None,
-            page_token: None,
-        }
+        ListEnvironments::new(self.client)
     }
 
     /// Deletes an environment.
@@ -373,62 +368,53 @@ impl<'a> Environments<'a> {
     }
 }
 
-/// A `GET /v1beta/environments` request, from [`Environments::list`].
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `next_page_token` to the end of the list. The page size is sent with
-/// every page.
-///
-/// A page can hold fewer environments than the page size, or none, while
-/// more remain: live on 2026-09-26, with `page_size=1` one page of the list
-/// came back empty with a `next_page_token`. The streams follow such pages;
-/// when calling [`send`](Self::send) yourself, keep going while
-/// `next_page_token` is present rather than stopping on a short page.
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // One page
-/// let page = client.environments().list().with_page_size(50).send().await?;
-/// println!(
-///     "{} environments, more: {}",
-///     page.environments.len(),
-///     page.next_page_token.is_some()
-/// );
-///
-/// // Every environment, across pages
-/// let all: Vec<genai_rs::Environment> =
-///     client.environments().list().items().try_collect().await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListEnvironments<'a> {
-    client: &'a Client,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
+paging::list_builder! {
+    /// A `GET /v1beta/environments` request, from [`Environments::list`].
+    ///
+    /// End it with [`send`](Self::send) for one page, or
+    /// [`pages`](Self::pages) / [`items`](Self::items) to follow
+    /// `next_page_token` to the end of the list. The page size is sent with
+    /// every page.
+    ///
+    /// A page can hold fewer environments than the page size, or none, while
+    /// more remain: live on 2026-09-26, with `page_size=1` one page of the list
+    /// came back empty with a `next_page_token`. The streams follow such pages;
+    /// when calling [`send`](Self::send) yourself, keep going while
+    /// `next_page_token` is present rather than stopping on a short page.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use futures_util::TryStreamExt;
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// // One page
+    /// let page = client.environments().list().with_page_size(50).send().await?;
+    /// println!(
+    ///     "{} environments, more: {}",
+    ///     page.environments.len(),
+    ///     page.next_page_token.is_some()
+    /// );
+    ///
+    /// // Every environment, across pages
+    /// let all: Vec<genai_rs::Environment> =
+    ///     client.environments().list().items().try_collect().await?;
+    /// # let _ = all;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub struct ListEnvironments<'a> {
+    }
+    page: EnvironmentListResponse => Environment;
+    label: "environments";
 
-impl<'a> ListEnvironments<'a> {
     /// Sets the maximum number of environments per page (the API's default
     /// is 50). Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
+    fn with_page_size;
 
     /// Starts from this page token, from a previous page's
     /// `next_page_token`.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
+    fn with_page_token;
 
     /// Sends the request and returns one page.
     ///
@@ -439,50 +425,17 @@ impl<'a> ListEnvironments<'a> {
     ///
     /// Returns an error on network failure, an invalid page token, or a
     /// response that fails to parse.
-    pub async fn send(self) -> Result<EnvironmentListResponse, GenaiError> {
-        crate::http::environments::list_environments(
-            &self.client.http,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<EnvironmentListResponse, GenaiError>> {
-        let Self {
-            client,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("environments", page_token, move |token| {
-            let client = client.clone();
-            async move {
-                crate::http::environments::list_environments(
-                    &client.http,
-                    page_size,
-                    token.as_deref(),
-                )
-                .await
-            }
-        })
-    }
+    fn send;
 
     /// Streams every environment across pages, in server order. Same rules
     /// as [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<Environment, GenaiError>> {
-        paging::items(self.pages())
-    }
+    fn items;
+
+    fetch: |http, page_size, token| crate::http::environments::list_environments(
+        http,
+        page_size,
+        token.as_deref(),
+    ),
 }
 
 #[cfg(test)]
@@ -552,7 +505,7 @@ mod tests {
         assert_eq!(env.size_bytes, Some(42));
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn unknown_status_roundtrips() {
         let json = serde_json::json!({"id": "x", "status": "hibernating"});

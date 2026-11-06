@@ -55,7 +55,7 @@ fn test_thinking_summaries_deserialization() {
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_thinking_summaries_unknown_roundtrip() {
     let unknown: ThinkingSummaries = serde_json::from_str("\"future_variant\"").unwrap();

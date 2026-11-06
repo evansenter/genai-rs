@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     match poll(&client, started, max_wait).await? {
         Some(report) => {
-            let summaries = report.thought_summaries().count();
+            let summaries = report.thought_summaries().len();
             println!(
                 "\n{}",
                 report.as_text().ok_or("completed without a report")?

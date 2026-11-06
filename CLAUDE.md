@@ -55,6 +55,7 @@ is gitignored).
 ```bash
 make check        # pre-push gate: fmt + clippy + test + test-scripts
 make test         # unit/offline tests (no doctests)
+make test-strict  # the same in strict mode (--cfg genai_strict_unknown, D-030)
 make test-all     # + live integration tests (needs GEMINI_API_KEY)
 make test-scripts # shell-script harnesses (needs bash, jq, python3; PyYAML for one)
 make docs         # rustdoc -D warnings, all-features and docs.rs feature set
@@ -74,13 +75,13 @@ installs a `tracing` subscriber.
 
 | Path | Contents |
 |------|----------|
-| `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `interaction()`, `execute`/`execute_stream`, `InteractionBuilder` (one file per concern: `input`, `tools`, `output`, `generation`; `ConversationBuilder` in `conversation.rs`), the auto-function loop (`auto_functions.rs`) |
+| `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `interaction()`, `execute`/`execute_stream`, `InteractionBuilder` (one file per concern: `input`, `tools`, `output`, `generation`; `ConversationBuilder` in `conversation.rs`), the auto-function loops (`auto_functions.rs`) and the round they share (`auto_functions/round.rs`) |
 | `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
 | `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
 | `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types |
 | `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`) |
 | `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
-| `src/paging.rs`, `src/poll.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()`; `PollOptions` and the wait behind every `wait_until_active` |
+| `src/paging.rs`, `src/poll.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()`, and the `list_builder!` macro that defines the builders; `PollOptions` and the wait behind every `wait_until_active` |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
 | `src/wire/` | `WireInspector`, `LOUD_WIRE` printer and `WireFilter` (`printer.rs`), `TracingForwarder` |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
@@ -113,9 +114,10 @@ with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 and keep unmodeled fields in a `#[serde(flatten)] extra` map; the known
 variants of `Step`, `StepDelta`, `Content` and `Annotation` do the same with
 an `extra` field, through `src/wire_fields.rs` (#491). Polling
-continues on unknown statuses, bounded by timeouts. The `strict-unknown`
-feature makes `Content`, `Step` and every string enum fail on unknown values
-instead. New string enums use the crate-private `wire_enum!` macro
+continues on unknown statuses, bounded by timeouts. Strict mode, the
+`--cfg genai_strict_unknown` flag (a cfg, not a feature: D-030), makes
+`Content`, `Step` and every string enum fail on unknown values instead
+(`make test-strict`). New string enums use the crate-private `wire_enum!` macro
 (`src/wire_enum.rs`), which supplies all of the above.
 
 When adding or changing an enum, record its verified wire format in
@@ -201,8 +203,9 @@ reaches the wire must use a real id.
 - Timing tests against the HTTP stub run on a paused clock and assert
   virtual time, never `std::time::Instant` (#501; `docs/TESTING.md`). The
   Antigravity suites drive real processes, so their bounds stay wall-clock,
-  as do the four stream-tail tests in `reliability_tests.rs` (#518), whose
-  tail arrives after a stub delay that a held clock would hold too.
+  as does `stream_ends_once_the_tail_after_completed_has_arrived` (#518),
+  which bounds a stream's tail read from above: a released paused clock
+  can overshoot it.
 - Don't assert `text.contains(..)` on non-deterministic model output; use
   `assert_response_semantic()` (see `docs/TESTING.md`). Exact computed values
   are fine.
@@ -260,7 +263,7 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
 
 - `rust.yml` jobs: check (also fails when `cargo package` would ship a
   test-only file, and builds the packaged crates), test,
-  test-strict-unknown, test-antigravity (pinned `localharness` wheel),
+  test-strict-unknown (strict mode, under `RUSTFLAGS`), test-antigravity (pinned `localharness` wheel),
   test-integration (live, grouped), example-smoke (live), captured-fixtures
   (live, schedule and dispatch only: re-captures `tests/fixtures/captured/`,
   replays the fresh copies, and fails once the committed ones are over 90

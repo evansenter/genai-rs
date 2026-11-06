@@ -9,7 +9,7 @@
 //! too.
 //!
 //! Tests whose replies carry unknown enum values are compiled out under
-//! `strict-unknown`, which rejects those values by design.
+//! `genai_strict_unknown`, which rejects those values by design.
 
 mod common;
 
@@ -21,15 +21,15 @@ use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
     Agent, AllowlistEntry, ChunkingConfig, CreateCredentialRequest, CreateEnvironmentRequest,
-    CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
-    CredentialUpdate, CustomMetadata, DocumentImport, DocumentState, DocumentUpload,
-    EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec, EnvironmentStatus, FileMetadata,
-    FileSearchDocument, FileUpload, GenaiError, InjectionLocation, InteractionInput,
+    CreateFileSearchStoreRequest, CreateTriggerRequest, CreateVoiceRequest, CredentialConfig,
+    CredentialType, CredentialUpdate, CustomMetadata, DocumentImport, DocumentState,
+    DocumentUpload, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec, EnvironmentStatus,
+    FileMetadata, FileSearchDocument, FileUpload, GenaiError, InjectionLocation, InteractionInput,
     InteractionRequest, NetworkConfig, PollOptions, RevocationBehavior, StreamChunk, Tool, Trigger,
-    TriggerCreateParams, TriggerExecution, TriggerStatus, TriggerUpdate, Voice, VoiceAudio,
-    VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState, WebhookUpdate,
+    TriggerExecution, TriggerStatus, TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType,
+    Webhook, WebhookEvent, WebhookState, WebhookUpdate,
 };
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
 use serde_json::{Value, json};
 
@@ -373,8 +373,8 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
 }
 
 /// A valid trigger create body: a custom agent, non-empty input, no `store`.
-fn trigger_params() -> TriggerCreateParams {
-    TriggerCreateParams::new("0 5 * * *", "UTC", nightly_interaction())
+fn trigger_params() -> CreateTriggerRequest {
+    CreateTriggerRequest::new("0 5 * * *", "UTC", nightly_interaction())
 }
 
 fn nightly_interaction() -> InteractionRequest {
@@ -514,7 +514,7 @@ async fn webhook_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
     let wire = json!({
@@ -561,7 +561,7 @@ async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
     assert_eq!(back["delivery_stats"], wire["delivery_stats"]);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entries() {
     let stub = Stub::replying(vec![Reply::json(
@@ -650,7 +650,7 @@ async fn webhook_list_items_resend_raw_byte_page_tokens_percent_encoded() {
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_secret() {
     let stub = Stub::replying(vec![Reply::json(200, json!({"secret": "whsec_rotated"}))]).await;
@@ -677,7 +677,7 @@ async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_
 // Triggers
 // =============================================================================
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn trigger_endpoints_send_the_documented_requests() {
     let stub = ok_stub().await;
@@ -685,7 +685,7 @@ async fn trigger_endpoints_send_the_documented_requests() {
     let c = &client;
 
     let interaction = nightly_interaction();
-    let mut params = TriggerCreateParams::new("0 5 * * *", "Europe/Paris", interaction.clone())
+    let mut params = CreateTriggerRequest::new("0 5 * * *", "Europe/Paris", interaction.clone())
         .with_display_name("nightly")
         .with_environment_id("env-1")
         .with_max_consecutive_failures(3)
@@ -822,7 +822,7 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     assert_eq!(back["max_consecutive_failures"], 3);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn trigger_list_preserves_unknown_statuses() {
     let stub = Stub::replying(vec![
@@ -856,7 +856,7 @@ async fn trigger_list_preserves_unknown_statuses() {
     assert!(empty.triggers.is_empty() && empty.next_page_token.is_none());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn trigger_execution_responses_parse_under_both_list_keys() {
     let stub = Stub::replying(vec![
@@ -1448,7 +1448,7 @@ async fn environment_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn environment_response_parses_string_counts_and_preserves_unknowns() {
     let network =
@@ -1618,7 +1618,7 @@ async fn environment_file_items_resend_the_path_recursive_and_page_size_on_every
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -2096,7 +2096,7 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn document_list_parses_states_sizes_and_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
@@ -2583,7 +2583,7 @@ async fn file_search_store_upload_read_back_failure_names_the_document() {
             (GenaiError::Api { status_code, .. }, Some(expected)) => {
                 assert_eq!(*status_code, expected, "{err:?}");
             }
-            (GenaiError::Internal(_), None) => {}
+            (GenaiError::MalformedResponse(_), None) => {}
             _ => panic!("unexpected error shape for {status:?}: {err:?}"),
         }
         let message = err.to_string();
@@ -2700,7 +2700,7 @@ async fn import_file_reports_a_failed_or_unnamed_operation() {
         .import_file(STORE, full_import())
         .await
         .unwrap_err();
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::ProcessingFailed(_)), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("files/f1"), "{message}");
     assert!(message.contains("error 5: File not found."), "{message}");
@@ -2755,7 +2755,7 @@ async fn import_file_times_out_on_an_operation_that_never_finishes() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     // The import goes on, and a second one makes a second document: the
@@ -2943,7 +2943,7 @@ async fn document_wait_until_active_failed_state_is_terminal() {
         wait_for_document(vec![document(Some("STATE_FAILED"))], Duration::from_secs(5)).await;
 
     let err = result.unwrap_err();
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::ProcessingFailed(_)), "{err:?}");
     assert!(!err.is_retryable(), "a failed document never recovers");
     assert!(err.to_string().contains(DOC), "{err}");
     assert_eq!(targets.len(), 1, "no polling past a terminal state");
@@ -2966,7 +2966,7 @@ async fn document_wait_until_active_times_out_with_the_last_state() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     assert!(message.contains("waited 50ms"), "{message}");
@@ -2974,7 +2974,7 @@ async fn document_wait_until_active_times_out_with_the_last_state() {
     assert_eq!(stub.requests().len(), 6, "{message}");
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn document_wait_until_active_keeps_polling_through_unknown_and_missing_states() {
     let (result, targets) = wait_for_document(
@@ -3104,7 +3104,7 @@ async fn voice_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn voice_list_parses_prebuilt_voices_and_preserves_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -3378,7 +3378,7 @@ async fn credential_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn credential_responses_parse_and_preserve_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -3570,7 +3570,7 @@ async fn interaction_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn interaction_response_preserves_unknown_status_input_and_extras() {
     let stub = Stub::replying(vec![
@@ -3959,7 +3959,7 @@ async fn file_list_pages_resume_from_with_page_token() {
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn file_list_parses_metadata_and_preserves_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
@@ -4024,7 +4024,7 @@ async fn wait_until_active_times_out_with_the_last_state() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     assert!(message.contains("waited 50ms"), "{message}");
@@ -4073,7 +4073,7 @@ async fn wait_until_active_bounds_a_stalled_request() {
         .unwrap_err();
     gate.await.unwrap();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     assert!(
@@ -4084,7 +4084,7 @@ async fn wait_until_active_bounds_a_stalled_request() {
     assert_eq!(stub.requests().len(), 1, "{message}");
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn wait_until_active_keeps_polling_through_unknown_states() {
     let stub = Stub::replying(vec![

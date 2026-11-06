@@ -86,8 +86,9 @@ pub enum AutoFunctionStreamChunk {
     /// and will always be populated, even though `response.function_calls()`
     /// may be empty.
     ExecutingFunctions {
-        /// The response from the API (may have empty `function_calls()` in streaming mode)
-        response: InteractionResponse,
+        /// The response from the API (may have empty `function_calls()` in
+        /// streaming mode). Boxed, so that a `Delta` chunk stays small (#490).
+        response: Box<InteractionResponse>,
         /// The function calls that are about to be executed (always populated)
         pending_calls: Vec<OwnedFunctionCallInfo>,
     },
@@ -102,7 +103,7 @@ pub enum AutoFunctionStreamChunk {
     ///
     /// This is the last event in the stream, yielded when the model returns
     /// a response that doesn't request any function calls.
-    Complete(InteractionResponse),
+    Complete(Box<InteractionResponse>),
 
     /// Maximum function call loops reached.
     ///
@@ -116,7 +117,7 @@ pub enum AutoFunctionStreamChunk {
     ///
     /// This allows debugging why the model is stuck in a loop while preserving
     /// all partial results.
-    MaxLoopsReached(InteractionResponse),
+    MaxLoopsReached(Box<InteractionResponse>),
 
     /// Unknown event type (for forward compatibility).
     ///
@@ -330,17 +331,18 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
             }
             "complete" => {
                 let data = extract_data_field(&value, "Complete");
-                let response: InteractionResponse = serde_json::from_value(data).map_err(|e| {
-                    serde::de::Error::custom(format!(
-                        "Failed to deserialize AutoFunctionStreamChunk::Complete data: {}",
-                        e
-                    ))
-                })?;
+                let response: Box<InteractionResponse> =
+                    serde_json::from_value(data).map_err(|e| {
+                        serde::de::Error::custom(format!(
+                            "Failed to deserialize AutoFunctionStreamChunk::Complete data: {}",
+                            e
+                        ))
+                    })?;
                 Ok(Self::Complete(response))
             }
             "max_loops_reached" => {
                 let data = extract_data_field(&value, "MaxLoopsReached");
-                let response: InteractionResponse = serde_json::from_value(data).map_err(|e| {
+                let response: Box<InteractionResponse> = serde_json::from_value(data).map_err(|e| {
                     serde::de::Error::custom(format!(
                         "Failed to deserialize AutoFunctionStreamChunk::MaxLoopsReached data: {}",
                         e
@@ -807,12 +809,12 @@ impl AutoFunctionResultAccumulator {
                 None
             }
             AutoFunctionStreamChunk::Complete(response) => Some(AutoFunctionResult {
-                response,
+                response: *response,
                 executions: std::mem::take(&mut self.executions),
                 reached_max_loops: false,
             }),
             AutoFunctionStreamChunk::MaxLoopsReached(response) => Some(AutoFunctionResult {
-                response,
+                response: *response,
                 executions: std::mem::take(&mut self.executions),
                 reached_max_loops: true,
             }),
@@ -1163,7 +1165,7 @@ mod tests {
             ..Default::default()
         };
 
-        let chunk = AutoFunctionStreamChunk::MaxLoopsReached(response);
+        let chunk = AutoFunctionStreamChunk::MaxLoopsReached(Box::new(response));
 
         // Serialize
         let json_str = serde_json::to_string(&chunk).expect("Serialization should succeed");
@@ -1219,7 +1221,7 @@ mod tests {
             ..Default::default()
         };
 
-        let max_loops_chunk = AutoFunctionStreamChunk::MaxLoopsReached(response);
+        let max_loops_chunk = AutoFunctionStreamChunk::MaxLoopsReached(Box::new(response));
         let result = accumulator.push(max_loops_chunk);
 
         assert!(result.is_some(), "Should complete on MaxLoopsReached");
@@ -1314,12 +1316,12 @@ mod tests {
         use crate::InteractionStatus;
 
         let chunk = AutoFunctionStreamChunk::ExecutingFunctions {
-            response: crate::InteractionResponse {
+            response: Box::new(crate::InteractionResponse {
                 id: Some("interaction-new".to_string()),
                 model: Some("test-model".to_string()),
                 status: InteractionStatus::Completed,
                 ..Default::default()
-            },
+            }),
             pending_calls: vec![
                 OwnedFunctionCallInfo {
                     id: "call-1".to_string(),

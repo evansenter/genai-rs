@@ -27,7 +27,7 @@ async fn completed_response(
     let mut completed = None;
     while let Some(event) = stream.next().await {
         match event?.chunk {
-            StreamChunk::Completed(response) => completed = Some(response),
+            StreamChunk::Completed(response) => completed = Some(*response),
             StreamChunk::Error { message, code } => {
                 return Err(GenaiError::Stream { message, code });
             }

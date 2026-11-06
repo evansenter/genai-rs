@@ -215,3 +215,66 @@ async fn test_scripted_hook_can_block_on_async_work() {
     assert!(function_response_text(&fake, 1).contains("async-hook-content-5501"));
     agent.shutdown().await.expect("shutdown");
 }
+
+/// A turn that hits its deadline is halted and drained with no one to
+/// consume it, so its per-turn hooks don't run for it: the drain answers
+/// them as if no hook were set (a stop hook's `Continue` would otherwise
+/// keep the halted turn going). The next turn runs them as usual.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_lifecycle_hooks_skip_a_drained_turn() {
+    for budget in DEADLINE_BUDGETS {
+        let started = Started::default();
+        let fake = FakeGemini::start(vec![
+            ModelTurn::call("hanging_tool", json!({})),
+            ModelTurn::text("after-drain-7731"),
+        ])
+        .await;
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let (post, stop) = (Arc::clone(&log), Arc::clone(&log));
+        let mut agent = scripted_agent(&fake)
+            .with_tool_service(Arc::new(HangingService(started.clone())))
+            .with_turn_timeout(budget)
+            .on_post_turn(move |turn| {
+                post.lock()
+                    .unwrap()
+                    .push(format!("post_turn:{}", turn.response_text))
+            })
+            .on_stop(move |request| {
+                stop.lock()
+                    .unwrap()
+                    .push(format!("stop:{}", request.continuation_count));
+                StopDecision::Stop
+            })
+            .spawn()
+            .await
+            .expect("spawn");
+
+        let turn_start = Instant::now();
+        let err = agent.chat("call the hanging tool").await.unwrap_err();
+        assert!(
+            matches!(err, AntigravityError::Timeout { .. }),
+            "expected Timeout, got {err:?}"
+        );
+        if !started_in_time(started.at(), turn_start, budget) {
+            println!("hanging_tool did not start early in a {budget:?} turn; retrying");
+            agent.shutdown().await.expect("shutdown");
+            continue;
+        }
+        assert!(
+            log.lock().unwrap().is_empty(),
+            "the drained turn ran a lifecycle hook: {:?}",
+            log.lock().unwrap()
+        );
+
+        let next = agent.chat("are you still there?").await.expect("next turn");
+        assert_eq!(next.text(), "after-drain-7731");
+        assert_eq!(
+            log.lock().unwrap().as_slice(),
+            ["stop:0", "post_turn:after-drain-7731"]
+        );
+        agent.shutdown().await.expect("shutdown");
+        return;
+    }
+    panic!("hanging_tool never started early enough in any of {DEADLINE_BUDGETS:?}");
+}

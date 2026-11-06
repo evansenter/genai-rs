@@ -200,7 +200,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 data: data_of(&value),
             }),
             "created" => {
-                let interaction: InteractionResponse = serde_json::from_value(data_of(&value))
+                let interaction: Box<InteractionResponse> = serde_json::from_value(data_of(&value))
                     .map_err(|e| {
                         serde::de::Error::custom(format!(
                             "Failed to deserialize StreamChunk::Created data: {}",
@@ -313,7 +313,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 })
             }
             "completed" => {
-                let response: InteractionResponse = serde_json::from_value(data_of(&value))
+                let response: Box<InteractionResponse> = serde_json::from_value(data_of(&value))
                     .map_err(|e| {
                         serde::de::Error::custom(format!(
                             "Failed to deserialize StreamChunk::Completed data: {}",

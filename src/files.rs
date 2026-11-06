@@ -66,7 +66,6 @@ use crate::poll::PollStep;
 use crate::serde_util::{ResourceName, deserialize_string_i64, serialize_string_i64};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -255,7 +254,7 @@ pub struct VideoMetadata {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
-pub struct ListFilesResponse {
+pub struct FileListResponse {
     /// The files on this page. A null or malformed list degrades to empty;
     /// malformed elements drop individually.
     #[serde(
@@ -274,7 +273,7 @@ pub struct ListFilesResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-paging::impl_list_page!(ListFilesResponse, files: FileMetadata);
+paging::impl_list_page!(FileListResponse, files: FileMetadata);
 
 /// Wrapper for file upload response.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -435,11 +434,7 @@ impl<'a> Files<'a> {
     /// [`pages`](ListFiles::pages) / [`items`](ListFiles::items) to stream
     /// them all.
     pub fn list(self) -> ListFiles<'a> {
-        ListFiles {
-            client: self.client,
-            page_size: None,
-            page_token: None,
-        }
+        ListFiles::new(self.client)
     }
 
     /// Deletes a file before its 48 hours are up.
@@ -476,10 +471,11 @@ impl<'a> Files<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::Internal`] if processing fails (terminal, so not
-    /// retryable: only a new upload recovers) or the timeout passes,
-    /// [`GenaiError::InvalidInput`] for a name that is not `files/<id>`, or
-    /// the error of a failed status request.
+    /// Returns [`GenaiError::ProcessingFailed`] if processing fails
+    /// (terminal: only a new upload recovers), [`GenaiError::PollTimeout`] if
+    /// the timeout passes (the file may still be processing; neither is
+    /// retryable), [`GenaiError::InvalidInput`] for a name that is not
+    /// `files/<id>`, or the error of a failed status request.
     ///
     /// # Example
     ///
@@ -514,15 +510,15 @@ impl<'a> Files<'a> {
                     return Ok(PollStep::Ready(current));
                 }
                 if current.is_failed() {
-                    // `Internal`, not `Api`: the file will never process, and a
-                    // fabricated 5xx would make `is_retryable()` say otherwise.
+                    // Not `Api`: the file will never process, and a fabricated
+                    // 5xx would make `is_retryable()` say otherwise.
                     // `FileError::code` is a google.rpc code, not an HTTP status.
                     let detail = current
                         .error
                         .as_ref()
                         .map_or_else(|| "no details".to_string(), ToString::to_string);
                     tracing::error!("File '{file_name}' processing failed: {detail}");
-                    return Err(GenaiError::Internal(format!(
+                    return Err(GenaiError::ProcessingFailed(format!(
                         "File '{file_name}' failed processing ({detail}). This is terminal — \
                          re-uploading is the only recovery."
                     )));
@@ -546,56 +542,47 @@ impl<'a> Files<'a> {
     }
 }
 
-/// A `GET /v1beta/files` request, from [`Files::list`]: your uploaded
-/// files, newest first.
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `nextPageToken` to the end of the list. The page size is sent with every
-/// page. (The Files API spells its paging parameters `pageSize` and
-/// `pageToken`; the builder sends them that way.)
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-/// use genai_rs::FileMetadata;
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // One page
-/// let page = client.files().list().with_page_size(10).send().await?;
-/// for file in &page.files {
-///     println!("{}: {} ({})", file.name, file.display_name.as_deref().unwrap_or(""), file.mime_type);
-/// }
-///
-/// // Every file, across pages
-/// let all: Vec<FileMetadata> = client.files().list().items().try_collect().await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListFiles<'a> {
-    client: &'a Client,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
+paging::list_builder! {
+    /// A `GET /v1beta/files` request, from [`Files::list`]: your uploaded
+    /// files, newest first.
+    ///
+    /// End it with [`send`](Self::send) for one page, or
+    /// [`pages`](Self::pages) / [`items`](Self::items) to follow
+    /// `nextPageToken` to the end of the list. The page size is sent with every
+    /// page. (The Files API spells its paging parameters `pageSize` and
+    /// `pageToken`; the builder sends them that way.)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use futures_util::TryStreamExt;
+    /// use genai_rs::FileMetadata;
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// // One page
+    /// let page = client.files().list().with_page_size(10).send().await?;
+    /// for file in &page.files {
+    ///     println!("{}: {} ({})", file.name, file.display_name.as_deref().unwrap_or(""), file.mime_type);
+    /// }
+    ///
+    /// // Every file, across pages
+    /// let all: Vec<FileMetadata> = client.files().list().items().try_collect().await?;
+    /// # let _ = all;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub struct ListFiles<'a> {
+    }
+    page: FileListResponse => FileMetadata;
+    label: "files";
 
-impl<'a> ListFiles<'a> {
     /// Sets the maximum number of files per page, from 1 to 100 (a larger
     /// value is a 400, verified live 2026-09-27). Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
+    fn with_page_size;
 
     /// Starts from this page token, from a previous page's
     /// `next_page_token`.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
+    fn with_page_token;
 
     /// Sends the request and returns one page.
     ///
@@ -604,45 +591,17 @@ impl<'a> ListFiles<'a> {
     /// # Errors
     ///
     /// Returns an error if the HTTP request fails or response parsing fails.
-    pub async fn send(self) -> Result<ListFilesResponse, GenaiError> {
-        crate::http::files::list_files(
-            &self.client.http,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<ListFilesResponse, GenaiError>> {
-        let Self {
-            client,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("files", page_token, move |token| {
-            let client = client.clone();
-            async move {
-                crate::http::files::list_files(&client.http, page_size, token.as_deref()).await
-            }
-        })
-    }
+    fn send;
 
     /// Streams every file across pages, newest first. Same rules as
     /// [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<FileMetadata, GenaiError>> {
-        paging::items(self.pages())
-    }
+    fn items;
+
+    fetch: |http, page_size, token| crate::http::files::list_files(
+        http,
+        page_size,
+        token.as_deref(),
+    ),
 }
 
 #[cfg(test)]

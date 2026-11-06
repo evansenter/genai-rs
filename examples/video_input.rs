@@ -7,12 +7,12 @@
 //! `VideoProcessing::segment()` restricts the model to a time window and
 //! frame rate. The window is what reduces video input tokens (see the
 //! measurements on `VideoProcessing`), which matters on long videos. The API
-//! accepts `processing` only on video inside a `user_input` step, hence
-//! `with_history(vec![Step::user_input(..)])` rather than `with_content`.
+//! accepts `processing` only on video inside a `user_input` step, which is
+//! how `with_content` sends its content.
 //!
 //! Run with: `cargo run --example video_input`
 
-use genai_rs::{Client, Content, Step, VideoProcessing};
+use genai_rs::{Client, Content, VideoProcessing};
 use std::env;
 use std::error::Error;
 
@@ -42,18 +42,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n--- First half-second at 1 fps ---");
     let clipped = Content::video_data(DEMO_MP4_BASE64, "video/mp4").with_processing(
         VideoProcessing::segment()
-            .start_offset("0s")
-            .end_offset("0.5s")
-            .fps(1.0)
+            .with_start_offset("0s")
+            .with_end_offset("0.5s")
+            .with_fps(1.0)
             .build(),
     );
     let response = client
         .interaction()
         .with_model(genai_rs::DEFAULT_MODEL)
-        .with_history(vec![Step::user_input(vec![
+        .with_content(vec![
             Content::text("Describe this video in one sentence."),
             clipped,
-        ])])
+        ])
         .create()
         .await?;
     println!("{}", response.as_text().ok_or("no text in response")?);

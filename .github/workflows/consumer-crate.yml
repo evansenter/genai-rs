@@ -2,8 +2,8 @@ name: Fresh Consumer Crate
 
 # Compiles `#[tool]` from a throwaway crate outside this workspace, with
 # exactly README.md's dependency set and no trait import. A missing
-# *dependency* can only fail there: inside the workspace `async-trait` and
-# `serde_json` always resolve. The trait-import half is also pinned on every
+# *dependency* can only fail there: inside the workspace `serde_json` always
+# resolves. The trait-import half is also pinned on every
 # PR by `tests/ui/pass_no_consumer_imports.rs`; trybuild gives a separate
 # crate, but not a separate dependency resolve, so it cannot replace this.
 

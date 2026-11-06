@@ -100,9 +100,9 @@ pub(super) fn contents() -> Vec<Content> {
             resolution: Some(Resolution::Low),
             processing: Some(
                 VideoProcessing::segment()
-                    .start_offset("1s")
-                    .end_offset("2s")
-                    .fps(2.0)
+                    .with_start_offset("1s")
+                    .with_end_offset("2s")
+                    .with_fps(2.0)
                     .build(),
             ),
             name: Some("clip.mp4".into()),

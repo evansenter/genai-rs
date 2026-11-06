@@ -27,11 +27,14 @@ make test-all                                         # + live tests (GEMINI_API
 cargo nextest run --test multiturn_tests --run-ignored all   # one live file
 cargo nextest run -E 'test(/function_calling/)' --run-ignored all
 LOUD_WIRE=1 cargo nextest run -E 'test(/name/)' --run-ignored all --no-capture -j 1
-cargo test --features strict-unknown                  # unknown Content/Step/string-enum values become errors
+make test-strict                                      # strict mode: unknown Content/Step/string-enum values become errors
 ```
 
-Tests that exercise an `Unknown` value carry
-`#[cfg(not(feature = "strict-unknown"))]`, since strict mode rejects it.
+Strict mode is the `--cfg genai_strict_unknown` flag, not a Cargo feature,
+because it is not additive (D-030): `make test-strict` runs the suite with
+`RUSTFLAGS="--cfg genai_strict_unknown"`, in `target/strict` so the default
+build is not evicted. Tests that exercise an `Unknown` value carry
+`#[cfg(not(genai_strict_unknown))]`, since strict mode rejects it.
 
 | Variable | Purpose |
 |----------|---------|
@@ -77,9 +80,10 @@ built on `genai-rs` too. Either build the test client with
 no other timeout; or hold the clock with a running `spawn_blocking` task
 until the stub has the request, as `common::http_stub::hold_clock` does
 when a test needs the real defaults or a timeout of its own. For a test
-that sends several requests (a poll), `Stub::paused_clock_client()` holds
-the clock for each request until its response is read, with every default
-in place. See [Reliability](RELIABILITY.md#tests-on-a-paused-clock).
+that sends several requests (a poll, the auto-function loop),
+`Stub::paused_clock_client()` holds the clock for each request until its
+response is in (its body, or a stream's terminal event), with every
+default in place. See [Reliability](RELIABILITY.md#tests-on-a-paused-clock).
 
 A timing test asserts virtual time, never wall-clock time: a bound on
 `std::time::Instant` holds on a quiet machine and flakes on a loaded runner
@@ -91,17 +95,16 @@ clock held until that data is in hand: auto-advance can otherwise fire the
 timeout while the bytes travel over localhost
 (`read_timeout_ends_a_stalled_stream`).
 
-The exception is the four stream-tail tests in `reliability_tests.rs`
-(#518; `stream_ends_once_the_tail_after_completed_has_arrived`,
-`bad_frame_after_completed_does_not_stop_the_tail_read`,
-`per_chunk_timeout_does_not_bound_the_tail_read` and
-`auto_function_stream_reads_each_round_to_its_end_before_the_next`). Each
-times a tail that the stub sends after `Completed`, once a delay of its own
-has passed, against the 5 s tail limit. A held clock would hold that
-delay too, and a released one can auto-advance to the limit while the
-tail's bytes are in flight, so they run on real time. Their bounds keep
-wide margins: a floor at the stub's delay, and ceilings 20 to 50 times the
-few milliseconds the step takes.
+A stream's tail, which the stub sends a delay after `Completed`, needs
+the clock released at `Completed` (`paused_clock_client` does that), and
+then a released clock can auto-advance past the tail to the 5 s tail limit
+while the tail's bytes are in flight. So a paused-clock test can bound the
+tail read from below (it waited for the tail) but not from above.
+The exception is the one test whose point is the upper bound, that the
+stream ends at the tail and not at the limit
+(`stream_ends_once_the_tail_after_completed_has_arrived`, #518): it runs on
+real time, with no per-chunk timeout to flake on a slow first poll, and
+wide margins, a floor at the stub's delay and a ceiling ten times it.
 
 ### Captured fixtures
 
@@ -242,7 +245,7 @@ Tests live with the feature they verify, not the mechanics they use (D-008).
 A function-calling test that happens to be multi-turn belongs in
 `function_calling_tests.rs`. `api_canary_tests` fail when the API returns a
 step, delta or status type the crate doesn't model. They are compiled out
-under `strict-unknown`.
+in strict mode.
 
 ### Template
 
@@ -470,7 +473,7 @@ checks on it:
   Each finding is
   traced to its `Class.field` by removing keys until it goes away. It runs
   against the bindings and the v1beta spec (whose `writeOnly` fields are
-  left out of responses), and not under `strict-unknown`.
+  left out of responses), and not in strict mode.
 - **Sparse response bodies** (`src/coverage_oracle/response_minimal.rs`,
   `sparse_binding_bodies_deserialize` and `sparse_spec_bodies_deserialize`).
   The bodies above set every field, so a type that demands a field the

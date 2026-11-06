@@ -13,7 +13,7 @@
 //! # Limits and cut-offs
 //!
 //! An event may grow to [`MAX_SSE_EVENT_BYTES`] before it ends; past that
-//! the stream fails with [`GenaiError::Parse`] rather than buffering a body
+//! the stream fails with [`GenaiError::MalformedResponse`] rather than buffering a body
 //! that never sends a newline without bound.
 //!
 //! A body that ends early is [`GenaiError::StreamInterrupted`], whichever way
@@ -53,7 +53,7 @@ pub(crate) const MAX_SSE_EVENT_BYTES: usize = 64 * 1024 * 1024;
 ///
 /// A transport error while reading the body is
 /// [`GenaiError::StreamInterrupted`] too, and an event larger than
-/// [`MAX_SSE_EVENT_BYTES`] is [`GenaiError::Parse`].
+/// [`MAX_SSE_EVENT_BYTES`] is [`GenaiError::MalformedResponse`].
 ///
 /// Wire inspectors see one [`WireEvent::SseFrame`] per dispatched event.
 pub fn parse_sse_stream<'a, T>(
@@ -159,7 +159,7 @@ where
 
             let pending = buffer.len() + event.data_len();
             if pending > max_event_bytes {
-                Err(GenaiError::Parse(format!(
+                Err(GenaiError::MalformedResponse(format!(
                     "an SSE event passed {max_event_bytes} bytes without ending \
                      ({pending} bytes buffered); the largest real event, a 4K \
                      image delta, is about 16 MB, so the server is not sending \
@@ -262,7 +262,7 @@ impl PendingEvent {
 
         serde_json::from_str(data)
             .map(Some)
-            .map_err(|e| GenaiError::Parse(format_json_parse_error(data, e)))
+            .map_err(|e| GenaiError::MalformedResponse(format_json_parse_error(data, e)))
     }
 }
 
@@ -482,7 +482,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(results.as_slice(), [Err(GenaiError::Parse(_))]),
+            matches!(results.as_slice(), [Err(GenaiError::MalformedResponse(_))]),
             "{results:?}"
         );
         // A complete event in an earlier read stays a parse error even when
@@ -496,7 +496,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(results.first(), Some(Err(GenaiError::Parse(_)))),
+            matches!(results.first(), Some(Err(GenaiError::MalformedResponse(_)))),
             "{results:?}"
         );
     }
@@ -520,7 +520,7 @@ mod tests {
         };
         assert_eq!(first.text, "a");
         assert!(
-            matches!(err, GenaiError::Parse(message) if message.contains("64 bytes")),
+            matches!(err, GenaiError::MalformedResponse(message) if message.contains("64 bytes")),
             "{err:?}"
         );
         assert!(
@@ -536,7 +536,7 @@ mod tests {
             .collect();
         let results = collect_chunks(lines, 64).await;
         assert!(
-            matches!(results.as_slice(), [Err(GenaiError::Parse(message))]
+            matches!(results.as_slice(), [Err(GenaiError::MalformedResponse(message))]
                 if message.contains("without ending")),
             "{results:?}"
         );
@@ -583,7 +583,7 @@ mod tests {
         let runaway = Bytes::from(vec![b'x'; MAX_SSE_EVENT_BYTES + 1]);
         let results = collect_chunks(vec![Ok(runaway)], MAX_SSE_EVENT_BYTES).await;
         assert!(
-            matches!(results.as_slice(), [Err(GenaiError::Parse(_))]),
+            matches!(results.as_slice(), [Err(GenaiError::MalformedResponse(_))]),
             "{:?}",
             results.iter().map(|r| r.is_ok()).collect::<Vec<_>>()
         );

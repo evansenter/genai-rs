@@ -16,8 +16,8 @@
 //! Run with: `cargo run --example webhooks_and_background`
 
 use genai_rs::{
-    Client, CreateEnvironmentRequest, EnvironmentSource, InteractionInput, InteractionRequest,
-    TriggerCreateParams, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
+    Client, CreateEnvironmentRequest, CreateTriggerRequest, EnvironmentSource, InteractionInput,
+    InteractionRequest, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
 };
 use std::env;
 use std::error::Error;
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "/etc/motd",
         "hello from genai-rs",
     ));
-    let trigger = TriggerCreateParams::new(
+    let trigger = CreateTriggerRequest::new(
         "0 9 * * 1-5",
         "UTC",
         InteractionRequest {

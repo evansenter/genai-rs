@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
+  ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
+  It reads both shapes the API has used: since 2026-11-05 an
+  `mcp_server_tool_call` with `server_name` and a `<server>:<tool>` name
+  (the tool comes back without the prefix), and from 2026-10-01 to
+  2026-11-04 an answered `function_call` named `<server>:<tool>`, where
+  `<server>` is the name the request gave `McpServerConfig` (both verified
+  live on `gemini-3.8-flash`). A client function may also contain
+  a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
+  only when its result is in the same response. `is_error` is `Some(true)`
+  when either the result step's `is_error` or the result object's own
+  `is_error` key is `true`: on failed calls the API leaves the step's flag
+  `false` (verified live 2026-11-04). The result object holds `result`,
+  `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
+  and `is_error: true` on failure or `structured_content` on success
+  (#459).
+- `extra()` and `extra_mut()` on `Step`, `StepDelta`, `Content` and
+  `Annotation`, and `arguments_extra()` / `arguments_extra_mut()` on `Step`
+  and `StepDelta`, expose the wire fields the crate does not model, for
+  reading or editing before replay (#491).
+- `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
+  `ReviewSnippet` and `StepError` have a public `extra` map for unmodeled
+  fields, like `Place`. As on the unions, an
+  entry named after a modeled field is never serialized.
 - Antigravity: the Python SDK's harness options (#493), each shown changing
   what harness 0.1.23 does against a scripted model (2026-11-05).
   `docs/ANTIGRAVITY_BRIDGE_DESIGN.md` lists every option the 0.1.23 SDK
@@ -85,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extensions (#516).
 - `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
   send a request field the crate doesn't model yet, flat beside the modeled
-  ones, as `TriggerCreateParams::extra` already allowed. A repeated key
+  ones, as `CreateTriggerRequest::extra` already allowed. A repeated key
   replaces its value, as with `add_label`. The server validates the field
   like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
   that names a modeled field overrides it, since the API keeps the last of a
@@ -100,59 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
   with no timer at all, for tests on a paused tokio clock. A `Client`'s
   `Debug` output shows its connect timeout, which reqwest's does not.
-- `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
-  ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
-  It reads both shapes the API has used: since 2026-11-05 an
-  `mcp_server_tool_call` with `server_name` and a `<server>:<tool>` name
-  (the tool comes back without the prefix), and from 2026-10-01 to
-  2026-11-04 an answered `function_call` named `<server>:<tool>`, where
-  `<server>` is the name the request gave `McpServerConfig` (both verified
-  live on `gemini-3.8-flash`). A client function may also contain
-  a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
-  only when its result is in the same response. `is_error` is `Some(true)`
-  when either the result step's `is_error` or the result object's own
-  `is_error` key is `true`: on failed calls the API leaves the step's flag
-  `false` (verified live 2026-11-04). The result object holds `result`,
-  `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
-  and `is_error: true` on failure or `structured_content` on success
-  (#459).
-- `extra()` and `extra_mut()` on `Step`, `StepDelta`, `Content` and
-  `Annotation`, and `arguments_extra()` / `arguments_extra_mut()` on `Step`
-  and `StepDelta`, expose the wire fields the crate does not model, for
-  reading or editing before replay (#491).
-- `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
-  `FileSearchResultItem`, `ReviewSnippet` and `StepError` have a public
-  `extra` map for unmodeled fields, like `Place`. As on the unions, an
-  entry named after a modeled field is never serialized.
-- `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
-  ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
-  Since 2026-10-01 the API returns each MCP call as an answered
-  `function_call` named `<server>:<tool>`, where `<server>` is the name the
-  request gave `McpServerConfig` (verified live 2026-11-04 on
-  `gemini-3.8-flash`, streamed and not). A client function may also contain
-  a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
-  only when its result is in the same response. `is_error` is `Some(true)`
-  when either the result step's `is_error` or the result object's own
-  `is_error` key is `true`: on failed calls the API leaves the step's flag
-  `false` (verified live 2026-11-04). The result object holds `result`,
-  `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
-  and `is_error: true` on failure or `structured_content` on success. The
-  spec-only `mcp_server_tool_call` / `mcp_server_tool_result` pair is read
-  too (#459).
-- `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
-  `ReviewSnippet` and `StepError` have a public `extra` map for unmodeled
-  fields, like `Place`. As on the unions, an
-  entry named after a modeled field is never serialized.
-- `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
-  send a request field the crate doesn't model yet, flat beside the modeled
-  ones, as `TriggerCreateParams::extra` already allowed. A repeated key
-  replaces its value, as with `add_label`. The server validates the field
-  like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
-  that names a modeled field overrides it, since the API keeps the last of a
-  repeated key (both verified live 2026-11-04). A stored
-  `Trigger::interaction` now keeps the interaction fields the crate doesn't
-  model, such as `object: "interaction"`, which the API accepts back on
-  create (verified live 2026-11-04).
+- Three crate features, `http2`, `system-proxy` and `charset`, each turning
+  on reqwest's feature of the same name. All three are on by default; see
+  Changed.
 - `InteractionStatus::Queued` (`"queued"`), from the google-genai 2.34.0
   bindings, where the interaction, the stream's interaction and its status
   updates all list it (#501). It used to read as `Unknown`. Not observed
@@ -252,12 +226,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content type); a directory comes back as a tar archive
   (`is_tar_archive()`). It is `GET` on the listing's path with `alt=media`
   (verified live 2026-11-05).
-- Three crate features, `http2`, `system-proxy` and `charset`, each turning
-  on reqwest's feature of the same name. All three are on by default; see
-  Changed.
 
 ### Changed
 
+- **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
+  `Annotation` has a new `extra` field.** It is a
+  `serde_json::Map<String, serde_json::Value>`. The call variants
+  `CodeExecutionCall`, `UrlContextCall`, `GoogleSearchCall`,
+  `GoogleMapsCall` and `RetrievalCall` (on both `Step` and `StepDelta`) also
+  have `arguments_extra`, and `VideoProcessing::StaticSegment` gains `extra`.
+  The enums are `#[non_exhaustive]` but their variants are not, so patterns
+  that list every field and struct literals stop compiling. Migration: add
+  `..` to such patterns (`StepDelta::Text { text, .. }`,
+  `Step::Thought { signature, summary, .. }`). In struct literals, add
+  `extra: Default::default()` (and `arguments_extra: Default::default()`),
+  or use the constructors (`Step::user_text`, `Step::function_call`,
+  `Content::text`, `Content::image_data`,
+  `VideoProcessing::segment()...build()`), which set them empty.
+- **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
+  `extra` map cannot be built in a const context. Migration: call it at
+  runtime.
+- **Breaking: a known step, delta, content block or annotation whose
+  modeled field is malformed now deserializes as `Unknown`.** `Unknown`
+  keeps the whole object. Examples: a non-object `arguments`, a non-string
+  element in `urls` or `queries`. These used to be read leniently, dropping
+  the bad value. A static video `processing` object with a mistyped field
+  becomes `VideoProcessing::Unknown`. In strict mode, a malformed
+  `Step` or `Content` is an error that names the field and why
+  (``field `arguments`: expected an object``) instead of calling the type
+  unknown; that includes an unrecognized `language` on
+  `code_execution_call`, which strict mode used to read as Python. A
+  streamed `StepDelta` holding such a value (that `language`, or an unknown
+  content type in a `thought_summary`) fails the same way; strict mode used
+  to read the delta's `language` as absent. Other malformed deltas are
+  still kept as `StepDelta::Unknown`. Well-formed API responses are
+  unaffected. Migration: none, unless you
+  relied on the lenient reading.
 - **Breaking: a string passed to Antigravity's `with_system_instructions`
   is added to the harness's own prompt instead of replacing it**, as in the
   Python SDK, so the harness's tool guidance, safety rules, workspace list,
@@ -388,7 +392,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: a deserialized `InteractionRequest` keeps the keys it doesn't
   model, in `extra`, and sends them.** 0.13.0 dropped them silently. This
   covers a request loaded from JSON or a config file, and the nested
-  `interaction` of a deserialized `TriggerCreateParams`. A stale, misplaced
+  `interaction` of a deserialized `CreateTriggerRequest`. A stale, misplaced
   or misspelled key, such as a top-level `temperature` that belongs in
   `generation_config`, now reaches the server, which rejects a name it
   doesn't know with `400 Unknown parameter '<name>'`. Migration: remove the
@@ -417,39 +421,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't change, use the non-streaming call instead: `create()`,
   `create_with_auto_functions()`, or `interactions().get(id)` for a stored
   interaction.
-- **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
-  `Annotation` has a new `extra` field.** It is a
-  `serde_json::Map<String, serde_json::Value>`. The call variants
-  `CodeExecutionCall`, `UrlContextCall`, `GoogleSearchCall`,
-  `GoogleMapsCall` and `RetrievalCall` (on both `Step` and `StepDelta`) also
-  have `arguments_extra`, and `VideoProcessing::StaticSegment` gains `extra`.
-  The enums are `#[non_exhaustive]` but their variants are not, so patterns
-  that list every field and struct literals stop compiling. Migration: add
-  `..` to such patterns (`StepDelta::Text { text, .. }`,
-  `Step::Thought { signature, summary, .. }`). In struct literals, add
-  `extra: Default::default()` (and `arguments_extra: Default::default()`),
-  or use the constructors (`Step::user_text`, `Step::function_call`,
-  `Content::text`, `Content::image_data`,
-  `VideoProcessing::segment()...build()`), which set them empty.
-- **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
-  `extra` map cannot be built in a const context. Migration: call it at
-  runtime.
-- **Breaking: a known step, delta, content block or annotation whose
-  modeled field is malformed now deserializes as `Unknown`.** `Unknown`
-  keeps the whole object. Examples: a non-object `arguments`, a non-string
-  element in `urls` or `queries`. These used to be read leniently, dropping
-  the bad value. A static video `processing` object with a mistyped field
-  becomes `VideoProcessing::Unknown`. Under `strict-unknown`, a malformed
-  `Step` or `Content` is an error that names the field and why
-  (``field `arguments`: expected an object``) instead of calling the type
-  unknown; that includes an unrecognized `language` on
-  `code_execution_call`, which strict mode used to read as Python. A
-  streamed `StepDelta` holding such a value (that `language`, or an unknown
-  content type in a `thought_summary`) fails the same way; strict mode used
-  to read the delta's `language` as absent. Other malformed deltas are
-  still kept as `StepDelta::Unknown`. Well-formed API responses are
-  unaffected. Migration: none, unless you
-  relied on the lenient reading.
+- **Breaking: `FileMetadata::size_bytes` is an `Option<i64>`, and
+  `FileMetadata::size_bytes_as_u64()` is gone.** The field reads the API's
+  string (`"17"`) or a plain number, and serializes back as a string, like
+  `FileSearchDocument::size_bytes`. Migration: read `file.size_bytes`
+  directly; where a `u64` is needed, `file.size_bytes.and_then(|n|
+  u64::try_from(n).ok())`.
+- **Breaking: `RemoteEnvironment` and `VoiceSpec` have new public
+  fields** (`environment_id`; `description`, `language_code`, `region_code`,
+  `accent`, `persona`, `context`, `gender`, `pitch`), so struct literals
+  that list every field stop compiling. Migration: add
+  `..Default::default()`, or build them with `RemoteEnvironment::new()` and
+  `CreateVoiceRequest`'s constructors and `with_*` setters.
+- **Breaking: `FileSearchDocument` and `FileSearchDocumentListResponse` no
+  longer implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration: `==`
+  still works (`PartialEq`); drop `Eq` bounds that required it.
+- **Breaking: `FileSearchStores::upload` takes `impl Into<DocumentUpload>`
+  and uses the resumable upload protocol.** A `FileUpload` converts, so
+  existing calls compile unchanged. The upload is now a start request
+  carrying the document's settings as JSON (`displayName`, `mimeType`,
+  `customMetadata`, `chunkingConfig`), then the file, then the read-back,
+  where it used to be one `raw` request with the display name in the query
+  string. Documents are named as before (verified live 2026-11-05).
+  Migration: none for callers; a test double that answered the `raw`
+  request must answer the start request with an `x-goog-upload-url`
+  header.
 - **Breaking: `Tool::Function`'s `description` is an `Option<String>` and
   its `parameters` an `Option<FunctionParameters>`.** The bindings make
   both optional, the API accepts a function tool with only a `name`, and a
@@ -505,7 +501,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `input` optional, and a decoding continuation of a stored interaction
   sends none (#489). `None` is left out of the body. A deserialized
   `InteractionRequest` without `input` now reads as `None` instead of
-  failing; a `TriggerCreateParams` config file still fails on a missing (or
+  failing; a `CreateTriggerRequest` config file still fails on a missing (or
   misspelled `inputs`) input, since a trigger never fires a continuation,
   and a malformed `input` value is still a parse error. A stored trigger's
   interaction without an input, or with one that does not parse, reads as
@@ -514,31 +510,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a struct literal, match `Some(InteractionInput::Steps(..))` where you
   read it, and replace `InteractionInput::default()` with the input you
   mean (or `None`).
-- **Breaking: `FileMetadata::size_bytes` is an `Option<i64>`, and
-  `FileMetadata::size_bytes_as_u64()` is gone.** The field reads the API's
-  string (`"17"`) or a plain number, and serializes back as a string, like
-  `FileSearchDocument::size_bytes`. Migration: read `file.size_bytes`
-  directly; where a `u64` is needed, `file.size_bytes.and_then(|n|
-  u64::try_from(n).ok())`.
-- **Breaking: `RemoteEnvironment` and `VoiceSpec` have new public
-  fields** (`environment_id`; `description`, `language_code`, `region_code`,
-  `accent`, `persona`, `context`, `gender`, `pitch`), so struct literals
-  that list every field stop compiling. Migration: add
-  `..Default::default()`, or build them with `RemoteEnvironment::new()` and
-  `CreateVoiceRequest`'s constructors and `with_*` setters.
-- **Breaking: `FileSearchDocument` and `DocumentListResponse` no longer
-  implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration: `==`
-  still works (`PartialEq`); drop `Eq` bounds that required it.
-- **Breaking: `FileSearchStores::upload` takes `impl Into<DocumentUpload>`
-  and uses the resumable upload protocol.** A `FileUpload` converts, so
-  existing calls compile unchanged. The upload is now a start request
-  carrying the document's settings as JSON (`displayName`, `mimeType`,
-  `customMetadata`, `chunkingConfig`), then the file, then the read-back,
-  where it used to be one `raw` request with the display name in the query
-  string. Documents are named as before (verified live 2026-11-05).
-  Migration: none for callers; a test double that answered the `raw`
-  request must answer the start request with an `x-goog-upload-url`
-  header.
 - **Breaking: genai-rs no longer forces reqwest's default features on.**
   It depends on reqwest with `default-features = false`, and reqwest's
   `http2`, `system-proxy` and `charset` come through genai-rs's own default
@@ -549,6 +520,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings (`HTTPS_PROXY` and the OS configuration) and charset decoding.
   Migration: add `features = ["http2", "system-proxy", "charset"]` to keep
   them.
+- **Breaking: `CallableFunction::call` returns a `FunctionFuture` instead
+  of being an `#[async_trait]` method, and genai-rs no longer depends on
+  `async-trait`** (#490). `FunctionFuture<'a>` is
+  `Pin<Box<dyn Future<Output = Result<Value, FunctionError>> + Send + 'a>>`,
+  the type `#[async_trait]` generated, written out, so tools are still
+  `dyn CallableFunction` (D-026). `async-trait` brought in a second `syn`
+  that every consumer compiled. `#[tool]` functions are unaffected.
+  Migration: in a hand-written impl, drop `#[async_trait]` and write
+  `fn call(&self, args: Value) -> FunctionFuture<'_> { Box::pin(async move { ... }) }`
+  around the old body; remove `async-trait` from your dependencies if
+  nothing else uses it.
+- **Breaking: `genai_rs::function_calling::submit` and
+  `CallableFunctionFactory` are no longer public API** (#490). They were
+  `#[tool]`'s `inventory` registration, and live in the doc-hidden
+  `genai_rs::__private` now, with no semver guarantee. A `genai-rs-macros`
+  must match its `genai-rs` release: a 0.13 `genai-rs-macros` does not
+  compile against this release, nor a new one against 0.13. Migration:
+  register functions with `#[tool]`, or return them from a `ToolService`;
+  bump `genai-rs` and `genai-rs-macros` together.
+- **Breaking: `GenaiError::Json` and `GenaiError::Parse` are removed**
+  (#490, D-027). `Json` had no producer. A streamed SSE event that does not
+  parse, or one that grows past 64 MiB, is `MalformedResponse` now, as a
+  non-streamed body that does not parse already was. Migration: match
+  `MalformedResponse` where you matched `Parse`, and drop `Json` arms.
+- **Breaking: a `wait_until_active` timeout is
+  `GenaiError::PollTimeout { timeout, message }`, and a file, document or
+  import that fails processing is `GenaiError::ProcessingFailed(String)`;
+  both were `Internal`** (#490, D-027). Neither is retryable, as before. A
+  file search store import's wait that times out is `PollTimeout` too.
+  `Internal` is left with the client's own failures: a request body that
+  would not serialize, and a read-back of a document an upload or import
+  already made that fails unexpectedly. Migration: match the new variants
+  where you told these cases apart by `Internal`'s message.
+- **Breaking: `GenaiError::ClientBuild` holds the `reqwest::Error` instead
+  of its message**, and returns it from `source()` (#490). Migration:
+  `ClientBuild(e)` binds a `reqwest::Error`; `e.to_string()` gives the old
+  string.
+- **Breaking: four types are renamed to the pattern the others follow,
+  and `VideoProcessingBuilder`'s setters take the `with_` prefix** (#490,
+  D-028). A list page is `<Resource>ListResponse` and a create body is
+  `Create<Resource>Request`. Migration:
+
+  | Was | Now |
+  |-----|-----|
+  | `ListFilesResponse` | `FileListResponse` |
+  | `EnvironmentFileList` | `EnvironmentFileListResponse` |
+  | `DocumentListResponse` | `FileSearchDocumentListResponse` |
+  | `TriggerCreateParams` | `CreateTriggerRequest` |
+  | `VideoProcessing::segment().start_offset(s)` | `.with_start_offset(s)` |
+  | `VideoProcessing::segment().end_offset(s)` | `.with_end_offset(s)` |
+  | `VideoProcessing::segment().fps(f)` | `.with_fps(f)` |
+- **Breaking: every collection accessor on `InteractionResponse` returns a
+  `Vec`** (#490, D-028). `output_contents()`, `all_annotations()`,
+  `images()`, `audios()`, `thought_signatures()` and `thought_summaries()`
+  returned an `impl Iterator`, while `function_calls()`, `tool_calls()`,
+  `mcp_calls()` and the rest returned a `Vec`. Migration: drop `.collect()`
+  after them, write `.len()` for `.count()`, `.first()` for `.next()`, and
+  `.into_iter()` before any other iterator adapter (`.into_iter().map(..)`).
+  A `for` loop over them is unchanged.
+- **Breaking: the large, rare payloads of the stream types are boxed**
+  (#490). `StreamChunk::Created { interaction }`, `StreamChunk::Completed`,
+  and `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
+  `Complete` and `MaxLoopsReached` hold a `Box<InteractionResponse>`;
+  `StreamChunk`'s `usage`, `total_usage` and `step_usage` fields are
+  `Option<Box<UsageMetadata>>`; and `StepDelta::ThoughtSummary`'s `content`
+  is an `Option<Box<Content>>`. An enum is as large as its largest variant,
+  so every `StreamEvent`, a one-word text delta included, was 1.9 KB; it is
+  216 bytes now. Migration: method calls and field reads go through the box
+  unchanged (`response.as_text()`, `usage.total_tokens`); where you need the
+  value itself, write `*response`
+  (`StreamChunk::Completed(response) => Some(*response)`); build a chunk
+  with `Box::new(..)`.
+- **Breaking: strict mode is the `--cfg genai_strict_unknown` flag; the
+  `strict-unknown` Cargo feature is gone** (#490, D-030). Cargo unifies
+  features across a build, so any crate that turned the feature on made
+  every other user of genai-rs in that build fail on unknown API values: a
+  feature must only add, and this one changed behavior. A cfg is set only
+  by whoever runs the build. Behavior under it is unchanged, except that
+  strict-mode errors name the cfg. Migration: replace
+  `--features strict-unknown` with
+  `RUSTFLAGS="--cfg genai_strict_unknown"` (and `RUSTDOCFLAGS` for
+  doctests), or put `rustflags = ["--cfg", "genai_strict_unknown"]` under
+  `[build]` in `.cargo/config.toml`; replace
+  `#[cfg(feature = "strict-unknown")]` in your tests with
+  `#[cfg(genai_strict_unknown)]`.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
@@ -560,6 +616,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once when the harness asked and again on dispatch.
 - Harness discovery no longer starts `python3` when the explicit path or
   `ANTIGRAVITY_HARNESS_PATH` names the binary.
+- A Files API or file search store upload's start request now sends
+  `Api-Revision`, as every other API request does; the request that sends
+  the file goes to the session URL and still carries neither it nor the
+  key.
 - The Antigravity harness runs in its own process group on Unix. A
   terminal's Ctrl-C now reaches only your process; when it exits, the
   harness sees stdin close and shuts down gracefully. To stop the harness on
@@ -568,14 +628,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   echoed. With `include_input=true` the API returns the input as a list
   holding one `user_input` step, and on that read it repeats every entry of
   the stored request's lists (`stop_sequences`, `response_modalities`,
-  `safety_settings`, speech speakers), which arrive unmodeled in `extra`
-  (verified live 2026-11-04).
+  `safety_settings`, speech speakers; verified live 2026-11-04).
 - `docs/ENUM_WIRE_FORMATS.md` no longer says reads echo no
   `generation_config`. A stored interaction read back carries it, with
   `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
-  and `response_format`, `response_modalities` and `safety_settings` too;
-  `InteractionResponse` does not model them yet, so they arrive in `extra`
-  (verified live 2026-11-04).
+  and `response_format`, `response_modalities` and `safety_settings` too
+  (verified live 2026-11-04); see Added for the fields that model them.
 - `wait_until_active` (files and file-search documents):
   - It honors the `Retry-After` of a 429 it polls through, and gives up at
     once when that falls past the deadline.
@@ -601,41 +659,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `create_stream_with_auto_functions()` reads each round to its end before
   sending the next. The read gives up after 5 s with a `warn!`, so a
   connection left open after the terminal event can't hang the last poll,
-  and `with_timeout()`'s per-chunk limit doesn't apply to it.
+  and `with_timeout()`'s per-chunk limit doesn't apply to it. A
+  client-level timeout (`ClientBuilder::with_timeout`) that ends the read
+  early is logged at `warn` too; either way the stored interaction may not
+  be readable yet.
 - One SSE event may hold up to 64 MiB. Past that, the stream fails with
-  `GenaiError::Parse`; before, a body that never sent a newline was buffered
-  without bound. The largest real events, measured live 2026-11-04 on
+  `GenaiError::MalformedResponse`; before, a body that never sent a newline
+  was buffered without bound. The largest real events, measured live 2026-11-04 on
   `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
   and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
-- `Interactions::get_with_input` docs no longer say the input is not
-  echoed. With `include_input=true` the API returns the input as a list
-  holding one `user_input` step, and on that read it repeats every entry of
-  the stored request's lists (`stop_sequences`, `response_modalities`,
-  `safety_settings`, speech speakers; verified live 2026-11-04).
-- `docs/ENUM_WIRE_FORMATS.md` no longer says reads echo no
-  `generation_config`. A stored interaction read back carries it, with
-  `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
-  and `response_format`, `response_modalities` and `safety_settings` too
-  (verified live 2026-11-04); see Added for the fields that model them.
-- A stream ends at its first terminal event (`Completed` or `Error`) and
-  reads nothing after it. A late error, such as a reset while the server
-  closes, no longer follows a finished interaction or fails a finished
-  auto-function round. The API sends only `event: done` / `data: [DONE]`
-  after `interaction.completed` (verified live 2026-11-04).
-- A `file_search` tool with no store names no longer writes
-  `"file_search_store_names": []`; the key is left out, as for the other
-  optional lists.
-- A Files API or file search store upload's start request now sends
-  `Api-Revision`, as every other API request does; the request that sends
-  the file goes to the session URL and still carries neither it nor the
-  key.
 - The published crate holds the library, its examples and the guides its
   doctests include, and no longer the integration tests, their fixtures, CI
   files, scripts or the library's unit-test sources: 184 files and about
   2.6 MiB unpacked, down from 383 files and 5.5 MiB.
+- A `file_search` tool with no store names no longer writes
+  `"file_search_store_names": []`; the key is left out, as for the other
+  optional lists.
+- `create_stream()`, `create_stream_with_auto_functions()` and
+  `Client::execute_stream()` return `BoxStream<'static, _>`: the stream owns
+  a clone of the client, as `interactions().stream()` and the list streams
+  do, so it can be stored or `tokio::spawn`ed (#498). `create_stream()` and
+  `create_stream_with_auto_functions()` now build the request when called;
+  a request the builder rejects is still the stream's only item, and
+  nothing is sent until the stream is polled.
+- `with_content()` composes with `with_history()`: the content is this
+  turn's input after the history, `[...history, user_input(content)]`, with
+  any `with_text()` text prepended to it as without history (#454, D-031).
+  `build()` used to refuse the pair, a rule left from when content went on
+  the wire as a bare array; the API takes the composed form like any
+  history (verified live 2026-11-06).
 
 ### Fixed
 
+- Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
+  variants now survive a deserialize/re-serialize round trip, and so do
+  unknown fields on the result items, review snippets, step errors and
+  static video segments nested in them. Replayed stateless history keeps a
+  field the API adds before the crate models it. Previously a
+  `function_call` lost an unknown top-level field, and a `text` block lost
+  an unknown field. A `url_context_call` lost `arguments` keys other than
+  `urls`; `google_search_call`, `google_maps_call` and `retrieval_call` lost
+  keys other than `queries`; `code_execution_call` lost keys other than
+  `language` and `code` (#491).
+- `Place` no longer serializes an `extra` entry named after one of its
+  modeled fields. Only a hand-built map can hold one, and it overrode the
+  field under `serde_json::to_value` and wrote the key twice in a request
+  body.
+- Streaming: two images in one `model_output` step now stay two
+  `Content::Image` blocks. The accumulator appended each image delta to the
+  previous image block in the step. That would merge two images into one
+  corrupt base64 string whenever `interaction.completed` omits `steps`,
+  which it did on every stream observed 2026-11-04. Each streamed image
+  arrives whole in one delta that names its `mime_type` (verified live
+  2026-11-04, `gemini-3.1-flash-image`), so such a delta now starts a new
+  block. In three live streams that day each image came in its own step,
+  which was already handled; the same-step case is defensive (#491).
+- Streaming: the assembled `Completed` response keeps the unmodeled fields
+  that deltas carry, on the content block or step each delta builds,
+  including every chunk of a merged thought summary.
+- `StepDelta::CodeExecutionCall` no longer serializes an absent `language`
+  or `code` as `null`.
 - Antigravity's `generate_image` builtin failed every call ("model is
   empty"): no image model was configured. With the builtin enabled the
   bridge now sends one, `DEFAULT_IMAGE_MODEL` unless `with_image_model`
@@ -669,38 +752,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serializing. It now carries `"unknown": true` and stays unknown; chunks
   serialized by 0.13.0 read back as before (`docs/ENUM_WIRE_FORMATS.md`).
   Found by the new fuzz targets.
-- The `TriggerCreateParams::extra` docs said a colliding key wins because
+- The `CreateTriggerRequest::extra` docs said a colliding key wins because
   the request path uses `serde_json::to_value`. In fact the body carries
   both keys, with the `extra` one last, and it wins because the API keeps
   the last of a repeated key (verified live 2026-11-04).
-- Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
-  variants now survive a deserialize/re-serialize round trip, and so do
-  unknown fields on the result items, review snippets, step errors and
-  static video segments nested in them. Replayed stateless history keeps a
-  field the API adds before the crate models it. Previously a
-  `function_call` lost an unknown top-level field, and a `text` block lost
-  an unknown field. A `url_context_call` lost `arguments` keys other than
-  `urls`; `google_search_call`, `google_maps_call` and `retrieval_call` lost
-  keys other than `queries`; `code_execution_call` lost keys other than
-  `language` and `code` (#491).
-- `Place` no longer serializes an `extra` entry named after one of its
-  modeled fields. Only a hand-built map can hold one, and it overrode the
-  field under `serde_json::to_value` and wrote the key twice in a request
-  body.
-- Streaming: two images in one `model_output` step now stay two
-  `Content::Image` blocks. The accumulator appended each image delta to the
-  previous image block in the step. That would merge two images into one
-  corrupt base64 string whenever `interaction.completed` omits `steps`,
-  which it did on every stream observed 2026-11-04. Each streamed image
-  arrives whole in one delta that names its `mime_type` (verified live
-  2026-11-04, `gemini-3.1-flash-image`), so such a delta now starts a new
-  block. In three live streams that day each image came in its own step,
-  which was already handled; the same-step case is defensive (#491).
-- Streaming: the assembled `Completed` response keeps the unmodeled fields
-  that deltas carry, on the content block or step each delta builds,
-  including every chunk of a merged thought summary.
-- `StepDelta::CodeExecutionCall` no longer serializes an absent `language`
-  or `code` as `null`.
 - A string enum that read a non-string wire value (a number, an object,
   `null`) into `Unknown` now serializes that value back unchanged. It used
   to write the `"<non-string: ...>"` descriptor its `Unknown` carries, so
@@ -753,6 +808,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list page dropped the file. It now reads the number.
 - `FileError` dropped a failed file's `details` and any other unmodeled
   key; it keeps them now.
+- `with_content(vec![])` with no `with_text()` fails in `build()` with
+  `GenaiError::InvalidInput` naming `with_content()`, as a missing input
+  does, instead of costing a round trip for the API's
+  `400 Request has empty input.` (#452).
+- Antigravity: a turn being halted and drained, because it hit its turn
+  timeout or no one consumes it, no longer runs the per-turn lifecycle hooks
+  (`on_pre_turn`, `on_post_turn`, `on_tool_error`, `on_compaction`,
+  `on_stop`). The drain answers the harness as if they were not set. Before,
+  a timed-out turn reported `stop` and an empty `post_turn` during the
+  drain (scripted against harness 0.1.23, 2026-11-06), and a stop hook's
+  `Continue` could keep the halted turn running.
 
 ## [0.13.0] - 2026-11-03
 

@@ -1059,7 +1059,7 @@ mod stateless {
             let calls = response1.function_calls();
             let call = calls.first().expect("Any mode should force a call");
             assert!(
-                response1.thought_signatures().next().is_some(),
+                !response1.thought_signatures().is_empty(),
                 "a thinking turn should return a thought signature to replay"
             );
 
@@ -1324,7 +1324,11 @@ mod thinking {
                 .expect("First interaction failed");
             let calls1 = response1.function_calls();
             let call1 = calls1.first().expect("Any mode should force a call");
-            let sig1: Vec<String> = response1.thought_signatures().map(str::to_string).collect();
+            let sig1: Vec<String> = response1
+                .thought_signatures()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
 
             let response2 = stateful_builder(&client)
                 .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
@@ -1342,7 +1346,11 @@ mod thinking {
                 .expect("Second interaction failed");
             let calls2 = response2.function_calls();
             assert!(!calls2.is_empty(), "Any mode should force a call");
-            let sig2: Vec<String> = response2.thought_signatures().map(str::to_string).collect();
+            let sig2: Vec<String> = response2
+                .thought_signatures()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
 
             assert!(!sig1.is_empty(), "step 1 should carry a thought signature");
             assert!(!sig2.is_empty(), "step 2 should carry a thought signature");

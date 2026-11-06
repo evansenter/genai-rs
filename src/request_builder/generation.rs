@@ -198,7 +198,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// if response.has_thoughts() {
     ///     // Thoughts contain cryptographic signatures, not readable text
-    ///     let sig_count = response.thought_signatures().count();
+    ///     let sig_count = response.thought_signatures().len();
     ///     println!("Model used reasoning ({} thought signatures)", sig_count);
     /// }
     /// # Ok(())

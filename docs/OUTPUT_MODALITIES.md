@@ -71,7 +71,7 @@ let response = client
 if let Some(bytes) = response.first_image_bytes()? {
     std::fs::write("sunset.png", &bytes)?;
 }
-for (i, image) in response.images().enumerate() {
+for (i, image) in response.images().into_iter().enumerate() {
     // mime_type() e.g. Some("image/png"); extension() "png", "jpeg", ...
     std::fs::write(format!("image_{i}.{}", image.extension()), image.bytes()?)?;
 }

@@ -83,8 +83,8 @@ impl PollOptions {
     /// at least that long.
     ///
     /// Time is tokio time, so the wait runs under a paused test clock. The
-    /// deadline error is `Internal`, not `Timeout`, so that `is_retryable()`
-    /// stays false: the resource may still be processing, and retrying the
+    /// deadline error is [`GenaiError::PollTimeout`], whose `is_retryable()`
+    /// is false: the resource may still be processing, and retrying the
     /// whole wait is the caller's call.
     pub(crate) async fn wait<T, Fut>(
         self,
@@ -172,10 +172,13 @@ impl PollOptions {
                         "; the server asked to retry after {asked:?}, past the deadline"
                     ));
                 }
-                return Err(GenaiError::Internal(format!(
-                    "Timeout waiting for {what} to become active (timeout {timeout:?}, \
-                     waited {waited:?}, last state: {last_state}{cause}). {advice}"
-                )));
+                return Err(GenaiError::PollTimeout {
+                    timeout,
+                    message: format!(
+                        "Timeout waiting for {what} to become active (timeout {timeout:?}, \
+                         waited {waited:?}, last state: {last_state}{cause}). {advice}"
+                    ),
+                });
             }
             tracing::debug!("{what} not active yet, waiting {delay:?}...");
             tokio::time::sleep(delay).await;

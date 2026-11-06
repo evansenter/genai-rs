@@ -534,7 +534,7 @@ let result = client
 | `has_tool_calls()` | Generic server-side tools (MCP before 2026-10) | `bool` |
 | `tool_calls()` | Generic server-side tools (MCP before 2026-10) | `Vec<ToolCallInfo>` |
 | `has_annotations()` | Any grounded | `bool` |
-| `all_annotations()` | Any grounded | `Iterator<Item = &Annotation>` |
+| `all_annotations()` | Any grounded | `Vec<&Annotation>` |
 | `step_summary()` | All | `StepSummary` (per-step-type counts) |
 
 ## Examples

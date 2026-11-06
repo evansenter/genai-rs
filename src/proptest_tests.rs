@@ -420,7 +420,7 @@ fn arb_url_context_result_item() -> impl Strategy<Value = UrlContextResultItem> 
 // String Enum Strategies
 // =============================================================================
 //
-// Their Unknown arms go through `unknown_or`: under `strict-unknown` an
+// Their Unknown arms go through `unknown_or`: under `genai_strict_unknown` an
 // unknown value fails to deserialize, so the arm yields a known value instead.
 
 /// The Unknown arm of a string-enum strategy (see above).
@@ -428,12 +428,12 @@ fn unknown_or<T: Clone + std::fmt::Debug + 'static>(
     known: T,
     unknown: impl Fn(String) -> T + 'static,
 ) -> BoxedStrategy<T> {
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     {
         let _ = known;
         arb_unknown_type().prop_map(unknown).boxed()
     }
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     {
         let _ = unknown;
         Just(known).boxed()
@@ -694,15 +694,15 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
 }
 
 /// Strategy for known Content variants only.
-/// Used when strict-unknown is enabled (Unknown variants fail to deserialize in strict mode).
-#[cfg(feature = "strict-unknown")]
+/// Used when strict mode is enabled (Unknown variants fail to deserialize in strict mode).
+#[cfg(genai_strict_unknown)]
 fn arb_content() -> impl Strategy<Value = Content> {
     arb_known_content()
 }
 
 /// Strategy for all Content variants including Unknown.
 /// Used in normal mode (Unknown variants are gracefully handled).
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 fn arb_content() -> impl Strategy<Value = Content> {
     prop_oneof![
         arb_known_content(),
@@ -1032,14 +1032,14 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
 }
 
 /// Strategy for known Step variants only.
-/// Used when strict-unknown is enabled (Unknown steps fail to deserialize in strict mode).
-#[cfg(feature = "strict-unknown")]
+/// Used when strict mode is enabled (Unknown steps fail to deserialize in strict mode).
+#[cfg(genai_strict_unknown)]
 fn arb_step() -> impl Strategy<Value = Step> {
     arb_known_step()
 }
 
 /// Strategy for all Step variants including Unknown.
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 fn arb_step() -> impl Strategy<Value = Step> {
     prop_oneof![
         arb_known_step(),
@@ -1122,7 +1122,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
             }),
         // thought_summary
         proptest::option::of(arb_content()).prop_map(|content| StepDelta::ThoughtSummary {
-            content,
+            content: content.map(Box::new),
             extra: Default::default()
         }),
         // thought_signature
@@ -2269,7 +2269,9 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
 fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
     prop_oneof![
         // Created variant
-        arb_interaction_response().prop_map(|interaction| StreamChunk::Created { interaction }),
+        arb_interaction_response().prop_map(|interaction| StreamChunk::Created {
+            interaction: Box::new(interaction)
+        }),
         // StatusUpdate variant
         (
             proptest::option::of(arb_identifier()),
@@ -2281,7 +2283,7 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
                 StreamChunk::StatusUpdate {
                     interaction_id,
                     status,
-                    usage,
+                    usage: usage.map(Box::new),
                     continuation_token,
                 }
             }),
@@ -2297,7 +2299,7 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
             .prop_map(|(index, delta, total_usage)| StreamChunk::StepDelta {
                 index,
                 delta,
-                total_usage
+                total_usage: total_usage.map(Box::new)
             }),
         // StepStop variant
         (
@@ -2307,11 +2309,11 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
         )
             .prop_map(|(index, usage, step_usage)| StreamChunk::StepStop {
                 index,
-                usage,
-                step_usage,
+                usage: usage.map(Box::new),
+                step_usage: step_usage.map(Box::new),
             }),
         // Completed variant
-        arb_interaction_response().prop_map(StreamChunk::Completed),
+        arb_interaction_response().prop_map(|r| StreamChunk::Completed(Box::new(r))),
         // Error variant
         (arb_text(), proptest::option::of(arb_identifier()))
             .prop_map(|(message, code)| { StreamChunk::Error { message, code } }),
@@ -2737,7 +2739,7 @@ proptest! {
 // Unknown Variant Preservation Tests (Evergreen)
 // =============================================================================
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 proptest! {
     /// Test that unknown Step types are preserved through a roundtrip.
     #[test]
@@ -3021,14 +3023,15 @@ fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunctionStreamC
         )
             .prop_map(|(response, pending_calls)| {
                 AutoFunctionStreamChunk::ExecutingFunctions {
-                    response,
+                    response: Box::new(response),
                     pending_calls,
                 }
             }),
         prop::collection::vec(arb_function_execution_result(), 0..5)
             .prop_map(AutoFunctionStreamChunk::FunctionResults),
-        arb_interaction_response().prop_map(AutoFunctionStreamChunk::Complete),
-        arb_interaction_response().prop_map(AutoFunctionStreamChunk::MaxLoopsReached),
+        arb_interaction_response().prop_map(|r| AutoFunctionStreamChunk::Complete(Box::new(r))),
+        arb_interaction_response()
+            .prop_map(|r| AutoFunctionStreamChunk::MaxLoopsReached(Box::new(r))),
         (arb_unknown_type(), arb_json_value()).prop_map(|(chunk_type, data)| {
             AutoFunctionStreamChunk::Unknown { chunk_type, data }
         }),
