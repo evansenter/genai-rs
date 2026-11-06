@@ -691,6 +691,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `#[tool]` documents everything it generates: the `<Name>Callable`
+  struct, its `new`, and the `<name>_declaration` and
+  `<name>_callable_factory` functions. They are public, so a crate that
+  warns on or denies `missing_docs` reported each of them for every tool.
 - Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
   variants now survive a deserialize/re-serialize round trip, and so do
   unknown fields on the result items, review snippets, step errors and
