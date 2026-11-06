@@ -491,7 +491,9 @@ impl AutoFunctionResult {
     /// ```
     #[must_use]
     pub fn all_executions_succeeded(&self) -> bool {
-        self.executions.iter().all(|e| e.is_success())
+        self.executions
+            .iter()
+            .all(FunctionExecutionResult::is_success)
     }
 
     /// Returns all executions that failed (had errors).

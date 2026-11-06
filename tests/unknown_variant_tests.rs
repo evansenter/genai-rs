@@ -375,7 +375,7 @@ mod tool_choice {
                 assert!(mode.is_unknown());
                 assert_eq!(mode.unknown_mode_type(), Some("everything"));
             }
-            other => panic!("Expected Mode variant, got {:?}", other),
+            other => panic!("Expected Mode variant, got {other:?}"),
         }
     }
 

@@ -1,3 +1,7 @@
+//! Client-side function calling: the [`CallableFunction`] trait `#[tool]`
+//! implements, [`ToolService`] for tools with shared state, the registry
+//! the auto-function loop looks functions up in, and [`FunctionError`].
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
@@ -16,7 +20,10 @@ use crate::FunctionDeclaration;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum FunctionError {
+    /// The model's arguments did not fit the function: one is missing, or
+    /// does not deserialize into its parameter's type.
     ArgumentMismatch(String),
+    /// The function ran and failed, or its result did not serialize.
     ExecutionError(Box<dyn Error + Send + Sync>),
 }
 
@@ -380,7 +387,7 @@ mod tests {
         let declarations = registry.all_declarations();
 
         // Our test function should be in the list
-        let names: Vec<_> = declarations.iter().map(|d| d.name()).collect();
+        let names: Vec<_> = declarations.iter().map(FunctionDeclaration::name).collect();
         assert!(
             names.contains(&"test_function_global"),
             "all_declarations should include registered function"

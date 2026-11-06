@@ -1,6 +1,8 @@
+//! The `#[tool]` macro: the declarations it generates from a function's
+//! signature, doc comments and attribute, and calling the result.
+
 #![allow(dead_code)] // Functions are used by the macro, not called directly
 #![allow(clippy::needless_pass_by_value)] // Macro needs owned types for schema generation
-#![allow(clippy::uninlined_format_args)] // Not important in tests
 
 use genai_rs::CallableFunction;
 use genai_rs_macros::tool;

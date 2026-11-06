@@ -24,8 +24,7 @@ pub async fn validate_response_semantically(
     use serde_json::json;
 
     let validation_prompt = format!(
-        "You are a test validator. Your job is to judge whether an LLM response is appropriate given the context.\n\nContext: {}\n\nResponse to validate: {}\n\nQuestion: {}\n\nProvide your judgment as a yes/no boolean and explain your reasoning.",
-        context, response_text, validation_question
+        "You are a test validator. Your job is to judge whether an LLM response is appropriate given the context.\n\nContext: {context}\n\nResponse to validate: {response_text}\n\nQuestion: {validation_question}\n\nProvide your judgment as a yes/no boolean and explain your reasoning."
     );
 
     let schema = json!({
@@ -65,7 +64,7 @@ pub async fn validate_response_semantically(
         return Ok(true);
     };
 
-    let Some(is_valid) = json.get("is_valid").and_then(|v| v.as_bool()) else {
+    let Some(is_valid) = json.get("is_valid").and_then(serde_json::Value::as_bool) else {
         println!(
             "SEMANTIC_VALIDATION_SKIPPED (missing-verdict): is_valid absent or non-boolean, assuming valid"
         );
@@ -104,13 +103,11 @@ pub async fn assert_response_semantic(
     {
         Ok(is_valid) => assert!(
             is_valid,
-            "Semantic validation failed.\nQuestion: {}\nResponse: {}",
-            validation_question, response_text
+            "Semantic validation failed.\nQuestion: {validation_question}\nResponse: {response_text}"
         ),
-        Err(e) if e.is_retryable() || is_transient_error(&e) => eprintln!(
-            "SEMANTIC_VALIDATION_SKIPPED (transient validator error): {:?}",
-            e
-        ),
-        Err(e) => panic!("Semantic validation call failed non-transiently: {:?}", e),
+        Err(e) if e.is_retryable() || is_transient_error(&e) => {
+            eprintln!("SEMANTIC_VALIDATION_SKIPPED (transient validator error): {e:?}")
+        }
+        Err(e) => panic!("Semantic validation call failed non-transiently: {e:?}"),
     }
 }

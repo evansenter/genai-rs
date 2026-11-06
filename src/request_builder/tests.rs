@@ -259,8 +259,7 @@ fn test_store_disabled_with_background_validation_error() {
     assert!(
         err.to_string()
             .contains("Background execution requires storage"),
-        "Expected background+store error, got: {}",
-        err
+        "Expected background+store error, got: {err}"
     );
 }
 
@@ -282,8 +281,7 @@ fn test_store_disabled_with_previous_interaction_validation_error() {
     assert!(
         err.to_string()
             .contains("Chained interactions require storage"),
-        "Expected chaining+store error, got: {}",
-        err
+        "Expected chaining+store error, got: {err}"
     );
 }
 
@@ -343,8 +341,7 @@ async fn test_auto_functions_rejects_store_disabled() {
     assert!(
         err.to_string()
             .contains("create_with_auto_functions() requires storage"),
-        "Expected auto-functions+store error, got: {}",
-        err
+        "Expected auto-functions+store error, got: {err}"
     );
 }
 
@@ -375,8 +372,7 @@ async fn test_stream_auto_functions_rejects_store_disabled() {
     assert!(
         err.to_string()
             .contains("create_with_auto_functions() requires storage"),
-        "Expected auto-functions+store error, got: {}",
-        err
+        "Expected auto-functions+store error, got: {err}"
     );
 }
 
@@ -403,8 +399,7 @@ async fn test_auto_functions_allows_store_true() {
     let err = result.unwrap_err();
     assert!(
         !matches!(err, crate::GenaiError::InvalidInput(_)),
-        "Should not be an InvalidInput error (validation passed), got: {:?}",
-        err
+        "Should not be an InvalidInput error (validation passed), got: {err:?}"
     );
 }
 
@@ -431,8 +426,7 @@ async fn test_auto_functions_allows_store_default() {
     let err = result.unwrap_err();
     assert!(
         !matches!(err, crate::GenaiError::InvalidInput(_)),
-        "Should not be an InvalidInput error (validation passed), got: {:?}",
-        err
+        "Should not be an InvalidInput error (validation passed), got: {err:?}"
     );
 }
 

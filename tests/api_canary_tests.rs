@@ -113,10 +113,9 @@ async fn canary_streaming_interaction() {
     if !unknown_types_found.is_empty() {
         panic!(
             "API returned unknown delta or event types while streaming!\n\
-             Unknown types: {:?}\n\n\
+             Unknown types: {unknown_types_found:?}\n\n\
              Action required: Add support for these types in \
-             src/",
-            unknown_types_found
+             src/"
         );
     }
 }

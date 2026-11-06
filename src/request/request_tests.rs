@@ -596,20 +596,17 @@ fn test_agent_config_field_naming_conventions() {
     // Expected: {"type":"deep-research","thinking_summaries":"auto"}
     assert!(
         json.contains("thinking_summaries"),
-        "Field should be snake_case 'thinking_summaries', got: {}",
-        json
+        "Field should be snake_case 'thinking_summaries', got: {json}"
     );
     assert!(
         !json.contains("thinkingSummaries"),
-        "Field should NOT be camelCase 'thinkingSummaries', got: {}",
-        json
+        "Field should NOT be camelCase 'thinkingSummaries', got: {json}"
     );
 
     // Verify value uses the lowercase wire format
     assert!(
         json.contains(r#""auto""#),
-        "ThinkingSummaries::Auto should serialize to 'auto', got: {}",
-        json
+        "ThinkingSummaries::Auto should serialize to 'auto', got: {json}"
     );
 }
 
@@ -774,7 +771,7 @@ fn test_interaction_input_steps_roundtrip() {
             assert!(matches!(steps[0], Step::UserInput { .. }));
             assert!(matches!(steps[1], Step::FunctionCall { .. }));
         }
-        other => panic!("Expected Steps input, got {:?}", other),
+        other => panic!("Expected Steps input, got {other:?}"),
     }
 
     // Roundtrip preserves shape
@@ -789,8 +786,7 @@ fn test_interaction_input_content_deserializes_by_type_tag() {
     let input: InteractionInput = serde_json::from_str(json).expect("Deserialization failed");
     assert!(
         matches!(input, InteractionInput::Content(_)),
-        "Expected Content input, got {:?}",
-        input
+        "Expected Content input, got {input:?}"
     );
 }
 

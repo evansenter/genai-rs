@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let event = event?;
         // Only events that carry an ID can be resumed from.
         if event.event_id.is_some() {
-            last_event_id = event.event_id.clone();
+            last_event_id.clone_from(&event.event_id);
         }
         match event.chunk {
             StreamChunk::Created { interaction } => interaction_id = interaction.id,

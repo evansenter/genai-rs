@@ -30,7 +30,7 @@ fn test_tool_google_search_with_search_types_roundtrip() {
             assert_eq!(types[0], SearchType::WebSearch);
             assert_eq!(types[1], SearchType::ImageSearch);
         }
-        other => panic!("Expected GoogleSearch variant, got {:?}", other),
+        other => panic!("Expected GoogleSearch variant, got {other:?}"),
     }
 }
 
@@ -48,7 +48,7 @@ fn test_tool_google_maps_roundtrip() {
     let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
     match parsed {
         Tool::GoogleMaps { enable_widget, .. } => assert_eq!(enable_widget, None),
-        other => panic!("Expected GoogleMaps variant, got {:?}", other),
+        other => panic!("Expected GoogleMaps variant, got {other:?}"),
     }
 }
 
@@ -75,7 +75,7 @@ fn test_tool_google_maps_with_widget_roundtrip() {
             assert_eq!(latitude, Some(40.758));
             assert_eq!(longitude, Some(-73.9855));
         }
-        other => panic!("Expected GoogleMaps variant, got {:?}", other),
+        other => panic!("Expected GoogleMaps variant, got {other:?}"),
     }
 }
 
@@ -95,7 +95,7 @@ fn test_tool_function_roundtrip() {
 
     match parsed {
         Tool::Function { name, .. } => assert_eq!(name, "get_weather"),
-        other => panic!("Expected Function variant, got {:?}", other),
+        other => panic!("Expected Function variant, got {other:?}"),
     }
 }
 
@@ -127,7 +127,7 @@ fn test_tool_mcp_server_roundtrip() {
             assert_eq!(allowed_tools, None);
             assert_eq!(headers, None);
         }
-        other => panic!("Expected McpServer variant, got {:?}", other),
+        other => panic!("Expected McpServer variant, got {other:?}"),
     }
 }
 
@@ -163,7 +163,7 @@ fn test_tool_mcp_server_with_optional_fields_roundtrip() {
             let hdrs = headers.expect("Should have headers");
             assert_eq!(hdrs.get("Authorization").unwrap(), "Bearer token");
         }
-        other => panic!("Expected McpServer variant, got {:?}", other),
+        other => panic!("Expected McpServer variant, got {other:?}"),
     }
 }
 
@@ -249,7 +249,7 @@ fn test_tool_computer_use_roundtrip() {
                 vec!["data_modification".to_string()]
             );
         }
-        other => panic!("Expected ComputerUse variant, got {:?}", other),
+        other => panic!("Expected ComputerUse variant, got {other:?}"),
     }
 }
 
@@ -275,7 +275,7 @@ fn test_tool_computer_use_empty_exclusions() {
         } => {
             assert!(excluded_predefined_functions.is_empty());
         }
-        other => panic!("Expected ComputerUse variant, got {:?}", other),
+        other => panic!("Expected ComputerUse variant, got {other:?}"),
     }
 }
 
@@ -354,7 +354,7 @@ fn test_tool_file_search_roundtrip() {
             assert_eq!(top_k, Some(5));
             assert_eq!(metadata_filter, Some("category:technical".to_string()));
         }
-        other => panic!("Expected FileSearch variant, got {:?}", other),
+        other => panic!("Expected FileSearch variant, got {other:?}"),
     }
 }
 
@@ -384,7 +384,7 @@ fn test_tool_file_search_minimal() {
             assert_eq!(top_k, None);
             assert_eq!(metadata_filter, None);
         }
-        other => panic!("Expected FileSearch variant, got {:?}", other),
+        other => panic!("Expected FileSearch variant, got {other:?}"),
     }
 }
 

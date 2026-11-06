@@ -224,9 +224,9 @@ pub struct FileError {
 impl std::fmt::Display for FileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match (&self.code, &self.message) {
-            (Some(code), Some(msg)) => write!(f, "error {}: {}", code, msg),
-            (Some(code), None) => write!(f, "error {}", code),
-            (None, Some(msg)) => write!(f, "{}", msg),
+            (Some(code), Some(msg)) => write!(f, "error {code}: {msg}"),
+            (Some(code), None) => write!(f, "error {code}"),
+            (None, Some(msg)) => write!(f, "{msg}"),
             (None, None) => write!(f, "unknown error"),
         }
     }

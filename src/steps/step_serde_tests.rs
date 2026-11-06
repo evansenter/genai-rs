@@ -52,7 +52,7 @@ fn test_deserialize_function_call_step_missing_arguments() {
             assert_eq!(name, "get_weather");
             assert_eq!(arguments, serde_json::Value::Null);
         }
-        _ => panic!("Expected FunctionCall variant, got {:?}", step),
+        _ => panic!("Expected FunctionCall variant, got {step:?}"),
     }
 }
 
@@ -389,7 +389,7 @@ fn test_deserialize_code_execution_call_step() {
             assert_eq!(code, "print(42)");
             assert!(signature.is_none());
         }
-        _ => panic!("Expected CodeExecutionCall variant, got {:?}", step),
+        _ => panic!("Expected CodeExecutionCall variant, got {step:?}"),
     }
 
     assert!(!step.is_unknown());
@@ -411,7 +411,7 @@ fn test_deserialize_code_execution_call_step_missing_arguments_defaults() {
             assert_eq!(*language, CodeExecutionLanguage::Python);
             assert!(code.is_empty());
         }
-        _ => panic!("Expected CodeExecutionCall variant, got {:?}", step),
+        _ => panic!("Expected CodeExecutionCall variant, got {step:?}"),
     }
 }
 
@@ -433,7 +433,7 @@ fn test_deserialize_code_execution_result_step() {
             assert_eq!(result, "42\n");
             assert!(signature.is_none());
         }
-        _ => panic!("Expected CodeExecutionResult variant, got {:?}", step),
+        _ => panic!("Expected CodeExecutionResult variant, got {step:?}"),
     }
 }
 
@@ -453,7 +453,7 @@ fn test_deserialize_code_execution_result_step_error() {
             assert!(is_error);
             assert!(result.contains("NameError"));
         }
-        _ => panic!("Expected CodeExecutionResult variant, got {:?}", step),
+        _ => panic!("Expected CodeExecutionResult variant, got {step:?}"),
     }
 }
 
@@ -577,7 +577,7 @@ fn test_roundtrip_built_in_tool_steps() {
     let restored: Step = serde_json::from_str(&json).unwrap();
     match restored {
         Step::GoogleSearchCall { queries, .. } => assert_eq!(queries, vec!["test query"]),
-        other => panic!("Expected GoogleSearchCall variant, got {:?}", other),
+        other => panic!("Expected GoogleSearchCall variant, got {other:?}"),
     }
 
     // GoogleSearchResult roundtrip
@@ -604,7 +604,7 @@ fn test_roundtrip_built_in_tool_steps() {
     let restored: Step = serde_json::from_str(&json).unwrap();
     match restored {
         Step::UrlContextCall { urls, .. } => assert_eq!(urls, vec!["https://example.com"]),
-        other => panic!("Expected UrlContextCall variant, got {:?}", other),
+        other => panic!("Expected UrlContextCall variant, got {other:?}"),
     }
 
     // UrlContextResult roundtrip
@@ -716,7 +716,7 @@ fn test_deserialize_google_search_call_step() {
             assert_eq!(queries[0], "Rust programming");
             assert_eq!(queries[1], "latest version");
         }
-        _ => panic!("Expected GoogleSearchCall variant, got {:?}", step),
+        _ => panic!("Expected GoogleSearchCall variant, got {step:?}"),
     }
 
     assert!(!step.is_unknown());
@@ -737,7 +737,7 @@ fn test_deserialize_google_search_result_step() {
             assert_eq!(result[0].search_suggestions.as_deref(), Some("<div/>"));
             assert!(result[0].extra.is_empty());
         }
-        _ => panic!("Expected GoogleSearchResult variant, got {:?}", step),
+        _ => panic!("Expected GoogleSearchResult variant, got {step:?}"),
     }
 
     assert!(!step.is_unknown());
@@ -756,7 +756,7 @@ fn test_deserialize_url_context_call_step() {
             assert_eq!(urls[0], "https://example.com");
             assert_eq!(urls[1], "https://example.org");
         }
-        _ => panic!("Expected UrlContextCall variant, got {:?}", step),
+        _ => panic!("Expected UrlContextCall variant, got {step:?}"),
     }
 
     assert!(!step.is_unknown());
@@ -781,7 +781,7 @@ fn test_deserialize_url_context_result_step() {
             assert_eq!(result[1].status, "error");
             assert!(result[1].is_error());
         }
-        _ => panic!("Expected UrlContextResult variant, got {:?}", step),
+        _ => panic!("Expected UrlContextResult variant, got {step:?}"),
     }
 
     assert!(!step.is_unknown());
@@ -938,7 +938,7 @@ fn test_file_search_result_step_wire_shape() {
             assert_eq!(signature.as_deref(), Some("c2ln"));
             assert!(extra.is_empty());
         }
-        _ => panic!("Expected FileSearchResult variant, got {:?}", step),
+        _ => panic!("Expected FileSearchResult variant, got {step:?}"),
     }
     assert_eq!(serde_json::to_value(&step).unwrap(), wire);
 }

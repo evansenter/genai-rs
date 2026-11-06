@@ -585,7 +585,7 @@ mod tests {
         assert!(
             matches!(results.as_slice(), [Err(GenaiError::MalformedResponse(_))]),
             "{:?}",
-            results.iter().map(|r| r.is_ok()).collect::<Vec<_>>()
+            results.iter().map(Result::is_ok).collect::<Vec<_>>()
         );
     }
 
@@ -689,7 +689,7 @@ mod tests {
     async fn test_parse_sse_stream_large_message() {
         // Test with a very large message (>1MB)
         let large_text = "x".repeat(1_000_000);
-        let data = format!("data: {{\"text\":\"{}\"}}\n\n", large_text);
+        let data = format!("data: {{\"text\":\"{large_text}\"}}\n\n");
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
         let ctx = test_ctx();
@@ -707,7 +707,7 @@ mod tests {
         // Test with many messages in rapid succession
         let mut data = Vec::new();
         for i in 0..1000 {
-            data.extend_from_slice(format!("data: {{\"text\":\"Message {}\"}}\n\n", i).as_bytes());
+            data.extend_from_slice(format!("data: {{\"text\":\"Message {i}\"}}\n\n").as_bytes());
         }
 
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
@@ -719,7 +719,7 @@ mod tests {
         while let Some(result) = parsed_stream.next().await {
             assert!(result.is_ok());
             let message = result.unwrap();
-            assert_eq!(message.text, format!("Message {}", count));
+            assert_eq!(message.text, format!("Message {count}"));
             count += 1;
         }
 

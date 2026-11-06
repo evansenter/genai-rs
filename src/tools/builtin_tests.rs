@@ -40,7 +40,7 @@ fn test_google_search_config_into_tool() {
             let types = search_types.expect("Should have search_types");
             assert_eq!(types, vec![SearchType::ImageSearch]);
         }
-        other => panic!("Expected GoogleSearch, got {:?}", other),
+        other => panic!("Expected GoogleSearch, got {other:?}"),
     }
 }
 
@@ -80,7 +80,7 @@ fn test_mcp_server_config_into_tool() {
             assert_eq!(allowed_tools, None);
             assert_eq!(headers, None);
         }
-        other => panic!("Expected McpServer, got {:?}", other),
+        other => panic!("Expected McpServer, got {other:?}"),
     }
 }
 
@@ -96,7 +96,7 @@ fn test_computer_use_config_into_tool() {
             assert_eq!(environment, "browser");
             assert!(excluded_predefined_functions.is_empty());
         }
-        other => panic!("Expected ComputerUse, got {:?}", other),
+        other => panic!("Expected ComputerUse, got {other:?}"),
     }
 
     let tool: Tool = ComputerUseConfig::new()
@@ -109,7 +109,7 @@ fn test_computer_use_config_into_tool() {
         } => {
             assert_eq!(excluded_predefined_functions, vec!["download"]);
         }
-        other => panic!("Expected ComputerUse, got {:?}", other),
+        other => panic!("Expected ComputerUse, got {other:?}"),
     }
 }
 
@@ -129,6 +129,6 @@ fn test_file_search_config_into_tool() {
             assert_eq!(top_k, Some(5));
             assert_eq!(metadata_filter, Some("cat:tech".to_string()));
         }
-        other => panic!("Expected FileSearch, got {:?}", other),
+        other => panic!("Expected FileSearch, got {other:?}"),
     }
 }

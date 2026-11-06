@@ -1,4 +1,5 @@
-// Shared types used by the Interactions API
+//! Tool declarations: [`Tool`], function declarations, the built-in tools'
+//! configs, and tool choice.
 
 mod builtin;
 mod choice;

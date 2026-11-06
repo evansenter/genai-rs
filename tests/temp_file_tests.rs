@@ -65,7 +65,7 @@ async fn test_image_from_temp_file() {
     assert!(response.has_text(), "Should have text response");
 
     let text = response.as_text().unwrap();
-    println!("Color response: {}", text);
+    println!("Color response: {text}");
 
     // The tiny PNG is red - use semantic validation
     assert_response_semantic(
@@ -169,7 +169,7 @@ async fn test_pdf_from_temp_file() {
     assert!(response.has_text(), "Should have text response");
 
     let text = response.as_text().unwrap();
-    println!("PDF response: {}", text);
+    println!("PDF response: {text}");
 
     // The minimal PDF contains "Hello World" - use semantic validation
     assert_response_semantic(
@@ -490,8 +490,7 @@ async fn test_image_from_file_not_found() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("Failed to read file") || err.contains("No such file"),
-        "Error should mention file not found: {}",
-        err
+        "Error should mention file not found: {err}"
     );
 }
 
@@ -511,16 +510,14 @@ async fn test_document_from_file_unsupported_extension() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("Unsupported document extension"),
-        "Error should mention unsupported extension: {}",
-        err
+        "Error should mention unsupported extension: {err}"
     );
     // The override only helps for a type the API accepts.
     assert!(
         err.contains("PDF, CSV or Office/OpenDocument")
             && err.contains("document_from_file_with_mime()")
             && err.contains("Content::text()"),
-        "Error should scope the override and name the text alternative: {}",
-        err
+        "Error should scope the override and name the text alternative: {err}"
     );
 }
 
@@ -540,7 +537,6 @@ async fn test_image_from_file_wrong_category() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("not an image type") || err.contains("audio_from_file"),
-        "Error should suggest correct function: {}",
-        err
+        "Error should suggest correct function: {err}"
     );
 }

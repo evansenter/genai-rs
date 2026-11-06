@@ -136,8 +136,8 @@ mod basic {
             .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Test");
         for i in 0..10 {
-            let func = FunctionDeclaration::builder(format!("function_{}", i))
-                .with_description(format!("Function number {}", i))
+            let func = FunctionDeclaration::builder(format!("function_{i}"))
+                .with_description(format!("Function number {i}"))
                 .add_parameter("param", json!({"type": "string"}))
                 .with_required(vec!["param".to_string()])
                 .build();

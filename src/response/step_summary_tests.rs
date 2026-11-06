@@ -97,7 +97,7 @@ fn test_step_summary_display() {
         code_execution_result_count: 1,
         ..Default::default()
     };
-    let display = format!("{}", summary);
+    let display = format!("{summary}");
     assert!(display.contains("2 text"));
     assert!(display.contains("1 thought"));
     assert!(display.contains("1 code_execution_call"));
@@ -110,7 +110,7 @@ fn test_step_summary_display() {
 #[test]
 fn test_step_summary_display_empty() {
     let summary = StepSummary::default();
-    assert_eq!(format!("{}", summary), "empty");
+    assert_eq!(format!("{summary}"), "empty");
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn test_step_summary_display_with_unknown() {
         unknown_types: vec!["new_type_a".to_string(), "new_type_b".to_string()],
         ..Default::default()
     };
-    let display = format!("{}", summary);
+    let display = format!("{summary}");
     assert!(display.contains("2 unknown"));
     assert!(display.contains("new_type_a"));
     assert!(display.contains("new_type_b"));

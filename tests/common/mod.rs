@@ -119,7 +119,7 @@ where
 {
     tokio::time::timeout(duration, future)
         .await
-        .unwrap_or_else(|_| panic!("Test timed out after {:?}", duration))
+        .unwrap_or_else(|_| panic!("Test timed out after {duration:?}"))
 }
 
 // =============================================================================

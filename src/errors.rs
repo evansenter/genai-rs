@@ -1,3 +1,5 @@
+//! [`GenaiError`], the error every API and transport call returns.
+
 use thiserror::Error;
 
 /// Defines errors that can occur when interacting with the GenAI API.
@@ -362,7 +364,7 @@ mod tests {
             request_id: Some("req-123".to_string()),
             retry_after: None,
         };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("429"));
         assert!(display.contains("Rate limited"));
     }
@@ -375,7 +377,7 @@ mod tests {
             request_id: None,
             retry_after: None,
         };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("500"));
         assert!(display.contains("Internal error"));
     }
@@ -383,7 +385,7 @@ mod tests {
     #[test]
     fn test_genai_error_internal_display() {
         let error = GenaiError::Internal("Max function loops exceeded".to_string());
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Internal client error"));
         assert!(display.contains("Max function loops exceeded"));
     }
@@ -391,7 +393,7 @@ mod tests {
     #[test]
     fn test_genai_error_invalid_input_display() {
         let error = GenaiError::InvalidInput("Missing model or agent".to_string());
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Invalid input"));
         assert!(display.contains("Missing model or agent"));
     }
@@ -402,7 +404,7 @@ mod tests {
         let bytes = vec![0xff, 0xfe];
         let utf8_err = std::str::from_utf8(&bytes).unwrap_err();
         let genai_err: GenaiError = utf8_err.into();
-        let display = format!("{}", genai_err);
+        let display = format!("{genai_err}");
         assert!(display.contains("UTF-8 decoding error"));
     }
 
@@ -414,7 +416,7 @@ mod tests {
             request_id: Some("req-456".to_string()),
             retry_after: None,
         };
-        let debug = format!("{:?}", error);
+        let debug = format!("{error:?}");
         assert!(debug.contains("Api"));
         assert!(debug.contains("400"));
         assert!(debug.contains("req-456"));
@@ -440,12 +442,10 @@ mod tests {
                 request_id: None,
                 retry_after: None,
             };
-            let display = format!("{}", error);
+            let display = format!("{error}");
             assert!(
                 display.contains(&code.to_string()),
-                "Expected {} in display: {}",
-                code,
-                display
+                "Expected {code} in display: {display}"
             );
         }
     }
@@ -459,7 +459,7 @@ mod tests {
             request_id: None,
             retry_after: None,
         };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("500"));
         // Should still display properly even with empty message
         assert!(display.contains("API error"));
@@ -470,7 +470,7 @@ mod tests {
         let error = GenaiError::MalformedResponse(
             "Function call 'get_weather' is missing required call_id field".to_string(),
         );
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Malformed API response"));
         assert!(display.contains("call_id"));
     }
@@ -479,7 +479,7 @@ mod tests {
     fn test_genai_error_malformed_response_stream() {
         let error =
             GenaiError::MalformedResponse("Stream ended without Complete event".to_string());
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Malformed API response"));
         assert!(display.contains("Complete event"));
     }
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn test_genai_error_timeout_display() {
         let error = GenaiError::Timeout(std::time::Duration::from_secs(30));
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Request timed out"));
         assert!(display.contains("30s"));
     }
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn test_genai_error_timeout_debug() {
         let error = GenaiError::Timeout(std::time::Duration::from_millis(500));
-        let debug = format!("{:?}", error);
+        let debug = format!("{error:?}");
         assert!(debug.contains("Timeout"));
         assert!(debug.contains("500ms"));
     }
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn test_genai_error_client_build_display() {
         let error = GenaiError::ClientBuild(client_build_error());
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(
             display.starts_with("Failed to build HTTP client: "),
             "{display}"
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_genai_error_client_build_debug() {
         let error = GenaiError::ClientBuild(client_build_error());
-        let debug = format!("{:?}", error);
+        let debug = format!("{error:?}");
         assert!(debug.contains("ClientBuild"));
     }
 
@@ -551,8 +551,7 @@ mod tests {
             };
             assert!(
                 error.is_retryable(),
-                "{} errors should be retryable",
-                status_code
+                "{status_code} errors should be retryable"
             );
         }
     }
@@ -569,8 +568,7 @@ mod tests {
             };
             assert!(
                 !error.is_retryable(),
-                "{} errors should NOT be retryable",
-                status_code
+                "{status_code} errors should NOT be retryable"
             );
         }
     }

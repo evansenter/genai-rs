@@ -197,7 +197,7 @@ fn test_deserialize_unknown_interaction_content() {
             assert_eq!(data["data_field"], "some_value");
             assert_eq!(data["count"], 42);
         }
-        _ => panic!("Expected Unknown variant, got {:?}", content),
+        _ => panic!("Expected Unknown variant, got {content:?}"),
     }
 
     assert!(content.is_unknown());
@@ -436,7 +436,7 @@ fn test_code_execution_language_unknown_display() {
         language_type: "RUST".to_string(),
         data: serde_json::Value::String("RUST".to_string()),
     };
-    assert_eq!(format!("{}", unknown), "RUST");
+    assert_eq!(format!("{unknown}"), "RUST");
 }
 
 #[test]

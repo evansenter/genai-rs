@@ -5,7 +5,9 @@ use crate::antigravity::policies::PolicyEngine;
 use crate::antigravity::protocol;
 use crate::antigravity::subagent::SubagentWireContext;
 use crate::antigravity::tools::ToolDispatcher;
-use crate::antigravity::{AgentBehavior, BuiltinTool, InlineSkill, McpServer};
+use crate::antigravity::{
+    AgentBehavior, Budget, BuiltinTool, InlineSkill, McpServer, RetryConfig, SessionContinuation,
+};
 
 impl AgentBuilder {
     pub(super) fn build_harness_config(
@@ -89,9 +91,11 @@ impl AgentBuilder {
                     }),
                 }
             }),
-            session_continuation_mode: options.session_continuation.map(|mode| mode.to_wire()),
-            retry_config: options.retry.and_then(|retry| retry.to_wire()),
-            budget_config: options.budget.and_then(|budget| budget.to_wire()),
+            session_continuation_mode: options
+                .session_continuation
+                .map(SessionContinuation::to_wire),
+            retry_config: options.retry.and_then(RetryConfig::to_wire),
+            budget_config: options.budget.and_then(Budget::to_wire),
             compaction_config: compaction_threshold.map(|tokens| protocol::CompactionConfig {
                 token_threshold: Some(tokens),
             }),

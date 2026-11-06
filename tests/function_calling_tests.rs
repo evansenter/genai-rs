@@ -35,17 +35,14 @@ use serde_json::json;
 #[allow(dead_code)]
 #[tool(city(description = "The city to get weather for"))]
 fn get_weather_test(city: String) -> String {
-    format!(
-        r#"{{"city": "{}", "temperature": "22°C", "conditions": "sunny"}}"#,
-        city
-    )
+    format!(r#"{{"city": "{city}", "temperature": "22°C", "conditions": "sunny"}}"#)
 }
 
 /// Gets the current time in a timezone
 #[allow(dead_code)]
 #[tool(timezone(description = "The timezone like UTC, PST, JST"))]
 fn get_time_test(timezone: String) -> String {
-    format!(r#"{{"timezone": "{}", "time": "14:30:00"}}"#, timezone)
+    format!(r#"{{"timezone": "{timezone}", "time": "14:30:00"}}"#)
 }
 
 /// Converts temperature between units
@@ -64,7 +61,7 @@ fn convert_temperature(value: f64, from_unit: String, to_unit: String) -> String
     } else {
         value
     };
-    format!(r#"{{"value": {:.1}, "unit": "{}"}}"#, result, to_unit)
+    format!(r#"{{"value": {result:.1}, "unit": "{to_unit}"}}"#)
 }
 
 /// Implementation behind `common::get_weather_function()`.
@@ -76,10 +73,9 @@ fn get_weather(city: String) -> String {
             r#"{"city": "Seattle", "temperature": "65°F", "conditions": "cloudy"}"#.to_string()
         }
         "tokyo" => r#"{"city": "Tokyo", "temperature": "72°F", "conditions": "sunny"}"#.to_string(),
-        _ => format!(
-            r#"{{"city": "{}", "temperature": "70°F", "conditions": "partly cloudy"}}"#,
-            city
-        ),
+        _ => {
+            format!(r#"{{"city": "{city}", "temperature": "70°F", "conditions": "partly cloudy"}}"#)
+        }
     }
 }
 
@@ -87,7 +83,7 @@ fn get_weather(city: String) -> String {
 #[allow(dead_code)]
 #[tool(timezone(description = "Timezone like PST, EST, JST"))]
 fn get_time(timezone: String) -> String {
-    format!(r#"{{"timezone": "{}", "time": "14:00"}}"#, timezone)
+    format!(r#"{{"timezone": "{timezone}", "time": "14:00"}}"#)
 }
 
 const SYSTEM_INSTRUCTION: &str = "You are a helpful assistant that uses available tools when appropriate. Always respond concisely.";
@@ -902,8 +898,7 @@ mod auto_execution {
 
         assert!(
             matches!(result, Err(GenaiError::Timeout(_))),
-            "Expected GenaiError::Timeout, got: {:?}",
-            result
+            "Expected GenaiError::Timeout, got: {result:?}"
         );
     }
 

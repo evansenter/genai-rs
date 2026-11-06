@@ -5,7 +5,9 @@ use std::collections::HashSet;
 use super::AgentBuilder;
 use crate::antigravity::process::API_KEY_ENV_VARS;
 use crate::antigravity::tools::ToolDispatcher;
-use crate::antigravity::{AgentBehavior, AntigravityError, BuiltinTool, SessionContinuation};
+use crate::antigravity::{
+    AgentBehavior, AntigravityError, Budget, BuiltinTool, McpServer, SessionContinuation,
+};
 
 /// A configuration error.
 fn config(message: impl Into<String>) -> AntigravityError {
@@ -209,7 +211,7 @@ impl AgentBuilder {
     /// SDK's pydantic validators, where the harness has the same limits).
     fn validate_options(&self) -> Result<(), AntigravityError> {
         let options = &self.options;
-        if let Some(cap) = options.budget.as_ref().and_then(|b| b.zero_cap()) {
+        if let Some(cap) = options.budget.as_ref().and_then(Budget::zero_cap) {
             return Err(config(format!("Budget {cap} must be at least 1")));
         }
         if options.max_output_tokens == Some(0) {
@@ -254,7 +256,7 @@ impl AgentBuilder {
         if self.policies.iter().filter(|p| p.is_auto()).count() > 1 {
             return Err(config("at most one policy::auto() rule may be added"));
         }
-        for (short, long) in overlapping_mcp_servers(self.mcp_servers.iter().map(|s| s.name())) {
+        for (short, long) in overlapping_mcp_servers(self.mcp_servers.iter().map(McpServer::name)) {
             tracing::warn!(
                 "MCP servers '{short}' and '{long}': a rule naming a tool as \
                  mcp_{short}_<tool> can also match a tool of '{long}' (tool \

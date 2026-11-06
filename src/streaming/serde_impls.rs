@@ -111,8 +111,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                 let data = extract_data_field(&value, "Delta");
                 let delta: StepDelta = serde_json::from_value(data).map_err(|e| {
                     serde::de::Error::custom(format!(
-                        "Failed to deserialize AutoFunctionStreamChunk::Delta data: {}",
-                        e
+                        "Failed to deserialize AutoFunctionStreamChunk::Delta data: {e}"
                     ))
                 })?;
                 Ok(Self::Delta(delta))
@@ -127,8 +126,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                 )
                 .map_err(|e| {
                     serde::de::Error::custom(format!(
-                        "Failed to deserialize ExecutingFunctions response: {}",
-                        e
+                        "Failed to deserialize ExecutingFunctions response: {e}"
                     ))
                 })?;
                 let pending_calls = serde_json::from_value(
@@ -138,8 +136,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                 )
                 .map_err(|e| {
                     serde::de::Error::custom(format!(
-                        "Failed to deserialize ExecutingFunctions pending_calls: {}",
-                        e
+                        "Failed to deserialize ExecutingFunctions pending_calls: {e}"
                     ))
                 })?;
 
@@ -153,8 +150,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                 let results: Vec<FunctionExecutionResult> =
                     serde_json::from_value(data).map_err(|e| {
                         serde::de::Error::custom(format!(
-                            "Failed to deserialize AutoFunctionStreamChunk::FunctionResults data: {}",
-                            e
+                            "Failed to deserialize AutoFunctionStreamChunk::FunctionResults data: {e}"
                         ))
                     })?;
                 Ok(Self::FunctionResults(results))
@@ -164,8 +160,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                 let response: Box<InteractionResponse> =
                     serde_json::from_value(data).map_err(|e| {
                         serde::de::Error::custom(format!(
-                            "Failed to deserialize AutoFunctionStreamChunk::Complete data: {}",
-                            e
+                            "Failed to deserialize AutoFunctionStreamChunk::Complete data: {e}"
                         ))
                     })?;
                 Ok(Self::Complete(response))
@@ -174,8 +169,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                 let data = extract_data_field(&value, "MaxLoopsReached");
                 let response: Box<InteractionResponse> = serde_json::from_value(data).map_err(|e| {
                     serde::de::Error::custom(format!(
-                        "Failed to deserialize AutoFunctionStreamChunk::MaxLoopsReached data: {}",
-                        e
+                        "Failed to deserialize AutoFunctionStreamChunk::MaxLoopsReached data: {e}"
                     ))
                 })?;
                 Ok(Self::MaxLoopsReached(response))

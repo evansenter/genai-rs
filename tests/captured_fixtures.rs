@@ -170,7 +170,10 @@ fn every_captured_fixture_is_dated_and_complete() {
         .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
     on_disk.sort();
-    let mut expected: Vec<String> = FIXTURES.iter().map(|s| s.to_string()).collect();
+    let mut expected: Vec<String> = FIXTURES
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     expected.sort();
     assert_eq!(
         on_disk, expected,
@@ -302,11 +305,11 @@ async fn a_captured_voice_listing_parses_and_keeps_every_key() {
 
     assert_eq!(stub.requests()[0].target, request_path(&f));
     assert!(!page.voices.is_empty());
-    assert!(
-        page.voices
-            .iter()
-            .all(|v| !v.voice_type.as_ref().is_some_and(|t| t.is_unknown()))
-    );
+    assert!(page.voices.iter().all(|v| {
+        !v.voice_type
+            .as_ref()
+            .is_some_and(genai_rs::VoiceType::is_unknown)
+    }));
     assert_nothing_dropped(
         "list_voices",
         &f["response"]["json"],

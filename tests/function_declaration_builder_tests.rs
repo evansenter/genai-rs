@@ -102,7 +102,7 @@ fn test_function_builder_with_many_parameters() {
     // Add 20 parameters
     for i in 0..20 {
         builder = builder.add_parameter(
-            &format!("param_{}", i),
+            &format!("param_{i}"),
             json!({"type": "string", "description": format!("Parameter {}", i)}),
         );
     }
@@ -113,7 +113,7 @@ fn test_function_builder_with_many_parameters() {
     let properties = func.parameters().properties();
 
     for i in 0..20 {
-        assert!(properties.get(format!("param_{}", i)).is_some());
+        assert!(properties.get(format!("param_{i}")).is_some());
     }
 }
 

@@ -28,8 +28,7 @@ pub(super) fn check_upload_size(file_size: u64) -> Result<(), GenaiError> {
     }
     if file_size > MAX_FILE_SIZE {
         return Err(GenaiError::InvalidInput(format!(
-            "File size {} bytes exceeds maximum allowed size of {} bytes (2 GB)",
-            file_size, MAX_FILE_SIZE
+            "File size {file_size} bytes exceeds maximum allowed size of {MAX_FILE_SIZE} bytes (2 GB)"
         )));
     }
     Ok(())

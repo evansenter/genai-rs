@@ -574,8 +574,7 @@ fn test_interaction_response_serialize_without_id() {
 
     assert!(
         !json.contains(r#""id""#),
-        "JSON should not contain id field when None: {}",
-        json
+        "JSON should not contain id field when None: {json}"
     );
 }
 

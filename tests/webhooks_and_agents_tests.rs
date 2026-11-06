@@ -1353,7 +1353,9 @@ async fn test_trigger_lifecycle() {
     let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
 
     // Best effort: the run stores an interaction and creates an environment.
-    let fired = fired.into_inner().unwrap_or_else(|p| p.into_inner());
+    let fired = fired
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(id) = fired {
         let _ = client.interactions().delete(&id).await;
     }

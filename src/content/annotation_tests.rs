@@ -572,7 +572,7 @@ fn test_annotation_file_citation_deserialize() {
             assert_eq!(*start_index, 0);
             assert_eq!(*end_index, 12);
         }
-        _ => panic!("Expected FileCitation variant, got {:?}", annotation),
+        _ => panic!("Expected FileCitation variant, got {annotation:?}"),
     }
 
     // source() prefers document_uri for file citations
@@ -613,7 +613,7 @@ fn test_annotation_place_citation_deserialize() {
             assert_eq!(*start_index, 4);
             assert_eq!(*end_index, 16);
         }
-        _ => panic!("Expected PlaceCitation variant, got {:?}", annotation),
+        _ => panic!("Expected PlaceCitation variant, got {annotation:?}"),
     }
 
     // source() prefers the place URL

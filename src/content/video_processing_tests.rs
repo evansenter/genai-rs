@@ -198,7 +198,7 @@ fn test_video_content_processing_roundtrip() {
                 extra: Default::default(),
             }
         ),
-        other => panic!("expected video content, got {:?}", other),
+        other => panic!("expected video content, got {other:?}"),
     }
 
     assert_eq!(serde_json::to_value(&content).unwrap(), wire);
@@ -220,7 +220,7 @@ fn test_video_content_with_processing_preserves_resolution() {
             assert_eq!(resolution.as_ref(), Some(&Resolution::High));
             assert_eq!(processing.as_ref(), Some(&VideoProcessing::Static));
         }
-        other => panic!("expected video content, got {:?}", other),
+        other => panic!("expected video content, got {other:?}"),
     }
 }
 
@@ -240,7 +240,7 @@ fn test_video_content_with_resolution_preserves_processing() {
             assert_eq!(resolution.as_ref(), Some(&Resolution::Low));
             assert_eq!(processing.as_ref(), Some(&VideoProcessing::Agentic));
         }
-        other => panic!("expected video content, got {:?}", other),
+        other => panic!("expected video content, got {other:?}"),
     }
 }
 

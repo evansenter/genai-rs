@@ -193,9 +193,9 @@ impl FunctionResultPayload {
             serde_json::Value::String(s) => Self::Text(s),
             serde_json::Value::Array(items) => {
                 let looks_like_contents = !items.is_empty()
-                    && items
-                        .iter()
-                        .all(|v| v.is_object() && v.get("type").is_some_and(|t| t.is_string()));
+                    && items.iter().all(|v| {
+                        v.is_object() && v.get("type").is_some_and(serde_json::Value::is_string)
+                    });
                 if looks_like_contents {
                     match serde_json::from_value::<Vec<Content>>(serde_json::Value::Array(
                         items.clone(),

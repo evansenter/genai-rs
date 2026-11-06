@@ -136,7 +136,7 @@ fn test_max_loops_reached_chunk_roundtrip() {
             assert_eq!(resp.function_calls().len(), 1);
             assert_eq!(resp.function_calls()[0].name, "stuck_function");
         }
-        other => panic!("Expected MaxLoopsReached, got {:?}", other),
+        other => panic!("Expected MaxLoopsReached, got {other:?}"),
     }
 }
 

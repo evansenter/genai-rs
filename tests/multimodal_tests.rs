@@ -76,7 +76,7 @@ mod image {
         assert!(response.has_text(), "Should have text response");
 
         let text = response.as_text().unwrap();
-        println!("Color response: {}", text);
+        println!("Color response: {text}");
 
         // The tiny PNG is red
         assert_response_semantic(
@@ -118,7 +118,7 @@ mod image {
         assert!(response.has_text(), "Should have text response");
 
         let text = response.as_text().unwrap();
-        println!("Multiple images response: {}", text);
+        println!("Multiple images response: {text}");
 
         // Should mention the colors from both images
         assert_response_semantic(
@@ -171,7 +171,7 @@ mod image {
             assert!(response2.has_text(), "Should have follow-up response");
 
             let text = response2.as_text().unwrap();
-            println!("Follow-up response: {}", text);
+            println!("Follow-up response: {text}");
 
             // Red is a warm color - use semantic validation
             assert_response_semantic(
@@ -432,7 +432,7 @@ mod mixed_content {
         assert!(response.has_text(), "Should have text response");
 
         let text = response.as_text().unwrap();
-        println!("Interleaved content response: {}", text);
+        println!("Interleaved content response: {text}");
 
         // Red is associated with passion, anger, love, energy - use semantic validation
         assert_response_semantic(
@@ -473,7 +473,7 @@ mod mixed_content {
         assert!(response.has_text(), "Should have text response");
 
         let text = response.as_text().unwrap();
-        println!("Comparison response: {}", text);
+        println!("Comparison response: {text}");
 
         // Should mention differences or colors - use semantic validation.
         // Deliberately omit the ground-truth colors from the context: naming
@@ -540,7 +540,7 @@ mod mixed_media {
         assert!(response.has_text(), "Should have text response");
 
         let text = response.as_text().unwrap();
-        println!("Mixed media response: {}", text);
+        println!("Mixed media response: {text}");
 
         // Verify the model acknowledged at least one input using semantic validation
         assert_response_semantic(
@@ -626,7 +626,7 @@ mod document {
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
         let text = response.as_text().unwrap();
-        println!("PDF response: {}", text);
+        println!("PDF response: {text}");
         // The PDF contains "Hello World" - use semantic validation
         assert_response_semantic(
             &client,
@@ -663,7 +663,7 @@ mod document {
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
         let text = response.as_text().unwrap();
-        println!("PDF question response: {}", text);
+        println!("PDF question response: {text}");
         // Should mention something about the PDF - use semantic validation
         assert_response_semantic(
             &client,
@@ -791,7 +791,7 @@ mod file_loading {
         assert!(response.has_text(), "Should have text response");
 
         let text = response.as_text().unwrap();
-        println!("Multiple images response: {}", text);
+        println!("Multiple images response: {text}");
 
         // Should mention at least one color - use semantic validation
         assert_response_semantic(
@@ -1009,8 +1009,7 @@ mod text_to_speech {
         // Assert: Nested format should fail with 400
         assert!(
             nested_status.is_client_error(),
-            "Nested SpeechConfig format should return 400 error, got {}",
-            nested_status
+            "Nested SpeechConfig format should return 400 error, got {nested_status}"
         );
 
         // Test 2: Flat format (should SUCCEED)
@@ -1060,13 +1059,12 @@ mod text_to_speech {
             .expect("Flat format request failed to send");
 
         let flat_status = flat_response.status();
-        println!("Flat format status: {}", flat_status);
+        println!("Flat format status: {flat_status}");
 
         // Assert: Flat format should succeed
         assert!(
             flat_status.is_success(),
-            "Flat SpeechConfig format should succeed, got {}",
-            flat_status
+            "Flat SpeechConfig format should succeed, got {flat_status}"
         );
 
         println!("\n✓ Verified: Nested format fails (400), flat format succeeds (200)");

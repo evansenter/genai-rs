@@ -114,7 +114,7 @@ impl InteractionResponse {
             .iter()
             .filter_map(|step| {
                 if let Step::GoogleSearchCall { queries, .. } = step {
-                    Some(queries.iter().map(|q| q.as_str()))
+                    Some(queries.iter().map(String::as_str))
                 } else {
                     None
                 }

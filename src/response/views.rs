@@ -59,7 +59,7 @@ impl ImageInfo<'_> {
     pub fn bytes(&self) -> Result<Vec<u8>, GenaiError> {
         base64::engine::general_purpose::STANDARD
             .decode(self.data)
-            .map_err(|e| GenaiError::InvalidInput(format!("Invalid base64 image data: {}", e)))
+            .map_err(|e| GenaiError::InvalidInput(format!("Invalid base64 image data: {e}")))
     }
 
     /// Returns the MIME type of the image, if available.
@@ -146,7 +146,7 @@ impl AudioInfo<'_> {
     pub fn bytes(&self) -> Result<Vec<u8>, GenaiError> {
         base64::engine::general_purpose::STANDARD
             .decode(self.data)
-            .map_err(|e| GenaiError::InvalidInput(format!("Invalid base64 audio data: {}", e)))
+            .map_err(|e| GenaiError::InvalidInput(format!("Invalid base64 audio data: {e}")))
     }
 
     /// Returns the MIME type of the audio, if available.

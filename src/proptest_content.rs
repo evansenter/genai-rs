@@ -46,7 +46,7 @@ pub(super) fn arb_video_processing() -> impl Strategy<Value = VideoProcessing> {
 
 /// Offsets are decimal seconds with an `s` suffix (e.g. `"10.5s"`).
 pub(super) fn arb_offset() -> impl Strategy<Value = String> {
-    (0u32..3600u32, 0u32..10u32).prop_map(|(secs, tenths)| format!("{}.{}s", secs, tenths))
+    (0u32..3600u32, 0u32..10u32).prop_map(|(secs, tenths)| format!("{secs}.{tenths}s"))
 }
 
 /// Frame rates round-trip through JSON exactly, so restrict to values with an

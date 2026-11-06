@@ -364,7 +364,7 @@ impl<'de> Deserialize<'de> for NetworkConfig {
                     value
                 );
                 Ok(Self::Unknown {
-                    network_type: format!("<unrecognized: {}>", value),
+                    network_type: format!("<unrecognized: {value}>"),
                     data: value,
                 })
             }
@@ -672,7 +672,7 @@ impl<'de> Deserialize<'de> for EnvironmentSpec {
                     value
                 );
                 Ok(Self::Unknown {
-                    environment_type: format!("<unrecognized: {}>", value),
+                    environment_type: format!("<unrecognized: {value}>"),
                     data: value,
                 })
             }

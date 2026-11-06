@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 fn test_genai_error_malformed_stream_event_display() {
     // An SSE event that does not parse is a malformed response.
     let error = GenaiError::MalformedResponse("Invalid SSE event".to_string());
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("Malformed API response"));
 }
 
@@ -36,7 +36,7 @@ fn test_genai_error_api_429_rate_limit() {
         request_id: Some("req-abc123".to_string()),
         retry_after: Some(std::time::Duration::from_secs(60)),
     };
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("429"));
     assert!(display.contains("Resource exhausted"));
 
@@ -59,7 +59,7 @@ fn test_genai_error_api_503_service_unavailable() {
         request_id: None,
         retry_after: None,
     };
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("503"));
     assert!(display.contains("Service temporarily unavailable"));
 }
@@ -72,7 +72,7 @@ fn test_genai_error_api_400_bad_request() {
         request_id: Some("req-xyz789".to_string()),
         retry_after: None,
     };
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("400"));
     assert!(display.contains("Invalid model name"));
 }
@@ -89,16 +89,15 @@ fn test_genai_error_api_request_id_in_debug() {
     };
 
     // Display is concise - no request_id
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("500"));
     assert!(display.contains("Server error"));
 
     // Debug includes request_id for logging/diagnostics
-    let debug = format!("{:?}", error);
+    let debug = format!("{error:?}");
     assert!(
         debug.contains("req-debug-12345"),
-        "Debug output should include request_id: {}",
-        debug
+        "Debug output should include request_id: {debug}"
     );
 }
 
@@ -110,20 +109,20 @@ fn test_genai_error_malformed_response_patterns() {
     let error1 = GenaiError::MalformedResponse(
         "Function call 'get_weather' is missing required call_id field".to_string(),
     );
-    let display1 = format!("{}", error1);
+    let display1 = format!("{error1}");
     assert!(display1.contains("Malformed API response"));
     assert!(display1.contains("call_id"));
 
     // Stream ended without Complete event
     let error2 = GenaiError::MalformedResponse("Stream ended without Complete event".to_string());
-    let display2 = format!("{}", error2);
+    let display2 = format!("{error2}");
     assert!(display2.contains("Complete event"));
 }
 
 #[test]
 fn test_genai_error_invalid_input() {
     let error = GenaiError::InvalidInput("Model or agent must be specified".to_string());
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("Invalid input"));
     assert!(display.contains("Model or agent"));
 }
@@ -131,7 +130,7 @@ fn test_genai_error_invalid_input() {
 #[test]
 fn test_genai_error_internal() {
     let error = GenaiError::Internal("Exceeded maximum function call loops".to_string());
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("Internal client error"));
     assert!(display.contains("function call loops"));
 }
@@ -590,8 +589,7 @@ fn test_error_matching_for_retry_logic() {
         };
         assert_eq!(
             category, expected_category,
-            "Error matching should work for {:?}",
-            error
+            "Error matching should work for {error:?}"
         );
     }
 }
@@ -649,8 +647,7 @@ fn test_interaction_builder_missing_model() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("model") || err.contains("agent"),
-        "Error should mention missing model: {}",
-        err
+        "Error should mention missing model: {err}"
     );
 }
 
@@ -670,8 +667,7 @@ fn test_interaction_builder_missing_content() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("content") || err.contains("input"),
-        "Error should mention missing content: {}",
-        err
+        "Error should mention missing content: {err}"
     );
 }
 
