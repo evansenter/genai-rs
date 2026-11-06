@@ -318,3 +318,82 @@ wire_string_enum!(
         None => "LINE_ACTION_NONE",
     }
 );
+
+wire_string_enum!(
+    /// `StopResult.Decision` — a stop hook's verdict.
+    StopDecision, decision_type, unknown_decision_type {
+        /// Unset.
+        Unspecified => "DECISION_UNSPECIFIED",
+        /// Let the turn end.
+        AllowStop => "ALLOW_STOP",
+        /// Inject the hook's reason and run another model call.
+        Continue => "CONTINUE",
+    }
+);
+
+wire_string_enum!(
+    /// `PolicyEvaluationOutcome` — this client's answer to a
+    /// `policyDecisionRequest`.
+    PolicyEvaluationOutcome, outcome_type, unknown_outcome_type {
+        /// Unset.
+        Unspecified => "POLICY_EVALUATION_OUTCOME_UNSPECIFIED",
+        /// Run the call.
+        Allow => "POLICY_EVALUATION_OUTCOME_ALLOW",
+        /// Refuse the call.
+        Deny => "POLICY_EVALUATION_OUTCOME_DENY",
+        /// The rule does not apply; the harness tries the next one.
+        NoMatch => "POLICY_EVALUATION_OUTCOME_NO_MATCH",
+    }
+);
+
+wire_string_enum!(
+    /// `PolicyDecision` — what a harness-side `PolicyRule` decides.
+    RuleDecision, decision_type, unknown_decision_type {
+        /// Unset.
+        Unspecified => "POLICY_DECISION_UNSPECIFIED",
+        /// Run the call.
+        Allow => "POLICY_DECISION_ALLOW",
+        /// Refuse the call.
+        Deny => "POLICY_DECISION_DENY",
+        /// Ask the client (a `policyDecisionRequest`).
+        AskUser => "POLICY_DECISION_ASK_USER",
+    }
+);
+
+wire_string_enum!(
+    /// `PolicyConfig.WorkspaceContainment`.
+    WorkspaceContainment, containment_type, unknown_containment_type {
+        /// Unset: contained when a workspace is configured.
+        Unspecified => "WORKSPACE_CONTAINMENT_UNSPECIFIED",
+        /// File tools confined to the workspaces.
+        Enabled => "WORKSPACE_CONTAINMENT_ENABLED",
+        /// No confinement.
+        Disabled => "WORKSPACE_CONTAINMENT_DISABLED",
+    }
+);
+
+wire_string_enum!(
+    /// `BudgetConfig.BudgetScope`.
+    BudgetScope, scope_type, unknown_scope_type {
+        /// Unset (the harness treats it as lifetime).
+        Unspecified => "BUDGET_SCOPE_UNSPECIFIED",
+        /// Counted from the start of the conversation.
+        Lifetime => "BUDGET_SCOPE_LIFETIME",
+        /// Counted from when the budget was set or the session resumed.
+        ForwardLooking => "BUDGET_SCOPE_FORWARD_LOOKING",
+    }
+);
+
+wire_string_enum!(
+    /// `HarnessConfig.SessionContinuationMode`.
+    SessionContinuationMode, mode_type, unknown_mode_type {
+        /// Unset: resume when the conversation id exists, else create.
+        Unspecified => "SESSION_CONTINUATION_MODE_UNSPECIFIED",
+        /// Resume; fail when the conversation does not exist.
+        Resume => "RESUME",
+        /// Resume when it exists, else create it.
+        CreateOrResume => "CREATE_OR_RESUME",
+        /// Create; fail when the conversation already exists.
+        CreateOnly => "CREATE_ONLY",
+    }
+);

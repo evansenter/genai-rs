@@ -53,23 +53,26 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 /// 3. `google/antigravity/bin/localharness` inside `python3`'s
 ///    site-packages directories.
 /// 4. `localharness` on `PATH`.
+///
+/// `python3` is asked for its site-packages only when the first two steps
+/// find nothing, so an explicit path costs no interpreter start-up.
 pub(crate) fn discover_harness(explicit: Option<&Path>) -> Result<PathBuf, AntigravityError> {
     let env_path = std::env::var_os(HARNESS_PATH_ENV).map(PathBuf::from);
-    let site_dirs = python_site_dirs();
     let path_var = std::env::var_os("PATH");
     discover_in(
         explicit,
         env_path.as_deref(),
-        &site_dirs,
+        python_site_dirs,
         path_var.as_deref(),
     )
 }
 
-/// Pure discovery core, separated for unit testing.
+/// Pure discovery core, separated for unit testing. `site_dirs` is called
+/// only when the explicit path and the environment variable miss.
 fn discover_in(
     explicit: Option<&Path>,
     env_path: Option<&Path>,
-    site_dirs: &[PathBuf],
+    site_dirs: impl FnOnce() -> Vec<PathBuf>,
     path_var: Option<&std::ffi::OsStr>,
 ) -> Result<PathBuf, AntigravityError> {
     let mut searched = Vec::new();
@@ -90,7 +93,8 @@ fn discover_in(
         searched.push(format!("{HARNESS_PATH_ENV} (unset)"));
     }
 
-    for dir in site_dirs {
+    let site_dirs = site_dirs();
+    for dir in &site_dirs {
         let candidate = dir.join(SITE_PACKAGES_SUFFIX);
         if candidate.is_file() {
             return Ok(candidate);
@@ -245,17 +249,23 @@ where
 /// The environment variables the harness reads a Gemini API key from when
 /// its model config carries none (the Go genai SDK's two names; both appear
 /// in the 0.1.23 binary).
-const API_KEY_ENV_VARS: [&str; 2] = ["GEMINI_API_KEY", "GOOGLE_API_KEY"];
+pub(crate) const API_KEY_ENV_VARS: [&str; 2] = ["GEMINI_API_KEY", "GOOGLE_API_KEY"];
 
 /// The harness command line: piped stdio, its own process group on Unix,
-/// and, with `scrub_key_env`, none of [`API_KEY_ENV_VARS`] in its
-/// environment.
-fn harness_command(binary: &Path, scrub_key_env: bool) -> Command {
+/// `env` added to its environment and, with `scrub_key_env`, none of
+/// [`API_KEY_ENV_VARS`] in it (`spawn()` refuses an `env` that sets one
+/// while scrubbing).
+fn harness_command(
+    binary: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+    scrub_key_env: bool,
+) -> Command {
     let mut command = Command::new(binary);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .envs(env);
     // A harness pointed at a custom Gemini host falls back to these when
     // its configured key is missing or empty, and would send that key to
     // the custom host (verified on 0.1.23, 2026-11-04). The builder
@@ -288,7 +298,7 @@ impl HarnessProcess {
         scrub_key_env: bool,
         wire: &WireContext,
     ) -> Result<(Self, OutputConfig), AntigravityError> {
-        let mut child = harness_command(binary, scrub_key_env)
+        let mut child = harness_command(binary, &input_config.env, scrub_key_env)
             .spawn()
             .map_err(|e| AntigravityError::HandshakeFailed {
                 message: format!("failed to spawn harness at {}: {e}", binary.display()),
@@ -402,15 +412,27 @@ impl HarnessProcess {
     ///    SIGTERM's default action (0.1.23), so this step no longer gives it
     ///    a chance to clean up; it is for the processes it started.
     /// 3. After [`KILL_GRACE`], escalate to SIGKILL.
+    ///
+    /// A harness that exits on its own with a failure status (step 1) is
+    /// reported as [`AntigravityError::HarnessExited`] with its stderr
+    /// tail, as the Python SDK raises: a failed exit there usually means
+    /// the trajectory was not saved. The escalated paths return `Ok`; the
+    /// harness was killed on purpose.
     pub(crate) async fn shutdown(mut self) -> Result<(), AntigravityError> {
         drop(self.stdin.take());
-        if self.wait_for_exit(SHUTDOWN_GRACE).await {
-            return Ok(());
+        if let Some(status) = self.wait_for_exit(SHUTDOWN_GRACE).await {
+            if status.success() {
+                return Ok(());
+            }
+            return Err(AntigravityError::HarnessExited {
+                code: status.code(),
+                stderr: self.stderr_tail().await,
+            });
         }
 
         tracing::warn!("Harness did not exit after stdin EOF; sending SIGTERM.");
         self.signal(Signal::Term);
-        if self.wait_for_exit(KILL_GRACE).await {
+        if self.wait_for_exit(KILL_GRACE).await.is_some() {
             return Ok(());
         }
 
@@ -420,18 +442,22 @@ impl HarnessProcess {
         Ok(())
     }
 
-    /// Waits up to `grace` for the harness to exit, reaping it if it does.
+    /// Waits up to `grace` for the harness to exit, reaping it if it does,
+    /// and returns its exit status (a success when it was already reaped).
     /// The child stays in `self` while waiting, so a cancelled shutdown
     /// still leaves `Drop` something to kill.
-    async fn wait_for_exit(&mut self, grace: Duration) -> bool {
+    async fn wait_for_exit(&mut self, grace: Duration) -> Option<std::process::ExitStatus> {
         let Some(child) = self.child.as_mut() else {
-            return true;
+            return Some(std::process::ExitStatus::default());
         };
-        if tokio::time::timeout(grace, child.wait()).await.is_ok() {
-            self.child = None;
-            true
-        } else {
-            false
+        match tokio::time::timeout(grace, child.wait()).await {
+            Ok(status) => {
+                self.child = None;
+                // A failed wait means the child is gone and unreapable;
+                // there is no status to report.
+                Some(status.unwrap_or_default())
+            }
+            Err(_) => None,
         }
     }
 

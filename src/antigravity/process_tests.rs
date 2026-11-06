@@ -1,4 +1,10 @@
 use super::*;
+use std::collections::BTreeMap;
+
+/// A `site_dirs` source that must never be consulted.
+fn no_python() -> Vec<PathBuf> {
+    panic!("discovery asked python3 for site-packages it did not need")
+}
 
 fn touch_executable(path: &Path) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -17,7 +23,7 @@ fn test_discovery_prefers_explicit_path() {
     let env = dir.path().join("env/localharness");
     touch_executable(&explicit);
     touch_executable(&env);
-    let found = discover_in(Some(&explicit), Some(&env), &[], None).unwrap();
+    let found = discover_in(Some(&explicit), Some(&env), no_python, None).unwrap();
     assert_eq!(found, explicit);
 }
 
@@ -28,7 +34,7 @@ fn test_discovery_env_var_beats_site_packages() {
     let site = dir.path().join("site");
     touch_executable(&env);
     touch_executable(&site.join(SITE_PACKAGES_SUFFIX));
-    let found = discover_in(None, Some(&env), std::slice::from_ref(&site), None).unwrap();
+    let found = discover_in(None, Some(&env), no_python, None).unwrap();
     assert_eq!(found, env);
 }
 
@@ -42,7 +48,7 @@ fn test_discovery_site_packages_beats_path() {
     let found = discover_in(
         None,
         None,
-        std::slice::from_ref(&site),
+        || vec![site.clone()],
         Some(path_dir.as_os_str()),
     )
     .unwrap();
@@ -54,7 +60,7 @@ fn test_discovery_falls_back_to_path() {
     let dir = tempfile::tempdir().unwrap();
     let path_dir = dir.path().join("bin");
     touch_executable(&path_dir.join("localharness"));
-    let found = discover_in(None, None, &[], Some(path_dir.as_os_str())).unwrap();
+    let found = discover_in(None, None, Vec::new, Some(path_dir.as_os_str())).unwrap();
     assert_eq!(found, path_dir.join("localharness"));
 }
 
@@ -64,7 +70,7 @@ fn test_discovery_missing_explicit_falls_through() {
     let missing = dir.path().join("nope/localharness");
     let path_dir = dir.path().join("bin");
     touch_executable(&path_dir.join("localharness"));
-    let found = discover_in(Some(&missing), None, &[], Some(path_dir.as_os_str())).unwrap();
+    let found = discover_in(Some(&missing), None, Vec::new, Some(path_dir.as_os_str())).unwrap();
     assert_eq!(found, path_dir.join("localharness"));
 }
 
@@ -239,16 +245,36 @@ fn test_harness_command_scrubs_key_env_only_when_asked() {
             .map(|(key, _)| key.to_string_lossy().into_owned())
             .collect()
     };
-    let scrubbed = harness_command(Path::new("/nonexistent/localharness"), true);
+    let scrubbed = harness_command(
+        Path::new("/nonexistent/localharness"),
+        &BTreeMap::new(),
+        true,
+    );
     let mut names = removed(&scrubbed);
     names.sort();
     assert_eq!(names, ["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
 
-    let inherited = harness_command(Path::new("/nonexistent/localharness"), false);
+    let inherited = harness_command(
+        Path::new("/nonexistent/localharness"),
+        &BTreeMap::new(),
+        false,
+    );
     assert!(
         removed(&inherited).is_empty(),
         "without a custom host the harness keeps its environment"
     );
+}
+
+#[test]
+fn test_harness_command_adds_the_configured_env() {
+    let env = BTreeMap::from([("AGY_PROBE".to_string(), "on".to_string())]);
+    let command = harness_command(Path::new("/nonexistent/localharness"), &env, false);
+    let set: Vec<_> = command
+        .as_std()
+        .get_envs()
+        .filter_map(|(k, v)| Some((k.to_str()?.to_string(), v?.to_str()?.to_string())))
+        .collect();
+    assert_eq!(set, [("AGY_PROBE".to_string(), "on".to_string())]);
 }
 
 #[test]
@@ -260,7 +286,7 @@ fn test_discovery_error_lists_searched_locations() {
     let err = discover_in(
         Some(&missing),
         None,
-        std::slice::from_ref(&site),
+        || vec![site.clone()],
         Some(std::ffi::OsStr::new("/definitely/not/a/dir")),
     )
     .unwrap_err();
@@ -274,4 +300,46 @@ fn test_discovery_error_lists_searched_locations() {
     let message = err.to_string();
     assert!(message.contains("pip install google-antigravity"));
     assert!(message.contains(HARNESS_PATH_ENV));
+}
+
+/// A stand-in harness process: `script` runs under `sh`, with stdin piped
+/// (EOF is the shutdown signal) and stderr drained like the real one's.
+#[cfg(unix)]
+fn fake_harness(script: &str) -> HarnessProcess {
+    let mut child = Command::new("sh")
+        .args(["-c", script])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn sh");
+    let stdin = child.stdin.take();
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let stderr_lines = Arc::new(Mutex::new(VecDeque::new()));
+    tokio::spawn(drain_stderr(
+        stderr,
+        Arc::clone(&stderr_lines),
+        WireContext::new(Vec::new()),
+    ));
+    HarnessProcess {
+        child: Some(child),
+        stdin,
+        stderr_lines,
+        version: None,
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_shutdown_reports_a_failed_graceful_exit_with_the_stderr_tail() {
+    let failing = fake_harness("cat >/dev/null; echo 'could not save trajectory' >&2; exit 3");
+    let err = failing.shutdown().await.unwrap_err();
+    let AntigravityError::HarnessExited { code, stderr } = &err else {
+        panic!("expected HarnessExited, got {err:?}");
+    };
+    assert_eq!(*code, Some(3));
+    assert!(stderr.contains("could not save trajectory"), "{stderr}");
+    assert!(err.to_string().contains("code 3"), "{err}");
+
+    let clean = fake_harness("cat >/dev/null; exit 0");
+    clean.shutdown().await.expect("a clean exit is Ok");
 }

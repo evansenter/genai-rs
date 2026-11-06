@@ -50,6 +50,16 @@ pub enum AntigravityError {
         /// Tail of the harness's stderr.
         stderr: String,
     },
+    /// The harness exited with a failure status when asked to shut down
+    /// (`shutdown()`), which usually means it did not save the trajectory.
+    #[error("harness exited with {}\nharness stderr:\n{stderr}", exit_description(*code))]
+    HarnessExited {
+        /// The exit code, when the process exited normally (`None` when a
+        /// signal ended it).
+        code: Option<i32>,
+        /// Tail of the harness's stderr.
+        stderr: String,
+    },
     /// A custom tool could not be dispatched.
     #[error("tool dispatch failed for '{name}': {message}")]
     ToolDispatch {
@@ -85,6 +95,10 @@ pub enum AntigravityError {
     /// JSON (de)serialization error.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+fn exit_description(code: Option<i32>) -> String {
+    code.map_or_else(|| "a signal".to_string(), |code| format!("code {code}"))
 }
 
 impl AntigravityError {

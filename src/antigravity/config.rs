@@ -1,8 +1,8 @@
 //! User-facing configuration types for Antigravity agents.
 
-use std::collections::BTreeMap;
 use std::collections::HashSet;
 
+use super::RunCommandOptions;
 use super::protocol;
 
 /// The `google-antigravity` wheel version this crate's protocol support is
@@ -89,8 +89,9 @@ pub enum BuiltinTool {
     RunCommand,
     /// Ask the user a clarifying question (`ask_question`). Write-capable.
     AskQuestion,
-    /// Invoke a subagent (`start_subagent`). Write-capable.
-    StartSubagent,
+    /// Invoke a subagent (`invoke_subagent`). Write-capable. Policies may
+    /// still target it by its pre-0.1.18 name, `start_subagent`.
+    InvokeSubagent,
     /// Generate or edit images (`generate_image`). Write-capable.
     GenerateImage,
     /// Search the web (`search_web`). Write-capable (network egress).
@@ -117,7 +118,7 @@ impl BuiltinTool {
             Self::EditFile => "edit_file",
             Self::RunCommand => "run_command",
             Self::AskQuestion => "ask_question",
-            Self::StartSubagent => "start_subagent",
+            Self::InvokeSubagent => "invoke_subagent",
             Self::GenerateImage => "generate_image",
             Self::SearchWeb => "search_web",
             Self::ReadUrlContent => "read_url_content",
@@ -137,7 +138,7 @@ impl BuiltinTool {
             Self::EditFile,
             Self::RunCommand,
             Self::AskQuestion,
-            Self::StartSubagent,
+            Self::InvokeSubagent,
             Self::GenerateImage,
             Self::SearchWeb,
             Self::ReadUrlContent,
@@ -190,6 +191,7 @@ impl BuiltinTool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capabilities {
     enabled: HashSet<BuiltinTool>,
+    run_command: RunCommandOptions,
 }
 
 impl Default for Capabilities {
@@ -204,6 +206,7 @@ impl Capabilities {
     pub fn read_only() -> Self {
         Self {
             enabled: BuiltinTool::read_only().into_iter().collect(),
+            run_command: RunCommandOptions::default(),
         }
     }
 
@@ -212,6 +215,7 @@ impl Capabilities {
     pub fn all() -> Self {
         Self {
             enabled: BuiltinTool::all().into_iter().collect(),
+            run_command: RunCommandOptions::default(),
         }
     }
 
@@ -220,6 +224,7 @@ impl Capabilities {
     pub fn none() -> Self {
         Self {
             enabled: HashSet::new(),
+            run_command: RunCommandOptions::default(),
         }
     }
 
@@ -249,6 +254,21 @@ impl Capabilities {
         self.enabled.iter().any(|t| t.is_write_capable())
     }
 
+    /// Sets the `run_command` builtin's timeout, daemon and sandbox options
+    /// (the Python SDK's `run_command_config`). They apply only while
+    /// [`BuiltinTool::RunCommand`] is enabled.
+    #[must_use]
+    pub fn with_run_command(mut self, options: RunCommandOptions) -> Self {
+        self.run_command = options;
+        self
+    }
+
+    /// The `run_command` options.
+    #[must_use]
+    pub fn run_command(&self) -> &RunCommandOptions {
+        &self.run_command
+    }
+
     /// Builds the harness `HarnessSideTools` flags. Every flag is written
     /// explicitly, disabled ones included: what an omitted flag means is
     /// the harness's call and has changed between revisions. Harness
@@ -259,8 +279,16 @@ impl Capabilities {
         let on = |tool: BuiltinTool| Some(protocol::ToolToggle::new(self.is_enabled(tool)));
         protocol::HarnessSideTools {
             find: on(BuiltinTool::FindFile),
-            run_command: on(BuiltinTool::RunCommand),
-            subagents: on(BuiltinTool::StartSubagent),
+            run_command: Some(
+                self.run_command
+                    .to_wire(self.is_enabled(BuiltinTool::RunCommand)),
+            ),
+            // Depth, allow-list and `define_subagent` are the agent's or
+            // the subagent's to fill in.
+            subagents: Some(protocol::SubagentsConfig {
+                enabled: self.is_enabled(BuiltinTool::InvokeSubagent),
+                ..Default::default()
+            }),
             user_questions: on(BuiltinTool::AskQuestion),
             file_edit: on(BuiltinTool::EditFile),
             view_file: on(BuiltinTool::ViewFile),
@@ -282,360 +310,6 @@ impl Capabilities {
     }
 }
 
-/// A static subagent the parent agent can delegate to.
-///
-/// Subagents run in their own trajectory with their own instructions and
-/// tool set. The parent model invokes them through the `start_subagent`
-/// builtin — enable it with
-/// `Capabilities::read_only().enable(BuiltinTool::StartSubagent)` (it is
-/// write-capable, so the spawn-time safety gate requires a policy or
-/// pre-tool hook).
-///
-/// ```rust,ignore
-/// use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};
-///
-/// let agent = AntigravityAgent::builder()
-///     .add_tool(severity_classifier_declaration())   // parent registration
-///     .add_subagent(
-///         Subagent::new("auditor")
-///             .with_description("Audits one file for security issues.")
-///             .with_system_instructions("Focus on injection vectors.")
-///             .add_tool("severity_classifier"),      // reference by name
-///     )
-///     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
-///     .add_policy(policy::allow_all())
-///     // ...
-///     ;
-/// ```
-///
-/// Custom tools are referenced **by name** and must also be registered on
-/// the parent agent (`add_tool` / `with_tool_service`) — the harness
-/// dispatches a subagent's custom tool calls through the parent's tool
-/// registry. `spawn()` validates this and fails with
-/// [`AntigravityError::Config`](super::AntigravityError::Config) on a
-/// dangling reference.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Subagent {
-    name: String,
-    description: Option<String>,
-    system_instructions: Option<String>,
-    capabilities: Capabilities,
-    tool_names: Vec<String>,
-    agent_behavior: Option<AgentBehavior>,
-}
-
-impl Subagent {
-    /// Creates a subagent with the given (unique) name and the default
-    /// read-only builtin set (matching the reference SDK).
-    #[must_use]
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            description: None,
-            system_instructions: None,
-            capabilities: Capabilities::read_only(),
-            tool_names: Vec::new(),
-            agent_behavior: None,
-        }
-    }
-
-    /// Sets the description shown to the parent model (how it decides when
-    /// to delegate).
-    #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
-    /// Sets system instructions for the subagent. These are **appended** to
-    /// the harness's default subagent instructions (reference SDK
-    /// semantics), not a full replacement.
-    #[must_use]
-    pub fn with_system_instructions(mut self, instructions: impl Into<String>) -> Self {
-        self.system_instructions = Some(instructions.into());
-        self
-    }
-
-    /// Configures which built-in harness tools the subagent may use
-    /// (default: the read-only set). `start_subagent` is force-disabled:
-    /// harness 0.1.18 can nest subagents, but only up to a
-    /// `max_nesting_depth` this crate does not configure yet, and the
-    /// harness default is flat (depth 1).
-    #[must_use]
-    pub fn with_capabilities(mut self, capabilities: Capabilities) -> Self {
-        self.capabilities = capabilities;
-        self
-    }
-
-    /// Sets how the harness frames the subagent's task (default: the
-    /// harness's, which is [`AgentBehavior::Autonomous`]).
-    #[must_use]
-    pub fn with_agent_behavior(mut self, behavior: AgentBehavior) -> Self {
-        self.agent_behavior = Some(behavior);
-        self
-    }
-
-    /// Adds a custom tool, referenced by name. The tool must also be
-    /// registered on the parent agent; `spawn()` validates this.
-    #[must_use]
-    pub fn add_tool(mut self, name: impl Into<String>) -> Self {
-        self.tool_names.push(name.into());
-        self
-    }
-
-    /// The subagent's name.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// The custom tool names this subagent references.
-    #[must_use]
-    pub fn tool_names(&self) -> &[String] {
-        &self.tool_names
-    }
-
-    /// Builds the wire `CustomAgent`, resolving custom tool names against
-    /// the parent's declarations. Callers must have validated the names
-    /// beforehand (`spawn()` does); unresolved names are skipped here.
-    ///
-    /// `workspace_note`, when present, is appended as an extra instruction
-    /// section so the subagent learns the workspace root(s) — its trajectory
-    /// does not inherit the parent's context.
-    pub(crate) fn to_wire(
-        &self,
-        parent_tools: &[protocol::Tool],
-        workspace_note: Option<&str>,
-    ) -> protocol::CustomAgent {
-        if self.capabilities.is_enabled(BuiltinTool::StartSubagent) {
-            tracing::warn!(
-                "Subagent '{}' enables start_subagent, but this crate does not configure \
-                 subagent nesting depth (harness default: flat); disabling it.",
-                self.name
-            );
-        }
-        let mut harness_side_tools = self.capabilities.to_harness_side_tools();
-        // Nesting needs `SubagentsConfig.max_nesting_depth`, which is not
-        // modeled; the harness default depth is 1 (flat).
-        harness_side_tools.subagents = Some(protocol::ToolToggle::new(false));
-
-        let tools = self
-            .tool_names
-            .iter()
-            .filter_map(|name| {
-                parent_tools
-                    .iter()
-                    .find(|tool| tool.name.as_deref() == Some(name))
-                    .cloned()
-            })
-            .collect();
-
-        // Reference SDK semantics: subagent instructions are appended
-        // sections (title "System"), never a full replacement. The
-        // workspace note (when present) is appended as its own section.
-        let mut appended_sections = Vec::new();
-        if let Some(text) = &self.system_instructions {
-            appended_sections.push(protocol::InstructionSection {
-                title: Some("System".to_string()),
-                content: Some(text.clone()),
-            });
-        }
-        if let Some(note) = workspace_note {
-            appended_sections.push(protocol::InstructionSection {
-                title: Some("Workspace".to_string()),
-                content: Some(note.to_string()),
-            });
-        }
-        let system_instructions =
-            (!appended_sections.is_empty()).then_some(protocol::SystemInstructions {
-                custom: None,
-                appended: Some(protocol::AppendedSystemInstructions {
-                    custom_identity: None,
-                    appended_sections,
-                }),
-            });
-
-        protocol::CustomAgent {
-            name: Some(self.name.clone()),
-            description: self.description.clone(),
-            system_instructions,
-            harness_side_tools: Some(harness_side_tools),
-            tools,
-            agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
-        }
-    }
-}
-
-/// An MCP server for the harness to connect to.
-///
-/// ```rust,ignore
-/// use genai_rs::antigravity::McpServer;
-///
-/// let git = McpServer::stdio("uvx", ["mcp-server-git"]);
-/// let api = McpServer::http("http://localhost:8931/mcp").with_name("api");
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct McpServer {
-    name: String,
-    transport: McpTransport,
-    enabled_tools: Vec<String>,
-    disabled_tools: Vec<String>,
-    timeout_seconds: Option<i32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum McpTransport {
-    Stdio {
-        command: String,
-        args: Vec<String>,
-        env: BTreeMap<String, String>,
-    },
-    Http {
-        url: String,
-        headers: BTreeMap<String, String>,
-    },
-}
-
-impl McpServer {
-    /// A stdio-transport MCP server: the harness spawns `command args...`.
-    ///
-    /// The server name defaults to the command's basename; override it with
-    /// [`Self::with_name`]. The name is the `<server>` part of policy
-    /// targets (`mcp_<server>_<tool>`).
-    #[must_use]
-    pub fn stdio(
-        command: impl Into<String>,
-        args: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        let command = command.into();
-        let name = std::path::Path::new(&command)
-            .file_stem()
-            .map_or_else(|| command.clone(), |s| s.to_string_lossy().into_owned());
-        Self {
-            name,
-            transport: McpTransport::Stdio {
-                command,
-                args: args.into_iter().map(Into::into).collect(),
-                env: BTreeMap::new(),
-            },
-            enabled_tools: Vec::new(),
-            disabled_tools: Vec::new(),
-            timeout_seconds: None,
-        }
-    }
-
-    /// A streamable-HTTP MCP server at the given URL.
-    ///
-    /// The server name defaults to the URL's host; override it with
-    /// [`Self::with_name`].
-    #[must_use]
-    pub fn http(url: impl Into<String>) -> Self {
-        let url = url.into();
-        let name = url
-            .split("//")
-            .nth(1)
-            .and_then(|rest| rest.split(['/', ':']).next())
-            .filter(|h| !h.is_empty())
-            .map_or_else(|| "http".to_string(), ToString::to_string);
-        Self {
-            name,
-            transport: McpTransport::Http {
-                url,
-                headers: BTreeMap::new(),
-            },
-            enabled_tools: Vec::new(),
-            disabled_tools: Vec::new(),
-            timeout_seconds: None,
-        }
-    }
-
-    /// Overrides the server name (used in policy targets).
-    #[must_use]
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Sets an environment variable for a stdio server's subprocess.
-    /// No-op for HTTP servers.
-    #[must_use]
-    pub fn add_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        if let McpTransport::Stdio { env, .. } = &mut self.transport {
-            env.insert(key.into(), value.into());
-        }
-        self
-    }
-
-    /// Adds an HTTP header for an HTTP server. No-op for stdio servers.
-    #[must_use]
-    pub fn add_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        if let McpTransport::Http { headers, .. } = &mut self.transport {
-            headers.insert(key.into(), value.into());
-        }
-        self
-    }
-
-    /// Restricts the server to the given tool names (empty = all tools).
-    #[must_use]
-    pub fn with_enabled_tools(
-        mut self,
-        tools: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        self.enabled_tools = tools.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Hides the given tool names from the agent.
-    #[must_use]
-    pub fn with_disabled_tools(
-        mut self,
-        tools: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        self.disabled_tools = tools.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Sets the per-call timeout in seconds.
-    #[must_use]
-    pub fn with_timeout_seconds(mut self, seconds: i32) -> Self {
-        self.timeout_seconds = Some(seconds);
-        self
-    }
-
-    /// The server name (the `<server>` part of `mcp_<server>_<tool>`
-    /// policy targets).
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) fn to_wire(&self) -> protocol::McpServerConfig {
-        let mut config = protocol::McpServerConfig {
-            name: Some(self.name.clone()),
-            enabled_tools: self.enabled_tools.clone(),
-            disabled_tools: self.disabled_tools.clone(),
-            timeout_seconds: self.timeout_seconds,
-            ..Default::default()
-        };
-        match &self.transport {
-            McpTransport::Stdio { command, args, env } => {
-                config.stdio = Some(protocol::McpStdioTransport {
-                    command: Some(command.clone()),
-                    args: args.clone(),
-                    env: env.clone(),
-                });
-            }
-            McpTransport::Http { url, headers } => {
-                config.http = Some(protocol::McpHttpTransport {
-                    url: Some(url.clone()),
-                    headers: headers.clone(),
-                });
-            }
-        }
-        config
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,7 +322,7 @@ mod tests {
         assert!(caps.is_enabled(BuiltinTool::Finish));
         assert!(!caps.is_enabled(BuiltinTool::RunCommand));
         assert!(!caps.is_enabled(BuiltinTool::EditFile));
-        assert!(!caps.is_enabled(BuiltinTool::StartSubagent));
+        assert!(!caps.is_enabled(BuiltinTool::InvokeSubagent));
         assert!(!caps.has_write_tools());
     }
 
@@ -747,7 +421,7 @@ mod tests {
             (BuiltinTool::EditFile, "edit_file"),
             (BuiltinTool::RunCommand, "run_command"),
             (BuiltinTool::AskQuestion, "ask_question"),
-            (BuiltinTool::StartSubagent, "start_subagent"),
+            (BuiltinTool::InvokeSubagent, "invoke_subagent"),
             (BuiltinTool::GenerateImage, "generate_image"),
             (BuiltinTool::SearchWeb, "search_web"),
             (BuiltinTool::ReadUrlContent, "read_url_content"),
@@ -756,190 +430,5 @@ mod tests {
         for (tool, name) in expected {
             assert_eq!(tool.wire_name(), name);
         }
-    }
-
-    fn parent_tool(name: &str) -> protocol::Tool {
-        protocol::Tool {
-            name: Some(name.to_string()),
-            description: Some(format!("{name} description")),
-            parameters_json_schema: Some(r#"{"type":"object"}"#.to_string()),
-            response_json_schema: None,
-        }
-    }
-
-    #[test]
-    fn test_subagent_defaults() {
-        let subagent = Subagent::new("auditor");
-        assert_eq!(subagent.name(), "auditor");
-        assert!(subagent.tool_names().is_empty());
-        let wire = subagent.to_wire(&[], None);
-        assert_eq!(wire.name.as_deref(), Some("auditor"));
-        assert!(wire.description.is_none());
-        assert!(wire.system_instructions.is_none());
-        assert!(wire.tools.is_empty());
-        // Default capabilities: read-only builtins, explicit flags.
-        let side_tools = wire.harness_side_tools.unwrap();
-        assert!(side_tools.view_file.unwrap().enabled);
-        assert!(!side_tools.run_command.unwrap().enabled);
-        assert!(!side_tools.subagents.unwrap().enabled);
-    }
-
-    #[test]
-    fn test_subagent_to_wire_resolves_parent_tools() {
-        let subagent = Subagent::new("auditor")
-            .with_description("Audits files.")
-            .with_system_instructions("Focus on injection vectors.")
-            .add_tool("severity_classifier");
-        assert_eq!(subagent.tool_names(), ["severity_classifier"]);
-
-        let parent_tools = [parent_tool("other"), parent_tool("severity_classifier")];
-        let wire = subagent.to_wire(&parent_tools, None);
-        assert_eq!(wire.description.as_deref(), Some("Audits files."));
-        // Instructions are appended sections (reference SDK semantics),
-        // never a custom replacement.
-        let instructions = wire.system_instructions.unwrap();
-        assert!(instructions.custom.is_none());
-        let appended = instructions.appended.unwrap();
-        assert_eq!(appended.appended_sections.len(), 1);
-        assert_eq!(
-            appended.appended_sections[0].title.as_deref(),
-            Some("System")
-        );
-        assert_eq!(
-            appended.appended_sections[0].content.as_deref(),
-            Some("Focus on injection vectors.")
-        );
-        // The full parent declaration is copied, not just the name.
-        assert_eq!(wire.tools.len(), 1);
-        assert_eq!(wire.tools[0].name.as_deref(), Some("severity_classifier"));
-        assert_eq!(
-            wire.tools[0].parameters_json_schema.as_deref(),
-            Some(r#"{"type":"object"}"#)
-        );
-    }
-
-    #[test]
-    fn test_subagent_to_wire_appends_workspace_note() {
-        // With both user instructions and a workspace note, the subagent
-        // gets two appended sections; with only the note, just the note.
-        let with_both = Subagent::new("auditor")
-            .with_system_instructions("Focus on injection vectors.")
-            .to_wire(&[], Some("ROOTS: /repo"));
-        let sections = with_both
-            .system_instructions
-            .unwrap()
-            .appended
-            .unwrap()
-            .appended_sections;
-        assert_eq!(sections.len(), 2);
-        assert_eq!(sections[0].title.as_deref(), Some("System"));
-        assert_eq!(sections[1].title.as_deref(), Some("Workspace"));
-        assert_eq!(sections[1].content.as_deref(), Some("ROOTS: /repo"));
-
-        let note_only = Subagent::new("auditor").to_wire(&[], Some("ROOTS: /repo"));
-        let sections = note_only
-            .system_instructions
-            .unwrap()
-            .appended
-            .unwrap()
-            .appended_sections;
-        assert_eq!(sections.len(), 1);
-        assert_eq!(sections[0].title.as_deref(), Some("Workspace"));
-    }
-
-    #[test]
-    fn test_subagent_start_subagent_forced_off() {
-        // Nesting depth is not configurable yet: even when explicitly
-        // enabled, the wire config disables the builtin.
-        let subagent = Subagent::new("nested")
-            .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent));
-        let wire = subagent.to_wire(&[], None);
-        assert!(!wire.harness_side_tools.unwrap().subagents.unwrap().enabled);
-    }
-
-    #[test]
-    fn test_subagent_wire_serialization_fixture() {
-        let subagent = Subagent::new("auditor")
-            .with_description("Audits files.")
-            .with_system_instructions("Be thorough.")
-            .add_tool("severity_classifier");
-        let wire = subagent.to_wire(&[parent_tool("severity_classifier")], None);
-        let value = serde_json::to_value(&wire).unwrap();
-        // Proto-JSON: camelCase fields, JSON-string schema.
-        assert_eq!(
-            value["systemInstructions"]["appended"]["appendedSections"][0]["content"],
-            "Be thorough."
-        );
-        assert_eq!(value["tools"][0]["name"], "severity_classifier");
-        assert_eq!(
-            value["tools"][0]["parametersJsonSchema"],
-            r#"{"type":"object"}"#
-        );
-        assert_eq!(value["harnessSideTools"]["subagents"]["enabled"], false);
-        assert_eq!(value["harnessSideTools"]["viewFile"]["enabled"], true);
-    }
-
-    #[test]
-    fn test_agent_behavior_reaches_the_wire_only_when_set() {
-        // Unset stays off the wire: the harness default is already
-        // Autonomous, so sending it would change nothing but the golden.
-        assert!(
-            Subagent::new("a")
-                .to_wire(&[], None)
-                .agent_behavior
-                .is_none()
-        );
-        let wire = Subagent::new("a")
-            .with_agent_behavior(AgentBehavior::Interactive)
-            .to_wire(&[], None);
-        assert_eq!(
-            serde_json::to_value(&wire).unwrap()["agentBehavior"],
-            "AGENT_BEHAVIOR_INTERACTIVE"
-        );
-        for (behavior, wire) in [
-            (AgentBehavior::Autonomous, "AGENT_BEHAVIOR_AUTONOMOUS"),
-            (AgentBehavior::Interactive, "AGENT_BEHAVIOR_INTERACTIVE"),
-            (AgentBehavior::Minimal, "AGENT_BEHAVIOR_MINIMAL"),
-        ] {
-            assert_eq!(behavior.to_wire().as_wire_str(), wire);
-        }
-    }
-
-    #[test]
-    fn test_mcp_stdio_defaults_name_from_command() {
-        let server = McpServer::stdio("/usr/bin/uvx", ["mcp-server-git"]);
-        assert_eq!(server.name(), "uvx");
-        let wire = server.to_wire();
-        let stdio = wire.stdio.unwrap();
-        assert_eq!(stdio.command.as_deref(), Some("/usr/bin/uvx"));
-        assert_eq!(stdio.args, vec!["mcp-server-git"]);
-        assert!(wire.http.is_none());
-    }
-
-    #[test]
-    fn test_mcp_http_defaults_name_from_host() {
-        let server = McpServer::http("http://localhost:8931/mcp");
-        assert_eq!(server.name(), "localhost");
-        let wire = server.to_wire();
-        assert_eq!(
-            wire.http.unwrap().url.as_deref(),
-            Some("http://localhost:8931/mcp")
-        );
-        assert!(wire.stdio.is_none());
-    }
-
-    #[test]
-    fn test_mcp_builders_accumulate() {
-        let server = McpServer::stdio("uvx", ["x"])
-            .with_name("git")
-            .add_env("A", "1")
-            .add_env("B", "2")
-            .with_enabled_tools(["status"])
-            .with_timeout_seconds(30);
-        assert_eq!(server.name(), "git");
-        let wire = server.to_wire();
-        assert_eq!(wire.stdio.unwrap().env.len(), 2);
-        assert_eq!(wire.enabled_tools, vec!["status"]);
-        assert_eq!(wire.timeout_seconds, Some(30));
     }
 }

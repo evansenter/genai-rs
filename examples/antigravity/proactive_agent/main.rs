@@ -14,8 +14,10 @@
 //! What this example demonstrates that the others don't:
 //!
 //! - **`add_trigger` / `TriggerConfig`** with a real interval.
-//! - **Observing a trigger** via a wire inspector, which is the only way
-//!   to see one today — there is no event on the agent's own stream.
+//! - **Counting deliveries** with a wire inspector, which sees every
+//!   `automatedTrigger` sent whether or not anything drives its turn.
+//!   (`next_trigger_turn` drives a trigger's turn and returns its response;
+//!   see `file_watcher`.)
 //! - **The discard boundary**: a `chat` after a trigger returns an answer
 //!   to *your* message, never the trigger's.
 //! - **Idle-only delivery**: a firing due mid-turn is deferred, and missed
@@ -75,9 +77,10 @@ const TRIGGER_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Records every `automatedTrigger` the crate sends to the harness.
 ///
-/// A trigger's turn produces no event on the agent's own stream, so a wire
-/// inspector is the supported way to confirm one fired at all. This is
-/// also the shape you'd use to export trigger deliveries to metrics.
+/// A trigger's turn produces no event on the agent's own stream unless
+/// `next_trigger_turn` drives it, so a wire inspector is how this example
+/// confirms one fired while it does not. This is also the shape you'd use
+/// to export trigger deliveries to metrics.
 #[derive(Debug, Default)]
 struct TriggerWatcher {
     deliveries: Mutex<Vec<String>>,

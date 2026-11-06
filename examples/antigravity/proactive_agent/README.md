@@ -16,8 +16,8 @@ issues a user turn that interrupts the trigger's turn.
 
 | Surface | Why it matters |
 |---------|----------------|
-| `add_trigger` / `TriggerConfig` | The only non-request/response entry point |
-| Wire inspector on `automatedTrigger` | The **only** way to observe a delivery today — there is no agent-stream event |
+| `add_trigger` / `TriggerConfig` | Work on a timer, with no request behind it (`add_custom_trigger` takes any other source) |
+| Wire inspector on `automatedTrigger` | Counts deliveries whether or not anything drives their turns |
 | The discard boundary | A `chat` after a trigger answers *your* message, never the trigger's |
 
 ## Running
@@ -39,10 +39,10 @@ LOUD_WIRE=automatedTrigger,summary cargo run --example proactive_agent --feature
   bounds: 0 vs 0`) and closed the WebSocket, killing the session. The
   example still opens with a turn, which also gives the trigger turns a
   conversation to build on.
-- **A trigger's turn is not surfaced.** Its text never reaches your
-  stream; the next `chat`/`send_streaming` halts it and discards its
-  events. Use triggers for side effects, and read results with a normal
-  turn afterwards.
+- **A trigger's turn is surfaced only on request.** Unless
+  `next_trigger_turn` drives it (see `file_watcher`), its text never
+  reaches you; the next `chat`/`send_streaming` halts it and discards its
+  events.
 - **Delivery is idle-only.** A firing due mid-turn is deferred, and missed
   intervals collapse into one — there is no backlog.
 - **The first firing is after one interval**, not at spawn.
