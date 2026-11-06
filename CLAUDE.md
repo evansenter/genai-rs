@@ -163,6 +163,11 @@ reaches the wire must use a real id.
 - `*_with_auto_functions()` runs the function-calling loop
   (`docs/FUNCTION_CALLING.md`).
 - `#[must_use]` on getters, handles and boolean checks.
+- Lints (`Cargo.toml`, `[workspace.lints]`, #501): every public item has a
+  doc comment, a public fallible function an `# Errors` section, and
+  clippy's `uninlined_format_args`, `assigning_clones`,
+  `redundant_closure_for_method_calls` and `must_use_candidate` hold in
+  src/, tests/ and examples/; `make clippy` denies warnings.
 - Errors: `GenaiError` (`src/errors.rs`) for API/transport, `FunctionError`
   for tool execution.
 - Logging (`docs/LOGGING_STRATEGY.md`): `warn` for recoverable issues

@@ -463,10 +463,10 @@ Test names in the split binaries gain their module
 (`http_mock_resources`'s `credentials::loud_wire_redacts_credential_secrets`,
 the library's `proptest_tests::steps::step_roundtrip`); nextest's
 `test(/name/)` filters still match. Counted afterwards, before any
-`#[cfg(test)]` module: `src/streaming.rs` 609 lines, the largest
+`#[cfg(test)]` module: `src/streaming.rs` 611 lines, the largest
 implementation module `src/steps/mod.rs` 774; the largest test files
 `src/content/content_tests.rs` 1,336, `src/response/response_tests.rs`
-1,258 and `tests/http_mock_resources/file_search_stores.rs` 1,052.
+1,260 and `tests/http_mock_resources/file_search_stores.rs` 1,052.
 
 ---
 
