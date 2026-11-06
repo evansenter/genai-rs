@@ -55,6 +55,121 @@ macro_rules! impl_list_page {
 }
 pub(crate) use impl_list_page;
 
+/// Defines a list builder (D-016): the struct, a crate-private `new`,
+/// `with_page_size`, `with_page_token`, and the three terminals `send`,
+/// `pages` and `items`. One definition of the paging rules for every
+/// resource (#498).
+///
+/// The caller gives the struct its docs and resource fields, each method its
+/// docs, the page and item types, the label `pages` logs and errors with,
+/// and how one page is fetched: `fetch: |http, page_size, token| expr`,
+/// where `expr` is a future and may name the resource fields as owned
+/// values. Resource-specific setters stay in an `impl` of their own.
+macro_rules! list_builder {
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident<'a> {
+            $($field:ident: $fty:ty),* $(,)?
+        }
+        page: $page:ty => $item:ty;
+        label: $label:literal;
+        $(#[$page_size_doc:meta])+
+        fn with_page_size;
+        $(#[$page_token_doc:meta])+
+        fn with_page_token;
+        $(#[$send_doc:meta])+
+        fn send;
+        $(#[$items_doc:meta])+
+        fn items;
+        fetch: |$http:ident, $page_size:ident, $token:ident| $fetch:expr $(,)?
+    ) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug)]
+        #[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+        pub struct $name<'a> {
+            pub(crate) client: &'a $crate::Client,
+            $(pub(crate) $field: $fty,)*
+            pub(crate) page_size: Option<u32>,
+            pub(crate) page_token: Option<String>,
+        }
+
+        impl<'a> $name<'a> {
+            pub(crate) fn new(client: &'a $crate::Client $(, $field: $fty)*) -> Self {
+                Self {
+                    client,
+                    $($field,)*
+                    page_size: None,
+                    page_token: None,
+                }
+            }
+
+            $(#[$page_size_doc])+
+            pub fn with_page_size(mut self, page_size: u32) -> Self {
+                self.page_size = Some(page_size);
+                self
+            }
+
+            $(#[$page_token_doc])+
+            pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+                self.page_token = Some(page_token.into());
+                self
+            }
+
+            $(#[$send_doc])+
+            pub async fn send(self) -> Result<$page, $crate::GenaiError> {
+                let Self {
+                    client,
+                    $($field,)*
+                    page_size: $page_size,
+                    page_token: $token,
+                } = self;
+                let $http = &client.http;
+                $fetch.await
+            }
+
+            /// Streams every page, starting at
+            /// [`with_page_token`](Self::with_page_token) or the first page.
+            ///
+            /// Nothing is sent until the stream is polled. It ends after a
+            /// page without a `next_page_token`; an error is yielded once and
+            /// ends it. A page whose token was already requested (the
+            /// starting token included) is yielded, then
+            /// [`GenaiError::MalformedResponse`](crate::GenaiError::MalformedResponse).
+            /// The stream owns a clone of the client, so it can be stored or
+            /// spawned.
+            #[must_use = "streams do nothing unless polled"]
+            pub fn pages(
+                self,
+            ) -> ::futures_util::stream::BoxStream<'static, Result<$page, $crate::GenaiError>> {
+                let Self {
+                    client,
+                    $($field,)*
+                    page_size: $page_size,
+                    page_token,
+                } = self;
+                let client = client.clone();
+                $crate::paging::pages($label, page_token, move |$token| {
+                    let client = client.clone();
+                    $(#[allow(clippy::clone_on_copy)] let $field = $field.clone();)*
+                    async move {
+                        let $http = &client.http;
+                        $fetch.await
+                    }
+                })
+            }
+
+            $(#[$items_doc])+
+            #[must_use = "streams do nothing unless polled"]
+            pub fn items(
+                self,
+            ) -> ::futures_util::stream::BoxStream<'static, Result<$item, $crate::GenaiError>> {
+                $crate::paging::items(self.pages())
+            }
+        }
+    };
+}
+pub(crate) use list_builder;
+
 /// Streams every page of a list, starting at `first_token`.
 ///
 /// `label` names the list in logs and errors. `fetch` sends one request for

@@ -12,7 +12,6 @@ use crate::serde_util::{
 };
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 struct ForEnvironmentFile;
@@ -241,14 +240,12 @@ impl<'a> EnvironmentFiles<'a> {
     /// A directory lists its entries; a file path lists that file's own
     /// entry.
     pub fn list(self, environment_id: &str, path: &str) -> ListEnvironmentFiles<'a> {
-        ListEnvironmentFiles {
-            client: self.client,
-            environment_id: environment_id.to_owned(),
-            path: path.to_owned(),
-            recursive: false,
-            page_size: None,
-            page_token: None,
-        }
+        ListEnvironmentFiles::new(
+            self.client,
+            environment_id.to_owned(),
+            path.to_owned(),
+            false,
+        )
     }
 
     /// Downloads the file at `path` in an environment: its bytes, or for a
@@ -326,75 +323,58 @@ impl<'a> EnvironmentFiles<'a> {
     }
 }
 
-/// A `GET /v1beta/environments/{id}/files/{path}` request, from
-/// [`EnvironmentFiles::list`].
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `next_page_token` to the end of the listing. The page size and
-/// [`with_recursive`](Self::with_recursive) are sent with every page (a page
-/// token without `recursive` lists something else, live 2026-09-26). An
-/// invalid environment ID or a `.`/`..` path segment fails with
-/// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
-/// the streams' only item).
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // One page of the root directory
-/// let page = client.environments().files().list("env-123", "").send().await?;
-/// for entry in &page.files {
-///     println!("{:?} {:?}", entry.file_type, entry.path);
-/// }
-///
-/// // Everything under `src/`, across pages
-/// let all: Vec<genai_rs::EnvironmentFile> = client
-///     .environments()
-///     .files()
-///     .list("env-123", "src")
-///     .with_recursive(true)
-///     .items()
-///     .try_collect()
-///     .await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListEnvironmentFiles<'a> {
-    client: &'a Client,
-    environment_id: String,
-    path: String,
-    recursive: bool,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
-
-impl<'a> ListEnvironmentFiles<'a> {
-    /// Whether to list everything below a directory, not only its direct
-    /// entries. Sent (as `recursive=true`) with every page, and only when
-    /// true.
-    pub fn with_recursive(mut self, recursive: bool) -> Self {
-        self.recursive = recursive;
-        self
+paging::list_builder! {
+    /// A `GET /v1beta/environments/{id}/files/{path}` request, from
+    /// [`EnvironmentFiles::list`].
+    ///
+    /// End it with [`send`](Self::send) for one page, or
+    /// [`pages`](Self::pages) / [`items`](Self::items) to follow
+    /// `next_page_token` to the end of the listing. The page size and
+    /// [`with_recursive`](Self::with_recursive) are sent with every page (a page
+    /// token without `recursive` lists something else, live 2026-09-26). An
+    /// invalid environment ID or a `.`/`..` path segment fails with
+    /// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
+    /// the streams' only item).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use futures_util::TryStreamExt;
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// // One page of the root directory
+    /// let page = client.environments().files().list("env-123", "").send().await?;
+    /// for entry in &page.files {
+    ///     println!("{:?} {:?}", entry.file_type, entry.path);
+    /// }
+    ///
+    /// // Everything under `src/`, across pages
+    /// let all: Vec<genai_rs::EnvironmentFile> = client
+    ///     .environments()
+    ///     .files()
+    ///     .list("env-123", "src")
+    ///     .with_recursive(true)
+    ///     .items()
+    ///     .try_collect()
+    ///     .await?;
+    /// # let _ = all;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub struct ListEnvironmentFiles<'a> {
+        environment_id: String,
+        path: String,
+        recursive: bool,
     }
+    page: EnvironmentFileListResponse => EnvironmentFile;
+    label: "environment files";
 
     /// Sets the maximum number of entries per page. Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
+    fn with_page_size;
 
     /// Starts from this page token, from a previous page's
     /// `next_page_token`.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
+    fn with_page_token;
 
     /// Sends the request and returns one page.
     ///
@@ -403,59 +383,29 @@ impl<'a> ListEnvironmentFiles<'a> {
     /// Returns an error for an invalid environment ID, path or page token,
     /// when the environment or path doesn't exist (404), on network
     /// failure, or when the response fails to parse.
-    pub async fn send(self) -> Result<EnvironmentFileListResponse, GenaiError> {
-        crate::http::environment_files::list_files(
-            &self.client.http,
-            &self.environment_id,
-            &self.path,
-            self.recursive,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<EnvironmentFileListResponse, GenaiError>> {
-        let Self {
-            client,
-            environment_id,
-            path,
-            recursive,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("environment files", page_token, move |token| {
-            let (client, environment_id, path) =
-                (client.clone(), environment_id.clone(), path.clone());
-            async move {
-                crate::http::environment_files::list_files(
-                    &client.http,
-                    &environment_id,
-                    &path,
-                    recursive,
-                    page_size,
-                    token.as_deref(),
-                )
-                .await
-            }
-        })
-    }
+    fn send;
 
     /// Streams every entry across pages, in server order. Same rules as
     /// [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<EnvironmentFile, GenaiError>> {
-        paging::items(self.pages())
+    fn items;
+
+    fetch: |http, page_size, token| crate::http::environment_files::list_files(
+        http,
+        &environment_id,
+        &path,
+        recursive,
+        page_size,
+        token.as_deref(),
+    ),
+}
+
+impl ListEnvironmentFiles<'_> {
+    /// Whether to list everything below a directory, not only its direct
+    /// entries. Sent (as `recursive=true`) with every page, and only when
+    /// true.
+    pub fn with_recursive(mut self, recursive: bool) -> Self {
+        self.recursive = recursive;
+        self
     }
 }
 

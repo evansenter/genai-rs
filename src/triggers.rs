@@ -35,13 +35,18 @@
 //! locally with [`GenaiError::InvalidInput`]
 //! before any request.
 
+mod list;
+
+pub use list::{
+    ListTriggerExecutions, ListTriggers, TriggerExecution, TriggerExecutionListResponse,
+    TriggerListResponse,
+};
+
 use crate::client::Client;
 use crate::errors::GenaiError;
-use crate::paging;
 use crate::request::{InteractionInput, InteractionRequest};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use futures_util::stream::BoxStream;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
@@ -576,127 +581,6 @@ impl TriggerUpdate {
     }
 }
 
-/// A single firing of a [`Trigger`].
-///
-/// All fields optional with a struct-level serde default; see [`Trigger`]
-/// for the rationale.
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
-#[serde(default)]
-#[non_exhaustive]
-pub struct TriggerExecution {
-    /// Output only. The ID of the execution.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// Output only. The ID of the trigger that fired (a bare ID, live
-    /// 2026-11-01).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trigger_id: Option<String>,
-    /// Output only. The interaction created by this firing, a bare ID for
-    /// [`Interactions::get`](crate::Interactions::get).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub interaction_id: Option<String>,
-    /// Output only. The environment the firing ran against. In the spec;
-    /// not sent on a completed manual run (live 2026-11-01), where
-    /// [`Trigger::environment_id`] carries it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub environment_id: Option<String>,
-    /// Output only. Status of this execution.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<TriggerExecutionStatus>,
-    /// Output only. Error message when the execution failed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Output only. When the firing was scheduled for. Absent on a manual
-    /// [`run`](Triggers::run) (live 2026-11-01).
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTriggerExecution>"
-    )]
-    pub scheduled_time: Option<DateTime<Utc>>,
-    /// Output only. When the execution started.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTriggerExecution>"
-    )]
-    pub start_time: Option<DateTime<Utc>>,
-    /// Output only. When the execution finished.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTriggerExecution>"
-    )]
-    pub end_time: Option<DateTime<Utc>>,
-    /// Fields the API returned that this struct does not model, preserved
-    /// for roundtrip (Evergreen).
-    ///
-    /// Without this, a deserialize-then-serialize cycle silently drops any
-    /// field the crate has not modeled yet — invisible to the caller, and
-    /// unrecoverable.
-    ///
-    /// A key that collides with a modeled field **wins on serialize** via
-    /// `serde_json::to_value`, matching the request-side escape hatches.
-    /// (`to_string` on a flattened struct emits both keys rather than
-    /// deduplicating; don't hand-serialize colliding keys.)
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-/// Response from listing triggers.
-///
-/// The API returns `{}` when no triggers exist (verified live 2026-08-08),
-/// so both fields default.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-#[non_exhaustive]
-pub struct TriggerListResponse {
-    /// The triggers in this page. A null or malformed list degrades to
-    /// empty; malformed elements drop individually.
-    #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
-    pub triggers: Vec<Trigger>,
-    /// Token for fetching the next page, absent on the last page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_page_token: Option<String>,
-    /// Fields the crate does not model yet, kept so a deserialize/serialize
-    /// round trip preserves them. A list envelope is where the API is
-    /// likeliest to add something (a total count, a page-size echo).
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-paging::impl_list_page!(TriggerListResponse, triggers: Trigger);
-
-/// Response from listing a trigger's executions.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-#[non_exhaustive]
-pub struct TriggerExecutionListResponse {
-    /// The executions in this page. A null or malformed list degrades to
-    /// empty; malformed elements drop individually. The envelope key is
-    /// `trigger_executions`, as in the SDK spec (live 2026-11-01);
-    /// `executions` (the path-segment spelling) is accepted on deserialize
-    /// as a hedge.
-    /// Both keys in one envelope is a serde duplicate-field error raised
-    /// before the lenient helper runs — the one alias arm that fails the
-    /// whole call rather than degrading.
-    #[serde(
-        alias = "executions",
-        deserialize_with = "crate::serde_util::deserialize_lenient_vec"
-    )]
-    pub trigger_executions: Vec<TriggerExecution>,
-    /// Token for fetching the next page, absent on the last page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_page_token: Option<String>,
-    /// Fields the crate does not model yet, kept so a deserialize/serialize
-    /// round trip preserves them. A list envelope is where the API is
-    /// likeliest to add something (a total count, a page-size echo).
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-paging::impl_list_page!(TriggerExecutionListResponse, trigger_executions: TriggerExecution);
-
 impl Client {
     /// The `/v1beta/triggers` resource: create, inspect, update, fire and
     /// delete server-side scheduled triggers, and list their executions.
@@ -780,11 +664,7 @@ impl<'a> Triggers<'a> {
     /// [`pages`](ListTriggers::pages) / [`items`](ListTriggers::items) to
     /// stream them all.
     pub fn list(self) -> ListTriggers<'a> {
-        ListTriggers {
-            client: self.client,
-            page_size: None,
-            page_token: None,
-        }
+        ListTriggers::new(self.client)
     }
 
     /// Updates a trigger with the fields set on `update` (display name
@@ -860,230 +740,9 @@ impl<'a> Triggers<'a> {
     /// to. A trigger that does not exist lists as an empty page, not a 404
     /// (live 2026-09-26). The execution shape is verified live (2026-11-01).
     pub fn list_executions(self, trigger_id: &str) -> ListTriggerExecutions<'a> {
-        ListTriggerExecutions {
-            client: self.client,
-            trigger_id: trigger_id.to_owned(),
-            page_size: None,
-            page_token: None,
-        }
+        ListTriggerExecutions::new(self.client, trigger_id.to_owned())
     }
 }
-
-/// A `GET /v1beta/triggers` request, from [`Triggers::list`].
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `next_page_token` to the end of the list. The page size is sent with
-/// every page.
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // One page
-/// let page = client.triggers().list().with_page_size(50).send().await?;
-/// println!("{} triggers, more: {}", page.triggers.len(), page.next_page_token.is_some());
-///
-/// // Every trigger, across pages
-/// let all: Vec<genai_rs::Trigger> = client.triggers().list().items().try_collect().await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListTriggers<'a> {
-    client: &'a Client,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
-
-impl<'a> ListTriggers<'a> {
-    /// Sets the maximum number of triggers per page. Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
-
-    /// Starts from this page token, from a previous page's
-    /// `next_page_token`.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
-
-    /// Sends the request and returns one page.
-    ///
-    /// An empty collection comes back as an empty page with no
-    /// `next_page_token` (the API answers `{}`).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on network failure, an invalid page token, or a
-    /// response that fails to parse.
-    pub async fn send(self) -> Result<TriggerListResponse, GenaiError> {
-        crate::http::triggers::list_triggers(
-            &self.client.http,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<TriggerListResponse, GenaiError>> {
-        let Self {
-            client,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("triggers", page_token, move |token| {
-            let client = client.clone();
-            async move {
-                crate::http::triggers::list_triggers(&client.http, page_size, token.as_deref())
-                    .await
-            }
-        })
-    }
-
-    /// Streams every trigger across pages, in server order. Same rules as
-    /// [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<Trigger, GenaiError>> {
-        paging::items(self.pages())
-    }
-}
-
-/// A `GET /v1beta/triggers/{id}/executions` request, from
-/// [`Triggers::list_executions`].
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `next_page_token` to the end of the list. The page size is sent with
-/// every page. An empty or dot-segment trigger ID fails with
-/// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
-/// the streams' only item).
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::TryStreamExt;
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // The ten most recent firings
-/// let page = client
-///     .triggers()
-///     .list_executions("trig-123")
-///     .with_page_size(10)
-///     .send()
-///     .await?;
-/// for execution in &page.trigger_executions {
-///     println!("{:?}: {:?}", execution.scheduled_time, execution.status);
-/// }
-///
-/// // Every firing, across pages
-/// let all: Vec<genai_rs::TriggerExecution> = client
-///     .triggers()
-///     .list_executions("trig-123")
-///     .items()
-///     .try_collect()
-///     .await?;
-/// # let _ = all;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListTriggerExecutions<'a> {
-    client: &'a Client,
-    trigger_id: String,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
-
-impl<'a> ListTriggerExecutions<'a> {
-    /// Sets the maximum number of executions per page. Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
-
-    /// Starts from this page token, from a previous page's
-    /// `next_page_token`.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
-
-    /// Sends the request and returns one page.
-    ///
-    /// No executions, and a trigger that does not exist, both come back as
-    /// an empty page with no `next_page_token` (the API answers `{}`).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an invalid trigger ID or page token, on network
-    /// failure, or when the response fails to parse.
-    pub async fn send(self) -> Result<TriggerExecutionListResponse, GenaiError> {
-        crate::http::triggers::list_trigger_executions(
-            &self.client.http,
-            &self.trigger_id,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<TriggerExecutionListResponse, GenaiError>> {
-        let Self {
-            client,
-            trigger_id,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("trigger executions", page_token, move |token| {
-            let (client, trigger_id) = (client.clone(), trigger_id.clone());
-            async move {
-                crate::http::triggers::list_trigger_executions(
-                    &client.http,
-                    &trigger_id,
-                    page_size,
-                    token.as_deref(),
-                )
-                .await
-            }
-        })
-    }
-
-    /// Streams every execution across pages, in server order. Same rules as
-    /// [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<TriggerExecution, GenaiError>> {
-        paging::items(self.pages())
-    }
-}
-
 #[cfg(test)]
 #[path = "triggers_tests.rs"]
 mod tests;

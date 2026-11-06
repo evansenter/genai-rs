@@ -192,11 +192,7 @@ impl<'a> FileSearchStores<'a> {
     /// [`pages`](ListFileSearchStores::pages) /
     /// [`items`](ListFileSearchStores::items) to stream them all.
     pub fn list(self) -> ListFileSearchStores<'a> {
-        ListFileSearchStores {
-            client: self.client,
-            page_size: None,
-            page_token: None,
-        }
+        ListFileSearchStores::new(self.client)
     }
 
     /// Deletes an empty file search store.
@@ -456,12 +452,7 @@ impl<'a> FileSearchDocuments<'a> {
     /// [`pages`](ListFileSearchDocuments::pages) /
     /// [`items`](ListFileSearchDocuments::items) to stream them all.
     pub fn list(self, store_name: &str) -> ListFileSearchDocuments<'a> {
-        ListFileSearchDocuments {
-            client: self.client,
-            store_name: store_name.to_owned(),
-            page_size: None,
-            page_token: None,
-        }
+        ListFileSearchDocuments::new(self.client, store_name.to_owned())
     }
 
     /// Gets a document, for example to check its indexing

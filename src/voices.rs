@@ -33,7 +33,6 @@ use crate::response::UsageMetadata;
 use crate::serde_util::{ResourceName, deserialize_lenient_timestamp};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 struct ForVoice;
@@ -532,12 +531,7 @@ impl<'a> Voices<'a> {
     /// [`pages`](ListVoices::pages) / [`items`](ListVoices::items) to stream
     /// them all.
     pub fn list(self) -> ListVoices<'a> {
-        ListVoices {
-            client: self.client,
-            filters: VoiceFilters::default(),
-            page_size: None,
-            page_token: None,
-        }
+        ListVoices::new(self.client, VoiceFilters::default())
     }
 
     /// Deletes a stored custom voice.
@@ -550,76 +544,90 @@ impl<'a> Voices<'a> {
     }
 }
 
-/// A `GET /v1beta/voices` request, from [`Voices::list`]. All filters are
-/// optional; each one set narrows the list.
-///
-/// End it with [`send`](Self::send) for one page, or
-/// [`pages`](Self::pages) / [`items`](Self::items) to follow
-/// `next_page_token` to the end of the list. The filters and page size are
-/// sent with every page.
-///
-/// The API ties a page token to the filters of the request that returned
-/// it: the same token with other filters, or with none, is a 400 (verified
-/// live 2026-09-27). The streams take care of this; when resuming with
-/// [`with_page_token`](Self::with_page_token), set the same filters again.
-///
-/// # Example
-///
-/// ```no_run
-/// use futures_util::{StreamExt, TryStreamExt};
-/// use genai_rs::{Voice, VoiceType};
-///
-/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
-/// // One page of the British English catalog
-/// let page = client
-///     .voices()
-///     .list()
-///     .with_voice_type(VoiceType::Prebuilt)
-///     .with_language_code("en-GB")
-///     .with_page_size(10)
-///     .send()
-///     .await?;
-/// for voice in &page.voices {
-///     println!("{:?}: {:?}", voice.id, voice.description);
-/// }
-///
-/// // The first 20 matches of a search, across pages
-/// let narrators: Vec<Voice> = client
-///     .voices()
-///     .list()
-///     .with_search("narrator")
-///     .items()
-///     .take(20)
-///     .try_collect()
-///     .await?;
-/// # let _ = narrators;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug)]
-#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
-pub struct ListVoices<'a> {
-    client: &'a Client,
-    filters: VoiceFilters,
-    page_size: Option<u32>,
-    page_token: Option<String>,
-}
+paging::list_builder! {
+    /// A `GET /v1beta/voices` request, from [`Voices::list`]. All filters are
+    /// optional; each one set narrows the list.
+    ///
+    /// End it with [`send`](Self::send) for one page, or
+    /// [`pages`](Self::pages) / [`items`](Self::items) to follow
+    /// `next_page_token` to the end of the list. The filters and page size are
+    /// sent with every page.
+    ///
+    /// The API ties a page token to the filters of the request that returned
+    /// it: the same token with other filters, or with none, is a 400 (verified
+    /// live 2026-09-27). The streams take care of this; when resuming with
+    /// [`with_page_token`](Self::with_page_token), set the same filters again.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use futures_util::{StreamExt, TryStreamExt};
+    /// use genai_rs::{Voice, VoiceType};
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// // One page of the British English catalog
+    /// let page = client
+    ///     .voices()
+    ///     .list()
+    ///     .with_voice_type(VoiceType::Prebuilt)
+    ///     .with_language_code("en-GB")
+    ///     .with_page_size(10)
+    ///     .send()
+    ///     .await?;
+    /// for voice in &page.voices {
+    ///     println!("{:?}: {:?}", voice.id, voice.description);
+    /// }
+    ///
+    /// // The first 20 matches of a search, across pages
+    /// let narrators: Vec<Voice> = client
+    ///     .voices()
+    ///     .list()
+    ///     .with_search("narrator")
+    ///     .items()
+    ///     .take(20)
+    ///     .try_collect()
+    ///     .await?;
+    /// # let _ = narrators;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub struct ListVoices<'a> {
+        filters: VoiceFilters,
+    }
+    page: VoiceListResponse => Voice;
+    label: "voices";
 
-impl<'a> ListVoices<'a> {
     /// Sets the maximum number of voices per page (the API default is 50).
     /// Sent with every page.
-    pub fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
+    fn with_page_size;
 
     /// Starts from this page token, from a previous page's
     /// `next_page_token`. Set the filters that page was listed with, too.
-    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
-        self.page_token = Some(page_token.into());
-        self
-    }
+    fn with_page_token;
 
+    /// Sends the request and returns one page.
+    ///
+    /// A list that matches nothing comes back as an empty page with no
+    /// `next_page_token`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    fn send;
+
+    /// Streams every voice across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    fn items;
+
+    fetch: |http, page_size, token| crate::http::voices::list_voices(
+        http,
+        &filters,
+        page_size,
+        token.as_deref(),
+    ),
+}
+
+impl ListVoices<'_> {
     /// Free-text search over the catalog, e.g. `narrator`.
     pub fn with_search(mut self, search: impl Into<String>) -> Self {
         self.filters.search = Some(search.into());
@@ -672,62 +680,6 @@ impl<'a> ListVoices<'a> {
     pub fn with_pitch(mut self, pitch: VoicePitch) -> Self {
         self.filters.pitch = Some(pitch);
         self
-    }
-
-    /// Sends the request and returns one page.
-    ///
-    /// A list that matches nothing comes back as an empty page with no
-    /// `next_page_token`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the HTTP request fails or response parsing fails.
-    pub async fn send(self) -> Result<VoiceListResponse, GenaiError> {
-        crate::http::voices::list_voices(
-            &self.client.http,
-            &self.filters,
-            self.page_size,
-            self.page_token.as_deref(),
-        )
-        .await
-    }
-
-    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
-    /// or the first page.
-    ///
-    /// Nothing is sent until the stream is polled. It ends after a page
-    /// without a `next_page_token`; an error is yielded once and ends it. A
-    /// page whose token was already requested (the starting token included)
-    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
-    /// clone of the client, so it can be stored or spawned.
-    #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<VoiceListResponse, GenaiError>> {
-        let Self {
-            client,
-            filters,
-            page_size,
-            page_token,
-        } = self;
-        let client = client.clone();
-        paging::pages("voices", page_token, move |token| {
-            let (client, filters) = (client.clone(), filters.clone());
-            async move {
-                crate::http::voices::list_voices(
-                    &client.http,
-                    &filters,
-                    page_size,
-                    token.as_deref(),
-                )
-                .await
-            }
-        })
-    }
-
-    /// Streams every voice across pages, in server order. Same rules as
-    /// [`pages`](Self::pages).
-    #[must_use = "streams do nothing unless polled"]
-    pub fn items(self) -> BoxStream<'static, Result<Voice, GenaiError>> {
-        paging::items(self.pages())
     }
 }
 

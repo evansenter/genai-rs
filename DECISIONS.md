@@ -943,3 +943,36 @@ allocate nothing.
 
 **Consequences.** A one-time migration for every renamed item; the
 CHANGELOG has the table. An accessor added later returns a `Vec` too.
+
+---
+
+## D-029 — One `list_builder!` for the list builders; the auto-function round and trigger listing move (2026-11-06)
+
+**Context.** #498: the eleven list builders repeated the same struct, two
+setters and three terminals, about 100 lines each, so a change to the
+paging rules (D-016) had to be made eleven times; and
+`src/triggers.rs` (1,086 lines) and `src/request_builder/auto_functions.rs`
+(830) were over the roughly 800-line limit (D-014), the second because its
+two loops repeated the per-round logic.
+
+**Decision.** A crate-private `list_builder!` macro in `src/paging.rs`, in
+the style of `impl_list_page!`, emits each builder's struct, `new`,
+`with_page_size`, `with_page_token`, `send`, `pages` and `items`. Each
+resource still writes its docs, its fields, how one page is fetched, and
+any setters of its own (`with_parent`, `with_recursive`, the voice
+filters). A generic `ListRequest<Q>` was rejected: its public type aliases
+would show one set of method docs for every resource, losing the
+per-resource page-size limits and token rules. Moved, per D-011, with no
+behavior or public-path change:
+
+| From | To |
+|------|----|
+| `ListTriggers`, `ListTriggerExecutions`, `TriggerListResponse`, `TriggerExecutionListResponse` and `TriggerExecution` in `src/triggers.rs` | `src/triggers/list.rs` |
+| `build_service_function_map`, `auto_discover_tools`, `execute_function`, `call_function` and their tests in `src/request_builder/auto_functions.rs` | `src/request_builder/auto_functions/round.rs` (as `AutoFunctionLoop`, with `round_tests.rs`) |
+
+`TriggerExecution` moves with the listing because a listing is the only
+place one comes from; the move alone left `triggers.rs` at 814 lines.
+
+**Consequences.** A new list builder is one macro invocation plus its
+docs. The macro's fields are `pub(crate)` so the handles' tests can read a
+builder's query.
