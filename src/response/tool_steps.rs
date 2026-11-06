@@ -211,9 +211,9 @@ impl InteractionResponse {
     /// Whether the response contains generic `tool_call` steps.
     ///
     /// The oldest MCP shape arrived as these; MCP calls now arrive as
-    /// `mcp_server_tool_call` steps, which
-    /// [`mcp_calls`](Self::mcp_calls) reads. See
-    /// [`tool_calls`](Self::tool_calls).
+    /// `mcp_server_tool_call` steps (as `function_call` pairs in the last
+    /// streams seen), both of which [`mcp_calls`](Self::mcp_calls) reads.
+    /// See [`tool_calls`](Self::tool_calls).
     #[must_use]
     pub fn has_tool_calls(&self) -> bool {
         self.steps
@@ -226,7 +226,8 @@ impl InteractionResponse {
     /// These are server-side tool invocations the API does not further
     /// identify: the oldest MCP shape, carrying only an `id` and an optional
     /// `signature`. MCP calls now arrive as `mcp_server_tool_call` steps
-    /// (in between, as answered `function_call` steps named
+    /// in a non-streamed or stored response (in between, and in the last
+    /// streams seen, as answered `function_call` steps named
     /// `<server>:<tool>`), which [`mcp_calls`](Self::mcp_calls) reads with
     /// the server and tool named.
     ///

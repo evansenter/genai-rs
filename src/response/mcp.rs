@@ -77,13 +77,15 @@ impl InteractionResponse {
     /// Reads both shapes the live API has used to identify the server (their
     /// dates are under MCP identity in `docs/ENUM_WIRE_FORMATS.md`):
     ///
-    /// - **The current shape:** an
-    ///   `mcp_server_tool_call` step carrying `server_name`, with `name` as
-    ///   `<server>:<tool>`, paired with an `mcp_server_tool_result` by id.
+    /// - **The current shape, non-streamed** (a stream has not been seen to
+    ///   carry it): an `mcp_server_tool_call` step carrying `server_name`,
+    ///   with `name` as `<server>:<tool>`, paired with an
+    ///   `mcp_server_tool_result` by id.
     ///   The tool is `name` without that prefix, so a server name may
     ///   contain `:` here.
-    /// - **The earlier shape, streamed and not:** a `function_call` named
-    ///   `<server>:<tool>`, where `<server>` is the name the request gave
+    /// - **The earlier shape, and the last one seen streamed:** a
+    ///   `function_call` named `<server>:<tool>`, where `<server>` is the
+    ///   name the request gave
     ///   [`McpServerConfig`](crate::McpServerConfig), answered by a
     ///   `function_result` with the same id in the same response. A call
     ///   counts only when it was answered here: a client function may also

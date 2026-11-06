@@ -48,10 +48,11 @@ pub struct GenerationConfig {
     /// Thinking level for chain-of-thought reasoning
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
-    /// Seed for deterministic output generation.
+    /// Seed for repeatable sampling.
     ///
-    /// Using the same seed with identical inputs will produce the same output,
-    /// useful for testing and debugging.
+    /// Identical seeded requests have returned identical text, but the API
+    /// documents no guarantee, so don't rely on it for exact-text
+    /// assertions (see `docs/CONFIGURATION.md`, "Seeds").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
     /// Stop sequences that halt generation.
