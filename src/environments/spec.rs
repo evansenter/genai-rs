@@ -130,7 +130,7 @@ pub struct AllowlistEntry {
     pub transform: Option<Vec<HashMap<String, String>>>,
     /// ID of a [`Credential`](crate::Credential) to inject on requests to
     /// this domain (an unknown ID is a 404). A bearer credential arrives as
-    /// `Authorization: Bearer <token>` (verified live 2026-09-24).
+    /// `Authorization: Bearer <token>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
     /// Additional fields not yet modeled (Evergreen forward compatibility)
@@ -168,7 +168,7 @@ impl AllowlistEntry {
 ///
 /// A plain value is visible in the sandbox as-is. A credential-backed variable
 /// holds only a placeholder there; the egress proxy substitutes the secret
-/// into outbound requests the credential trusts (verified live 2026-09-24).
+/// into outbound requests the credential trusts.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
@@ -225,9 +225,8 @@ pub enum NetworkConfig {
     /// `{"allowlist": "disabled"}`, the bindings' `Disabled` arm of the
     /// allowlist). A GET echoes it as `{"allowlist": [{"mode":
     /// "disabled"}]}`, which reads as this variant too. It blocks egress
-    /// exactly as [`Disabled`](Self::Disabled) does (live 2026-11-05: an
-    /// agent's `curl` in either sandbox got the egress proxy's 403, and 200
-    /// in one with no network config), so prefer that; check either with
+    /// exactly as [`Disabled`](Self::Disabled) does (an agent's `curl` gets
+    /// the egress proxy's 403 under either), so prefer that; check either with
     /// [`is_disabled`](Self::is_disabled) (#489).
     AllowlistDisabled,
     /// Restricts outbound traffic to the listed domains
@@ -373,7 +372,7 @@ impl<'de> Deserialize<'de> for NetworkConfig {
 }
 
 /// `{"allowlist": "disabled"}`, or the `{"allowlist": [{"mode": "disabled"}]}`
-/// a GET echoes it as (live 2026-11-05), with nothing beside it.
+/// a GET echoes it as, with nothing beside it.
 fn is_disabled_allowlist(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
     obj.len() == 1
         && obj.get("allowlist").is_some_and(|allowlist| {
@@ -403,10 +402,9 @@ pub struct RemoteEnvironment {
     ///
     /// On an interaction's `environment`, the agent runs in that environment
     /// with its files: the interaction reports the ID as its
-    /// `environment_id`, and an ID that does not exist is a 404 (live
-    /// 2026-11-05). On an agent's
-    /// [`base_environment`](crate::Agent::base_environment) it is accepted
-    /// and dropped, unchecked (live 2026-11-05).
+    /// `environment_id`, and an ID that does not exist is a 404. On an
+    /// agent's [`base_environment`](crate::Agent::base_environment) it is
+    /// accepted and dropped, unchecked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Sources mounted into the environment.
@@ -471,7 +469,7 @@ impl RemoteEnvironment {
 }
 
 /// Reads `env` in the request's map form or the list of single-key maps the
-/// API echoes back (`[{"NAME": {...}}, ...]`, observed 2026-09-24). Returns
+/// API echoes back (`[{"NAME": {...}}, ...]`). Returns
 /// `None` for any other shape so the caller can preserve it verbatim.
 fn env_from_wire(value: &serde_json::Value) -> Option<BTreeMap<String, EnvVar>> {
     let entries: Vec<(&String, &serde_json::Value)> = match value {

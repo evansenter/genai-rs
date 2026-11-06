@@ -153,8 +153,8 @@ pub struct UsageMetadata {
     /// This is **implicit** caching, applied by the API with no
     /// configuration. Explicit context caching is not available on the
     /// Interactions API: the request field is rejected at every spelling and
-    /// at both the top level and inside `generation_config` (verified live
-    /// 2026-08-16), so there is nothing to pair this with — a non-zero value
+    /// at both the top level and inside `generation_config`, so there is
+    /// nothing to pair this with — a non-zero value
     /// here is the whole story.
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -169,7 +169,7 @@ pub struct UsageMetadata {
     pub total_thought_tokens: Option<u32>,
     /// Total number of tokens used for tool/function calling overhead.
     ///
-    /// Declaration alone is not counted: measured 2026-08-16, an interaction
+    /// Declaration alone is not counted: an interaction
     /// declaring an MCP server but answering from the model's own knowledge
     /// returns `Some(0)`, identical to the same prompt with no tool
     /// declared. So a non-zero value means a tool was actually invoked,
@@ -187,7 +187,7 @@ pub struct UsageMetadata {
     )]
     pub total_tool_use_tokens: Option<u32>,
     /// Input tokens of the interaction's first turn (google-genai 2.34.0;
-    /// on every response live, 2026-11-01). On a continued decode it stays
+    /// on every live response). On a continued decode it stays
     /// at the original prompt while
     /// [`total_input_tokens`](Self::total_input_tokens) grows.
     #[serde(
@@ -232,7 +232,7 @@ pub struct UsageMetadata {
     /// for roundtrip (Evergreen). Live responses carry `raw_prompt_token`,
     /// `model_invocation_token_counts` and
     /// `non_grounding_model_invocation_token_counts`, none of which are in
-    /// the bindings (2026-09-24).
+    /// the bindings.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }

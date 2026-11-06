@@ -584,11 +584,11 @@ pub async fn video_from_file_with_mime(
 }
 
 /// MIME types [`document_from_file`] sends as document content: the ones the
-/// Interactions API accepts inline, verified live 2026-11-05 by reading back a
-/// real file of each type. The legacy `.doc`, `.xls` and `.ppt` types only
-/// passed the API's MIME check with plain-text bytes; parsing a real legacy
-/// file is unverified. The API rejects other inline document types with
-/// `400 Unsupported mime_type`.
+/// Interactions API accepts inline, each read back from a real file. The
+/// legacy `.doc`, `.xls` and `.ppt` types only passed the API's MIME check
+/// with plain-text bytes; parsing a real legacy file is unverified. The API
+/// rejects other inline document types with `400 Unsupported mime_type`.
+/// The dated record is under Requests in `docs/INTERACTIONS_API_GAP.md`.
 const DOCUMENT_MIME_TYPES: &[&str] = &[
     "application/pdf",
     "text/csv",
@@ -604,9 +604,8 @@ const DOCUMENT_MIME_TYPES: &[&str] = &[
 ];
 
 /// MIME types [`document_from_file`] reads as UTF-8 and sends as text content.
-/// The API accepted these as documents until 2026-11-04, when it started
-/// rejecting them with a 400 ("Unsupported mime_type ... in document content"),
-/// see #514.
+/// The API rejects them as document content with a 400 ("Unsupported
+/// mime_type ... in document content", #514).
 const TEXT_FILE_MIME_TYPES: &[&str] = &["text/plain", "text/markdown"];
 
 /// Loads a document file with automatic MIME type detection.
@@ -629,9 +628,9 @@ const TEXT_FILE_MIME_TYPES: &[&str] = &["text/plain", "text/markdown"];
 /// | `.txt`, `.md` | Text content ([`Content::text()`]) with the file's UTF-8 contents |
 ///
 /// Document content is base64-encoded. These are the document types the
-/// Interactions API accepts inline (verified live 2026-11-05 by reading back
-/// a real file of each type; for `.doc`, `.xls` and `.ppt`, only that the API
-/// accepts the MIME type, not that it parses a real legacy file).
+/// Interactions API accepts inline (each read back from a real file; for
+/// `.doc`, `.xls` and `.ppt`, only that the API accepts the MIME type, not
+/// that it parses a real legacy file).
 ///
 /// The Interactions API rejects `text/plain` and `text/markdown` as document
 /// content, so plain-text files are sent as text instead; the model reads them

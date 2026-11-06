@@ -210,9 +210,10 @@ impl InteractionResponse {
 
     /// Whether the response contains generic `tool_call` steps.
     ///
-    /// MCP calls arrived as these through September 2026; since 2026-10-01
-    /// they arrive as [`function_calls`](Self::function_calls) named
-    /// `<server>:<tool>`. See [`tool_calls`](Self::tool_calls).
+    /// The oldest MCP shape arrived as these; MCP calls now arrive as
+    /// `mcp_server_tool_call` steps, which
+    /// [`mcp_calls`](Self::mcp_calls) reads. See
+    /// [`tool_calls`](Self::tool_calls).
     #[must_use]
     pub fn has_tool_calls(&self) -> bool {
         self.steps
@@ -223,10 +224,11 @@ impl InteractionResponse {
     /// The generic `tool_call` steps, in order.
     ///
     /// These are server-side tool invocations the API does not further
-    /// identify: MCP calls arrived as them on 2026-08-16, carrying only an
-    /// `id` and an optional `signature`. Since 2026-10-01 an MCP call
-    /// arrives instead as an answered `function_call` named
-    /// `<server>:<tool>`, in [`function_calls`](Self::function_calls).
+    /// identify: the oldest MCP shape, carrying only an `id` and an optional
+    /// `signature`. MCP calls now arrive as `mcp_server_tool_call` steps
+    /// (in between, as answered `function_call` steps named
+    /// `<server>:<tool>`), which [`mcp_calls`](Self::mcp_calls) reads with
+    /// the server and tool named.
     ///
     /// Returns a borrowed view carrying both fields, matching
     /// [`function_calls`](Self::function_calls) — the `signature` is what a
@@ -253,7 +255,7 @@ impl InteractionResponse {
     /// Whether the response contains a `file_search_result` step, that is,
     /// whether a file search ran.
     ///
-    /// The step carries no results (live 2026-11-05): the retrieved chunks
+    /// The step carries no results: the retrieved chunks
     /// are folded into the answer, which cites them with `file_citation`
     /// [`Annotation`](crate::Annotation)s. Read those with
     /// [`all_annotations`](Self::all_annotations).

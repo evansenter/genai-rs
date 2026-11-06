@@ -163,7 +163,7 @@ impl AgentBuilder {
     /// [`AntigravityError::Config`] without one. Without a configured key
     /// (an empty one included) the harness falls back to its own
     /// environment's `GEMINI_API_KEY` and sends *that* to the custom host
-    /// (verified on harness 0.1.23, 2026-11-04), which would hand a real key
+    /// (harness 0.1.23), which would hand a real key
     /// to whatever the URL names. Pass the key that host expects, or any
     /// placeholder for a server that checks none. As a second guard, the
     /// harness is started without `GEMINI_API_KEY` and `GOOGLE_API_KEY` in
@@ -192,13 +192,14 @@ impl AgentBuilder {
     /// [`SystemInstructions::harness_default`] lets you replace its
     /// identity line and add sections of your own.
     ///
-    /// ```rust,ignore
-    /// use genai_rs::antigravity::SystemInstructions;
+    /// ```rust,no_run
+    /// use genai_rs::antigravity::{AntigravityAgent, SystemInstructions};
     ///
     /// let added = AntigravityAgent::builder()
     ///     .with_system_instructions("Review for security issues only.");
     /// let replaced = AntigravityAgent::builder()
     ///     .with_system_instructions(SystemInstructions::custom("You are a linter."));
+    /// # let _ = (added, replaced);
     /// ```
     #[must_use]
     pub fn with_system_instructions(mut self, instructions: impl Into<SystemInstructions>) -> Self {
@@ -237,12 +238,14 @@ impl AgentBuilder {
     ///
     /// Turn it off to manage workspace grounding yourself:
     ///
-    /// ```rust,ignore
-    /// let agent = AntigravityAgent::builder()
+    /// ```rust,no_run
+    /// # use genai_rs::antigravity::AntigravityAgent;
+    /// let builder = AntigravityAgent::builder()
     ///     .add_workspace("/repo")
     ///     .with_workspace_announcement(false)
     ///     // ...
     ///     ;
+    /// # let _ = builder;
     /// ```
     #[must_use]
     pub fn with_workspace_announcement(mut self, announce: bool) -> Self {
@@ -275,12 +278,14 @@ impl AgentBuilder {
     /// Turn it off only if the agent must reach paths outside its
     /// workspaces, and gate those tools with a pre-tool hook or policy:
     ///
-    /// ```rust,ignore
-    /// let agent = AntigravityAgent::builder()
+    /// ```rust,no_run
+    /// # use genai_rs::antigravity::AntigravityAgent;
+    /// let builder = AntigravityAgent::builder()
     ///     .add_workspace("/repo")
     ///     .with_workspace_containment(false)
     ///     // ...
     ///     ;
+    /// # let _ = builder;
     /// ```
     #[must_use]
     pub fn with_workspace_containment(mut self, contain: bool) -> Self {
@@ -467,8 +472,10 @@ impl AgentBuilder {
     /// decides to. [`triggers::on_file_change`] builds one that watches a
     /// path. Deliveries wait while a turn runs; see [`triggers`].
     ///
-    /// ```rust,ignore
-    /// let agent = AntigravityAgent::builder()
+    /// ```rust,no_run
+    /// # use genai_rs::antigravity::AntigravityAgent;
+    /// # let (_jobs, mut queue) = tokio::sync::mpsc::channel::<u32>(8);
+    /// let builder = AntigravityAgent::builder()
     ///     .add_custom_trigger(|ctx| async move {
     ///         while let Some(job) = queue.recv().await {
     ///             ctx.send(format!("Process job {job}.")).await?;
@@ -477,6 +484,7 @@ impl AgentBuilder {
     ///     })
     ///     // ...
     ///     ;
+    /// # let _ = builder;
     /// ```
     ///
     /// An error the trigger returns is logged and ends that trigger only.

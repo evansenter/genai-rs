@@ -31,7 +31,7 @@
 //!
 //! Unlike the Interactions API, which uses snake_case throughout, this
 //! resource returns **camelCase** (`displayName`, `createTime`,
-//! `embeddingModel`, `sizeBytes`). Verified live 2026-08-16. The types here
+//! `embeddingModel`, `sizeBytes`). The types here
 //! therefore carry explicit `rename_all = "camelCase"`, deliberately
 //! diverging from the rest of the crate — see `docs/ENUM_WIRE_FORMATS.md`.
 //!
@@ -251,7 +251,7 @@ impl<'a> FileSearchStores<'a> {
     /// one its extension maps to, as for [`Files::upload`](crate::Files::upload).
     /// The document's display name is the one set with
     /// [`FileUpload::with_display_name`](crate::FileUpload::with_display_name); without one, a path upload is named
-    /// after its file and an in-memory upload is unnamed (live 2026-11-05).
+    /// after its file and an in-memory upload is unnamed.
     ///
     /// The document is indexed asynchronously and starts in
     /// [`DocumentState::Pending`]; file search will not match it until it
@@ -273,7 +273,7 @@ impl<'a> FileSearchStores<'a> {
     /// extension doesn't map to one, without [`FileUpload::with_mime_type`](crate::FileUpload::with_mime_type)),
     /// a MIME type that cannot be sent as a header value, or a white-space
     /// chunking overlap not smaller than its chunk (which the API fails with
-    /// a 500, live 2026-11-05). MIME *syntax* is not checked: `nonsense` or
+    /// a 500). MIME *syntax* is not checked: `nonsense` or
     /// `text/` reach the API and come back as an API error. Returns an API or
     /// network error if the upload fails, and
     /// [`GenaiError::MalformedResponse`] if its answer names no document. If the upload succeeds but reading the document back
@@ -346,7 +346,7 @@ impl<'a> FileSearchStores<'a> {
     /// the [chunking](DocumentImport::with_chunking_config) to index it with,
     /// and how long to [wait](DocumentImport::with_poll_options). The
     /// document is named after the file's ID, and is a copy: deleting the
-    /// file afterwards leaves it in place (live 2026-11-05).
+    /// file afterwards leaves it in place.
     ///
     /// The API answers with an operation, which this polls (`GET` on the
     /// operation, every 500 ms for up to 60 s by default) until it names the
@@ -369,7 +369,7 @@ impl<'a> FileSearchStores<'a> {
     /// Do not retry an import that timed out or whose polling failed: the
     /// import goes on on the server, and its document already exists,
     /// pending, under the operation's ID, so a second import makes a second
-    /// document (live 2026-11-05). The error names the operation and that
+    /// document. The error names the operation and that
     /// document; wait for it with
     /// [`FileSearchDocuments::wait_until_active`] instead.
     ///

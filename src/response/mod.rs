@@ -58,19 +58,19 @@ wire_enum! {
         /// Decoding paused and can be resumed with
         /// [`continuation_token`](InteractionResponse::continuation_token).
         ///
-        /// In the google-genai 2.34.0 bindings but never observed live: on
-        /// 2026-11-01 a continuable response (only
+        /// In the google-genai 2.34.0 bindings but never observed live: a
+        /// continuable response (only
         /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL), at
-        /// `max_output_tokens`) reported [`Incomplete`](Self::Incomplete)
+        /// `max_output_tokens`) reports [`Incomplete`](Self::Incomplete)
         /// with a token instead.
         RequiresContinuation = "requires_continuation",
         /// Accepted but not started yet.
         ///
         /// In the google-genai 2.34.0 bindings (on the interaction, the
         /// stream's interaction and its status updates) but not in the
-        /// spec, and never observed live: on 2026-11-05 background agent
-        /// and model interactions reported
-        /// [`InProgress`](Self::InProgress) from their create response on.
+        /// spec, and never observed live: background agent and model
+        /// interactions report [`InProgress`](Self::InProgress) from their
+        /// create response on.
         Queued = "queued",
     }
     unknown(status_type, unknown_status_type)
@@ -153,8 +153,8 @@ pub struct InteractionResponse {
 
     /// Resource type discriminator returned by the API.
     ///
-    /// The live API returns `"interaction"` on every response (verified
-    /// 2026-07 against Api-Revision 2026-05-20). Preserved for lossless
+    /// The live API returns `"interaction"` on every response. Preserved for
+    /// lossless
     /// roundtrip per Evergreen principles.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub object: Option<String>,
@@ -162,16 +162,15 @@ pub struct InteractionResponse {
     /// The service tier that actually processed this request.
     ///
     /// The live API echoes the effective tier (e.g. `"standard"`) on every
-    /// response, including when the request did not set `service_tier`
-    /// (verified 2026-07 against Api-Revision 2026-05-20).
+    /// response, including when the request did not set `service_tier`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
 
     /// The per-request webhook routing config, echoed back by the API.
     ///
     /// The live API echoes the request's `webhook_config` (`uris` +
-    /// `user_metadata`) verbatim on the create response (verified 2026-07
-    /// against Api-Revision 2026-05-20). Preserved for lossless roundtrip
+    /// `user_metadata`) verbatim on the create response. Preserved for
+    /// lossless roundtrip
     /// per Evergreen principles.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_config: Option<crate::webhooks::WebhookConfig>,
@@ -180,7 +179,7 @@ pub struct InteractionResponse {
     /// 2.34.0 bindings.
     ///
     /// Not served: create responses, stored reads and stream completed
-    /// events carry none (live 2026-11-05); the text is in the steps. Kept
+    /// events carry none; the text is in the steps. Kept
     /// because it is in the bindings and the text helpers' fallback to it
     /// costs nothing. Use [`as_text()`](Self::as_text) /
     /// [`all_text()`](Self::all_text), which fall back to this field when
@@ -199,21 +198,20 @@ pub struct InteractionResponse {
     /// The system instruction the interaction ran with. Only a stored
     /// interaction read back with
     /// [`interactions().get`](crate::Interactions::get) carries it; create
-    /// responses stopped echoing request fields by 2026-10-01.
+    /// responses don't echo it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
 
     /// The request's labels. Like
     /// [`system_instruction`](Self::system_instruction), only a stored
     /// interaction read back with
-    /// [`interactions().get`](crate::Interactions::get) carries them
-    /// (verified live 2026-10-01).
+    /// [`interactions().get`](crate::Interactions::get) carries them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
 
     /// The generation config the interaction ran with. Like
     /// [`system_instruction`](Self::system_instruction), only a stored
-    /// interaction read back carries it (verified live 2026-11-05); the spec
+    /// interaction read back carries it; the spec
     /// marks it `writeOnly`, but it is served.
     ///
     /// `speech_config` comes back in the `{"speakers": [...]}` form whichever
@@ -222,38 +220,38 @@ pub struct InteractionResponse {
     /// [`get_with_input`](crate::Interactions::get_with_input), every list in
     /// it (`stop_sequences`, the speakers) holds each entry twice, as do
     /// [`response_modalities`](Self::response_modalities) and
-    /// [`safety_settings`](Self::safety_settings) (live 2026-11-04 and
-    /// 2026-11-05); a plain [`get`](crate::Interactions::get) serves them
+    /// [`safety_settings`](Self::safety_settings); a plain
+    /// [`get`](crate::Interactions::get) serves them
     /// once. The crate keeps what was served and does not deduplicate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GenerationConfig>,
 
     /// The request's response format. Only a stored interaction read back
-    /// carries it (verified live 2026-11-05).
+    /// carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormatSpec>,
 
     /// The request's response modalities (`"text"`, `"image"`, `"audio"`).
-    /// Only a stored interaction read back carries them (verified live
-    /// 2026-11-05); see [`generation_config`](Self::generation_config) on
+    /// Only a stored interaction read back carries them; see
+    /// [`generation_config`](Self::generation_config) on
     /// the repeated entries of an `include_input` read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_modalities: Option<Vec<String>>,
 
     /// The request's safety settings. Echoed on the create response as well
-    /// as on a stored read (verified live 2026-11-05); see
+    /// as on a stored read; see
     /// [`generation_config`](Self::generation_config) on the repeated entries
     /// of an `include_input` read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
 
     /// The agent's config, echoed on an agent interaction's create response
-    /// and stored read (verified live 2026-11-05, `{"type": "antigravity"}`).
+    /// and stored read (`{"type": "antigravity"}`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_config: Option<AgentConfig>,
 
     /// The environment the request named: the id string when it named one by
-    /// id (verified live 2026-11-05, on a stored read), or the inline
+    /// id (on a stored read), or the inline
     /// definition. [`environment_id`](Self::environment_id) holds the id the
     /// interaction ran in either way.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -262,8 +260,7 @@ pub struct InteractionResponse {
     /// Resumes a decode that stopped early; pass it back with
     /// [`InteractionBuilder::with_continuation_token`](crate::InteractionBuilder::with_continuation_token).
     ///
-    /// Verified live 2026-11-01: only
-    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports decoding
+    /// Only [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports decoding
     /// continuation. It returns a token with status
     /// [`Incomplete`](InteractionStatus::Incomplete) when
     /// `max_output_tokens` cuts the answer off, on plain, streamed and
@@ -272,7 +269,7 @@ pub struct InteractionResponse {
     pub continuation_token: Option<String>,
 
     /// Errors the interaction ended with, e.g. `[{"code": "CANCELLED", ...}]`
-    /// on an interaction cancelled by a dropped stream (live 2026-11-01).
+    /// on an interaction cancelled by a dropped stream.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<InteractionError>>,
 
@@ -341,7 +338,7 @@ impl InteractionResponse {
     /// Extract the first text content from the model output steps.
     ///
     /// Falls back to the [`output_text`](Self::output_text) convenience
-    /// field (in the bindings, not served as of 2026-11-05) when no
+    /// field (in the bindings, not served) when no
     /// text-bearing steps are present.
     ///
     /// # Example
@@ -569,10 +566,10 @@ impl InteractionResponse {
     /// Function calls that still need a result: those with no
     /// [`Step::FunctionResult`] for their `id` in this response.
     ///
-    /// A tool the server runs itself, such as an MCP server, comes back as a
-    /// `function_call` and its `function_result` in the same response
-    /// (observed 2026-10-01), so [`function_calls`](Self::function_calls)
-    /// alone over-reports what the client must answer.
+    /// A tool the server runs itself can come back as a `function_call` and
+    /// its `function_result` in the same response (MCP calls have), so
+    /// [`function_calls`](Self::function_calls) alone over-reports what the
+    /// client must answer.
     #[must_use]
     pub fn pending_function_calls(&self) -> Vec<FunctionCallInfo<'_>> {
         let answered: std::collections::BTreeSet<&str> = self
@@ -758,8 +755,8 @@ impl InteractionResponse {
     /// Get the number of tool use tokens consumed.
     ///
     /// Tool use tokens represent overhead from function calling.
-    /// Declaring a tool without using it does not count — measured
-    /// 2026-08-16 — so a non-zero value means a tool was actually invoked.
+    /// Declaring a tool without using it does not count, so a non-zero
+    /// value means a tool was actually invoked.
     /// It is a single aggregate across all tools, though, so it identifies
     /// *which* tool only when one is declared.
     /// Returns `None` when usage metadata is absent, or when the API omitted

@@ -20,7 +20,8 @@ use tracing::{debug, warn};
 /// stored interaction is readable only once it has: a `GET` sent right
 /// after a close at `interaction.completed` answered `500 Internal error
 /// encountered`, the same `GET` ten seconds later `200`, and one sent after
-/// reading to the end `200` at once (live 2026-11-05, `DEFAULT_MODEL`). So a
+/// reading to the end `200` at once (dated under Streaming in
+/// `docs/INTERACTIONS_API_GAP.md`). So a
 /// stream reads the tail before it ends, and a caller that reads it to its
 /// end can `get` the interaction or chain on it right away.
 ///

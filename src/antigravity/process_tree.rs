@@ -4,8 +4,8 @@
 //! `process_group(0)`), so a signal to that group reaches it and everything
 //! it started without moving them elsewhere, such as stdio MCP servers.
 //! That alone is not enough: the harness gives every `run_command` command
-//! a process group of its own (pgid == the command's pid, verified on
-//! harness 0.1.23, 2026-11-04), so the command and its children sit outside
+//! a process group of its own (pgid == the command's pid on harness
+//! 0.1.23), so the command and its children sit outside
 //! the harness's group. Those groups are found through the harness's direct
 //! children and signalled too.
 //!

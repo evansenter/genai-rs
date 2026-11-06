@@ -15,9 +15,10 @@
 //!
 //! # Quick start
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use genai_rs::antigravity::{AntigravityAgent, policy};
 //!
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut agent = AntigravityAgent::builder()
 //!     .with_api_key(std::env::var("GEMINI_API_KEY")?)
 //!     .with_model(genai_rs::DEFAULT_MODEL)
@@ -31,6 +32,8 @@
 //! let response = agent.chat("Summarize src/lib.rs").await?;
 //! println!("{}", response.text());
 //! agent.shutdown().await?;
+//! # Ok(())
+//! # }
 //! ```
 
 mod agent;

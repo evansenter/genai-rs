@@ -22,9 +22,9 @@ pub(crate) struct DocumentOptions {
 
 impl DocumentOptions {
     /// Rejects a white-space overlap that is not smaller than its chunk. The
-    /// API answers one with a `500 Internal error` (live 2026-11-05: an
-    /// overlap equal to the chunk and one larger), which reads as
-    /// retryable, so it is caught before any request.
+    /// API answers one (an overlap equal to the chunk, or larger) with a
+    /// `500 Internal error`, which reads as retryable, so it is caught
+    /// before any request.
     pub(crate) fn validate(&self) -> Result<(), GenaiError> {
         let Some(white_space) = self
             .chunking_config

@@ -80,10 +80,10 @@ impl Interactions<'_> {
     /// parameter so the response's `input` field is populated.
     ///
     /// The input comes back as a step list, a single `user_input` step for a
-    /// text prompt (live 2026-11-04; it was not echoed in 2026-07). On this
+    /// text prompt. On this
     /// read the API also repeats every entry of the stored request's lists
     /// (`stop_sequences`, `response_modalities`, `safety_settings`, speech
-    /// speakers; live 2026-11-04 and 2026-11-05), and the crate keeps them
+    /// speakers), and the crate keeps them
     /// as served: see
     /// [`generation_config`](InteractionResponse::generation_config).
     ///

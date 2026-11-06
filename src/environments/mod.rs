@@ -24,7 +24,7 @@
 //! reference it, and [`get`](Environments::get), [`list`](Environments::list)
 //! and [`delete`](Environments::delete) them.
 //!
-//! Wire format verified live 2026-08-08: the resource uses `created` /
+//! Wire format: the resource uses `created` /
 //! `updated` / `last_accessed` ISO-8601 timestamps, and `file_count` /
 //! `size_bytes` are int64s serialized as JSON *strings* (protobuf JSON
 //! convention); both are accepted here as numbers too.
@@ -39,10 +39,7 @@
 //! interaction runs. Paths are relative to the environment root; `""` lists
 //! the root.
 //!
-//! Verified live 2026-09-24: listing (root, a directory, one file,
-//! recursive) and a resumable single-shot upload; 2026-11-05: downloading a
-//! file and a directory. The API reports entry
-//! types in uppercase (`FILE`, `DIRECTORY`) although the bindings spell them
+//! The API reports entry types in uppercase (`FILE`, `DIRECTORY`) although the bindings spell them
 //! lowercase; both are accepted. Environments are forked with
 //! [`CreateEnvironmentRequest::from_environment`].
 //!
@@ -155,7 +152,7 @@ pub struct Environment {
     ///
     /// Without this, a deserialize-then-serialize cycle silently drops any
     /// field the crate has not modeled yet — invisible to the caller, and
-    /// unrecoverable. The resource was live-verified 2026-08-08, but verification is a
+    /// unrecoverable. The shape was verified live, but that is a
     /// point-in-time snapshot, not a guarantee the shape stays fixed.
     ///
     /// A key that collides with a modeled field **wins on serialize** via
@@ -184,7 +181,7 @@ pub struct Environment {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct CreateEnvironmentRequest {
     /// An environment to copy. Must be a bare ID: the documented
-    /// `environments/{id}` form returned 404 (2026-09-24). Excludes
+    /// `environments/{id}` form is a 404. Excludes
     /// `sources`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_environment: Option<String>,
@@ -377,8 +374,8 @@ paging::list_builder! {
     /// every page.
     ///
     /// A page can hold fewer environments than the page size, or none, while
-    /// more remain: live on 2026-09-26, with `page_size=1` one page of the list
-    /// came back empty with a `next_page_token`. The streams follow such pages;
+    /// more remain: with `page_size=1` one page of the list has come back
+    /// empty with a `next_page_token`. The streams follow such pages;
     /// when calling [`send`](Self::send) yourself, keep going while
     /// `next_page_token` is present rather than stopping on a short page.
     ///

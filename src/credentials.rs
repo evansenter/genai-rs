@@ -11,16 +11,15 @@
 //! [`get`](Credentials::get), [`list`](Credentials::list),
 //! [`update`](Credentials::update) and [`delete`](Credentials::delete).
 //!
-//! Verified live 2026-09-24: create (bearer token, environment variable),
-//! get, list, patch (with and without `update_mask`), delete; the ID is
-//! optional on create (a UUID is assigned). OAuth2 creation validates that
-//! `token_url` is reachable. Since late October 2026 (seen 2026-10-30), an
-//! `environment_variable` create needs at least one `trusted_domains` entry
-//! as well as an `injection_location`, although the `google-genai` 2.34.0
-//! bindings still mark the domains optional.
+//! The ID is optional on create (a UUID is assigned). OAuth2 creation
+//! validates that `token_url` is reachable. An `environment_variable`
+//! create needs at least one `trusted_domains` entry as well as an
+//! `injection_location`, although the `google-genai` 2.34.0 bindings mark
+//! the domains optional. The live record of this resource is under
+//! Credentials in `docs/INTERACTIONS_API_GAP.md`.
 //!
-//! Both references take effect at runtime (verified live 2026-09-24 in a
-//! `DEFAULT_ANTIGRAVITY_AGENT` sandbox, pinned by
+//! Both references take effect at runtime, in a
+//! `DEFAULT_ANTIGRAVITY_AGENT` sandbox (pinned by
 //! `tests/credentials_tests.rs`). An `environment_variable` credential is
 //! never visible inside the sandbox: the variable holds a placeholder, and the
 //! egress proxy substitutes the secret into requests to its `trusted_domains`
@@ -31,8 +30,8 @@
 //!
 //! Methods take the bare ID ([`Credential::id`]), not a `credentials/...`
 //! resource name: the ID is percent-encoded into a single path segment, and
-//! the API rejects a resource name there with a 400 (verified live
-//! 2026-09-27). The API allows letters, digits and hyphens, up to 63
+//! the API rejects a resource name there with a 400. The API allows
+//! letters, digits and hyphens, up to 63
 //! characters, and checks this on create too. An empty or dot-segment ID
 //! fails locally with [`GenaiError::InvalidInput`] before any request.
 
@@ -152,14 +151,14 @@ pub enum CredentialConfig {
         token: String,
         /// Header to inject into; the API defaults to `Authorization`.
         ///
-        /// Accepted but not applied as of 2026-09-24: a custom header name
-        /// still arrived as `Authorization` in two live probes.
+        /// Accepted but not applied: a custom header name still arrived as
+        /// `Authorization` in live probes.
         #[serde(skip_serializing_if = "Option::is_none")]
         header_name: Option<String>,
         /// Prefix before the token; the API defaults to `Bearer`. `""` for
         /// none.
         ///
-        /// Accepted but not applied as of 2026-09-24, like `header_name`.
+        /// Accepted but not applied, like `header_name`.
         #[serde(skip_serializing_if = "Option::is_none")]
         prefix: Option<String>,
     },
@@ -171,7 +170,7 @@ pub enum CredentialConfig {
         /// Where the value may be injected; the API requires at least one.
         injection_location: Vec<InjectionLocation>,
         /// Domains whose requests receive the value. The API requires at
-        /// least one (`400 invalid_request` otherwise, seen 2026-10-30).
+        /// least one (`400 invalid_request` otherwise).
         trusted_domains: Vec<String>,
     },
     /// OAuth2 client credentials.
@@ -356,8 +355,7 @@ pub struct CredentialUpdate {
     /// [`Credentials::update`] sends it as the `update_mask` query
     /// parameter; it is never part of the body. `None` omits the parameter.
     ///
-    /// Verified live 2026-09-24: an update is accepted with and without a
-    /// mask.
+    /// The API accepts an update with or without a mask.
     #[serde(skip)]
     pub update_mask: Option<String>,
 }

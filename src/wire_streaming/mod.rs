@@ -49,12 +49,12 @@ pub enum StreamChunk {
     /// Useful for tracking progress of background/agent interactions.
     StatusUpdate {
         /// The interaction ID. Absent on a `store: false` stream, which has
-        /// no stored interaction to name (live 2026-11-01).
+        /// no stored interaction to name.
         interaction_id: Option<String>,
         /// The updated status
         status: InteractionStatus,
         /// Usage so far. Background streams send it mid-run (google-genai
-        /// 2.34.0; live 2026-11-01).
+        /// 2.34.0).
         usage: Option<Box<UsageMetadata>>,
         /// A continuation token (google-genai 2.34.0; not observed live,
         /// where it arrives on the completed interaction instead).
@@ -78,8 +78,8 @@ pub enum StreamChunk {
         delta: StepDelta,
         /// Cumulative interaction usage so far, from the event's
         /// `metadata.total_usage` (google-genai 2.34.0 and the spec). Not
-        /// observed live: text, TTS and agent streams sent no `metadata` on
-        /// a `step.delta` (2026-11-05), so expect `None`.
+        /// observed live: text, TTS and agent streams send no `metadata` on
+        /// a `step.delta`, so expect `None`.
         total_usage: Option<Box<UsageMetadata>>,
     },
 
@@ -202,7 +202,7 @@ impl StreamChunk {
 /// This wrapper pairs a [`StreamChunk`] with its `event_id`. Only a
 /// **background** interaction's stream carries event ids and can be
 /// resumed: a foreground `create_stream()` carries none, and the server
-/// cancels it when the connection drops (verified live 2026-11-01).
+/// cancels it when the connection drops.
 ///
 /// # Example
 ///

@@ -241,14 +241,14 @@ const WILDCARD: &str = "*";
 ///
 /// **A subagent's own tool calls are not gated** on harness 0.1.23: they
 /// reach neither the pre-tool callback nor the harness's policy evaluator,
-/// and workspace containment does not confine them (verified 2026-11-05).
+/// and workspace containment does not confine them.
 /// Only the subagent's capabilities limit what it can do, so give a
 /// subagent only builtins it may use ungated.
 ///
 /// # Evaluation order
 ///
 /// The harness's own evaluator's order, which the Python SDK documents and
-/// harness 0.1.23 follows (verified 2026-11-05):
+/// harness 0.1.23 follows:
 ///
 /// 1. **Specificity**: a rule naming the tool beats a server-wide MCP rule
 ///    (`mcp_<server>_*`), which beats the wildcard (`"*"`).

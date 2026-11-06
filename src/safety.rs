@@ -8,8 +8,8 @@
 //! wire values deserialize into `Unknown` variants that preserve the
 //! original data for roundtrip serialization.
 //!
-//! Accepted by the Gemini API (verified live 2026-10-30; the parameter was
-//! Vertex-only through 2026-10-08). The wire object is
+//! Accepted by the Gemini API (it was Vertex-only until recently; see
+//! Safety settings in `docs/ENUM_WIRE_FORMATS.md`). The wire object is
 //! `{"type", "threshold", "method"?}`, and the API validates every value.
 //! Some values are still rejected as Vertex-only (400 "...allowed on the
 //! Gemini Enterprise Agent Platform"): [`HarmCategory::CivicIntegrity`],
@@ -37,16 +37,15 @@ wire_enum! {
         /// Sexually explicit content.
         SexuallyExplicit = "sexually_explicit",
         /// Content that could undermine civic processes. Vertex-only on the
-        /// Gemini API (verified live 2026-10-30).
+        /// Gemini API.
         CivicIntegrity = "civic_integrity",
-        /// Hateful imagery. Vertex-only on the Gemini API (2026-10-30).
+        /// Hateful imagery. Vertex-only on the Gemini API.
         ImageHate = "image_hate",
-        /// Dangerous imagery. Vertex-only on the Gemini API (2026-10-30).
+        /// Dangerous imagery. Vertex-only on the Gemini API.
         ImageDangerousContent = "image_dangerous_content",
-        /// Harassing imagery. Vertex-only on the Gemini API (2026-10-30).
+        /// Harassing imagery. Vertex-only on the Gemini API.
         ImageHarassment = "image_harassment",
-        /// Sexually explicit imagery. Vertex-only on the Gemini API
-        /// (2026-10-30).
+        /// Sexually explicit imagery. Vertex-only on the Gemini API.
         ImageSexuallyExplicit = "image_sexually_explicit",
         /// Prompt-injection / jailbreak attempts.
         Jailbreak = "jailbreak",
@@ -69,7 +68,7 @@ wire_enum! {
         /// Block only content with high probability of harm.
         BlockOnlyHigh = "block_only_high",
         /// Never block for this category, but keep safety scoring on.
-        /// Vertex-only on the Gemini API (verified live 2026-10-30).
+        /// Vertex-only on the Gemini API.
         BlockNone = "block_none",
         /// Disable the safety filter for this category entirely.
         Off = "off",

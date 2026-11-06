@@ -391,8 +391,8 @@ pub struct InteractionRequest {
     /// interaction: with
     /// [`previous_interaction_id`](Self::previous_interaction_id) and
     /// [`continuation_token`](Self::continuation_token) set, the API
-    /// continues without it (verified live 2026-11-05;
-    /// [`InteractionBuilder::continue_decode`](crate::InteractionBuilder::continue_decode)
+    /// continues without it
+    /// ([`InteractionBuilder::continue_decode`](crate::InteractionBuilder::continue_decode)
     /// builds that request). Without input and without a token the API
     /// answers `404 Model '...' not found`, a misleading error that
     /// [`InteractionBuilder::build`](crate::InteractionBuilder::build)
@@ -475,8 +475,7 @@ pub struct InteractionRequest {
 
     /// Safety settings for the interaction, one per harm category.
     ///
-    /// Accepted by the Gemini API (verified live 2026-10-30; Vertex-only
-    /// through 2026-10-08). A few values are still Vertex-only; see
+    /// Accepted by the Gemini API. A few values are Vertex-only; see
     /// [`SafetySetting`]. A stored interaction read back with
     /// `interactions().get` carries them.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -484,9 +483,9 @@ pub struct InteractionRequest {
 
     /// User-defined metadata labels for the request.
     ///
-    /// Accepted by the Gemini API and echoed on the response as
-    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels)
-    /// (verified live 2026-09-24; it was Vertex-only on 2026-08-08).
+    /// Accepted by the Gemini API and stored: a stored interaction read back
+    /// carries them as
+    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels).
     ///
     /// `BTreeMap` (not `HashMap`) so the serialized key order is
     /// deterministic — wire captures and `LOUD_WIRE` diffs of the same
@@ -499,15 +498,15 @@ pub struct InteractionRequest {
     ///
     /// For a stored interaction, send it with
     /// [`previous_interaction_id`](Self::previous_interaction_id) and no
-    /// `input` (live 2026-11-05); the API requires the id then (`400
+    /// `input`; the API requires the id then (`400
     /// previous_interaction_id is required when continuation_token is set
     /// for a stored interaction`). For a `store: false` one, which has no
-    /// id, resend the *original* input (live 2026-11-01 and 2026-11-05):
+    /// id, resend the *original* input:
     /// without it the API answers `400 contents is not specified`, and any
     /// other input, including empty text, gets `400 Cannot provide a
     /// different input on a continuation request`. `max_output_tokens` is
     /// cumulative across continuations, so raise it or leave it out (a
-    /// continuation without one ran to completion, live 2026-11-05), or the
+    /// continuation without one runs to completion), or the
     /// API answers that the budget "has already been exhausted". Only
     /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports
     /// continuation so far.
@@ -522,12 +521,12 @@ pub struct InteractionRequest {
     /// Deserializing keeps unrecognized keys here too, so a stored
     /// [`Trigger::interaction`](crate::Trigger) round-trips the fields this
     /// crate doesn't model. The echo's output-only `object: "interaction"`
-    /// lands here; the API accepts it back on create (live 2026-11-04).
+    /// lands here; the API accepts it back on create.
     ///
     /// The server checks these like any other key: a name it doesn't know is
-    /// `400 Unknown parameter '<name>'` (live 2026-11-04). The entries are
-    /// written after the modeled fields, and for a key sent twice the API
-    /// keeps the last (live 2026-11-04), so a key that collides with a
+    /// `400 Unknown parameter '<name>'`. The entries are written after the
+    /// modeled fields, and for a key sent twice the API keeps the last, so a
+    /// key that collides with a
     /// modeled field overrides it: a way to send a modeled field in a shape
     /// the crate gets wrong. The exception is `stream`, which belongs to
     /// the transport: [`Client::execute`](crate::Client::execute) and
@@ -559,7 +558,7 @@ wire_enum! {
         Priority = "priority",
         /// Deferred processing. Vertex-only: the Gemini API answers "not
         /// supported for 'service_tier' on the Gemini API, it is allowed on
-        /// the Gemini Enterprise Agent Platform" (live 2026-11-01).
+        /// the Gemini Enterprise Agent Platform".
         Deferred = "deferred",
     }
     unknown(tier_type, unknown_tier_type)

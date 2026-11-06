@@ -108,9 +108,19 @@ pub trait CallableFunction: Send + Sync {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use genai_rs::{CallableFunction, ToolService, FunctionDeclaration};
 /// use std::sync::Arc;
+/// # use genai_rs::FunctionFuture;
+/// # struct GetWeatherTool { api_key: String }
+/// # impl CallableFunction for GetWeatherTool {
+/// #     fn declaration(&self) -> FunctionDeclaration {
+/// #         FunctionDeclaration::builder("get_weather").build()
+/// #     }
+/// #     fn call(&self, _args: serde_json::Value) -> FunctionFuture<'_> {
+/// #         Box::pin(async move { Ok(serde_json::json!({"key_len": self.api_key.len()})) })
+/// #     }
+/// # }
 ///
 /// struct WeatherService {
 ///     api_key: String,
@@ -124,12 +134,17 @@ pub trait CallableFunction: Send + Sync {
 ///     }
 /// }
 ///
+/// # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 /// // Use with InteractionBuilder:
 /// let service = Arc::new(WeatherService { api_key: "...".into() });
 /// client.interaction()
+///     .with_model(genai_rs::DEFAULT_MODEL)
+///     .with_text("What's the weather in Tokyo?")
 ///     .with_tool_service(service)
 ///     .create_with_auto_functions()
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub trait ToolService: Send + Sync {
     /// Returns the callable functions provided by this service.

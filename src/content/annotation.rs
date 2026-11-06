@@ -134,7 +134,7 @@ pub enum Annotation {
     /// Multi-speaker synthesis on `gemini-3.8-flash-tts` requires one per
     /// text turn, naming a speaker from `speech_config`; the older
     /// `Name: line` transcript form is rejected there. Older TTS models
-    /// reject these annotations outright (verified live 2026-09-24). Omit the
+    /// reject these annotations outright. Omit the
     /// indices to cover the whole text block; with indices, the spans must
     /// tile the text without gaps. See [`Content::speaker_text`](crate::Content::speaker_text).
     SpeechMetadata {

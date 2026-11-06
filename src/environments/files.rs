@@ -47,8 +47,7 @@ pub struct EnvironmentFile {
     pub file_type: Option<EnvironmentFileType>,
     /// Size in bytes (an int64 string on the wire). Reported for files
     /// from environment sources; files written with
-    /// [`upload`](EnvironmentFiles::upload) carry none (observed
-    /// 2026-10-06).
+    /// [`upload`](EnvironmentFiles::upload) carry none.
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_string_i64",
@@ -133,7 +132,7 @@ impl EnvironmentFileUpload {
 
     /// Whether to replace a file already at the destination. Without it,
     /// uploading over an existing file fails with a `409` from the
-    /// finalizing request, after the bytes are sent (live 2026-09-26).
+    /// finalizing request, after the bytes are sent.
     #[must_use]
     pub fn with_overwrite(mut self, overwrite: bool) -> Self {
         self.overwrite = overwrite;
@@ -173,7 +172,7 @@ pub struct EnvironmentFileDownload {
     /// The `Content-Type` the API served: the file's own (`text/csv;
     /// charset=utf-8` for a file uploaded as `text/csv`,
     /// `application/octet-stream` for a source file), or
-    /// `application/x-tar` for a directory (live 2026-11-05).
+    /// `application/x-tar` for a directory.
     pub mime_type: Option<String>,
 }
 
@@ -272,7 +271,7 @@ impl<'a> EnvironmentFiles<'a> {
     /// Returns [`GenaiError::InvalidInput`] for an invalid environment ID or
     /// a `.`/`..` path segment, before any request, and an API error when
     /// nothing is at `path`: a `404 Directory not found or is empty`, which
-    /// the root (`""`) gets too (live 2026-11-05).
+    /// the root (`""`) gets too.
     pub async fn download(
         self,
         environment_id: &str,
@@ -331,7 +330,7 @@ paging::list_builder! {
     /// [`pages`](Self::pages) / [`items`](Self::items) to follow
     /// `next_page_token` to the end of the listing. The page size and
     /// [`with_recursive`](Self::with_recursive) are sent with every page (a page
-    /// token without `recursive` lists something else, live 2026-09-26). An
+    /// token without `recursive` lists something else). An
     /// invalid environment ID or a `.`/`..` path segment fails with
     /// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
     /// the streams' only item).

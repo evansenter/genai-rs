@@ -46,7 +46,7 @@ pub enum Tool {
     /// [`into_tool`](FunctionDeclaration::into_tool). Only `name` is needed
     /// for the model to call it: the API accepts a function tool with no
     /// `description` or `parameters`, and a stored interaction read back
-    /// serves it that way (live 2026-11-05).
+    /// serves it that way.
     Function {
         /// The function's name. Empty when the wire tool has none (the
         /// bindings make every field optional), and then not written.
@@ -147,7 +147,7 @@ pub enum Tool {
     /// Prefer constructing via [`RetrievalConfig`], which keeps
     /// `retrieval_types` in sync with the per-backend configs.
     ///
-    /// Server-side constraint (verified live 2026-07): the Gemini API
+    /// Server-side constraint: the Gemini API
     /// rejects `type: "retrieval"` — "not supported ... on the Gemini API,
     /// it is allowed on the Gemini Enterprise Agent Platform" (Vertex).
     /// The Gemini API's supported tool types are `google_maps`,

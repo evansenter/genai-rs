@@ -30,9 +30,9 @@ wire_enum! {
         #[default]
         Python = "python",
         /// Bash. In the google-genai 2.34.0 bindings ("only available for
-        /// Gemini 3.0 model or above") but not observed live: on 2026-11-01
-        /// `gemini-3.8-flash` ran only Python, and `gemini-4-argon` ran shell
-        /// commands through Python's `subprocess`.
+        /// Gemini 3.0 model or above") but not observed live:
+        /// `gemini-3.8-flash` runs only Python, and `gemini-4-argon` runs
+        /// shell commands through Python's `subprocess`.
         Bash = "bash",
     }
     unknown(language_type, unknown_language_type)
@@ -177,8 +177,8 @@ pub enum Content {
         /// agentic processing. Has a large effect on token cost — see
         /// [`VideoProcessing`].
         processing: Option<VideoProcessing>,
-        /// Optional label for the video. Accepted on input (verified live
-        /// 2026-09-24); no effect on the output was observed.
+        /// Optional label for the video. Accepted on input; no effect on the
+        /// output was observed.
         name: Option<String>,
         /// Unmodeled wire fields, kept for round trip ([`Content::extra`]).
         extra: serde_json::Map<String, serde_json::Value>,
@@ -680,7 +680,7 @@ impl Content {
     }
 
     /// Sets a label on video content; other content is returned unchanged
-    /// with a warning. Accepted by the API (verified live 2026-09-24).
+    /// with a warning. The API accepts the label.
     #[must_use]
     pub fn with_video_name(mut self, name: impl Into<String>) -> Self {
         if let Self::Video { name: n, .. } = &mut self {

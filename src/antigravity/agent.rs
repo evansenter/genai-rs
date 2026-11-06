@@ -159,13 +159,16 @@ impl AntigravityAgent {
     /// [`SUPPORTED_HARNESS_VERSION`](super::SUPPORTED_HARNESS_VERSION). To
     /// refuse a mismatch, compare the two and shut the agent down:
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use genai_rs::antigravity::SUPPORTED_HARNESS_VERSION;
     ///
+    /// # async fn run(agent: genai_rs::antigravity::AntigravityAgent) -> Result<(), Box<dyn std::error::Error>> {
     /// if agent.harness_version() != Some(SUPPORTED_HARNESS_VERSION) {
     ///     agent.shutdown().await?;
     ///     return Err("unsupported localharness version".into());
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn harness_version(&self) -> Option<&str> {
@@ -325,11 +328,15 @@ impl AntigravityAgent {
     /// connection while this waits, and a failed turn's errors, as for
     /// [`chat`](Self::chat).
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use std::time::Duration;
+    /// # async fn run(mut agent: genai_rs::antigravity::AntigravityAgent) -> Result<(), genai_rs::antigravity::AntigravityError> {
     /// // React to whatever the triggers start, between user turns.
     /// while let Some(response) = agent.next_trigger_turn(Duration::from_secs(60)).await? {
     ///     println!("trigger turn: {}", response.text());
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn next_trigger_turn(
         &mut self,

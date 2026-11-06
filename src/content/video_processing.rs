@@ -11,36 +11,17 @@ use std::fmt;
 ///
 /// # What actually reduces token cost
 ///
-/// **The segment window is the cost lever among the `static` forms.**
-/// Re-measured 2026-08-18 against `gemini-3.7-flash`, same source video:
+/// **The segment window is the cost lever among the `static` forms.** A
+/// window cuts the video input tokens; `fps` on its own, the bare
+/// `"static"` and an empty `{"type": "static"}` leave them where omitting
+/// `processing` does. Reach for [`VideoProcessing::segment()`] with an
+/// explicit window when cost matters. [`Agentic`](Self::Agentic) reports no
+/// video tokens at all: it bills a varying number of `image` tokens, which
+/// has measured cheaper than even a clipped window.
 ///
-/// | `processing` | Video input tokens |
-/// |--------------|--------------------|
-/// | *(field omitted)* | 57,778 |
-/// | `"static"` | 57,778 |
-/// | `{"type": "static"}` | 57,778 |
-/// | `{"type": "static", "fps": 1}` | 57,778 |
-/// | `{"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}` | **16,198** |
-/// | `"agentic"` | *no video modality* — billed as `image`: 2,112 and 4,158 on two runs |
-///
-/// So a window is what moves the count among the `static` forms; `fps` on
-/// its own did not. Reach for [`VideoProcessing::segment()`] with an
-/// explicit window when cost matters.
-///
-/// Both numbers moved since the 2026-08-16 measurement, and the difference
-/// is worth recording because it bounds how much these figures are worth.
-/// The window's saving was ~127x then (455 vs 57,775) and is ~3.6x now, on
-/// the same video and model — the unclipped side barely moved, so it is the
-/// clipped accounting the service revised. And `"agentic"` no longer
-/// ingests video at all: it reports `image` tokens, in a quantity that
-/// varies run to run, which makes it the cheapest mode rather than one
-/// equivalent to `static` as previously recorded.
-///
-/// Treat the table as a dated observation, not a contract. What has held
-/// across both measurements is that a window reduces ingestion among the
-/// `static` forms. What has not: the magnitudes, and the earlier conclusion
-/// that mode selection is never a lever — `"agentic"` is now the cheapest
-/// option of all, below even the clipped window.
+/// The magnitudes have changed between measurements, so treat them as
+/// observations, not a contract: the measured token counts and their dates
+/// are under VideoProcessing in `docs/ENUM_WIRE_FORMATS.md`.
 ///
 /// # Wire forms
 ///
@@ -99,13 +80,11 @@ pub enum VideoProcessing {
     /// Model-driven exploration of the video (wire: the bare string
     /// `"agentic"`).
     ///
-    /// **No longer reports video tokens at all.** As of 2026-08-18 this bills
-    /// as `image`, in a quantity that varies run to run (2,112 and 4,158 on
-    /// two consecutive runs) — which made it the cheapest of the measured
-    /// options, below even a clipped window. It consumed the same count as
-    /// [`Static`](Self::Static) when first measured on 2026-08-16, so treat
-    /// this as a moving figure and see the token table on
-    /// [`VideoProcessing`].
+    /// **Reports no video tokens.** It bills as `image`, in a quantity that
+    /// varies run to run, which has made it the cheapest of the measured
+    /// options, below even a clipped window. It once consumed the same count
+    /// as [`Static`](Self::Static), so treat this as a moving figure (see
+    /// [`VideoProcessing`]).
     Agentic,
     /// Static processing with an explicit segment window and/or frame rate
     /// (wire: `{"type": "static", ...}`).

@@ -22,7 +22,7 @@ pub struct McpCallInfo<'a> {
     /// The arguments the model passed to the tool.
     pub arguments: &'a serde_json::Value,
     /// What the tool returned, when the response carries the result. On the
-    /// live `function_result` shape (observed 2026-11-04) this is an object
+    /// live API this is an object
     /// with the tool's text under `result` and the raw MCP `CallToolResult`
     /// as a JSON string under `call_tool_result_json`. A failed call adds
     /// `is_error: true`; a successful one may add `structured_content`, the
@@ -31,17 +31,16 @@ pub struct McpCallInfo<'a> {
     pub result: Option<&'a FunctionResultPayload>,
     /// Whether the tool call failed: `true` when either the result step's
     /// `is_error` or the result object's own `is_error` key is `true`. On
-    /// failed calls the live API set the step's flag to `false` and only the
-    /// result object's key to `true` (2026-11-04), so the step's flag alone
-    /// misses them. `None` when neither says.
+    /// failed calls the live API has set the step's flag to `false` and only
+    /// the result object's key to `true`, so the step's flag alone misses
+    /// them. `None` when neither says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
 }
 
 /// Whether an MCP call failed, from the result step's `is_error` and the
 /// `is_error` key of its result object. Either one being `true` is a
-/// failure; the live API has sent the step's as `false` on a failed call
-/// (2026-11-04).
+/// failure; the live API has sent the step's as `false` on a failed call.
 fn call_failed(step_flag: Option<bool>, result: Option<&FunctionResultPayload>) -> Option<bool> {
     let payload_flag = result
         .and_then(FunctionResultPayload::as_json)
@@ -62,7 +61,7 @@ fn split_mcp_name(name: &str) -> Option<(&str, &str)> {
 }
 
 /// The tool of an `mcp_server_tool_call`: its `name` without the
-/// `<server_name>:` prefix the live API puts there (2026-11-05), or the whole
+/// `<server_name>:` prefix the live API puts there, or the whole
 /// name when there is no such prefix (the bindings' form).
 fn strip_server<'a>(name: &'a str, server: &str) -> &'a str {
     name.strip_prefix(server)
@@ -75,21 +74,21 @@ impl InteractionResponse {
     /// The MCP tool calls the server ran in this response, in order, with
     /// the server and tool each one named.
     ///
-    /// Reads both shapes the live API has used to identify the server:
+    /// Reads both shapes the live API has used to identify the server (their
+    /// dates are under MCP identity in `docs/ENUM_WIRE_FORMATS.md`):
     ///
-    /// - **Live since 2026-11-05 (`gemini-3.8-flash`):** an
+    /// - **The current shape:** an
     ///   `mcp_server_tool_call` step carrying `server_name`, with `name` as
     ///   `<server>:<tool>`, paired with an `mcp_server_tool_result` by id.
     ///   The tool is `name` without that prefix, so a server name may
     ///   contain `:` here.
-    /// - **Live 2026-10-01 to 2026-11-04 (`gemini-3.8-flash`, streamed and
-    ///   not):** a `function_call` named
+    /// - **The earlier shape, streamed and not:** a `function_call` named
     ///   `<server>:<tool>`, where `<server>` is the name the request gave
     ///   [`McpServerConfig`](crate::McpServerConfig), answered by a
     ///   `function_result` with the same id in the same response. A call
     ///   counts only when it was answered here: a client function may also
-    ///   be named `a:b` (the API accepted `weather:get` as a declared name on
-    ///   2026-11-04), but the client answers its own calls in a later
+    ///   be named `a:b` (the API accepts `weather:get` as a declared name),
+    ///   but the client answers its own calls in a later
     ///   request, so a call answered within the response was run by the
     ///   server. The name splits at its first colon. A failed call is
     ///   marked in the result object (`is_error: true`) while the step's
@@ -97,8 +96,8 @@ impl InteractionResponse {
     ///   accounts for. This shape splits at the name's first colon, so it
     ///   misreads a server name that contains `:`.
     ///
-    /// The 2026-08-16 shape, a bare [`Step::ToolCall`], names neither and
-    /// is not returned; see [`tool_calls`](Self::tool_calls).
+    /// The oldest shape, a bare [`Step::ToolCall`], names neither and is not
+    /// returned; see [`tool_calls`](Self::tool_calls).
     ///
     /// # Example
     ///

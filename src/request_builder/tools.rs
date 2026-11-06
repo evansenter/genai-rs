@@ -144,9 +144,22 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use genai_rs::{Client, ToolService, CallableFunction};
     /// use std::sync::Arc;
+    /// # use genai_rs::{FunctionDeclaration, FunctionFuture};
+    /// # #[derive(Clone)] struct Database;
+    /// # impl Database { fn new() -> Self { Database } }
+    /// # struct QueryTool { db: Database }
+    /// # impl CallableFunction for QueryTool {
+    /// #     fn declaration(&self) -> FunctionDeclaration {
+    /// #         FunctionDeclaration::builder("query_users").build()
+    /// #     }
+    /// #     fn call(&self, _args: serde_json::Value) -> FunctionFuture<'_> {
+    /// #         let _ = &self.db;
+    /// #         Box::pin(async move { Ok(serde_json::json!([])) })
+    /// #     }
+    /// # }
     ///
     /// struct MyService { db: Database }
     ///
@@ -156,6 +169,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     }
     /// }
     ///
+    /// # async fn run(client: Client) -> Result<(), genai_rs::GenaiError> {
     /// let service = Arc::new(MyService { db: Database::new() });
     /// let response = client
     ///     .interaction()
@@ -164,6 +178,9 @@ impl<'a> InteractionBuilder<'a> {
     ///     .with_text("Query the database for users")
     ///     .create_with_auto_functions()
     ///     .await?;
+    /// # let _ = response;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_tool_service(mut self, service: Arc<dyn ToolService>) -> Self {

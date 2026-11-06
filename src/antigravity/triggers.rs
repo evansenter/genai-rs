@@ -306,11 +306,11 @@ const IGNORED_DIRS: &[&str] = &[
 /// with
 /// [`AgentBuilder::add_custom_trigger`](super::AgentBuilder::add_custom_trigger):
 ///
-/// ```rust,ignore
-/// use genai_rs::antigravity::triggers;
+/// ```rust,no_run
+/// use genai_rs::antigravity::{AntigravityAgent, triggers};
 /// use std::time::Duration;
 ///
-/// let agent = AntigravityAgent::builder()
+/// let builder = AntigravityAgent::builder()
 ///     .add_custom_trigger(triggers::on_file_change(
 ///         "/repo/docs",
 ///         Duration::from_secs(2),
@@ -318,6 +318,7 @@ const IGNORED_DIRS: &[&str] = &[
 ///     ))
 ///     // ...
 ///     ;
+/// # let _ = builder;
 /// ```
 ///
 /// The watch polls every `poll_interval`, comparing each file's size and

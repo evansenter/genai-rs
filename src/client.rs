@@ -266,7 +266,7 @@ impl ClientBuilder {
     /// after the host) instead of `v1beta`; `"v1"` selects the stable
     /// endpoint.
     ///
-    /// Measured live 2026-11-05: `/v1` serves interactions in full, the
+    /// `/v1` serves interactions in full, the
     /// same protocol as `/v1beta` (create, get, delete, cancel, streaming,
     /// and decoding continuation, which the v1 spec leaves out), plus the
     /// Files API (uploads included, under `/upload/v1`) and the File Search

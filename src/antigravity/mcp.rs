@@ -6,11 +6,12 @@ use super::protocol;
 
 /// An MCP server for the harness to connect to.
 ///
-/// ```rust,ignore
+/// ```rust
 /// use genai_rs::antigravity::McpServer;
 ///
 /// let git = McpServer::stdio("uvx", ["mcp-server-git"]);
 /// let api = McpServer::http("http://localhost:8931/mcp").with_name("api");
+/// # let _ = (git, api);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServer {
