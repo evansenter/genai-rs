@@ -27,6 +27,14 @@
       "size_bytes": "1204"
     },
     {
+      "id": "0b1d0e5c0de0c0ffee000000000bytes",
+      "created": "2026-07-01T00:00:00+00:00",
+      "updated": "2026-07-01T00:00:00+00:00",
+      "status": "active",
+      "file_count": "0",
+      "size_bytes": "2048"
+    },
+    {
       "id": "0b1d0e5c0de0c0ffee000000000inuse",
       "created": "2026-07-01T00:00:00+00:00",
       "updated": "2026-07-01T00:00:00+00:00",

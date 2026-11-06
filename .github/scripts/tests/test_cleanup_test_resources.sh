@@ -137,7 +137,7 @@ expect_rc     "dry run: exits 0" 0
 expect_deletes "dry run: sends no DELETE" ""
 expect_output "dry run: names an old empty environment" \
   "would delete environments/52ab487220d5f6d72523f3c8f87a86e1: no sources and no files, last active 2026-07-19T23:20:03"
-expect_output "dry run: counts what it would delete" "| environments | 12 | 8 | 5 | 3 | 0 |"
+expect_output "dry run: counts what it would delete" "| environments | 13 | 8 | 5 | 3 | 0 |"
 expect_output "dry run: says nothing was deleted" "Dry run: nothing was deleted"
 
 # --- Delete: exactly the expected set, pages followed (an environment and a
@@ -158,12 +158,17 @@ expect_output  "delete: keeps a young prompted voice from page two" \
 expect_output  "delete: keeps an empty sourceless environment used within the floor" \
   "kept     environments/0b1d0e5c0de0c0ffee000000000inuse: no sources and no files, last active 2026-11-05T09:30:00+00:00, under 6h ago"
 expect_output  "delete: lists a sourceless environment holding files for review" \
-  "review   environments/0b1d0e5c0de0c0ffee00000000holder: no sources, but it holds 3 file(s)"
+  "review   environments/0b1d0e5c0de0c0ffee00000000holder: no sources, but it holds 3 file(s) (1204 bytes)"
+# Either count is enough: a zero (or missing) file_count beside a non-zero
+# size_bytes still holds data, so it is kept and listed.
+expect_output  "delete: lists a sourceless environment with bytes but no file count" \
+  "review   environments/0b1d0e5c0de0c0ffee000000000bytes: no sources, but it holds 0 file(s) (2048 bytes)"
 # Named outright too, so a widened EXPECTED cannot quietly take one.
 touched=0
 for id in 0b1d0e5c0de0c0ffee0000000000user 0b1d0e5c0de0c0ffee000000000mixed \
           0b1d0e5c0de0c0ffee0000000gitrepo 0b1d0e5c0de0c0ffee00000000holder \
-          0b1d0e5c0de0c0ffee000000000inuse 8e8112f1-f062-43dd-a9e2-5cf1650c2957 \
+          0b1d0e5c0de0c0ffee000000000inuse 0b1d0e5c0de0c0ffee000000000bytes \
+          8e8112f1-f062-43dd-a9e2-5cf1650c2957 \
           github-deploy-token wh-production support-bot t-nightly genairswp2bprobe \
           voice_brandnarrator; do
   if grep -q -- "$id" <(deletes); then
@@ -207,11 +212,13 @@ expect_in_file "scheduled dry run: the summary lists a store" "$WORK/summary.md"
 expect_in_file "scheduled dry run: the summary names a marked resource of unknown age" "$WORK/summary.md" \
   '- `agents/genai-rs-test-agent-287338089`: a genai-rs-test id'
 expect_in_file "scheduled dry run: the summary lists the environments to check by hand" "$WORK/summary.md" \
-  "### Unmarked, kept: check by hand (1)"
+  "### Unmarked, kept: check by hand (2)"
 expect_in_file "scheduled dry run: the summary names the sourceless environment holding files" "$WORK/summary.md" \
   '- `environments/0b1d0e5c0de0c0ffee00000000holder`: no sources, but it holds 3 file(s)'
+expect_in_file "scheduled dry run: the summary names the sourceless environment holding bytes" "$WORK/summary.md" \
+  '- `environments/0b1d0e5c0de0c0ffee000000000bytes`: no sources, but it holds 0 file(s) (2048 bytes)'
 expect_in_file "scheduled dry run: the summary has the table" "$WORK/summary.md" \
-  "| environments | 12 | 8 | 5 | 3 | 0 |"
+  "| environments | 13 | 8 | 5 | 3 | 0 |"
 expect_in_file "scheduled dry run: the summary says nothing was deleted" "$WORK/summary.md" \
   "Dry run: nothing was deleted"
 

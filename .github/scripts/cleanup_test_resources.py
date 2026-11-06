@@ -242,7 +242,8 @@ def environment_review(env: dict):
     no sources that holds files, as a leaked fork does. It is kept."""
     if env.get("sources") or not holds_files(env):
         return None
-    return (f"no sources, but it holds {count(env.get('file_count'))} file(s): "
+    return (f"no sources, but it holds {count(env.get('file_count'))} file(s) "
+            f"({count(env.get('size_bytes'))} bytes): "
             "a fork or an agent's workspace, a test's or a person's")
 
 

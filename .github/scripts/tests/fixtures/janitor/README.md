@@ -20,8 +20,9 @@ content cut short, the rest verbatim):
 - `agents.json`: the shape of a probe agent; agents carry no timestamp.
 
 Not a test's, written for the harness so that "kept" is exercised: the
-environments named `...user`, `...mixed`, `...gitrepo` and `...holder` (no
-sources, but three files: listed for a person to check), the
+environments named `...user`, `...mixed`, `...gitrepo`, `...holder` (no
+sources, but three files: listed for a person to check) and `...bytes` (no
+sources and a `file_count` of zero, but 2,048 bytes: listed too), the
 `github-deploy-token` credential, the `wh-production` webhook, the
 `support-bot` agent, the `t-nightly` trigger and the `Brand narrator`
 voice. The `...inuse` environment is sourceless and empty but was used three
