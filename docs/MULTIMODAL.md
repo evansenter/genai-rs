@@ -120,9 +120,9 @@ use genai_rs::{Content, VideoProcessing};
 
 // Clip a 5-second window and sample one frame per second
 let clipped = VideoProcessing::segment()
-    .start_offset("5s")
-    .end_offset("10s")
-    .fps(1.0)
+    .with_start_offset("5s")
+    .with_end_offset("10s")
+    .with_fps(1.0)
     .build();
 
 let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clipped);

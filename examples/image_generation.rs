@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     let mut saved = 0;
-    for (i, image) in response.images().enumerate() {
+    for (i, image) in response.images().into_iter().enumerate() {
         let bytes = image.bytes()?;
         let path = env::temp_dir().join(format!("genai_rs_image_{i}.{}", image.extension()));
         std::fs::write(&path, &bytes)?;

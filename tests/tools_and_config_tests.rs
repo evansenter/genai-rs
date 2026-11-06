@@ -169,7 +169,10 @@ mod google_search {
             );
         }
         assert!(
-            response.all_annotations().any(|a| a.source().is_some()),
+            response
+                .all_annotations()
+                .into_iter()
+                .any(|a| a.source().is_some()),
             "no annotation named a source"
         );
     }

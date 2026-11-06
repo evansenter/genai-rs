@@ -202,7 +202,7 @@ fn cases() -> Vec<Case> {
         case("Webhook (create)", "webhooks.WebhookInput", webhooks()),
         case("WebhookUpdate", "webhooks.WebhookUpdate", webhook_updates()),
         case(
-            "TriggerCreateParams",
+            "CreateTriggerRequest",
             "triggers.TriggerCreateParams",
             trigger_params(),
         ),

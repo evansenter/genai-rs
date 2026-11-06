@@ -7,7 +7,7 @@ use super::common::{
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
-use crate::files::{FileMetadata, FileUploadResponse, ListFilesResponse};
+use crate::files::{FileListResponse, FileMetadata, FileUploadResponse};
 use crate::wire::WireEvent;
 use std::path::Path;
 
@@ -295,10 +295,10 @@ pub async fn list_files(
     ctx: &HttpContext,
     page_size: Option<u32>,
     page_token: Option<&str>,
-) -> Result<ListFilesResponse, GenaiError> {
+) -> Result<FileListResponse, GenaiError> {
     let url = list_files_url(ctx, page_size, page_token);
     let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
-    let list: ListFilesResponse = deserialize_with_context(&text, "ListFilesResponse")?;
+    let list: FileListResponse = deserialize_with_context(&text, "FileListResponse")?;
     tracing::debug!("Listed {} files", list.files.len());
     Ok(list)
 }

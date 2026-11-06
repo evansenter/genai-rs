@@ -85,9 +85,9 @@ pub(crate) use document_input::DocumentOptions;
 pub use document_input::{DocumentImport, DocumentUpload};
 pub use list::{ListFileSearchDocuments, ListFileSearchStores};
 pub use types::{
-    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentListResponse,
-    DocumentState, FileSearchDocument, FileSearchStore, FileSearchStoreListResponse, StringList,
-    WhiteSpaceConfig,
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentState,
+    FileSearchDocument, FileSearchDocumentListResponse, FileSearchStore,
+    FileSearchStoreListResponse, StringList, WhiteSpaceConfig,
 };
 
 use crate::client::Client;

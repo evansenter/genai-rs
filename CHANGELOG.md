@@ -557,6 +557,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of its message**, and returns it from `source()` (#490). Migration:
   `ClientBuild(e)` binds a `reqwest::Error`; `e.to_string()` gives the old
   string.
+- **Breaking: four types are renamed to the pattern the others follow,
+  and `VideoProcessingBuilder`'s setters take the `with_` prefix** (#490,
+  D-028). A list page is `<Resource>ListResponse` and a create body is
+  `Create<Resource>Request`. Migration:
+
+  | Was | Now |
+  |-----|-----|
+  | `ListFilesResponse` | `FileListResponse` |
+  | `EnvironmentFileList` | `EnvironmentFileListResponse` |
+  | `DocumentListResponse` | `FileSearchDocumentListResponse` |
+  | `TriggerCreateParams` | `CreateTriggerRequest` |
+  | `VideoProcessing::segment().start_offset(s)` | `.with_start_offset(s)` |
+  | `VideoProcessing::segment().end_offset(s)` | `.with_end_offset(s)` |
+  | `VideoProcessing::segment().fps(f)` | `.with_fps(f)` |
+- **Breaking: every collection accessor on `InteractionResponse` returns a
+  `Vec`** (#490, D-028). `output_contents()`, `all_annotations()`,
+  `images()`, `audios()`, `thought_signatures()` and `thought_summaries()`
+  returned an `impl Iterator`, while `function_calls()`, `tool_calls()`,
+  `mcp_calls()` and the rest returned a `Vec`. Migration: drop `.collect()`
+  after them, write `.len()` for `.count()`, `.first()` for `.next()`, and
+  `.into_iter()` before any other iterator adapter (`.into_iter().map(..)`).
+  A `for` loop over them is unchanged.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can

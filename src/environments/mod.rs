@@ -62,7 +62,7 @@ mod files;
 mod spec;
 
 pub use files::{
-    EnvironmentFile, EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileType,
+    EnvironmentFile, EnvironmentFileDownload, EnvironmentFileListResponse, EnvironmentFileType,
     EnvironmentFileUpload, EnvironmentFiles, ListEnvironmentFiles,
 };
 pub use spec::{
@@ -199,7 +199,7 @@ pub struct CreateEnvironmentRequest {
     /// unmodeled create-request field be set without a crate release.
     ///
     /// The inherent cost (same as
-    /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams)): a
+    /// [`CreateTriggerRequest::extra`](crate::CreateTriggerRequest)): a
     /// *typo'd optional* key in a deserialized config (`netwrok`, ...) is
     /// silently absorbed here and forwarded to the server verbatim rather
     /// than rejected.

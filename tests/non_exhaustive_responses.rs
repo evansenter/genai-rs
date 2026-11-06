@@ -59,7 +59,7 @@ const REQUEST_SIDE: &[&str] = &[
     // Passed to `with_environment`; reached only via a hand-written
     // Deserialize impl.
     "src/environments/spec.rs:RemoteEnvironment",
-    "src/triggers.rs:TriggerCreateParams",
+    "src/triggers.rs:CreateTriggerRequest",
     "src/triggers.rs:TriggerUpdate",
     "src/webhooks.rs:WebhookUpdate",
     "src/webhooks.rs:WebhookConfig",

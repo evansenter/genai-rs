@@ -35,7 +35,7 @@ use crate::response_format::{
 };
 use crate::safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 use crate::tools::{AllowedTools, FunctionCallingMode, Tool, ToolChoice};
-use crate::triggers::{TriggerCreateParams, TriggerStatus, TriggerUpdate};
+use crate::triggers::{CreateTriggerRequest, TriggerStatus, TriggerUpdate};
 use crate::voices::{
     CreateVoiceRequest, PromptedVoice, ReplicatedVoice, VoiceAudio, VoicePitch, VoiceSpec,
     VoiceType,
@@ -355,7 +355,7 @@ pub(super) fn trigger_params() -> Vec<Value> {
     agent_requests()
         .into_iter()
         .map(|interaction| {
-            to_value(&TriggerCreateParams {
+            to_value(&CreateTriggerRequest {
                 schedule: "0 9 * * *".into(),
                 time_zone: "America/Los_Angeles".into(),
                 interaction,

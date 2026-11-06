@@ -81,7 +81,7 @@ pub struct EnvironmentFile {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[non_exhaustive]
-pub struct EnvironmentFileList {
+pub struct EnvironmentFileListResponse {
     /// The entries in this page.
     #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub files: Vec<EnvironmentFile>,
@@ -94,7 +94,7 @@ pub struct EnvironmentFileList {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-paging::impl_list_page!(EnvironmentFileList, files: EnvironmentFile);
+paging::impl_list_page!(EnvironmentFileListResponse, files: EnvironmentFile);
 
 /// A file to write into an environment, for [`EnvironmentFiles::upload`]:
 /// its bytes, its MIME type, and whether to overwrite or unpack it.
@@ -320,7 +320,7 @@ impl<'a> EnvironmentFiles<'a> {
         environment_id: &str,
         path: &str,
         upload: EnvironmentFileUpload,
-    ) -> Result<EnvironmentFileList, GenaiError> {
+    ) -> Result<EnvironmentFileListResponse, GenaiError> {
         crate::http::environment_files::upload_file(&self.client.http, environment_id, path, upload)
             .await
     }
@@ -403,7 +403,7 @@ impl<'a> ListEnvironmentFiles<'a> {
     /// Returns an error for an invalid environment ID, path or page token,
     /// when the environment or path doesn't exist (404), on network
     /// failure, or when the response fails to parse.
-    pub async fn send(self) -> Result<EnvironmentFileList, GenaiError> {
+    pub async fn send(self) -> Result<EnvironmentFileListResponse, GenaiError> {
         crate::http::environment_files::list_files(
             &self.client.http,
             &self.environment_id,
@@ -424,7 +424,7 @@ impl<'a> ListEnvironmentFiles<'a> {
     /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
     /// clone of the client, so it can be stored or spawned.
     #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<EnvironmentFileList, GenaiError>> {
+    pub fn pages(self) -> BoxStream<'static, Result<EnvironmentFileListResponse, GenaiError>> {
         let Self {
             client,
             environment_id,
@@ -467,7 +467,7 @@ mod tests {
     /// Captured from a live listing and upload finalize (2026-09-24).
     #[test]
     fn listing_deserializes_the_live_shape() {
-        let list: EnvironmentFileList = serde_json::from_value(json!({
+        let list: EnvironmentFileListResponse = serde_json::from_value(json!({
             "files": [
                 {"name": ".agents", "path": ".agents", "type": "DIRECTORY",
                  "created": "2026-09-23T14:47:11Z", "modified": "2026-09-23T14:47:11Z"},

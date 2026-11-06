@@ -2,7 +2,8 @@
 //! [`ListFileSearchDocuments`].
 
 use super::types::{
-    DocumentListResponse, FileSearchDocument, FileSearchStore, FileSearchStoreListResponse,
+    FileSearchDocument, FileSearchDocumentListResponse, FileSearchStore,
+    FileSearchStoreListResponse,
 };
 use crate::client::Client;
 use crate::errors::GenaiError;
@@ -189,7 +190,7 @@ impl<'a> ListFileSearchDocuments<'a> {
     /// Returns [`GenaiError::InvalidInput`] for a malformed store name, and
     /// an API or network error if the request fails or response parsing
     /// fails.
-    pub async fn send(self) -> Result<DocumentListResponse, GenaiError> {
+    pub async fn send(self) -> Result<FileSearchDocumentListResponse, GenaiError> {
         crate::http::file_search_stores::list_documents(
             &self.client.http,
             &self.store_name,
@@ -208,7 +209,7 @@ impl<'a> ListFileSearchDocuments<'a> {
     /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
     /// clone of the client, so it can be stored or spawned.
     #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<DocumentListResponse, GenaiError>> {
+    pub fn pages(self) -> BoxStream<'static, Result<FileSearchDocumentListResponse, GenaiError>> {
         let Self {
             client,
             store_name,

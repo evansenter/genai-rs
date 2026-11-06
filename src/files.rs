@@ -255,7 +255,7 @@ pub struct VideoMetadata {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
-pub struct ListFilesResponse {
+pub struct FileListResponse {
     /// The files on this page. A null or malformed list degrades to empty;
     /// malformed elements drop individually.
     #[serde(
@@ -274,7 +274,7 @@ pub struct ListFilesResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-paging::impl_list_page!(ListFilesResponse, files: FileMetadata);
+paging::impl_list_page!(FileListResponse, files: FileMetadata);
 
 /// Wrapper for file upload response.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -605,7 +605,7 @@ impl<'a> ListFiles<'a> {
     /// # Errors
     ///
     /// Returns an error if the HTTP request fails or response parsing fails.
-    pub async fn send(self) -> Result<ListFilesResponse, GenaiError> {
+    pub async fn send(self) -> Result<FileListResponse, GenaiError> {
         crate::http::files::list_files(
             &self.client.http,
             self.page_size,
@@ -623,7 +623,7 @@ impl<'a> ListFiles<'a> {
     /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
     /// clone of the client, so it can be stored or spawned.
     #[must_use = "streams do nothing unless polled"]
-    pub fn pages(self) -> BoxStream<'static, Result<ListFilesResponse, GenaiError>> {
+    pub fn pages(self) -> BoxStream<'static, Result<FileListResponse, GenaiError>> {
         let Self {
             client,
             page_size,

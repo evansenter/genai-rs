@@ -916,3 +916,30 @@ told apart only by message; `ClientBuild(String)` dropped the
 **Consequences.** Code that matched `Internal` and parsed its message for
 these cases needs the new arms. `GenaiError` was already
 `#[non_exhaustive]`, so the new variants cost wildcard matches nothing.
+
+---
+
+## D-028 — One naming pattern for list pages, create bodies and accessors (2026-11-06)
+
+**Context.** #490's naming outliers: three list pages and one create body
+broke the pattern the other resources follow (`AgentListResponse`,
+`CreateEnvironmentRequest`), `VideoProcessingBuilder` was the one builder
+whose setters lacked `with_`, and `InteractionResponse`'s collection
+accessors returned a `Vec` (fourteen of them) or an `impl Iterator` (six),
+with nothing to tell a caller which.
+
+**Decision.** Rename to `FileListResponse`,
+`EnvironmentFileListResponse`, `FileSearchDocumentListResponse` and
+`CreateTriggerRequest`; the coverage oracle keeps the binding class names
+(`legacy.ListFilesResponse`, `triggers.TriggerCreateParams`) it maps them
+to. The video-processing setters become `with_start_offset`,
+`with_end_offset` and `with_fps`. Collection accessors return a `Vec`: it
+is what most of them already returned and what most call sites use
+(`.len()`, `.is_empty()`, `.first()`, indexing, a second pass), and the
+lists hold a handful of borrowed views of a response already in memory, so
+the allocation is noise beside the request that produced it. The `has_*`
+checks and the `first_*` helpers walk a private iterator, so they still
+allocate nothing.
+
+**Consequences.** A one-time migration for every renamed item; the
+CHANGELOG has the table. An accessor added later returns a `Vec` too.

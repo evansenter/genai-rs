@@ -42,9 +42,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n--- First half-second at 1 fps ---");
     let clipped = Content::video_data(DEMO_MP4_BASE64, "video/mp4").with_processing(
         VideoProcessing::segment()
-            .start_offset("0s")
-            .end_offset("0.5s")
-            .fps(1.0)
+            .with_start_offset("0s")
+            .with_end_offset("0.5s")
+            .with_fps(1.0)
             .build(),
     );
     let response = client

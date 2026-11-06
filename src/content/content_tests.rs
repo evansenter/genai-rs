@@ -2728,9 +2728,9 @@ fn test_video_processing_segment_serializes_to_object() {
     // The exact payload accepted live (16,198 video input tokens as of
     // 2026-08-18; 455 when first measured 2026-08-16 — see `VideoProcessing`).
     let processing = VideoProcessing::segment()
-        .start_offset("5s")
-        .end_offset("10s")
-        .fps(1.0)
+        .with_start_offset("5s")
+        .with_end_offset("10s")
+        .with_fps(1.0)
         .build();
 
     let json = serde_json::to_value(&processing).unwrap();
@@ -2747,7 +2747,7 @@ fn test_video_processing_segment_serializes_to_object() {
 
 #[test]
 fn test_video_processing_segment_omits_unset_fields() {
-    let processing = VideoProcessing::segment().fps(2.5).build();
+    let processing = VideoProcessing::segment().with_fps(2.5).build();
     let json = serde_json::to_value(&processing).unwrap();
 
     assert_eq!(json, serde_json::json!({"type": "static", "fps": 2.5}));
@@ -2841,7 +2841,7 @@ fn test_video_processing_known_variants_have_no_unknown_data() {
     assert!(VideoProcessing::Agentic.unknown_processing_type().is_none());
     assert!(
         VideoProcessing::segment()
-            .fps(1.0)
+            .with_fps(1.0)
             .build()
             .unknown_data()
             .is_none()

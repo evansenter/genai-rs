@@ -163,7 +163,7 @@ pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec, 
 // Triggers resource (/v1beta/triggers) — server-side scheduled interactions
 pub mod triggers;
 pub use triggers::{
-    ListTriggerExecutions, ListTriggers, Trigger, TriggerCreateParams, TriggerExecution,
+    CreateTriggerRequest, ListTriggerExecutions, ListTriggers, Trigger, TriggerExecution,
     TriggerExecutionListResponse, TriggerExecutionStatus, TriggerListResponse, TriggerStatus,
     TriggerUpdate, Triggers,
 };
@@ -173,18 +173,18 @@ pub use triggers::{
 pub mod environments;
 pub use environments::{
     AllowlistEntry, CreateEnvironmentRequest, EnvVar, Environment, EnvironmentFile,
-    EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
-    EnvironmentFiles, EnvironmentListResponse, EnvironmentSource, EnvironmentSpec,
-    EnvironmentStatus, Environments, ListEnvironmentFiles, ListEnvironments, NetworkConfig,
-    RemoteEnvironment, SourceType,
+    EnvironmentFileDownload, EnvironmentFileListResponse, EnvironmentFileType,
+    EnvironmentFileUpload, EnvironmentFiles, EnvironmentListResponse, EnvironmentSource,
+    EnvironmentSpec, EnvironmentStatus, Environments, ListEnvironmentFiles, ListEnvironments,
+    NetworkConfig, RemoteEnvironment, SourceType,
 };
 
 // File Search Stores resource (/v1beta/fileSearchStores) — the documents
 // `Tool::FileSearch` retrieves over
 pub mod file_search_stores;
 pub use file_search_stores::{
-    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentImport,
-    DocumentListResponse, DocumentState, DocumentUpload, FileSearchDocument, FileSearchDocuments,
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentImport, DocumentState,
+    DocumentUpload, FileSearchDocument, FileSearchDocumentListResponse, FileSearchDocuments,
     FileSearchStore, FileSearchStoreListResponse, FileSearchStores, ListFileSearchDocuments,
     ListFileSearchStores, StringList, WhiteSpaceConfig,
 };
@@ -251,8 +251,8 @@ pub mod antigravity;
 // Files API (/v1beta/files)
 pub mod files;
 pub use files::{
-    FileError, FileMetadata, FileSource, FileState, FileUpload, FileUploadResponse, Files,
-    ListFiles, ListFilesResponse, PollOptions, VideoMetadata,
+    FileError, FileListResponse, FileMetadata, FileSource, FileState, FileUpload,
+    FileUploadResponse, Files, ListFiles, PollOptions, VideoMetadata,
 };
 
 // =============================================================================

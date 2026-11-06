@@ -116,7 +116,7 @@ pub struct Trigger {
     /// undeserializable `interaction` as `None`, each with a `warn!`. An
     /// absent `input` (list projections elide it) reads as empty text
     /// silently, so don't treat `interaction.input` as evidence of the stored
-    /// prompt. [`TriggerCreateParams`]'s send side stays strict.
+    /// prompt. [`CreateTriggerRequest`]'s send side stays strict.
     ///
     /// Interaction fields this crate does not model are kept in
     /// [`InteractionRequest::extra`] and sent back on reuse. One roundtrip
@@ -127,7 +127,7 @@ pub struct Trigger {
     /// comes back as one `user_input` step, and the echo carries
     /// `store: true` plus `object: "interaction"` (kept in `extra`, and
     /// accepted back on create, live 2026-11-04). To reuse a stored
-    /// trigger's interaction in a new [`TriggerCreateParams`], clear
+    /// trigger's interaction in a new [`CreateTriggerRequest`], clear
     /// [`store`](InteractionRequest::store) first: the API rejects it on
     /// create.
     #[serde(
@@ -141,7 +141,7 @@ pub struct Trigger {
     pub display_name: Option<String>,
     /// ID of the environment fired interactions run against, as a bare ID
     /// for [`Environments::get`](crate::Environments::get). Without
-    /// [`TriggerCreateParams::with_environment_id`], the first firing
+    /// [`CreateTriggerRequest::with_environment_id`], the first firing
     /// creates one and the trigger reports it from then on (live
     /// 2026-11-01).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -264,7 +264,7 @@ pub struct Trigger {
 /// wholesale failure the lenient int64 and timestamp helpers exist to
 /// avoid. Scoped here (not on `InteractionRequest` itself) so a request
 /// loaded from a config file still fails on a malformed input, and
-/// [`TriggerCreateParams`] also fails on a missing one.
+/// [`CreateTriggerRequest`] also fails on a missing one.
 fn deserialize_lenient_interaction<'de, D>(
     deserializer: D,
 ) -> Result<Option<InteractionRequest>, D::Error>
@@ -323,27 +323,27 @@ where
 /// CHANGELOG entry).
 ///
 /// ```
-/// use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams};
+/// use genai_rs::{InteractionInput, InteractionRequest, CreateTriggerRequest};
 ///
 /// let interaction = InteractionRequest {
 ///     agent: Some("my-custom-agent".to_string()),
 ///     input: Some(InteractionInput::Text("Daily repo audit".to_string())),
 ///     ..Default::default()
 /// };
-/// let params = TriggerCreateParams::new("0 9 * * *", "UTC", interaction)
+/// let params = CreateTriggerRequest::new("0 9 * * *", "UTC", interaction)
 ///     .with_display_name("daily-audit");
 /// ```
 ///
 /// [`Client`]: crate::Client
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct TriggerCreateParams {
+pub struct CreateTriggerRequest {
     /// Cron expression the trigger fires on.
     pub schedule: String,
     /// IANA time zone the schedule is evaluated in (e.g. `"UTC"`).
     pub time_zone: String,
     /// The interaction request created on each firing. Must target a
     /// custom `agent`; `store` is not allowed here (server-verified —
-    /// [`TriggerCreateParams::new`], the deserialize path, and
+    /// [`CreateTriggerRequest::new`], the deserialize path, and
     /// [`Triggers::create`] itself all warn when it is set, the last
     /// covering struct literals and post-construction mutation too).
     #[serde(deserialize_with = "deserialize_interaction_with_warns")]
@@ -403,20 +403,20 @@ pub struct TriggerCreateParams {
 /// - no input, or an empty one: would fire on a schedule with an empty
 ///   prompt.
 ///
-/// Called from [`TriggerCreateParams::new`], the deserialize path, and
+/// Called from [`CreateTriggerRequest::new`], the deserialize path, and
 /// [`Triggers::create`] (which also catches struct literals and later
 /// mutation), so `new`-then-create warns twice. Warns rather than errors, so
 /// the server stays the authority if it relaxes a rule.
 pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
-            "TriggerCreateParams: `store` is set on the nested interaction; \
+            "CreateTriggerRequest: `store` is set on the nested interaction; \
              the API rejects it in trigger requests"
         );
     }
     if interaction.agent.is_none() {
         tracing::warn!(
-            "TriggerCreateParams: the nested interaction targets no `agent`; \
+            "CreateTriggerRequest: the nested interaction targets no `agent`; \
              the API requires a custom agent for triggers and rejects \
              model-only interactions (\"Agent '' is invalid or not found\")"
         );
@@ -429,7 +429,7 @@ pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     };
     if input_is_empty {
         tracing::warn!(
-            "TriggerCreateParams: the nested interaction's input is missing \
+            "CreateTriggerRequest: the nested interaction's input is missing \
              or empty (empty text, content, or steps); the trigger would fire \
              on its schedule with an empty prompt"
         );
@@ -458,7 +458,7 @@ where
     Ok(interaction)
 }
 
-impl TriggerCreateParams {
+impl CreateTriggerRequest {
     /// Creates trigger parameters for `schedule` (cron) in `time_zone`.
     #[must_use]
     pub fn new(
@@ -531,7 +531,7 @@ pub struct TriggerUpdate {
     /// unmodeled update field be sent without a crate release. Empty maps
     /// add nothing to the body, keeping the empty-update-is-`{}` contract.
     /// Colliding keys win on serialize, as on
-    /// [`TriggerCreateParams::extra`].
+    /// [`CreateTriggerRequest::extra`].
     ///
     /// The same typo cost as its siblings, sharpened by this endpoint: a
     /// typo'd optional key in a deserialized config (`dispaly_name`, ...)
@@ -732,7 +732,7 @@ impl<'a> Triggers<'a> {
     ///
     /// The trigger's `interaction` must target a custom `agent` (see
     /// [`crate::triggers`] for the live-verified constraints).
-    /// Like [`TriggerCreateParams::new`], this warns when the nested
+    /// Like [`CreateTriggerRequest::new`], this warns when the nested
     /// interaction sets `store`, targets no `agent`, or has empty input.
     ///
     /// # Errors
@@ -743,7 +743,7 @@ impl<'a> Triggers<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::{Client, InteractionInput, InteractionRequest, TriggerCreateParams};
+    /// use genai_rs::{Client, InteractionInput, InteractionRequest, CreateTriggerRequest};
     ///
     /// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
     /// let interaction = InteractionRequest {
@@ -754,7 +754,7 @@ impl<'a> Triggers<'a> {
     /// let trigger = client
     ///     .triggers()
     ///     .create(
-    ///         &TriggerCreateParams::new("0 9 * * *", "UTC", interaction)
+    ///         &CreateTriggerRequest::new("0 9 * * *", "UTC", interaction)
     ///             .with_display_name("daily-audit"),
     ///     )
     ///     .await?;
@@ -762,7 +762,7 @@ impl<'a> Triggers<'a> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn create(self, params: &TriggerCreateParams) -> Result<Trigger, GenaiError> {
+    pub async fn create(self, params: &CreateTriggerRequest) -> Result<Trigger, GenaiError> {
         crate::http::triggers::create_trigger(&self.client.http, params).await
     }
 

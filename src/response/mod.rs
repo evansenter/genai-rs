@@ -287,11 +287,17 @@ impl InteractionResponse {
     // Step / Content Iteration Helpers
     // =========================================================================
 
-    /// Iterates over all content blocks in `model_output` steps.
+    /// Returns every content block of the `model_output` steps, in order.
     ///
-    /// This is the step-model equivalent of iterating the launch-era
-    /// `outputs` array.
-    pub fn output_contents(&self) -> impl Iterator<Item = &Content> {
+    /// This is the step-model equivalent of the launch-era `outputs` array.
+    #[must_use]
+    pub fn output_contents(&self) -> Vec<&Content> {
+        self.iter_output_contents().collect()
+    }
+
+    /// The content blocks of the `model_output` steps, lazily: what the
+    /// collection accessors and `has_*` checks walk.
+    fn iter_output_contents(&self) -> impl Iterator<Item = &Content> {
         self.steps.iter().flat_map(|step| match step {
             Step::ModelOutput { content, .. } => content.as_slice(),
             _ => &[],
@@ -348,7 +354,7 @@ impl InteractionResponse {
     /// ```
     #[must_use]
     pub fn as_text(&self) -> Option<&str> {
-        self.output_contents()
+        self.iter_output_contents()
             .find_map(Content::as_text)
             .or(self.output_text.as_deref())
     }
@@ -359,7 +365,7 @@ impl InteractionResponse {
     #[must_use]
     pub fn all_text(&self) -> String {
         let text: String = self
-            .output_contents()
+            .iter_output_contents()
             .filter_map(Content::as_text)
             .collect::<Vec<_>>()
             .join("");
@@ -373,7 +379,7 @@ impl InteractionResponse {
     /// Check if response contains text
     #[must_use]
     pub fn has_text(&self) -> bool {
-        self.output_contents().any(|c| c.as_text().is_some()) || self.output_text.is_some()
+        self.iter_output_contents().any(|c| c.as_text().is_some()) || self.output_text.is_some()
     }
 
     // =========================================================================
@@ -387,7 +393,8 @@ impl InteractionResponse {
     /// `GoogleSearch` or `UrlContext` were used.
     #[must_use]
     pub fn has_annotations(&self) -> bool {
-        self.output_contents().any(|c| c.annotations().is_some())
+        self.iter_output_contents()
+            .any(|c| c.annotations().is_some())
     }
 
     /// Returns all annotations from model output text.
@@ -395,10 +402,12 @@ impl InteractionResponse {
     /// Collects all [`Annotation`] references from all text blocks in the
     /// response. Annotations link specific text spans to their sources,
     /// enabling citation tracking.
-    pub fn all_annotations(&self) -> impl Iterator<Item = &Annotation> {
-        self.output_contents()
+    #[must_use]
+    pub fn all_annotations(&self) -> Vec<&Annotation> {
+        self.iter_output_contents()
             .filter_map(|c| c.annotations())
             .flatten()
+            .collect()
     }
 
     // =========================================================================
@@ -414,7 +423,7 @@ impl InteractionResponse {
     ///
     /// Returns an error if the base64 data is invalid.
     pub fn first_image_bytes(&self) -> Result<Option<Vec<u8>>, GenaiError> {
-        for content in self.output_contents() {
+        for content in self.iter_output_contents() {
             if let Content::Image {
                 data: Some(base64_data),
                 ..
@@ -431,32 +440,35 @@ impl InteractionResponse {
         Ok(None)
     }
 
-    /// Returns an iterator over all images in the response.
+    /// Returns every image in the response, in order.
     ///
     /// Each item is an [`ImageInfo`] that provides access to the image data,
     /// MIME type, and convenience methods for decoding.
-    pub fn images(&self) -> impl Iterator<Item = ImageInfo<'_>> {
-        self.output_contents().filter_map(|content| {
-            if let Content::Image {
-                data: Some(base64_data),
-                mime_type,
-                ..
-            } = content
-            {
-                Some(ImageInfo {
-                    data: base64_data.as_str(),
-                    mime_type: mime_type.as_deref(),
-                })
-            } else {
-                None
-            }
-        })
+    #[must_use]
+    pub fn images(&self) -> Vec<ImageInfo<'_>> {
+        self.iter_output_contents()
+            .filter_map(|content| {
+                if let Content::Image {
+                    data: Some(base64_data),
+                    mime_type,
+                    ..
+                } = content
+                {
+                    Some(ImageInfo {
+                        data: base64_data.as_str(),
+                        mime_type: mime_type.as_deref(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Check if the response contains any images.
     #[must_use]
     pub fn has_images(&self) -> bool {
-        self.output_contents()
+        self.iter_output_contents()
             .any(|c| matches!(c, Content::Image { data: Some(_), .. }))
     }
 
@@ -470,15 +482,20 @@ impl InteractionResponse {
     /// generated audio. For multiple audio outputs, use [`audios()`](Self::audios).
     #[must_use]
     pub fn first_audio(&self) -> Option<AudioInfo<'_>> {
-        self.audios().next()
+        self.iter_audios().next()
     }
 
-    /// Returns an iterator over all audio content in the response.
+    /// Returns every audio block in the response, in order.
     ///
     /// Each [`AudioInfo`] provides methods for accessing the audio data,
     /// MIME type, sample rate, channels, and a suitable file extension.
-    pub fn audios(&self) -> impl Iterator<Item = AudioInfo<'_>> {
-        self.output_contents().filter_map(|content| {
+    #[must_use]
+    pub fn audios(&self) -> Vec<AudioInfo<'_>> {
+        self.iter_audios().collect()
+    }
+
+    fn iter_audios(&self) -> impl Iterator<Item = AudioInfo<'_>> {
+        self.iter_output_contents().filter_map(|content| {
             if let Content::Audio {
                 data: Some(base64_data),
                 mime_type,
@@ -502,7 +519,7 @@ impl InteractionResponse {
     /// Check if the response contains any audio content.
     #[must_use]
     pub fn has_audio(&self) -> bool {
-        self.output_contents()
+        self.iter_output_contents()
             .any(|c| matches!(c, Content::Audio { data: Some(_), .. }))
     }
 
@@ -630,29 +647,37 @@ impl InteractionResponse {
         })
     }
 
-    /// Get an iterator over all thought signatures.
+    /// Returns every thought signature, in order.
     ///
     /// Signatures are opaque values validating the model's reasoning process;
     /// pass them back unchanged when replaying history statelessly.
-    pub fn thought_signatures(&self) -> impl Iterator<Item = &str> {
-        self.steps.iter().filter_map(|s| match s {
-            Step::Thought {
-                signature: Some(sig),
-                ..
-            } => Some(sig.as_str()),
-            _ => None,
-        })
+    #[must_use]
+    pub fn thought_signatures(&self) -> Vec<&str> {
+        self.steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Thought {
+                    signature: Some(sig),
+                    ..
+                } => Some(sig.as_str()),
+                _ => None,
+            })
+            .collect()
     }
 
-    /// Get an iterator over all thought summary content blocks.
+    /// Returns every thought summary content block, in order.
     ///
     /// Populated when thinking summaries are enabled
     /// (`with_thinking_summaries(ThinkingSummaries::Auto)`).
-    pub fn thought_summaries(&self) -> impl Iterator<Item = &Content> {
-        self.steps.iter().flat_map(|s| match s {
-            Step::Thought { summary, .. } => summary.as_slice(),
-            _ => &[],
-        })
+    #[must_use]
+    pub fn thought_summaries(&self) -> Vec<&Content> {
+        self.steps
+            .iter()
+            .flat_map(|s| match s {
+                Step::Thought { summary, .. } => summary.as_slice(),
+                _ => &[],
+            })
+            .collect()
     }
 
     // =========================================================================

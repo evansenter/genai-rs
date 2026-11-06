@@ -59,7 +59,7 @@ fn triggers_handle_and_lists_debug_redact_the_api_key() {
 
 #[test]
 fn create_params_serialize_minimal() {
-    let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", probe_interaction());
+    let params = CreateTriggerRequest::new("0 5 1 1 *", "UTC", probe_interaction());
     let json = serde_json::to_value(&params).unwrap();
     assert_eq!(json["schedule"], "0 5 1 1 *");
     assert_eq!(json["time_zone"], "UTC");
@@ -122,7 +122,7 @@ fn create_params_and_update_pass_through_unmodeled_fields() {
     // agent-gated, so the Evergreen extra map is the release valve for
     // fields the crate doesn't model yet (same shape as
     // CreateEnvironmentRequest::extra next door).
-    let mut params = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
+    let mut params = CreateTriggerRequest::new("0 9 * * *", "UTC", probe_interaction());
     params
         .extra
         .insert("future_field".into(), serde_json::json!("x"));
@@ -153,7 +153,7 @@ fn create_params_and_update_pass_through_unmodeled_fields() {
     // typo relies on, and the direction where a flatten regression
     // (flatten buffers every sibling through serde's Content, and the
     // nested interaction deserializers are custom) would be silent.
-    let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+    let params: CreateTriggerRequest = serde_json::from_value(serde_json::json!({
         "schedule": "0 9 * * *",
         "time_zone": "UTC",
         "interaction": {"agent": "my-agent", "input": "hi"},
@@ -165,7 +165,7 @@ fn create_params_and_update_pass_through_unmodeled_fields() {
     // The int64s accept the protobuf-JSON string form on the way in
     // (a config seeded from a stored Trigger re-serializes them as
     // strings) while still sending plain numbers on the way out.
-    let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+    let params: CreateTriggerRequest = serde_json::from_value(serde_json::json!({
         "schedule": "0 9 * * *",
         "time_zone": "UTC",
         "interaction": {"agent": "my-agent", "input": "hi"},
@@ -189,7 +189,7 @@ fn create_params_and_update_pass_through_unmodeled_fields() {
         serde_json::json!(3.5),
         serde_json::json!(true),
     ] {
-        let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
+        let result: Result<CreateTriggerRequest, _> = serde_json::from_value(serde_json::json!({
             "schedule": "0 9 * * *",
             "time_zone": "UTC",
             "interaction": {"agent": "my-agent", "input": "hi"},
@@ -210,7 +210,7 @@ fn store_warn_fires_on_both_construction_paths() {
     let messages = crate::test_subscriber::capture_messages(|| {
         let mut interaction = probe_interaction();
         interaction.store = Some(true);
-        let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+        let _ = CreateTriggerRequest::new("0 9 * * *", "UTC", interaction);
     });
     assert!(
         messages.iter().any(|m| m.contains("store")),
@@ -218,7 +218,7 @@ fn store_warn_fires_on_both_construction_paths() {
     );
 
     let messages = crate::test_subscriber::capture_messages(|| {
-        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+        let params: CreateTriggerRequest = serde_json::from_value(serde_json::json!({
             "schedule": "0 9 * * *",
             "time_zone": "UTC",
             "interaction": {"agent": "my-agent", "input": "hi", "store": true}
@@ -244,7 +244,7 @@ fn missing_agent_warn_fires_on_model_only_interactions() {
             input: Some(InteractionInput::Text("Daily audit".to_string())),
             ..Default::default()
         };
-        let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+        let _ = CreateTriggerRequest::new("0 9 * * *", "UTC", interaction);
     });
     assert!(
         messages.iter().any(|m| m.contains("custom agent")),
@@ -252,7 +252,7 @@ fn missing_agent_warn_fires_on_model_only_interactions() {
     );
 
     let messages = crate::test_subscriber::capture_messages(|| {
-        let _ = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
+        let _ = CreateTriggerRequest::new("0 9 * * *", "UTC", probe_interaction());
     });
     assert!(
         !messages.iter().any(|m| m.contains("custom agent")),
@@ -279,7 +279,7 @@ fn empty_input_warn_fires_on_the_struct_literal_shape() {
                 input,
                 ..Default::default()
             };
-            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+            let _ = CreateTriggerRequest::new("0 9 * * *", "UTC", interaction);
         });
         assert!(
             messages.iter().any(|m| m.contains("empty prompt")),
@@ -293,7 +293,7 @@ fn empty_input_warn_fires_on_the_struct_literal_shape() {
     // funnel must warn too — this is the shape a user hits without
     // ever writing a struct literal.
     let messages = crate::test_subscriber::capture_messages(|| {
-        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+        let params: CreateTriggerRequest = serde_json::from_value(serde_json::json!({
             "schedule": "0 9 * * *",
             "time_zone": "UTC",
             "interaction": {"agent": "my-agent", "input": []}
@@ -310,7 +310,7 @@ fn empty_input_warn_fires_on_the_struct_literal_shape() {
     );
 
     let messages = crate::test_subscriber::capture_messages(|| {
-        let _ = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
+        let _ = CreateTriggerRequest::new("0 9 * * *", "UTC", probe_interaction());
     });
     assert!(
         !messages.iter().any(|m| m.contains("empty prompt")),
@@ -535,7 +535,7 @@ fn trigger_timestamps_degrade_per_field() {
 
 #[test]
 fn create_params_serialize_all_fields() {
-    let params = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction())
+    let params = CreateTriggerRequest::new("0 9 * * *", "UTC", probe_interaction())
         .with_display_name("daily-audit")
         .with_environment_id("env-123")
         .with_max_consecutive_failures(3)
@@ -675,10 +675,10 @@ fn sparse_trigger_projection_degrades_per_field() {
     }
 
     // The leniency is scoped to the response side: the same malformed
-    // input in a send-side TriggerCreateParams (e.g. loaded from a
+    // input in a send-side CreateTriggerRequest (e.g. loaded from a
     // config file) is a clean parse error, not a silently scheduled
     // empty prompt.
-    let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
+    let result: Result<CreateTriggerRequest, _> = serde_json::from_value(serde_json::json!({
         "schedule": "0 9 * * *",
         "time_zone": "UTC",
         "interaction": {"agent": "my-agent", "input": 0}
@@ -693,7 +693,7 @@ fn sparse_trigger_projection_degrades_per_field() {
         serde_json::json!({"agent": "my-agent"}),
         serde_json::json!({"agent": "my-agent", "input": null}),
     ] {
-        let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
+        let result: Result<CreateTriggerRequest, _> = serde_json::from_value(serde_json::json!({
             "schedule": "0 9 * * *",
             "time_zone": "UTC",
             "interaction": interaction

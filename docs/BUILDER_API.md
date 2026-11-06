@@ -19,6 +19,12 @@ rules. For every method and its arguments, see the
 `add_label(key, value)` and `add_extra(key, value)` add one entry to a keyed
 map: entries added earlier are kept, and a repeated key replaces its value.
 
+Types follow the same pattern across resources: a list page is
+`<Resource>ListResponse` (`FileListResponse`), a create body is
+`Create<Resource>Request` (`CreateTriggerRequest`), and every collection
+accessor on `InteractionResponse` (`function_calls()`, `images()`,
+`all_annotations()`, ...) returns a `Vec` (D-028).
+
 `continue_decode(&response)` sets several settings at once from a response
 whose decode stopped early: its model, its id as the previous interaction,
 and its continuation token (see

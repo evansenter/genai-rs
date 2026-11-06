@@ -324,9 +324,9 @@ mod video {
             &client,
             "static+window",
             genai_rs::VideoProcessing::segment()
-                .start_offset("5s")
-                .end_offset("10s")
-                .fps(1.0)
+                .with_start_offset("5s")
+                .with_end_offset("10s")
+                .with_fps(1.0)
                 .build(),
         )
         .await;
@@ -836,7 +836,7 @@ mod text_to_speech {
             }
             let response = completed.expect("no completed event");
             assert!(chunks > 1, "expected several audio deltas, got {chunks}");
-            let audios: Vec<_> = response.audios().collect();
+            let audios: Vec<_> = response.audios();
             assert_eq!(
                 audios.len(),
                 1,

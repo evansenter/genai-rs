@@ -76,7 +76,7 @@ fn list_responses_drop_only_the_undeserializable_entry() {
     assert_eq!(stores.stores.len(), 1);
     assert_eq!(stores.next_page_token.as_deref(), Some("p2"));
 
-    let docs: DocumentListResponse = serde_json::from_value(serde_json::json!({
+    let docs: FileSearchDocumentListResponse = serde_json::from_value(serde_json::json!({
         "documents": [{"name": 7}, document_wire()]
     }))
     .unwrap();
@@ -88,7 +88,7 @@ fn list_responses_treat_an_explicit_null_list_as_empty() {
     let stores: FileSearchStoreListResponse =
         serde_json::from_value(serde_json::json!({"fileSearchStores": null})).unwrap();
     assert!(stores.stores.is_empty());
-    let docs: DocumentListResponse =
+    let docs: FileSearchDocumentListResponse =
         serde_json::from_value(serde_json::json!({"documents": null})).unwrap();
     assert!(docs.documents.is_empty());
 }

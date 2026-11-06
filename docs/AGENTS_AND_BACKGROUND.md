@@ -285,7 +285,7 @@ agent is verified live (2026-11-01, see below).
 ```rust,no_run
 use futures_util::TryStreamExt;
 use genai_rs::{
-    InteractionInput, InteractionRequest, TriggerCreateParams, TriggerExecution, TriggerStatus,
+    InteractionInput, InteractionRequest, CreateTriggerRequest, TriggerExecution, TriggerStatus,
     TriggerUpdate,
 };
 
@@ -297,7 +297,7 @@ let interaction = InteractionRequest {
 };
 
 // Cron schedule, IANA time zone, the interaction to run
-let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
+let params = CreateTriggerRequest::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
     .with_display_name("weekday-briefing")
     .with_environment_id("env-id"); // optional
 let trigger = client.triggers().create(&params).await?;

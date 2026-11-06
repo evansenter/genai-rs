@@ -535,7 +535,7 @@ pub struct InteractionRequest {
     /// `stream` key from here before sending, with a `warn!`, since a copy
     /// here would override the [`stream`](Self::stream) they set (an SSE
     /// answer to a non-streaming call). The same typo cost as
-    /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams::extra)
+    /// [`CreateTriggerRequest::extra`](crate::CreateTriggerRequest::extra)
     /// applies to a deserialized request: a misspelled key lands here and is
     /// sent as is. Clear this map before sending to drop every such key, as
     /// 0.13.0 did.

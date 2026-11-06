@@ -62,8 +62,8 @@ Helpers on `InteractionResponse`:
 | Method | Returns |
 |--------|---------|
 | `has_thoughts()` | `true` if any `Thought` step is present (a step can be present even when `thought_tokens()` is 0) |
-| `thought_signatures()` | Iterator over the populated signatures (`&str`) |
-| `thought_summaries()` | Iterator over summary `Content` blocks |
+| `thought_signatures()` | The populated signatures, `Vec<&str>` |
+| `thought_summaries()` | The summary `Content` blocks, `Vec<&Content>` |
 | `thought_tokens()` | `Option<u32>`, the same as `usage.total_thought_tokens` |
 | `step_summary().thought_count` | Number of `Thought` steps |
 

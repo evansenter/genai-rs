@@ -19,8 +19,8 @@ use super::error_helpers::deserialize_with_context;
 use super::files::{ResumableUpload, check_upload_size, finish_resumable_upload};
 use crate::errors::GenaiError;
 use crate::file_search_stores::{
-    CreateFileSearchStoreRequest, DocumentImport, DocumentListResponse, DocumentOptions,
-    FileSearchDocument, FileSearchStore, FileSearchStoreListResponse,
+    CreateFileSearchStoreRequest, DocumentImport, DocumentOptions, FileSearchDocument,
+    FileSearchDocumentListResponse, FileSearchStore, FileSearchStoreListResponse,
 };
 use crate::files::{FileError, UploadSource};
 use crate::poll::PollStep;
@@ -155,11 +155,11 @@ pub async fn list_documents(
     store_name: &str,
     page_size: Option<u32>,
     page_token: Option<&str>,
-) -> Result<DocumentListResponse, GenaiError> {
+) -> Result<FileSearchDocumentListResponse, GenaiError> {
     tracing::debug!("Listing documents in store: {store_name}");
     let url = with_paging(documents_url(ctx, store_name)?, page_size, page_token);
     let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
-    deserialize_with_context(&text, "DocumentListResponse")
+    deserialize_with_context(&text, "FileSearchDocumentListResponse")
 }
 
 /// Retrieves a document

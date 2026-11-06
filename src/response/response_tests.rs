@@ -240,7 +240,7 @@ fn test_interaction_response_thoughts() {
 
     assert!(response.has_thoughts());
 
-    let signatures: Vec<_> = response.thought_signatures().collect();
+    let signatures: Vec<_> = response.thought_signatures();
     assert_eq!(signatures.len(), 2);
     assert_eq!(signatures[0], "sig_1");
     assert_eq!(signatures[1], "sig_2");
@@ -260,7 +260,7 @@ fn test_interaction_response_no_thoughts() {
     };
 
     assert!(!response.has_thoughts());
-    let signatures: Vec<_> = response.thought_signatures().collect();
+    let signatures: Vec<_> = response.thought_signatures();
     assert!(signatures.is_empty());
 }
 
@@ -279,7 +279,7 @@ fn test_interaction_response_thought_summaries() {
         ..Default::default()
     };
 
-    let summaries: Vec<_> = response.thought_summaries().collect();
+    let summaries: Vec<_> = response.thought_summaries();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].as_text(), Some("Summarized reasoning"));
 }
@@ -1335,7 +1335,7 @@ fn test_interaction_response_complex_roundtrip() {
     assert_eq!(deserialized.steps.len(), 10);
 
     // Verify thought signature survived
-    let signatures: Vec<_> = deserialized.thought_signatures().collect();
+    let signatures: Vec<_> = deserialized.thought_signatures();
     assert_eq!(signatures, vec!["thought-sig-abc123"]);
 
     // Verify function calls are accessible
@@ -1796,7 +1796,7 @@ fn test_interaction_response_all_annotations() {
         ..Default::default()
     };
 
-    let annotations: Vec<_> = response.all_annotations().collect();
+    let annotations: Vec<_> = response.all_annotations();
 
     // Should collect all 3 annotations from the two Text blocks with annotations
     assert_eq!(annotations.len(), 3);
@@ -1819,7 +1819,7 @@ fn test_interaction_response_all_annotations_empty() {
         ..Default::default()
     };
 
-    let count = response.all_annotations().count();
+    let count = response.all_annotations().len();
     assert_eq!(count, 0);
 }
 
@@ -1855,7 +1855,7 @@ fn test_interaction_response_all_annotations_skips_non_text() {
         ..Default::default()
     };
 
-    let annotations: Vec<_> = response.all_annotations().collect();
+    let annotations: Vec<_> = response.all_annotations();
 
     // Should only find the one annotation from the Text content
     assert_eq!(annotations.len(), 1);
@@ -1918,7 +1918,7 @@ fn test_image_info_bytes_decodes_valid_base64() {
 
     let response = model_output_response(vec![Content::image_data(base64_data, "image/png")]);
 
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images.len(), 1);
 
     let decoded = images[0].bytes().expect("Should decode valid base64");
@@ -1932,7 +1932,7 @@ fn test_image_info_bytes_invalid_base64() {
         "image/png",
     )]);
 
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images.len(), 1);
 
     let result = images[0].bytes();
@@ -1952,7 +1952,7 @@ fn test_image_info_mime_type() {
         },
     ]);
 
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images.len(), 2);
 
     assert_eq!(images[0].mime_type(), Some("image/jpeg"));
@@ -1962,42 +1962,42 @@ fn test_image_info_mime_type() {
 #[test]
 fn test_image_info_extension_jpeg() {
     let response = model_output_response(vec![Content::image_data("YWJj", "image/jpeg")]);
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images[0].extension(), "jpg");
 }
 
 #[test]
 fn test_image_info_extension_jpg_alternate() {
     let response = model_output_response(vec![Content::image_data("YWJj", "image/jpg")]);
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images[0].extension(), "jpg");
 }
 
 #[test]
 fn test_image_info_extension_png() {
     let response = model_output_response(vec![Content::image_data("YWJj", "image/png")]);
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images[0].extension(), "png");
 }
 
 #[test]
 fn test_image_info_extension_webp() {
     let response = model_output_response(vec![Content::image_data("YWJj", "image/webp")]);
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images[0].extension(), "webp");
 }
 
 #[test]
 fn test_image_info_extension_gif() {
     let response = model_output_response(vec![Content::image_data("YWJj", "image/gif")]);
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images[0].extension(), "gif");
 }
 
 #[test]
 fn test_image_info_extension_unknown_defaults_to_png() {
     let response = model_output_response(vec![Content::image_data("YWJj", "image/tiff")]);
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images[0].extension(), "png"); // Defaults to png for unknown types
 }
 
@@ -2010,7 +2010,7 @@ fn test_image_info_extension_none_mime_type_defaults_to_png() {
         resolution: None,
         extra: Default::default(),
     }]);
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images[0].extension(), "png"); // Defaults to png when no MIME type
 }
 
@@ -2032,7 +2032,7 @@ fn test_images_iterator_returns_only_images_with_data() {
         ..Default::default()
     };
 
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     // Only 2 images with data should be included, not the URI-based one
     assert_eq!(images.len(), 2);
     assert_eq!(images[0].mime_type(), Some("image/png"));
@@ -2049,7 +2049,7 @@ fn test_images_iterator_empty_when_no_images() {
         ..Default::default()
     };
 
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert!(images.is_empty());
 }
 
@@ -2063,7 +2063,7 @@ fn test_images_iterator_empty_steps() {
         ..Default::default()
     };
 
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert!(images.is_empty());
 }
 
@@ -2089,7 +2089,7 @@ fn test_audios_iterator_returns_only_audios_with_data() {
         ..Default::default()
     };
 
-    let audios: Vec<_> = response.audios().collect();
+    let audios: Vec<_> = response.audios();
     // Only 2 audios with data should be included, not the URI-based one
     assert_eq!(audios.len(), 2);
     assert_eq!(
@@ -2109,7 +2109,7 @@ fn test_audios_iterator_empty_when_no_audios() {
         ..Default::default()
     };
 
-    let audios: Vec<_> = response.audios().collect();
+    let audios: Vec<_> = response.audios();
     assert!(audios.is_empty());
 }
 
@@ -2123,7 +2123,7 @@ fn test_audios_iterator_empty_steps() {
         ..Default::default()
     };
 
-    let audios: Vec<_> = response.audios().collect();
+    let audios: Vec<_> = response.audios();
     assert!(audios.is_empty());
 }
 
@@ -2261,7 +2261,7 @@ fn test_output_contents_iterates_model_output_only() {
         ..Default::default()
     };
 
-    let contents: Vec<_> = response.output_contents().collect();
+    let contents: Vec<_> = response.output_contents();
     // Only content from model_output steps is included
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0].as_text(), Some("model text"));
@@ -2446,10 +2446,7 @@ fn test_response_deserializes_steps_wire_fixture() {
     assert_eq!(response.status, InteractionStatus::Completed);
     assert_eq!(response.steps.len(), 2);
     assert_eq!(response.as_text(), Some("The answer is 4."));
-    assert_eq!(
-        response.thought_signatures().collect::<Vec<_>>(),
-        vec!["sig-1"]
-    );
+    assert_eq!(response.thought_signatures(), vec!["sig-1"]);
     assert_eq!(
         response.environment_id.as_deref(),
         Some("38aac1ae7f30fe9bd67afe42382ea041")
@@ -2586,7 +2583,7 @@ fn test_images_iterator() {
         ..Default::default()
     };
 
-    let images: Vec<_> = response.images().collect();
+    let images: Vec<_> = response.images();
     assert_eq!(images.len(), 2);
 
     assert_eq!(images[0].bytes().unwrap(), b"test1");

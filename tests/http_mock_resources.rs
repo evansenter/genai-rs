@@ -21,13 +21,13 @@ use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
     Agent, AllowlistEntry, ChunkingConfig, CreateCredentialRequest, CreateEnvironmentRequest,
-    CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
-    CredentialUpdate, CustomMetadata, DocumentImport, DocumentState, DocumentUpload,
-    EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec, EnvironmentStatus, FileMetadata,
-    FileSearchDocument, FileUpload, GenaiError, InjectionLocation, InteractionInput,
+    CreateFileSearchStoreRequest, CreateTriggerRequest, CreateVoiceRequest, CredentialConfig,
+    CredentialType, CredentialUpdate, CustomMetadata, DocumentImport, DocumentState,
+    DocumentUpload, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec, EnvironmentStatus,
+    FileMetadata, FileSearchDocument, FileUpload, GenaiError, InjectionLocation, InteractionInput,
     InteractionRequest, NetworkConfig, PollOptions, RevocationBehavior, StreamChunk, Tool, Trigger,
-    TriggerCreateParams, TriggerExecution, TriggerStatus, TriggerUpdate, Voice, VoiceAudio,
-    VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState, WebhookUpdate,
+    TriggerExecution, TriggerStatus, TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType,
+    Webhook, WebhookEvent, WebhookState, WebhookUpdate,
 };
 #[cfg(not(feature = "strict-unknown"))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
@@ -373,8 +373,8 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
 }
 
 /// A valid trigger create body: a custom agent, non-empty input, no `store`.
-fn trigger_params() -> TriggerCreateParams {
-    TriggerCreateParams::new("0 5 * * *", "UTC", nightly_interaction())
+fn trigger_params() -> CreateTriggerRequest {
+    CreateTriggerRequest::new("0 5 * * *", "UTC", nightly_interaction())
 }
 
 fn nightly_interaction() -> InteractionRequest {
@@ -685,7 +685,7 @@ async fn trigger_endpoints_send_the_documented_requests() {
     let c = &client;
 
     let interaction = nightly_interaction();
-    let mut params = TriggerCreateParams::new("0 5 * * *", "Europe/Paris", interaction.clone())
+    let mut params = CreateTriggerRequest::new("0 5 * * *", "Europe/Paris", interaction.clone())
         .with_display_name("nightly")
         .with_environment_id("env-1")
         .with_max_consecutive_failures(3)

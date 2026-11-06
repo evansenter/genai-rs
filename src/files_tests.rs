@@ -48,7 +48,7 @@ fn test_list_files_response_deserialization() {
         "nextPageToken": "token123"
     }"#;
 
-    let response: ListFilesResponse = serde_json::from_str(json).unwrap();
+    let response: FileListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(response.files.len(), 2);
     assert_eq!(response.next_page_token.as_deref(), Some("token123"));
 }
@@ -63,7 +63,7 @@ fn test_list_files_response_drops_only_the_undeserializable_entry() {
         ],
         "nextPageToken": "p2"
     }"#;
-    let list: ListFilesResponse = serde_json::from_str(json).unwrap();
+    let list: FileListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.files.len(), 1);
     assert_eq!(list.files[0].name, "files/a");
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
@@ -71,14 +71,14 @@ fn test_list_files_response_drops_only_the_undeserializable_entry() {
 
 #[test]
 fn test_list_files_response_explicit_null_list_is_empty() {
-    let list: ListFilesResponse = serde_json::from_str(r#"{"files": null}"#).unwrap();
+    let list: FileListResponse = serde_json::from_str(r#"{"files": null}"#).unwrap();
     assert!(list.files.is_empty());
 }
 
 #[test]
 fn test_empty_list_files_response() {
     let json = r#"{}"#;
-    let response: ListFilesResponse = serde_json::from_str(json).unwrap();
+    let response: FileListResponse = serde_json::from_str(json).unwrap();
     assert!(response.files.is_empty());
     assert!(response.next_page_token.is_none());
 }

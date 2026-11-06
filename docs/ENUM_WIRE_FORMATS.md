@@ -1146,7 +1146,7 @@ response.status = InteractionStatus::Completed;
 ```
 
 Types with neither `Default` nor a constructor need a JSON fixture:
-`FileMetadata`, `FileError`, `VideoMetadata`, `ListFilesResponse`,
+`FileMetadata`, `FileError`, `VideoMetadata`, `FileListResponse`,
 `FileUploadResponse` and `AutoFunctionResult`.
 (`ModalityTokens::new()`, `StreamEvent::new()` and
 `FunctionCallInfo::to_owned()` cover the others without `Default`.)

@@ -521,6 +521,7 @@ async fn sse_images_in_separate_steps_as_streamed_live() {
     }
     let images: Vec<Vec<u8>> = response
         .images()
+        .into_iter()
         .map(|image| image.bytes().expect("each image decodes"))
         .collect();
     assert_eq!(images.len(), 2);
@@ -558,6 +559,7 @@ async fn sse_two_images_in_one_step_stay_two_blocks() {
     // mid-way, did not.
     let images: Vec<Vec<u8>> = response
         .images()
+        .into_iter()
         .map(|image| image.bytes().expect("each image decodes"))
         .collect();
     assert_eq!(images.len(), 2, "two images, two blocks");

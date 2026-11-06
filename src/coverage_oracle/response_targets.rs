@@ -77,12 +77,13 @@ pub(super) fn targets() -> Vec<Target> {
     use crate::agents::{Agent, AgentListResponse};
     use crate::credentials::{Credential, CredentialListResponse};
     use crate::environments::{
-        Environment, EnvironmentFile, EnvironmentFileList, EnvironmentListResponse,
+        Environment, EnvironmentFile, EnvironmentFileListResponse, EnvironmentListResponse,
     };
     use crate::file_search_stores::{
-        DocumentListResponse, FileSearchDocument, FileSearchStore, FileSearchStoreListResponse,
+        FileSearchDocument, FileSearchDocumentListResponse, FileSearchStore,
+        FileSearchStoreListResponse,
     };
-    use crate::files::{FileMetadata, ListFilesResponse};
+    use crate::files::{FileListResponse, FileMetadata};
     use crate::response::InteractionResponse;
     use crate::triggers::{
         Trigger, TriggerExecution, TriggerExecutionListResponse, TriggerListResponse,
@@ -177,10 +178,10 @@ pub(super) fn targets() -> Vec<Target> {
             probe::<EnvironmentFile>,
         ),
         t(
-            "EnvironmentFileList",
+            "EnvironmentFileListResponse",
             Some("environments.GetEnvironmentFilesResponse"),
             Some("GetEnvironmentFilesResponse"),
-            probe::<EnvironmentFileList>,
+            probe::<EnvironmentFileListResponse>,
         ),
         t(
             "Credential",
@@ -213,10 +214,10 @@ pub(super) fn targets() -> Vec<Target> {
             probe::<FileMetadata>,
         ),
         t(
-            "ListFilesResponse",
+            "FileListResponse",
             Some("legacy.ListFilesResponse"),
             None,
-            probe::<ListFilesResponse>,
+            probe::<FileListResponse>,
         ),
         t(
             "FileSearchStore",
@@ -237,10 +238,10 @@ pub(super) fn targets() -> Vec<Target> {
             probe::<FileSearchDocument>,
         ),
         t(
-            "DocumentListResponse",
+            "FileSearchDocumentListResponse",
             Some("legacy.ListDocumentsResponse"),
             None,
-            probe::<DocumentListResponse>,
+            probe::<FileSearchDocumentListResponse>,
         ),
     ]
 }
