@@ -133,7 +133,7 @@ fn test_accumulator_keeps_unmodeled_delta_fields() {
 /// A streamed code execution call whose language the crate does not know
 /// keeps its code, as the same call read as a step does. By default the
 /// language reads as `CodeExecutionLanguage::Unknown`. Under
-/// `strict-unknown` the delta fails to parse, naming the field, like the
+/// `genai_strict_unknown` the delta fails to parse, naming the field, like the
 /// step; it used to become a `StepDelta::Unknown`, which the accumulator
 /// left out of the step, so the code was lost without an error.
 #[test]
@@ -143,14 +143,14 @@ fn test_accumulator_code_execution_delta_with_an_unknown_language() {
         "arguments": {"language": "cobol", "code": "DISPLAY 1"}
     });
 
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     {
         let err = serde_json::from_value::<StepDelta>(delta).unwrap_err();
         assert_eq!(
             err.to_string(),
             "StepDelta 'code_execution_call' has a field this crate cannot read: \
              field `arguments.language`: Unknown CodeExecutionLanguage 'cobol'. \
-             Strict mode is enabled via the 'strict-unknown' feature flag. \
+             Strict mode is enabled via the 'genai_strict_unknown' cfg flag. \
              Either update the library or disable strict mode."
         );
         let step = json!({
@@ -165,7 +165,7 @@ fn test_accumulator_code_execution_delta_with_an_unknown_language() {
         );
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     {
         let mut acc = StepAccumulator::new();
         acc.start(
@@ -406,7 +406,7 @@ fn merge_signature_replaces_empty_and_extends_fragments() {
 #[test]
 fn accumulator_merges_unknown_delta_signature_into_unknown_step() {
     let mut acc = StepAccumulator::new();
-    // Built directly: `strict-unknown` rejects unknown steps on deserialize.
+    // Built directly: `genai_strict_unknown` rejects unknown steps on deserialize.
     acc.start(
         0,
         Step::Unknown {

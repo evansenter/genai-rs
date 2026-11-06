@@ -83,7 +83,7 @@ fn test_empty_list_files_response() {
     assert!(response.next_page_token.is_none());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_file_state_unknown_preserves_data() {
     // Test that unknown states preserve the original value
@@ -285,7 +285,7 @@ fn file_source_wire_values() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn file_source_unknown_is_preserved() {
     let source: FileSource = serde_json::from_value("COPIED".into()).unwrap();
@@ -454,7 +454,7 @@ mod proptest_tests {
     }
 
     /// Strategy for generating FileState variants.
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     fn arb_file_state() -> impl Strategy<Value = FileState> {
         prop_oneof![
             Just(FileState::Processing),
@@ -469,7 +469,7 @@ mod proptest_tests {
     }
 
     /// Strategy for FileState - no Unknown in strict mode.
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     fn arb_file_state() -> impl Strategy<Value = FileState> {
         prop_oneof![
             Just(FileState::Processing),
@@ -508,12 +508,12 @@ mod proptest_tests {
 
     /// Strategy for FileSource, with an unknown value outside strict mode.
     fn arb_file_source() -> impl Strategy<Value = FileSource> {
-        #[cfg(not(feature = "strict-unknown"))]
+        #[cfg(not(genai_strict_unknown))]
         let unknown = "[A-Z_]{4,20}".prop_map(|source_type| FileSource::Unknown {
             data: serde_json::Value::String(source_type.clone()),
             source_type,
         });
-        #[cfg(feature = "strict-unknown")]
+        #[cfg(genai_strict_unknown)]
         let unknown = Just(FileSource::Uploaded);
         prop_oneof![
             Just(FileSource::Uploaded),

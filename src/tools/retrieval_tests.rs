@@ -15,7 +15,7 @@ fn test_retrieval_type_wire_roundtrip() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_retrieval_type_unknown_roundtrip() {
     let unknown: RetrievalType = serde_json::from_str("\"bing_search\"").unwrap();

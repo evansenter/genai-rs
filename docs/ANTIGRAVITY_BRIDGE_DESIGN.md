@@ -695,7 +695,7 @@ from the wire.
 | `interaction.created` (in) | `{interaction_id}` | `StreamChunk::Created` wants an interaction object | No |
 | `step.start` / `step.delta` / `step.stop` (in) | `index`, `step` / `delta`, plus `sub_interaction_id`, `parent_interaction_id`, `depth` | `StreamChunk::StepStart` / `StepDelta` / `StepStop` | Envelope fits; subagent identity only in the raw event |
 | Steps `user_input`, `model_output`, `thought`, `function_call`/`_result`, `code_execution_*`, `google_search_*`, `url_context_*`, `mcp_server_tool_*` | | `Step` variants of those names | Fit |
-| Steps `view_file_*`, `list_directory_*`, `find_file_*`, `search_directory_*`, `edit_file_*`, `generate_image_*`, `skill_lookup_*`, `elicitation_call`/`_result`, `compaction` | | none | `Step::Unknown` (an error under `strict-unknown`) |
+| Steps `view_file_*`, `list_directory_*`, `find_file_*`, `search_directory_*`, `edit_file_*`, `generate_image_*`, `skill_lookup_*`, `elicitation_call`/`_result`, `compaction` | | none | `Step::Unknown` (an error in strict mode, `--cfg genai_strict_unknown`) |
 | Deltas `text`, `thought_summary`; `raw_thought` | | `StepDelta::Text`, `ThoughtSummary`; none | Fit; `raw_thought` is `Unknown` |
 | `state_update` (in) | `state` (`running`, `waiting_for_tasks`, `fully_idle`, `cancelled`), `reason`, `error` | `StreamChunk::StatusUpdate` (`InteractionStatus`) | No: trajectory states, not interaction statuses |
 | `usage_update` (in) | usage payload | `UsageMetadata` | Payload likely; the event is new |

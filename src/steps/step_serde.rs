@@ -511,7 +511,7 @@ impl<'de> Deserialize<'de> for Step {
     where
         D: serde::Deserializer<'de>,
     {
-        #[cfg(feature = "strict-unknown")]
+        #[cfg(genai_strict_unknown)]
         use serde::de::Error as _;
 
         let value = Value::deserialize(deserializer)?;
@@ -528,14 +528,14 @@ impl<'de> Deserialize<'de> for Step {
                 // An unknown type and a known type with a field the crate
                 // cannot read both keep the whole object; the cause says
                 // which.
-                #[cfg(feature = "strict-unknown")]
+                #[cfg(genai_strict_unknown)]
                 {
                     Err(D::Error::custom(
                         fallback.strict_message("Step", &step_type),
                     ))
                 }
 
-                #[cfg(not(feature = "strict-unknown"))]
+                #[cfg(not(genai_strict_unknown))]
                 {
                     tracing::warn!(
                         "Keeping a step whole in Step::Unknown: {}. \

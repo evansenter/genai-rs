@@ -5,14 +5,14 @@
 //! 2. Preserve the original type string and data
 //! 3. Roundtrip correctly (serialize back to original form)
 //!
-//! These tests are SKIPPED when `strict-unknown` is enabled because
+//! These tests are SKIPPED when `genai_strict_unknown` is enabled because
 //! strict mode causes deserialization errors instead of Unknown variants.
 //!
 //! Run tests:
 //! - Default: `cargo test --test unknown_variant_tests`
-//! - Strict (should skip): `cargo test --test unknown_variant_tests --features strict-unknown`
+//! - Strict (should skip): `RUSTFLAGS='--cfg genai_strict_unknown' cargo test --test unknown_variant_tests`
 
-#![cfg(not(feature = "strict-unknown"))]
+#![cfg(not(genai_strict_unknown))]
 
 use genai_rs::{
     Annotation, Content, EnvironmentStatus, FunctionCallingMode, HarmCategory, InteractionStatus,

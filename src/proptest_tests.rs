@@ -420,7 +420,7 @@ fn arb_url_context_result_item() -> impl Strategy<Value = UrlContextResultItem> 
 // String Enum Strategies
 // =============================================================================
 //
-// Their Unknown arms go through `unknown_or`: under `strict-unknown` an
+// Their Unknown arms go through `unknown_or`: under `genai_strict_unknown` an
 // unknown value fails to deserialize, so the arm yields a known value instead.
 
 /// The Unknown arm of a string-enum strategy (see above).
@@ -428,12 +428,12 @@ fn unknown_or<T: Clone + std::fmt::Debug + 'static>(
     known: T,
     unknown: impl Fn(String) -> T + 'static,
 ) -> BoxedStrategy<T> {
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     {
         let _ = known;
         arb_unknown_type().prop_map(unknown).boxed()
     }
-    #[cfg(feature = "strict-unknown")]
+    #[cfg(genai_strict_unknown)]
     {
         let _ = unknown;
         Just(known).boxed()
@@ -694,15 +694,15 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
 }
 
 /// Strategy for known Content variants only.
-/// Used when strict-unknown is enabled (Unknown variants fail to deserialize in strict mode).
-#[cfg(feature = "strict-unknown")]
+/// Used when strict mode is enabled (Unknown variants fail to deserialize in strict mode).
+#[cfg(genai_strict_unknown)]
 fn arb_content() -> impl Strategy<Value = Content> {
     arb_known_content()
 }
 
 /// Strategy for all Content variants including Unknown.
 /// Used in normal mode (Unknown variants are gracefully handled).
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 fn arb_content() -> impl Strategy<Value = Content> {
     prop_oneof![
         arb_known_content(),
@@ -1032,14 +1032,14 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
 }
 
 /// Strategy for known Step variants only.
-/// Used when strict-unknown is enabled (Unknown steps fail to deserialize in strict mode).
-#[cfg(feature = "strict-unknown")]
+/// Used when strict mode is enabled (Unknown steps fail to deserialize in strict mode).
+#[cfg(genai_strict_unknown)]
 fn arb_step() -> impl Strategy<Value = Step> {
     arb_known_step()
 }
 
 /// Strategy for all Step variants including Unknown.
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 fn arb_step() -> impl Strategy<Value = Step> {
     prop_oneof![
         arb_known_step(),
@@ -2739,7 +2739,7 @@ proptest! {
 // Unknown Variant Preservation Tests (Evergreen)
 // =============================================================================
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 proptest! {
     /// Test that unknown Step types are preserved through a roundtrip.
     #[test]

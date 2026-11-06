@@ -543,7 +543,7 @@ fn the_cfg_test_gate_recognises_compound_forms_and_only_those() {
     }
     assert!(gated("#[cfg(test)]"));
     assert!(gated("#[cfg(all(test, not(miri)))]"));
-    assert!(gated("#[cfg(any(test, feature = \"strict-unknown\"))]"));
+    assert!(gated("#[cfg(any(test, genai_strict_unknown))]"));
     assert!(gated("#[allow(dead_code)] #[cfg(test)]"));
     assert!(!gated("#[cfg(not(test))]"));
     assert!(!gated("#[cfg(all(not(test), unix))]"));

@@ -322,7 +322,7 @@ fn test_interaction_response_function_calls() {
     assert!(!response.has_text());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_function_call_step_without_id_becomes_unknown() {
     // The 2026-05-20 spec requires an id on function_call steps. A payload
@@ -1399,7 +1399,7 @@ fn test_interaction_response_complex_roundtrip() {
 
 // --- InteractionStatus Tests ---
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_interaction_status_unknown_deserialize() {
     // Simulate a new API status that this library doesn't know about
@@ -1411,7 +1411,7 @@ fn test_interaction_status_unknown_deserialize() {
     assert!(status.unknown_data().is_some());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_interaction_status_unknown_roundtrip() {
     // Deserialize unknown status
@@ -1473,7 +1473,7 @@ fn test_interaction_status_default_is_in_progress() {
     assert_eq!(InteractionStatus::default(), InteractionStatus::InProgress);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_interaction_status_non_string_handled() {
     // Edge case: API returns non-string (shouldn't happen but code handles it)
@@ -2634,7 +2634,7 @@ fn test_interaction_status_incomplete_roundtrip() {
     assert_eq!(serialized, r#""incomplete""#);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_interaction_status_unknown_preserved() {
     let status: InteractionStatus = serde_json::from_str("\"hibernating\"").unwrap();

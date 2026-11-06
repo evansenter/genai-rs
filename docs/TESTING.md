@@ -27,11 +27,14 @@ make test-all                                         # + live tests (GEMINI_API
 cargo nextest run --test multiturn_tests --run-ignored all   # one live file
 cargo nextest run -E 'test(/function_calling/)' --run-ignored all
 LOUD_WIRE=1 cargo nextest run -E 'test(/name/)' --run-ignored all --no-capture -j 1
-cargo test --features strict-unknown                  # unknown Content/Step/string-enum values become errors
+make test-strict                                      # strict mode: unknown Content/Step/string-enum values become errors
 ```
 
-Tests that exercise an `Unknown` value carry
-`#[cfg(not(feature = "strict-unknown"))]`, since strict mode rejects it.
+Strict mode is the `--cfg genai_strict_unknown` flag, not a Cargo feature,
+because it is not additive (D-030): `make test-strict` runs the suite with
+`RUSTFLAGS="--cfg genai_strict_unknown"`, in `target/strict` so the default
+build is not evicted. Tests that exercise an `Unknown` value carry
+`#[cfg(not(genai_strict_unknown))]`, since strict mode rejects it.
 
 | Variable | Purpose |
 |----------|---------|
@@ -242,7 +245,7 @@ Tests live with the feature they verify, not the mechanics they use (D-008).
 A function-calling test that happens to be multi-turn belongs in
 `function_calling_tests.rs`. `api_canary_tests` fail when the API returns a
 step, delta or status type the crate doesn't model. They are compiled out
-under `strict-unknown`.
+in strict mode.
 
 ### Template
 
@@ -470,7 +473,7 @@ checks on it:
   Each finding is
   traced to its `Class.field` by removing keys until it goes away. It runs
   against the bindings and the v1beta spec (whose `writeOnly` fields are
-  left out of responses), and not under `strict-unknown`.
+  left out of responses), and not in strict mode.
 - **Sparse response bodies** (`src/coverage_oracle/response_minimal.rs`,
   `sparse_binding_bodies_deserialize` and `sparse_spec_bodies_deserialize`).
   The bodies above set every field, so a type that demands a field the

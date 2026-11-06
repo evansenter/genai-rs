@@ -261,7 +261,7 @@ pub struct Trigger {
 /// `interaction` onto `None`. (Under default features a malformed steps
 /// *array* never reaches the rejection path — the Evergreen `Step`
 /// deserializer absorbs unrecognized elements as `Step::Unknown`
-/// per-element; `strict-unknown` rejects it and it degrades here like any
+/// per-element; `genai_strict_unknown` rejects it and it degrades here like any
 /// other bad input.)
 ///
 /// Without this a projection carrying `input: 0` would propagate a hard

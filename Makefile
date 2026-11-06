@@ -1,4 +1,4 @@
-.PHONY: check fmt clippy test test-all test-scripts docs clean
+.PHONY: check fmt clippy test test-strict test-all test-scripts docs clean
 
 # Pre-push gate: format check + lint + unit tests + the CI script harnesses
 check: fmt clippy test test-scripts
@@ -7,11 +7,17 @@ check: fmt clippy test test-scripts
 fmt:
 	cargo fmt --all -- --check
 
-# Lint with warnings as errors: all features, then without strict-unknown,
-# which compiles code out (the coverage oracle's response side)
+# Lint with warnings as errors: all features, then strict mode
+# (`--cfg genai_strict_unknown`, D-030), which compiles code in and out (the
+# coverage oracle's response side). RUSTFLAGS rebuilds every crate, so strict
+# mode builds in its own target dir rather than evicting the default build.
 clippy:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
-	cargo clippy --workspace --all-targets --features antigravity -- -D warnings
+	RUSTFLAGS="--cfg genai_strict_unknown" cargo clippy --workspace --all-targets --all-features --target-dir target/strict -- -D warnings
+
+# Unit tests in strict mode, as CI's test-strict-unknown job runs them
+test-strict:
+	RUSTFLAGS="--cfg genai_strict_unknown" cargo nextest run --workspace --target-dir target/strict
 
 # Unit tests only (doctests run in CI - excluded locally for speed)
 test:
@@ -68,9 +74,9 @@ test-scripts:
 	fi; \
 	exit "$$rc"
 
-# Build documentation with warnings as errors (all features + the docs.rs
-# feature set, which differ on strict-unknown). The mirror build uses its
-# own target dir so target/doc stays browsable as the all-features build.
+# Build documentation with warnings as errors (all features with private
+# items, and the docs.rs build with its `--cfg docsrs`). The mirror build uses
+# its own target dir so target/doc stays browsable as the all-features build.
 docs:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
 	RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs

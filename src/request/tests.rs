@@ -18,7 +18,7 @@ fn test_service_tier_roundtrip() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_service_tier_unknown_roundtrip() {
     let unknown: ServiceTier = serde_json::from_str("\"turbo\"").unwrap();

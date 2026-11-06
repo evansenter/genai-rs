@@ -177,7 +177,7 @@ mod tests {
         assert!(json.get("method").is_none());
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn unknown_values_roundtrip() {
         let json = serde_json::json!({

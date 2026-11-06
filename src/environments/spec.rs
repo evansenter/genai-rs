@@ -699,7 +699,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn test_source_type_unknown_roundtrip() {
         let unknown: SourceType = serde_json::from_str("\"s3\"").unwrap();

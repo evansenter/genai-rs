@@ -278,15 +278,20 @@ impl<'a> InteractionBuilder<'a> {
 
     /// Sets the input from a vector of content objects, replacing any existing content.
     ///
-    /// This is useful for building multi-part inputs or for sending function results.
+    /// This is useful for building multi-part inputs.
     ///
-    /// # Panics / Errors
+    /// It composes with the other input setters:
+    /// - with [`with_text()`](Self::with_text), the text is prepended to the
+    ///   content as its first block;
+    /// - with [`with_history()`](Self::with_history), the content is this
+    ///   turn's input after the history: `[...history, Step::user_input(content)]`.
     ///
-    /// Calling `build()` will return an error if `with_content()` is combined with
-    /// `with_history()`. To combine multimodal content with conversation
-    /// history, wrap the content in a [`Step::user_input`] and use
-    /// [`with_history()`](Self::with_history) instead. For function results,
-    /// use `with_history(vec![Step::function_result(...)])`.
+    /// For function results, use `with_history(vec![Step::function_result(...)])`.
+    ///
+    /// # Errors
+    ///
+    /// `build()` returns [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput)
+    /// for an empty `content` with no `with_text()`.
     ///
     /// # Example
     /// ```no_run
@@ -314,12 +319,15 @@ impl<'a> InteractionBuilder<'a> {
 
     /// Sets the conversation history from an explicit array of steps.
     ///
-    /// This can be combined with [`with_text()`](Self::with_text) to build a conversation:
+    /// This can be combined with [`with_text()`](Self::with_text) or
+    /// [`with_content()`](Self::with_content) to build a conversation:
     /// - `with_history()` sets the conversation history (previous steps)
-    /// - `with_text()` sets the current user message to append
+    /// - `with_text()` or `with_content()` sets this turn's input, appended
+    ///   as a final `user_input` step
     ///
-    /// The order doesn't matter - at build time, the history and current message
-    /// are composed into `[...history, Step::user_text(current_message)]`.
+    /// The order doesn't matter - at build time, the history and this turn are
+    /// composed into `[...history, Step::user_text(current_message)]`, or
+    /// `[...history, Step::user_input(content)]` with content.
     ///
     /// This enables multi-turn conversations without relying on server-side
     /// storage via `previous_interaction_id`. Useful for:

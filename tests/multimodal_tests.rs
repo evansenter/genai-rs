@@ -14,7 +14,7 @@ mod image {
         SAMPLE_IMAGE_URL, TINY_BLUE_PNG_BASE64, TINY_RED_PNG_BASE64, assert_response_semantic,
         get_client, stateful_builder, test_timeout, with_timeout,
     };
-    use genai_rs::{Content, InteractionInput, InteractionStatus};
+    use genai_rs::{Content, InteractionInput, InteractionStatus, Step};
 
     /// `gs://` URIs are rejected outright; files must be registered first.
     #[tokio::test]
@@ -179,6 +179,55 @@ mod image {
                 "Previous turn discussed a red image. Asked if the color is warm or cool.",
                 text,
                 "Does this response identify the color as warm (or mention red/hot)?",
+            )
+            .await;
+        })
+        .await;
+    }
+
+    /// Content after history: `with_history()` plus `with_content()` sends
+    /// `[...history, user_input(content)]`, and the model reads both
+    /// (#454; live 2026-11-06).
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_image_content_after_history() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        with_timeout(test_timeout(), async {
+            let history = vec![
+                Step::user_text("Remember this code word for later: PELICAN."),
+                Step::model_text("Got it, I'll remember the code word."),
+            ];
+            let contents = vec![
+                Content::text(
+                    "What color is this image? And what was the code word I gave you? \
+                     Answer in one short sentence.",
+                ),
+                Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
+            ];
+
+            let response = crate::retry_request!([client, history, contents] => {
+                stateful_builder(&client)
+                    .with_history(history)
+                    .with_content(contents)
+                    .create()
+                    .await
+            })
+            .expect("content after history should be accepted");
+
+            assert_eq!(response.status, InteractionStatus::Completed);
+            let text = response.as_text().expect("a text answer");
+            println!("Response: {text}");
+            assert_response_semantic(
+                &client,
+                "History gave the code word PELICAN; this turn showed a red 1x1 image and asked \
+                 for its color and the code word.",
+                text,
+                "Does this response say the image is red (or a shade of red) AND give the code \
+                 word PELICAN?",
             )
             .await;
         })

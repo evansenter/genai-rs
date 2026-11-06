@@ -12,7 +12,9 @@ unsafe_code = "deny"
 # No source currently branches on cfg(docsrs); this allowance keeps the
 # docs.rs rustdoc-arg below lint-clean if a #[cfg(docsrs)] is ever added.
 # `cargo fuzz` sets cfg(fuzzing), which compiles `__fuzz` (src/fuzzing.rs).
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)"] }
+# `--cfg genai_strict_unknown` turns on strict mode for unknown API values
+# (D-030): a cfg rather than a Cargo feature, because it is not additive.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)", "cfg(genai_strict_unknown)"] }
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -77,9 +79,9 @@ include = [
     "!/src/coverage_oracle/**",
 ]
 
-# docs.rs builds with the antigravity feature (not all-features: that would
-# pull in strict-unknown, compiling the docs build with the crate's documented
-# Evergreen lenient behavior inverted). Per-item "Available on crate feature
+# docs.rs builds with the antigravity feature, the one non-default feature.
+# Strict mode is a cfg, not a feature (D-030), so no feature set turns it on.
+# Per-item "Available on crate feature
 # ... only" banners come from nightly rustdoc's crate-level doc(auto_cfg)
 # default — no source attribute needed (feature(doc_auto_cfg) was removed in
 # Rust 1.92; do not re-add it). The docsrs rustdoc-arg is the docs.rs
@@ -165,16 +167,6 @@ system-proxy = ["reqwest/system-proxy"]
 ## Enabled by default. Without it bodies are read as UTF-8, which is what
 ## the API sends.
 charset = ["reqwest/charset"]
-
-## Strict mode for unknown API values.
-##
-## When enabled, an unrecognized content type, step type, or string-enum value
-## (statuses, modes, tiers, ...) in an API response is a deserialization error
-## instead of an `Unknown` variant. Other tagged unions (`Tool`, `StepDelta`,
-## `StreamChunk`, ...) still capture unknown values gracefully.
-##
-## Default: disabled (unknown types are captured gracefully)
-strict-unknown = []
 
 ## Native client for Google's Antigravity `localharness` agent runtime.
 ##

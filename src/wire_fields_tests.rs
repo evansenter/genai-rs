@@ -40,7 +40,7 @@ fn missing_required_and_mistyped_fields_are_errors() {
 }
 
 /// Every read error names the field, with its path from the tagged object,
-/// so the warning and the `strict-unknown` error give the real cause.
+/// so the warning and the `genai_strict_unknown` error give the real cause.
 #[test]
 fn errors_name_the_field_and_its_path() {
     let wire = object(json!({"type": "t", "id": 7, "arguments": {"language": 5}, "meta": "x"}));

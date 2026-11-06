@@ -179,10 +179,10 @@ fn test_serialize_known_variant_with_none_fields() {
 }
 
 // --- Unknown Variant Tests ---
-// Note: Tests that rely on graceful unknown handling are disabled when strict-unknown is enabled,
+// Note: Tests that rely on graceful unknown handling are disabled when strict mode is enabled,
 // since strict mode causes deserialization errors for unknown types instead of capturing them.
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_unknown_interaction_content() {
     // Simulate a new API content type that this library doesn't know about
@@ -205,7 +205,7 @@ fn test_deserialize_unknown_interaction_content() {
     assert!(content.unknown_data().is_some());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_unknown_streaming_content() {
     // Simulate a new streaming content type that this library doesn't know about
@@ -337,7 +337,7 @@ fn test_serialize_unknown_with_special_characters() {
     assert_eq!(value["type"], "special/type:with.chars-and_underscores");
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_unknown_manual_construction_roundtrip() {
     // Test that manually constructed Unknown variants can round-trip through JSON
@@ -375,7 +375,7 @@ fn test_unknown_manual_construction_roundtrip() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_unknown_with_missing_type() {
     // Edge case: JSON object without a type field
@@ -391,7 +391,7 @@ fn test_deserialize_unknown_with_missing_type() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_unknown_with_null_type() {
     // Edge case: JSON object with null type field
@@ -458,7 +458,7 @@ fn test_deserialize_function_call_step_missing_arguments() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_function_call_step_missing_required_fields_becomes_unknown() {
     // id and name are required on function_call steps; a payload without them
@@ -653,7 +653,7 @@ fn test_serialize_unknown_step() {
     assert_eq!(obj.keys().filter(|k| *k == "type").count(), 1);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_unknown_step_roundtrip() {
     let unknown_json = r#"{"type": "future_step_type", "payload": "some_value", "count": 42}"#;
@@ -673,7 +673,7 @@ fn test_deserialize_unknown_step_roundtrip() {
     assert_eq!(restored.unknown_step_type(), Some("future_step_type"));
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_step_with_missing_type() {
     let malformed_json = r#"{"foo": "bar"}"#;
@@ -1107,7 +1107,7 @@ fn test_step_edge_cases_empty_values() {
 // CodeExecutionLanguage Tests
 // =============================================================================
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_code_execution_language_unknown_deserialization() {
     // Simulate a new language the library doesn't know about
@@ -1126,7 +1126,7 @@ fn test_code_execution_language_unknown_deserialization() {
     assert_eq!(reserialized, r#""JAVASCRIPT""#);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_code_execution_language_unknown_display() {
     let unknown = CodeExecutionLanguage::Unknown {
@@ -1152,7 +1152,7 @@ fn test_code_execution_language_known_variants_serde() {
     assert_eq!(format!("{}", CodeExecutionLanguage::Python), "python");
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_code_execution_language_uppercase_is_unknown() {
     // The pre-revision spelling is not the wire format any more.
@@ -1339,7 +1339,7 @@ fn test_deserialize_response_with_built_in_tool_steps() {
     assert_eq!(summary.unknown_count, 0);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_deserialize_response_with_unknown_steps() {
     // Test deserializing a full response that contains truly unknown steps
@@ -2012,7 +2012,7 @@ fn test_video_with_resolution_roundtrip() {
 
 // --- Resolution Unknown Tests ---
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_resolution_unknown_deserialization() {
     // Test that unrecognized resolution strings deserialize to Unknown
@@ -2023,7 +2023,7 @@ fn test_resolution_unknown_deserialization() {
     assert_eq!(resolution.unknown_resolution_type(), Some("super_high"));
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_resolution_unknown_roundtrip() {
     // Test that Unknown variant roundtrips correctly
@@ -2057,7 +2057,7 @@ fn test_resolution_unknown_helper_methods() {
     assert_eq!(data.get("extra").unwrap(), true);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_resolution_unknown_in_image_content() {
     // Test that unknown resolution works within Image content
@@ -2075,7 +2075,7 @@ fn test_resolution_unknown_in_image_content() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_resolution_unknown_object_form() {
     // Test that object-form resolution values are handled (future API compatibility)

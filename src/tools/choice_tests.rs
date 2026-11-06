@@ -21,7 +21,7 @@ fn test_function_calling_mode_serialization() {
     }
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_function_calling_mode_unknown_roundtrip() {
     // Test that unknown modes are preserved
@@ -57,7 +57,7 @@ fn test_function_calling_mode_helper_methods() {
     assert!(unknown.unknown_data().is_some());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn test_function_calling_mode_non_string_value() {
     // Test that non-string JSON values are handled gracefully

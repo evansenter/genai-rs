@@ -587,7 +587,7 @@ fn empty_list_response_deserializes() {
     assert!(trigger.update_time.is_some());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn unknown_statuses_roundtrip() {
     let status: TriggerStatus = serde_json::from_value(serde_json::json!("snoozing")).unwrap();

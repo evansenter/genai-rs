@@ -592,6 +592,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value itself, write `*response`
   (`StreamChunk::Completed(response) => Some(*response)`); build a chunk
   with `Box::new(..)`.
+- **Breaking: strict mode is the `--cfg genai_strict_unknown` flag; the
+  `strict-unknown` Cargo feature is gone** (#490, D-030). Cargo unifies
+  features across a build, so any crate that turned the feature on made
+  every other user of genai-rs in that build fail on unknown API values: a
+  feature must only add, and this one changed behavior. A cfg is set only
+  by whoever runs the build. Behavior under it is unchanged, except that
+  strict-mode errors name the cfg. Migration: replace
+  `--features strict-unknown` with
+  `RUSTFLAGS="--cfg genai_strict_unknown"` (and `RUSTDOCFLAGS` for
+  doctests), or put `rustflags = ["--cfg", "genai_strict_unknown"]` under
+  `[build]` in `.cargo/config.toml`; replace
+  `#[cfg(feature = "strict-unknown")]` in your tests with
+  `#[cfg(genai_strict_unknown)]`.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
@@ -666,6 +679,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `create_stream_with_auto_functions()` now build the request when called;
   a request the builder rejects is still the stream's only item, and
   nothing is sent until the stream is polled.
+- `with_content()` composes with `with_history()`: the content is this
+  turn's input after the history, `[...history, user_input(content)]`, with
+  any `with_text()` text prepended to it as without history (#454, D-031).
+  `build()` used to refuse the pair, a rule left from when content went on
+  the wire as a bare array; the API takes the composed form like any
+  history (verified live 2026-11-06).
 
 ### Fixed
 
@@ -786,6 +805,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list page dropped the file. It now reads the number.
 - `FileError` dropped a failed file's `details` and any other unmodeled
   key; it keeps them now.
+- `with_content(vec![])` with no `with_text()` fails in `build()` with
+  `GenaiError::InvalidInput` naming `with_content()`, as a missing input
+  does, instead of costing a round trip for the API's
+  `400 Request has empty input.` (#452).
 
 ## [0.13.0] - 2026-11-03
 

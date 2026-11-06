@@ -411,23 +411,12 @@ impl<'a> InteractionBuilder<'a> {
     ///   ([`continue_decode`](Self::continue_decode))
     /// - A continuation token is set without input and without a previous
     ///   interaction id
-    /// - `with_content()` was combined with `with_history()` (mutually exclusive)
+    /// - `with_content()` was given no content blocks (and no `with_text()`)
     /// - Neither model nor agent was specified
     /// - Both model and agent were specified (mutually exclusive)
     pub fn build(self) -> Result<InteractionRequest, GenaiError> {
         // Runtime validation for storage-related constraints
         self.validate()?;
-
-        // A builder policy, not a wire constraint: say what the caller should
-        // build instead.
-        if self.content_input.is_some() && !self.history.is_empty() {
-            return Err(GenaiError::InvalidInput(
-                "Content input (with_content()) cannot be combined with with_history(). \
-                 For multimodal multi-turn conversations, wrap the content in \
-                 Step::user_input(...) and include it in the history instead."
-                    .to_string(),
-            ));
-        }
 
         // Validate that agent_config is not set without agent
         if self.agent_config.is_some() && self.agent.is_none() {
@@ -438,17 +427,30 @@ impl<'a> InteractionBuilder<'a> {
             ));
         }
 
-        // Compose input from the separate fields
-        // Priority: content_input > history > current_message
-        // - content_input + current_message: merge (text prepended to content)
-        // - history + current_message: merge (text appended as user_input step)
+        // Compose the input. This turn's input is the content (with the text,
+        // if any, prepended as its first block) or else the text; history
+        // comes before it, so `[...history, user_input(this turn)]` (#454:
+        // the API takes that like any history, live 2026-11-06).
         let input = if let Some(mut content) = self.content_input {
-            // Content input mode (single-turn multimodal)
-            // If there's also a current_message, prepend it as text content
             if let Some(text) = self.current_message {
                 content.insert(0, Content::text(text));
             }
-            Some(InteractionInput::Content(content))
+            // The API would refuse it too (`400 Request has empty input.`,
+            // live 2026-08-16), a round trip later (#452).
+            if content.is_empty() {
+                return Err(GenaiError::InvalidInput(
+                    "with_content() was given no content blocks. Pass at least one \
+                     block, or set the input with with_text() or with_history()."
+                        .to_string(),
+                ));
+            }
+            if self.history.is_empty() {
+                Some(InteractionInput::Content(content))
+            } else {
+                let mut steps = self.history;
+                steps.push(Step::user_input(content));
+                Some(InteractionInput::Steps(steps))
+            }
         } else {
             // Text/history mode
             match (self.history.is_empty(), self.current_message) {

@@ -55,6 +55,7 @@ is gitignored).
 ```bash
 make check        # pre-push gate: fmt + clippy + test + test-scripts
 make test         # unit/offline tests (no doctests)
+make test-strict  # the same in strict mode (--cfg genai_strict_unknown, D-030)
 make test-all     # + live integration tests (needs GEMINI_API_KEY)
 make test-scripts # shell-script harnesses (needs bash, jq, python3; PyYAML for one)
 make docs         # rustdoc -D warnings, all-features and docs.rs feature set
@@ -113,9 +114,10 @@ with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 and keep unmodeled fields in a `#[serde(flatten)] extra` map; the known
 variants of `Step`, `StepDelta`, `Content` and `Annotation` do the same with
 an `extra` field, through `src/wire_fields.rs` (#491). Polling
-continues on unknown statuses, bounded by timeouts. The `strict-unknown`
-feature makes `Content`, `Step` and every string enum fail on unknown values
-instead. New string enums use the crate-private `wire_enum!` macro
+continues on unknown statuses, bounded by timeouts. Strict mode, the
+`--cfg genai_strict_unknown` flag (a cfg, not a feature: D-030), makes
+`Content`, `Step` and every string enum fail on unknown values instead
+(`make test-strict`). New string enums use the crate-private `wire_enum!` macro
 (`src/wire_enum.rs`), which supplies all of the above.
 
 When adding or changing an enum, record its verified wire format in
@@ -260,7 +262,7 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
 
 - `rust.yml` jobs: check (also fails when `cargo package` would ship a
   test-only file, and builds the packaged crates), test,
-  test-strict-unknown, test-antigravity (pinned `localharness` wheel),
+  test-strict-unknown (strict mode, under `RUSTFLAGS`), test-antigravity (pinned `localharness` wheel),
   test-integration (live, grouped), example-smoke (live), captured-fixtures
   (live, schedule and dispatch only: re-captures `tests/fixtures/captured/`,
   replays the fresh copies, and fails once the committed ones are over 90

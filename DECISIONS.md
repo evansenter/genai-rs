@@ -976,3 +976,61 @@ place one comes from; the move alone left `triggers.rs` at 814 lines.
 **Consequences.** A new list builder is one macro invocation plus its
 docs. The macro's fields are `pub(crate)` so the handles' tests can read a
 builder's query.
+
+---
+
+## D-030 — Strict mode is a `--cfg`, not a Cargo feature (2026-11-06)
+
+**Context.** #490: `strict-unknown` was a Cargo feature that turned
+Evergreen's lenient reading (D-001) into errors. Cargo features must be
+additive, because Cargo unifies them: if any crate in a build enables one,
+every crate in that build gets it. A library that turned on
+`strict-unknown` for its own tests, or a binary's dev tool that did, made
+every other user of genai-rs in the same build fail on the next value the
+API added.
+
+**Decision.** Strict mode is `--cfg genai_strict_unknown`, set through
+`RUSTFLAGS` (and `RUSTDOCFLAGS` for doctests) or a `.cargo/config.toml`,
+which only the person running the build controls, as tokio's
+`tokio_unstable` is. `Cargo.toml` declares the cfg under
+`unexpected_cfgs`'s `check-cfg`. CI's `Test Suite (strict-unknown)` job
+keeps its name (branch protection names it) and runs the suite and the
+doctests with the cfg; the Clippy job lints both configurations, and
+`make clippy` and `make test-strict` do the same locally, in
+`target/strict` so the default build is not evicted.
+
+Rejected: a runtime switch (a global the feature only defaults, or an
+environment variable). Deserialization has no context to carry a
+per-client setting, so it would be process-global state, still shared by
+every crate in the process, and the test suite's 100-odd
+`cfg(not(strict))` gates would become runtime skips that pass silently in
+the wrong mode.
+
+**Consequences.** `--all-features` no longer covers strict mode, so a
+strict build is a separate build. In CI, `RUSTFLAGS` replaces the mold
+linker flag the opt-in cargo config sets, so the strict job links with the
+default linker.
+
+---
+
+## D-031 — `with_content()` composes with `with_history()` (2026-11-06)
+
+**Context.** #454: `build()` refused `with_content()` with
+`with_history()`. That was a wire fact while content was sent as a bare
+content array, since the API's input union has no arm mixing steps and
+content. Since #451 content goes out as a single `user_input` step, so the
+pair has an obvious meaning, history then this turn, and the error told
+callers to build exactly that by hand.
+
+**Decision.** Relax it. Content after history is
+`[...history, Step::user_input(content)]`, the arrangement
+`with_history()` + `with_text()` already produces for text; `with_text()`
+with content is prepended to the content, as it is without history. A live
+probe (2026-11-06, `tests/multimodal_tests.rs`'s
+`test_image_content_after_history`) sent a text history and then an image
+turn: the API accepted it and the model answered from both.
+
+**Consequences.** One input path is no longer unambiguously single-turn;
+`docs/BUILDER_API.md`'s composition tree spells the rule out. An empty
+content list is now refused in `build()` (#452), since with history it
+would otherwise be an empty final turn.

@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(env.size_bytes, Some(42));
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn unknown_status_roundtrips() {
         let json = serde_json::json!({"id": "x", "status": "hibernating"});

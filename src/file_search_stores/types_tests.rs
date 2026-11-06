@@ -132,7 +132,7 @@ fn document_state_wire_values_use_state_prefix() {
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[test]
 fn document_state_unknown_is_preserved() {
     let state: DocumentState = serde_json::from_value(serde_json::json!("STATE_QUARANTINED"))

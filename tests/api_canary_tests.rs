@@ -3,15 +3,15 @@
 //! `Unknown` keeps the library working when that happens; these make sure
 //! someone finds out.
 //!
-//! Skipped under `strict-unknown`, where an unknown type is a deserialization
+//! Skipped under `genai_strict_unknown`, where an unknown type is a deserialization
 //! error rather than an `Unknown` to report.
 //!
 //! ```bash
 //! cargo nextest run --test api_canary_tests --run-ignored all
 //! ```
 
-// Skip all tests in this module when strict-unknown is enabled
-#![cfg(not(feature = "strict-unknown"))]
+// Skip all tests in this module when strict mode is enabled
+#![cfg(not(genai_strict_unknown))]
 
 mod common;
 

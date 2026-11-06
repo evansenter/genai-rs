@@ -49,8 +49,8 @@ and `ComputerUseConfig::new().with_excluded_predefined_functions(..)`.
 | Method | Purpose | Composes with |
 |--------|---------|---------------|
 | `with_text(str)` | A text message | `with_history()`, `with_content()` |
-| `with_history(Vec<Step>)` | Conversation history as steps | `with_text()` |
-| `with_content(Vec<Content>)` | Multimodal content for one turn | `with_text()` |
+| `with_history(Vec<Step>)` | Conversation history as steps | `with_text()`, `with_content()` |
+| `with_content(Vec<Content>)` | Multimodal content for one turn | `with_text()`, `with_history()` |
 | `conversation()...done()` | Fluent history builder (`.user()` / `.model()` steps) | — |
 | `with_input(InteractionInput)` | Maps an `InteractionInput` onto the three methods above | — |
 
@@ -58,8 +58,9 @@ and `ComputerUseConfig::new().with_excluded_predefined_functions(..)`.
 
 ```text
 with_content() set?
-├── Yes ── with_history() also set? ── Yes → ERROR (InvalidInput)
-│                                     No  → Content([text?, ...content])   (text prepended if set)
+├── Yes → this turn = [text?, ...content]           (text prepended if set; empty → ERROR)
+│         with_history() also set?  Yes → Steps([...history, user_input(this turn)])
+│                                   No  → Content(this turn)
 └── No ─── with_history() set?
            ├── Yes → Steps([...history, user_text(text)?])                 (text appended if set)
            └── No  → with_text() set?  Yes → Text(text)
@@ -68,23 +69,22 @@ with_content() set?
                                              else ERROR ("Input is required")
 ```
 
-A `Content` input is sent on the wire as a single `user_input` step.
-
-For multimodal content *and* history, put the content in a step yourself:
+A `Content` input is sent on the wire as a single `user_input` step, so
+content after history is the same request as a history whose last step is
+`Step::user_input(content)` (accepted live 2026-11-06):
 
 ```rust,no_run
 use genai_rs::{Content, Step};
 
-# async fn run(client: genai_rs::Client, mut history: Vec<Step>, base64_png: String) -> Result<(), genai_rs::GenaiError> {
-history.push(Step::user_input(vec![
-    Content::text("What's in this image?"),
-    Content::image_data(base64_png, "image/png"),
-]));
-
+# async fn run(client: genai_rs::Client, history: Vec<Step>, base64_png: String) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_history(history)
+    .with_content(vec![
+        Content::text("What's in this image?"),
+        Content::image_data(base64_png, "image/png"),
+    ])
     .create()
     .await?;
 # let _ = response;
@@ -101,7 +101,7 @@ every `create*()`), before any request is sent:
 |-------------|-----|
 | Neither or both of `with_model()` and `with_agent()` | Exactly one target is required |
 | `with_agent_config()` without `with_agent()` | Agent config only applies to agents |
-| `with_content()` together with `with_history()` | Wrap the content in `Step::user_input` instead (above) |
+| `with_content(vec![])` with no `with_text()` | An empty turn; the API would refuse it too (`400 Request has empty input.`) |
 | No input at all, outside a continuation | Nothing to send; without input the API answers a misleading `404 Model ... not found` (live 2026-11-05) |
 | A continuation token with no input and no `with_previous_interaction()` | A continuation without input continues a stored interaction by its id (a `store: false` one resends its input) |
 | `with_store_disabled()` + `with_previous_interaction()` | Chaining needs the previous interaction stored |

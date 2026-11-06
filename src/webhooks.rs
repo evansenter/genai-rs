@@ -707,7 +707,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn test_webhook_event_unknown_roundtrip() {
         let unknown: WebhookEvent = serde_json::from_str("\"file.generated\"").unwrap();
@@ -736,7 +736,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn test_webhook_state_unknown_roundtrip() {
         let unknown: WebhookState = serde_json::from_str("\"paused\"").unwrap();
@@ -764,7 +764,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "strict-unknown"))]
+    #[cfg(not(genai_strict_unknown))]
     #[test]
     fn test_revocation_behavior_unknown_roundtrip() {
         let unknown: RevocationBehavior = serde_json::from_str("\"revoke_after_week\"").unwrap();

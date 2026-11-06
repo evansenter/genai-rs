@@ -9,7 +9,7 @@
 //! too.
 //!
 //! Tests whose replies carry unknown enum values are compiled out under
-//! `strict-unknown`, which rejects those values by design.
+//! `genai_strict_unknown`, which rejects those values by design.
 
 mod common;
 
@@ -29,7 +29,7 @@ use genai_rs::{
     TriggerExecution, TriggerStatus, TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType,
     Webhook, WebhookEvent, WebhookState, WebhookUpdate,
 };
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
 use serde_json::{Value, json};
 
@@ -514,7 +514,7 @@ async fn webhook_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
     let wire = json!({
@@ -561,7 +561,7 @@ async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
     assert_eq!(back["delivery_stats"], wire["delivery_stats"]);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entries() {
     let stub = Stub::replying(vec![Reply::json(
@@ -650,7 +650,7 @@ async fn webhook_list_items_resend_raw_byte_page_tokens_percent_encoded() {
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_secret() {
     let stub = Stub::replying(vec![Reply::json(200, json!({"secret": "whsec_rotated"}))]).await;
@@ -677,7 +677,7 @@ async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_
 // Triggers
 // =============================================================================
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn trigger_endpoints_send_the_documented_requests() {
     let stub = ok_stub().await;
@@ -822,7 +822,7 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     assert_eq!(back["max_consecutive_failures"], 3);
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn trigger_list_preserves_unknown_statuses() {
     let stub = Stub::replying(vec![
@@ -856,7 +856,7 @@ async fn trigger_list_preserves_unknown_statuses() {
     assert!(empty.triggers.is_empty() && empty.next_page_token.is_none());
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn trigger_execution_responses_parse_under_both_list_keys() {
     let stub = Stub::replying(vec![
@@ -1448,7 +1448,7 @@ async fn environment_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn environment_response_parses_string_counts_and_preserves_unknowns() {
     let network =
@@ -1618,7 +1618,7 @@ async fn environment_file_items_resend_the_path_recursive_and_page_size_on_every
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -2096,7 +2096,7 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn document_list_parses_states_sizes_and_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
@@ -2974,7 +2974,7 @@ async fn document_wait_until_active_times_out_with_the_last_state() {
     assert_eq!(stub.requests().len(), 6, "{message}");
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn document_wait_until_active_keeps_polling_through_unknown_and_missing_states() {
     let (result, targets) = wait_for_document(
@@ -3104,7 +3104,7 @@ async fn voice_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn voice_list_parses_prebuilt_voices_and_preserves_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -3378,7 +3378,7 @@ async fn credential_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn credential_responses_parse_and_preserve_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -3570,7 +3570,7 @@ async fn interaction_endpoints_send_the_documented_requests() {
     .await;
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn interaction_response_preserves_unknown_status_input_and_extras() {
     let stub = Stub::replying(vec![
@@ -3959,7 +3959,7 @@ async fn file_list_pages_resume_from_with_page_token() {
     );
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn file_list_parses_metadata_and_preserves_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
@@ -4084,7 +4084,7 @@ async fn wait_until_active_bounds_a_stalled_request() {
     assert_eq!(stub.requests().len(), 1, "{message}");
 }
 
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 #[tokio::test]
 async fn wait_until_active_keeps_polling_through_unknown_states() {
     let stub = Stub::replying(vec![

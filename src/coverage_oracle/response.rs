@@ -20,7 +20,7 @@
 //! generated, a snapshot refresh that adds a field fails here until the field
 //! is modeled or listed below.
 //!
-//! Compiled out under `strict-unknown`, where an unmodeled enum value fails
+//! Compiled out under `genai_strict_unknown`, where an unmodeled enum value fails
 //! the whole body instead of showing as `Unknown`: the default build is the
 //! one this measures.
 

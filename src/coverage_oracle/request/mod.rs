@@ -248,7 +248,7 @@ fn cases() -> Vec<Case> {
 
 /// The binding class of every case, for the completeness check in
 /// [`super`].
-#[cfg(not(feature = "strict-unknown"))]
+#[cfg(not(genai_strict_unknown))]
 pub(super) fn case_classes() -> Vec<&'static str> {
     cases().into_iter().map(|case| case.binding).collect()
 }

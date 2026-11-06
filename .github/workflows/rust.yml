@@ -72,10 +72,18 @@ jobs:
       - uses: taiki-e/install-action@cargo-nextest
       - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/setup-mold
-      - name: Run unit tests with strict-unknown feature
-        run: cargo nextest run --workspace --features strict-unknown
-      - name: Run doctests with strict-unknown feature
-        run: cargo test --workspace --features strict-unknown --doc
+      # Strict mode is a cfg, not a Cargo feature (D-030). RUSTFLAGS replaces
+      # the mold linker flag from setup-mold's cargo config, so this job
+      # links with the default linker.
+      - name: Run unit tests in strict mode
+        env:
+          RUSTFLAGS: --cfg genai_strict_unknown
+        run: cargo nextest run --workspace
+      - name: Run doctests in strict mode
+        env:
+          RUSTFLAGS: --cfg genai_strict_unknown
+          RUSTDOCFLAGS: --cfg genai_strict_unknown
+        run: cargo test --workspace --doc
 
   test-antigravity:
     name: Test Suite (antigravity)
@@ -495,10 +503,12 @@ jobs:
       - uses: ./.github/actions/setup-mold
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # --all-features turns on strict-unknown, which compiles code out (the
-      # coverage oracle's response side), so lint the default set too.
-      - name: Run clippy (without strict-unknown)
-        run: cargo clippy --workspace --all-targets --features antigravity -- -D warnings
+      # Strict mode (`--cfg genai_strict_unknown`, D-030) compiles code in and
+      # out (the coverage oracle's response side), so lint it too.
+      - name: Run clippy (strict mode)
+        env:
+          RUSTFLAGS: --cfg genai_strict_unknown
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   doc:
     name: Documentation
