@@ -223,37 +223,104 @@ fn ui_tests_do_not_run_on_beta() {
     );
 }
 
+/// The steps of a job: each `- ` item under its `steps:` key, with the
+/// lines indented below it (its `run:` script and `env:` block).
+fn steps(job: &str) -> Vec<String> {
+    let Some(body) = job.split("\n    steps:\n").nth(1) else {
+        return Vec::new();
+    };
+    let mut steps: Vec<String> = Vec::new();
+    for line in body.lines() {
+        let indent = line.len() - line.trim_start().len();
+        if line.starts_with("      - ") {
+            steps.push(String::new());
+        } else if !line.trim().is_empty() && indent < 6 {
+            // A key back at the job's own level ends its steps.
+            break;
+        } else if indent == 6 && line.trim_start().starts_with('#') {
+            // A comment between steps belongs to neither.
+            continue;
+        }
+        if let Some(step) = steps.last_mut() {
+            step.push_str(line);
+            step.push('\n');
+        }
+    }
+    steps
+}
+
+/// A step that runs nextest against the live API: it runs `nextest run`
+/// with the repository's key in its env (the scripted harness step blanks
+/// the key, and the unit-test steps have none).
+fn is_live_nextest_step(step: &str) -> bool {
+    command_lines(step).any(|line| line.contains("nextest run"))
+        && step.contains("GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}")
+}
+
 /// The flakiness report counts a step's tests only when the step retries,
 /// which `count_retried_flakes.sh` reads from the step header GitHub
 /// echoes into the log. Retries are set as `NEXTEST_RETRIES` in the step's
 /// env, which the header always lists, never as `--retries`, so the
-/// command's layout cannot hide them; and the jobs the report reads keep
-/// setting them (#504).
+/// command's layout cannot hide them; and every live nextest step sets
+/// them, so the jobs the report reads keep being counted (#504).
 #[test]
 fn nextest_retries_are_set_in_the_step_env() {
-    let mut retried = 0;
+    let mut live = Vec::new();
     let mut problems = Vec::new();
     for (name, text) in workflows() {
         for line in command_lines(&text) {
             if line.contains("--retries") && !line.starts_with("NEXTEST_RETRIES") {
                 problems.push(format!("{name}: `{line}` (set NEXTEST_RETRIES instead)"));
             }
-            if line.starts_with("NEXTEST_RETRIES:") {
-                retried += 1;
+        }
+        for (job, body) in jobs(&text) {
+            for step in steps(&body)
+                .iter()
+                .filter(|step| is_live_nextest_step(step))
+            {
+                let title = step.lines().next().unwrap_or("").trim().to_string();
+                if !command_lines(step).any(|line| line.starts_with("NEXTEST_RETRIES:")) {
+                    problems.push(format!(
+                        "{name} job {job}, step `{title}`: a live nextest step with no \
+                         NEXTEST_RETRIES in its env"
+                    ));
+                }
+                live.push(format!("{name}:{job}"));
             }
         }
     }
     // rust.yml's integration groups and harness step, and release.yml's two
-    // live steps.
+    // live steps: the parser must still find them.
+    for expected in [
+        "rust.yml:test-integration",
+        "rust.yml:test-antigravity",
+        "release.yml:validate",
+    ] {
+        assert!(
+            live.iter().any(|found| found == expected),
+            "no live nextest step found in {expected}; found {live:?}"
+        );
+    }
     assert!(
-        retried >= 4,
-        "only {retried} steps set NEXTEST_RETRIES; the live steps retry the shared key's 429s"
+        live.len() >= 4,
+        "found only {} live nextest steps: {live:?}",
+        live.len()
     );
     assert!(
         problems.is_empty(),
-        "nextest retries must be set through NEXTEST_RETRIES:\n  {}",
+        "nextest retries must be set through NEXTEST_RETRIES in each live step's env:\n  {}",
         problems.join("\n  ")
     );
+}
+
+#[test]
+fn the_step_parser_finds_live_steps_and_their_env() {
+    let job = "    runs-on: x\n    steps:\n      - uses: actions/checkout@v4\n      # The live step.\n      - name: Unit\n        run: cargo nextest run --workspace\n      - name: Live\n        run: |\n          cargo nextest run \\\n            --run-ignored all\n        env:\n          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n          NEXTEST_RETRIES: 2\n      - name: Scripted\n        run: cargo nextest run -E 'binary(x)'\n        env:\n          GEMINI_API_KEY: \"\"\n";
+    let found = steps(job);
+    assert_eq!(found.len(), 4, "{found:?}");
+    assert!(found[2].contains("NEXTEST_RETRIES: 2") && !found[2].contains("Scripted"));
+    let live: Vec<bool> = found.iter().map(|s| is_live_nextest_step(s)).collect();
+    assert_eq!(live, [false, false, true, false]);
 }
 
 #[test]

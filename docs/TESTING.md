@@ -311,14 +311,16 @@ implementation is answered with an error result, not a failure, so a
 
 ### Flakes and retries
 
-The live jobs run nextest with `--retries 2`, so a test that fails and then
-passes leaves its job green. The daily `ci-flakiness-report.yml` reads the
+Every live nextest step sets `NEXTEST_RETRIES: 2` in its env, never a
+`--retries` flag (`tests/ci_workflows/` checks both), so a test that fails
+and then passes leaves its job green. The daily `ci-flakiness-report.yml` reads the
 retry jobs' logs from every finished run of the week, green ones included,
 and counts each test nextest marked `FLAKY` (`.github/scripts/count_retried_flakes.sh`).
 The rolling report lists retried tests beside failed ones and gives the
 week's rate: tests that passed only on a retry, over live test runs. Only
-the steps that run nextest with `--retries` count, so the antigravity job's
-offline suite, which shares its log, stays out of the rate. The target is
+the steps that retry count, read from the `NEXTEST_RETRIES` in the env
+GitHub echoes into the log, so the antigravity job's offline suite, which
+shares its log, stays out of the rate. The target is
 under 1%; the report calls out a week at or over it. No CI run
 stops at its first failure: `.config/nextest.toml` turns fail-fast off for
 the default profile, which every job uses.
