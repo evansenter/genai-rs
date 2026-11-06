@@ -723,7 +723,7 @@ fn append_base64(existing: &mut String, chunk: &str) {
     use base64::Engine;
     use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
-    let whole = |s: &str| s.len() % 4 == 0;
+    let whole = |s: &str| s.len().is_multiple_of(4);
     if whole(existing) && !existing.ends_with('=') && whole(chunk) {
         existing.push_str(chunk);
         return;
