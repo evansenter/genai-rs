@@ -1120,3 +1120,38 @@ person made without sources; whether that is acceptable on the shared key
 is the owner's call when setting `JANITOR_DELETE`. On 2026-11-06 the key
 held 35 sourceless environments, all empty, 34 of them from July. A leaked
 fork, which holds its parent's files, is listed rather than deleted.
+
+---
+
+## D-034 — Request-side types the API echoes keep an `extra` map too (2026-11-06)
+
+**Context.** D-001 keeps unmodeled fields in a flattened `extra` map, and
+`tests/non_exhaustive_responses.rs` checked it for response structs only:
+the request-side types listed in its `REQUEST_SIDE` (exempt from
+`#[non_exhaustive]` so callers can build them) were skipped silently, and
+so was all of `src/antigravity/`. But a stored interaction serves its
+request config back (`generation_config`, `safety_settings`,
+`webhook_config`), so `SpeechConfig`, `ImageConfig`, `VideoConfig`,
+`TranscriptionConfig`, `AllowedTools`, `SafetySetting` and
+`WebhookConfig` dropped a field the API adds, under a `GenerationConfig`
+that kept its own. Fifteen Antigravity types read from the harness did the
+same beside siblings that kept theirs.
+
+**Decision.** Every deserializable struct keeps an `extra` map unless
+nothing serves it back, and the guard checks request-side and Antigravity
+types too. The exceptions are listed with a reason each: `CRATE_MADE` (the
+crate builds them) and `SENT_ONLY` (only sent: the retrieval tool's
+configs, which the Gemini API rejects, so no stored interaction holds one;
+`FunctionDeclaration`, made into a `Tool::Function` before it is sent;
+`WebhookUpdate`; and the harness config, options, question answers and
+hook replies). The guard also requires the map to be a flattened map, not
+merely a field named `extra`.
+
+**Consequences.** A breaking change for struct literals of the seven
+request configs and the Antigravity types (D-007): add
+`..Default::default()`. `SafetySetting::new` loses `const`. A caller can
+now also send a field of these configs the crate does not model yet, as
+`GenerationConfig::extra` allowed. Not covered: the `Tool` enum's known
+variants, which keep no `extra` (enums are outside the guard, as `Step`'s
+were before #491).
+
