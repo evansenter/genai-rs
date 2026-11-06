@@ -4,12 +4,13 @@ Status: **Implemented (phase 1)** — `src/antigravity/`, feature `antigravity`,
 user guide `docs/ANTIGRAVITY.md`.
 
 > **Pre-implementation design.** This document was written before the
-> bridge was built. Its [module layout](#module-layout), [public API
-> sketch](#public-api-sketch), wire-debugging plan and example list are
-> that plan, not a description of what shipped: names in the sketch differ
-> from the real API. What shipped is the code in `src/antigravity/` and its
-> rustdoc, and the user guide `docs/ANTIGRAVITY.md`; trust those over this
-> file. What *is* kept current here is the record: the harness upgrade
+> bridge was built. Its [public API sketch](#public-api-sketch),
+> wire-debugging plan and example list are that plan, not a description of
+> what shipped: names in the sketch differ from the real API. Its [module
+> layout](#module-layout) began as the plan too and has been updated by hand
+> since, so check it against `src/antigravity/`. What shipped is the code in
+> `src/antigravity/` and its rustdoc, and the user guide
+> `docs/ANTIGRAVITY.md`; trust those over this file. What *is* kept current here is the record: the harness upgrade
 > table and its findings, the [Python SDK parity
 > table](#python-sdk-parity-google-antigravity-0123), the
 > [#494 decision](#interactions-mode-transport-494-decision), and the

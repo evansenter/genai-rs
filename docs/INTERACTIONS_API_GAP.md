@@ -135,7 +135,8 @@ from here rather than repeated.
 - **TTS models:** the output format and the multi-speaker rules per model are
   under Audio response and SpeechConfig in `docs/ENUM_WIRE_FORMATS.md`. A
   custom voice worked on the 3.8 and 2.5-pro TTS models;
-  `gemini-3.1-flash-tts-preview` answered 500 (2026-09-24).
+  `gemini-3.1-flash-tts-preview` answered 500 (recorded without a date,
+  from the 2.25.0 sweep's Voices work of 2026-09-24).
 
 ### Requests
 

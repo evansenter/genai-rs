@@ -83,9 +83,10 @@ point-in-time claim, not a completeness guarantee — see
 sweep found and what is still open. A few knobs are **modeled but
 gated to Vertex AI** and rejected by the Gemini API today: the Retrieval
 tool, `DeepResearchConfig::with_bigquery_tool()`, a few `safety_settings`
-values, and video `gcs_uri` delivery. Details and per-feature
-live-verification notes are in
-[docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md).
+values, and video `gcs_uri` delivery. The dated live-verification record
+is in two places: [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md)
+for what the API accepts and does, and
+[docs/ENUM_WIRE_FORMATS.md](docs/ENUM_WIRE_FORMATS.md) for the wire shapes.
 
 ## Installation
 
@@ -367,8 +368,8 @@ agentic code-review application with subagents and a structured report.
 | [Error Handling](docs/ERROR_HANDLING.md) | Error types, recovery patterns |
 | [Reliability](docs/RELIABILITY.md) | Retries, timeouts, cancellation, service tiers |
 | [Logging Strategy](docs/LOGGING_STRATEGY.md) | Log levels, `LOUD_WIRE` debugging |
-| [Enum Wire Formats](docs/ENUM_WIRE_FORMATS.md) | Verified wire formats, Unknown variants |
-| [API Gap Analysis](docs/INTERACTIONS_API_GAP.md) | Coverage tracker, Vertex-only findings |
+| [Enum Wire Formats](docs/ENUM_WIRE_FORMATS.md) | Verified wire formats with their dates, Unknown variants |
+| [API Gap Analysis](docs/INTERACTIONS_API_GAP.md) | Coverage tracker, dated live behavior, Vertex-only findings |
 | [Testing Guide](docs/TESTING.md) | Test strategies, assertions |
 | [API Reference](https://docs.rs/genai-rs) | Generated API documentation |
 
