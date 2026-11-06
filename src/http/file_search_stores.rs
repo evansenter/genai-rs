@@ -2,26 +2,31 @@
 //! `documents` sub-resource.
 //!
 //! Responses are camelCase (`displayName`, `createTime`); the types in
-//! `crate::file_search_stores` carry the rename. Adding a document goes to
-//! the upload path (`/upload/v1beta/{store}:uploadToFileSearchStore`) with the
-//! `raw` protocol, so the crate need not enable reqwest's `multipart` feature
-//! for one call site. The resource accepts `page_size` as well as `pageSize`,
-//! so the shared [`with_paging`] helper works unchanged.
+//! `crate::file_search_stores` carry the rename. Uploading a document goes
+//! to the upload path (`/upload/v1beta/{store}:uploadToFileSearchStore`)
+//! with the resumable protocol the Files API uses, whose start request
+//! carries the document's settings as JSON, so the crate need not enable
+//! reqwest's `multipart` feature. Importing a file is a JSON `POST
+//! {store}:importFile`. The resource accepts `page_size` as well as
+//! `pageSize`, so the shared [`with_paging`] helper works unchanged.
 
 use super::common::{
-    NO_BODY, api_request, file_body, mime_type_header, path_segment, require_id, send_and_read,
-    send_checked, with_paging, with_query,
+    NO_BODY, file_body, mime_type_header, path_segment, require_id, send_and_read, with_paging,
+    with_query,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
-use super::files::check_upload_size;
+use super::files::{ResumableUpload, check_upload_size, finish_resumable_upload};
 use crate::errors::GenaiError;
 use crate::file_search_stores::{
-    CreateFileSearchStoreRequest, DocumentListResponse, FileSearchDocument, FileSearchStore,
-    FileSearchStoreListResponse,
+    CreateFileSearchStoreRequest, DocumentImport, DocumentListResponse, DocumentOptions,
+    FileSearchDocument, FileSearchStore, FileSearchStoreListResponse,
 };
-use crate::files::UploadSource;
+use crate::files::{FileError, UploadSource};
+use crate::poll::PollStep;
 use reqwest::header::HeaderValue;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 fn stores_url(ctx: &HttpContext) -> String {
     ctx.api_url("fileSearchStores")
@@ -189,37 +194,60 @@ pub async fn delete_document(
     Ok(())
 }
 
+/// The JSON body that starts a document upload: the bindings'
+/// `UploadToFileSearchStoreConfig` (camelCase on the wire).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UploadDocumentBody<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) display_name: Option<&'a str>,
+    /// Also sent as the session's `X-Goog-Upload-Header-Content-Type`; the
+    /// body's wins when they differ (live 2026-11-05).
+    pub(crate) mime_type: &'a str,
+    #[serde(flatten)]
+    pub(crate) options: &'a DocumentOptions,
+}
+
+/// The JSON body of `POST {store}:importFile`: the file's name beside the
+/// bindings' `ImportFileConfig`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportFileBody<'a> {
+    pub(crate) file_name: &'a str,
+    #[serde(flatten)]
+    pub(crate) options: &'a DocumentOptions,
+}
+
 /// Uploads a file from disk or memory into a store
-/// (`POST /upload/v1beta/{store}:uploadToFileSearchStore`, raw protocol).
+/// (`POST /upload/v1beta/{store}:uploadToFileSearchStore`, resumable
+/// protocol).
 ///
-/// The API answers with an operation wrapper naming the created document;
-/// this fetches the document so callers get the same shape the list and get
-/// endpoints return. New documents start `Pending` — see
+/// The start request carries the document's settings
+/// ([`UploadDocumentBody`]); the finalizing request carries the file and is
+/// answered with an operation naming the created document, which this
+/// fetches so callers get the shape the list and get endpoints return. New
+/// documents start `Pending`; see
 /// [`FileSearchDocuments::wait_until_active`](crate::FileSearchDocuments::wait_until_active).
-///
-/// The raw protocol sends the whole body in one request, so a path is read
-/// fully into memory; the size guard (the Files API's 2 GB, unverified for
-/// this resource) at least stops an oversized file before it is read.
 pub async fn upload_to_file_search_store(
     ctx: &HttpContext,
     store_name: &str,
     source: UploadSource,
     display_name: Option<&str>,
     mime_type: &str,
+    options: &DocumentOptions,
 ) -> Result<FileSearchDocument, GenaiError> {
     let store_path = store_resource_path(store_name)?;
-    let url = with_query(
-        ctx.upload_url(&format!("{store_path}:uploadToFileSearchStore")),
-        &[("display_name", display_name)],
-    );
-    let mime_type_header = mime_type_header(mime_type)?;
+    options.validate()?;
+    let url = ctx.upload_url(&format!("{store_path}:uploadToFileSearchStore"));
+    let mime_type_value = mime_type_header(mime_type)?;
 
-    // Without `display_name`, the API names the document after the
+    // Without `displayName`, the API names the document after the
     // `X-Goog-Upload-File-Name` header, and leaves it unnamed when the header
-    // is absent too (verified live 2026-09-27). A path sends its file name,
-    // as a Files API path upload does; bytes send none, so an in-memory
-    // upload without a display name stays unnamed, as in the Files API.
-    let (body, size_bytes, file_name_header) = match source {
+    // is absent too (verified live 2026-09-27 on the raw protocol and
+    // 2026-11-05 on the resumable one). A path sends its file name, as a
+    // Files API path upload does; bytes send none, so an in-memory upload
+    // without a display name stays unnamed, as in the Files API.
+    let (body, file_size, file_name) = match source {
         UploadSource::Path(file_path) => {
             let read_error = |e: std::io::Error| {
                 GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
@@ -248,65 +276,222 @@ pub async fn upload_to_file_search_store(
         }
     };
 
+    let metadata = UploadDocumentBody {
+        display_name,
+        mime_type,
+        options,
+    };
     let request_id = ctx.next_request_id();
-    ctx.emit_request(
-        request_id,
-        "POST",
-        &url,
-        Some(&serde_json::json!({
-            "display_name": display_name,
-            "file_name": file_name_header
-                .as_ref()
-                .map(|h| String::from_utf8_lossy(h.as_bytes())),
-            "mime_type": mime_type,
-            "size_bytes": size_bytes,
-        })),
-    );
-
-    let mut builder =
-        api_request(ctx, reqwest::Method::POST, &url).header("X-Goog-Upload-Protocol", "raw");
-    if let Some(file_name_header) = file_name_header {
-        builder = builder.header("X-Goog-Upload-File-Name", file_name_header);
+    let wire_body = ctx.serialize_wire_body(&metadata);
+    ctx.emit_request(request_id, "POST", &url, wire_body.as_ref());
+    let upload_url = ResumableUpload {
+        url,
+        metadata: &metadata,
+        file_size,
+        mime_type: mime_type_value,
+        file_name,
     }
-    let builder = builder
-        .header(reqwest::header::CONTENT_TYPE, mime_type_header)
-        .header(reqwest::header::CONTENT_LENGTH, size_bytes)
-        .body(body);
-    let response = send_checked(ctx, request_id, builder).await?;
-    let text = response.text().await?;
+    .start(ctx, request_id)
+    .await?;
+    let text = finish_resumable_upload(ctx, request_id, &upload_url, file_size, body).await?;
     ctx.emit_response_body(request_id, &text);
 
     // {"name": ".../upload/operations/...",
     //  "response": {"documentName": "...", "mimeType": ..., "sizeBytes": ...}}
-    let operation: serde_json::Value =
+    let operation: Operation =
         deserialize_with_context(&text, "uploadToFileSearchStore operation")?;
-    let document_name = operation
-        .get("response")
-        .and_then(|r| r.get("documentName"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            // Every observed upload came back resolved. The raw response
-            // carries the operation `name`, the only handle left to a caller.
-            GenaiError::MalformedResponse(format!(
-                "Upload operation did not report a documentName (the operation \
-                 may be unresolved). Raw response: {text}"
-            ))
-        })?
-        .to_string();
+    let document_name = operation.document_name(&store_path).ok_or_else(|| {
+        // Every observed upload came back resolved. The raw response
+        // carries the operation `name`, the only handle left to a caller.
+        GenaiError::MalformedResponse(format!(
+            "Upload operation did not report a documentName (the operation \
+             may be unresolved). Raw response: {text}"
+        ))
+    })?;
+    read_back(ctx, &document_name, "Upload succeeded and created").await
+}
 
-    // The bytes are already accepted, so a failed read-back must still hand
-    // the caller the document name — and must not turn a retryable error
-    // into a non-retryable one.
-    get_document(ctx, &document_name).await.map_err(|e| {
-        tracing::error!(
-            "Upload succeeded and created '{}', but reading it back failed: {}",
-            document_name,
-            e
+/// Imports a Files API file into a store (`POST /v1beta/{store}:importFile`)
+/// and waits for the operation it answers with to name the document, then
+/// reads the document back.
+///
+/// The first answer is an unfinished operation with no document; `GET` on
+/// the operation's name reports `done` and the document's ID, bare (live
+/// 2026-11-05).
+pub async fn import_file(
+    ctx: &HttpContext,
+    store_name: &str,
+    import: &DocumentImport,
+) -> Result<FileSearchDocument, GenaiError> {
+    let store_path = store_resource_path(store_name)?;
+    import.options.validate()?;
+    let url = ctx.api_url(&format!("{store_path}:importFile"));
+    let body = ImportFileBody {
+        file_name: &import.file_name,
+        options: &import.options,
+    };
+    tracing::debug!("Importing {} into {store_name}", import.file_name);
+    let text = send_and_read(ctx, reqwest::Method::POST, &url, Some(&body)).await?;
+    let operation: Operation = deserialize_with_context(&text, "importFile operation")?;
+
+    let what = format!("the import of '{}' into '{store_name}'", import.file_name);
+    let operation = if operation.is_finished(&store_path) {
+        operation
+    } else {
+        let (operation_url, operation_id) = operation_url(ctx, &store_path, &operation.name)?;
+        // The import goes on without the client, and a second import makes a
+        // second document, so an error from here on names what it creates.
+        // The document already exists, pending, under the operation's ID
+        // (live 2026-11-05).
+        let handle = format!(
+            "It may still be running on the server as operation '{}', which \
+             creates document '{store_path}/documents/{operation_id}': wait for \
+             that document (FileSearchDocuments::wait_until_active) rather than \
+             importing the file again, which makes a second document.",
+            operation.name
         );
+        import
+            .poll
+            .wait_with_advice(
+                &what,
+                &handle,
+                (IMPORT_WAIT_TIMEOUT, IMPORT_POLL_INTERVAL),
+                || get_operation(ctx, &operation_url),
+                |current| {
+                    if current.is_finished(&store_path) {
+                        Ok(PollStep::Ready(current))
+                    } else {
+                        Ok(PollStep::Pending("running".to_string()))
+                    }
+                },
+            )
+            .await
+            .map_err(|e| {
+                unfinished_import(e, &format!("Polling {what} failed. {handle} Cause: "))
+            })?
+    };
+    if let Some(error) = &operation.error {
+        return Err(GenaiError::Internal(format!(
+            "{what} failed (operation '{}'): {error}",
+            operation.name
+        )));
+    }
+    let document_name = operation.document_name(&store_path).ok_or_else(|| {
+        GenaiError::MalformedResponse(format!(
+            "The import operation '{}' finished without naming a document",
+            operation.name
+        ))
+    })?;
+    read_back(ctx, &document_name, "Import succeeded and created").await
+}
+
+/// How long [`import_file`] waits for its operation by default.
+const IMPORT_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+/// How often [`import_file`] polls its operation by default.
+const IMPORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// A long-running operation, as an upload or an import answers with it.
+#[derive(Debug, Deserialize)]
+struct Operation {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    done: bool,
+    #[serde(default)]
+    response: Option<serde_json::Value>,
+    #[serde(default)]
+    error: Option<FileError>,
+}
+
+impl Operation {
+    /// Finished: done, failed, or already naming its document.
+    fn is_finished(&self, store_path: &str) -> bool {
+        self.done || self.error.is_some() || self.document_name(store_path).is_some()
+    }
+
+    /// The full name of the document the operation reports. An upload
+    /// reports the full name and an import the bare ID (live 2026-11-05).
+    fn document_name(&self, store_path: &str) -> Option<String> {
+        let name = self.response.as_ref()?.get("documentName")?.as_str()?;
+        if name.is_empty() {
+            return None;
+        }
+        Some(if name.contains('/') {
+            name.to_string()
+        } else {
+            format!("{store_path}/documents/{name}")
+        })
+    }
+}
+
+/// The URL of an operation of the store at `store_path`, from the name the
+/// API gave it, with its ID percent-encoded; and the ID, as given.
+fn operation_url<'n>(
+    ctx: &HttpContext,
+    store_path: &str,
+    name: &'n str,
+) -> Result<(String, &'n str), GenaiError> {
+    let id = name
+        .strip_prefix(store_path)
+        .and_then(|rest| rest.strip_prefix("/operations/"))
+        .filter(|id| !id.is_empty() && !id.contains('/') && require_id(id, "operation").is_ok())
+        .ok_or_else(|| {
+            GenaiError::MalformedResponse(format!(
+                "The import operation is unfinished, and its name {name:?} is not \
+                 an operation of '{store_path}'"
+            ))
+        })?;
+    Ok((
+        ctx.api_url(&format!("{store_path}/operations/{}", path_segment(id))),
+        id,
+    ))
+}
+
+/// An error from polling an unfinished import, with `context` (which names
+/// the operation and the document it creates) put in front of its message.
+/// The wait's own deadline error names them already. Only non-retryable
+/// errors reach here (the wait polls through the rest), so nothing is made
+/// retryable that was not.
+fn unfinished_import(e: GenaiError, context: &str) -> GenaiError {
+    match e {
+        GenaiError::Api {
+            status_code,
+            message,
+            request_id,
+            retry_after,
+        } => GenaiError::Api {
+            status_code,
+            message: format!("{context}{message}"),
+            request_id,
+            retry_after,
+        },
+        timeout @ GenaiError::Internal(_) => timeout,
+        GenaiError::MalformedResponse(message) => {
+            GenaiError::MalformedResponse(format!("{context}{message}"))
+        }
+        other => GenaiError::Internal(format!("{context}{other}")),
+    }
+}
+
+async fn get_operation(ctx: &HttpContext, url: &str) -> Result<Operation, GenaiError> {
+    let text = send_and_read(ctx, reqwest::Method::GET, url, NO_BODY).await?;
+    deserialize_with_context(&text, "file search store operation")
+}
+
+/// Reads back the document an upload or import created. Its bytes are
+/// already accepted, so a failed read must still hand the caller the
+/// document name, and must not turn a retryable error into a non-retryable
+/// one.
+async fn read_back(
+    ctx: &HttpContext,
+    document_name: &str,
+    what: &str,
+) -> Result<FileSearchDocument, GenaiError> {
+    get_document(ctx, document_name).await.map_err(|e| {
+        tracing::error!("{what} '{document_name}', but reading it back failed: {e}");
         let context = format!(
-            "Upload succeeded and created '{document_name}', but reading it \
-             back failed. The document exists — use that name to wait on or \
-             delete it. Cause: "
+            "{what} '{document_name}', but reading it back failed. The \
+             document exists — use that name to wait on or delete it. Cause: "
         );
         match e {
             GenaiError::Api {

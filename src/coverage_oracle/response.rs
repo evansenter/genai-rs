@@ -57,6 +57,10 @@ const ALLOWED: &[Allowed] = &[
         "legacy.Document.state=STATE_UNSPECIFIED",
         "The protobuf default; never served.",
     ),
+    (
+        "legacy.File.source=SOURCE_UNSPECIFIED",
+        "The protobuf default; never served.",
+    ),
     ("CreateAgentInteractionParams.created", TRIGGER_OUTPUT_ONLY),
     (
         "CreateAgentInteractionParams.environment_id",
@@ -120,47 +124,15 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
 
 /// Fields and values the crate does not model yet.
 const GAPS: &[Allowed] = &[
-    ("agents.Agent.agent_config", UNSEEN),
-    ("Agent.agent_config", UNSEEN),
+    // Files.
     (
-        "interactions.Environment.environment_id",
-        INLINE_ENVIRONMENT_ID,
-    ),
-    ("EnvironmentConfig.environment_id", INLINE_ENVIRONMENT_ID),
-    // Files and File Search Stores.
-    (
-        "legacy.FileSearchStore.activeDocumentsCount",
-        "Served (live 2026-11-04, as a string int64); WP2.",
-    ),
-    (
-        "legacy.FileSearchStore.sizeBytes",
-        "Served (live 2026-11-04, as a string int64); WP2.",
-    ),
-    ("legacy.FileSearchStore.pendingDocumentsCount", UNSEEN),
-    ("legacy.FileSearchStore.failedDocumentsCount", UNSEEN),
-    ("legacy.Document.customMetadata", UNSEEN),
-    (
-        "legacy.File.updateTime",
-        "Served on every file (live 2026-11-04); WP2.",
-    ),
-    (
-        "legacy.File.source",
-        "Served on every file (live 2026-11-04: UPLOADED); WP2.",
-    ),
-    ("legacy.File.downloadUri", UNSEEN),
-    (
-        "legacy.FileStatus.details",
-        "`FileError` has no `details` and no `extra`, so the key is dropped; WP2.",
+        "legacy.File.downloadUri",
+        "Not served on an uploaded file, nor on one that failed processing (live \
+         2026-11-05). The bindings' `files.download` reads it on a generated \
+         file (`source` GENERATED), which only a video generation makes, so it \
+         is unprobed; it lands in `FileMetadata::extra` until it is seen.",
     ),
 ];
-
-const INLINE_ENVIRONMENT_ID: &str = "Not served: a stored interaction's \
-     inline environment comes back without it (live 2026-11-05). On create it \
-     is accepted and checked (an unknown id is `404 Requested entity was not \
-     found`, live 2026-11-05), so it is a field to add to `RemoteEnvironment`, \
-     in src/environments/, which WP2b (#504) owns.";
-const UNSEEN: &str = "In the snapshot, not modeled, and not seen live yet \
-     (2026-11-04); probe before modeling (D-010); WP2.";
 
 /// Values for sites whose snapshot type is looser than what the API sends,
 /// so a synthesized value would test the synthesizer rather than the crate.
@@ -189,9 +161,6 @@ pub(super) fn values() -> BTreeMap<&'static str, Value> {
             "EnvironmentConfig.env",
             json!({"PLAIN": {"value": "v"}, "SECRET": {"credential": "credentials/c"}}),
         ),
-        // A protobuf int64: the Files API sends it as a JSON string. The
-        // bindings type it `int` because google-genai converts it.
-        ("legacy.File.sizeBytes", json!("7")),
         // `dict[str, Any]` in the bindings; the API serves `videoDuration`
         // (live 2026-11-05), the one key `VideoMetadata` models. It keeps
         // any other in its `extra`, where a synthesized key would land.

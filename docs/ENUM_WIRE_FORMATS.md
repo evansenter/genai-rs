@@ -6,7 +6,9 @@ wrong, so this catalog records what the live API actually sent or accepted,
 and when.
 
 **Revision.** Everything here is Interactions API revision **2026-05-20**.
-Every request sends `Api-Revision: 2026-05-20`. The server currently ignores
+Every request sends `Api-Revision: 2026-05-20`, except the second request
+of a resumable upload, which goes to the session URL the first one returned
+and carries neither the key nor the header. The server currently ignores
 the header and serves 2026-05-20 whatever value it carries.
 
 **Status markers.** "Verified live *date*" means the value was observed on
@@ -66,6 +68,7 @@ the shape was a `Content` block rather than a step.
 | 45 | `VideoResolution` | `resolution_type` | 360p/720p/1080p/4k |
 | 46 | `TranscriptionMode` | `mode_type` | smart/verbatim, string or tagged object |
 | 47 | `CodeMenderMode` | `mode_type` | scan/verify (CodeMender is Vertex-only) |
+| 48 | `FileSource` | `source_type` | Files API file origin: UPLOADED/GENERATED/REGISTERED |
 
 The Antigravity harness enums are listed in their
 [own section](#antigravity-harness-protocol-feature-antigravity).
@@ -195,6 +198,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `GoogleSearchResultItem` | snake_case | `{"search_suggestions": "<html>"}` | The only field in the 2.34.0 bindings and on the wire (live 2026-07 and 2026-11-05); `title`, `url` and `rendered_content` were removed, and one that arrives lands in `extra` |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | `status` is `success`/`error`/`paywall`/`unsafe`; no separate paywall field (2026-01-13) |
 | `FileState` | uppercase | `"PROCESSING"`, `"ACTIVE"`, `"FAILED"` | Files API |
+| `FileSource` | uppercase | `"UPLOADED"`, `"GENERATED"`, `"REGISTERED"` | Files API; `UPLOADED` on every uploaded file (live 2026-11-05), the other two from google-genai 2.34.0 |
 | `DocumentState` | prefixed uppercase | `"STATE_PENDING"`, `"STATE_ACTIVE"`, `"STATE_FAILED"` | File Search documents; verified live 2026-08-16 |
 | `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 values |
 | `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | |
@@ -586,8 +590,13 @@ Verified live 2026-09-27 (list paging, three text files at `pageSize=1`):
 - `pageSize` must be 1 to 100; `5000` is a 400 (`page_size must be between
   1 and 100`). `0` is the default. The snake_case `page_size` is accepted
   too; the crate sends `pageSize`.
-- Files carry `updateTime` and `source` (`UPLOADED`), which the crate does
-  not model; they are dropped on deserialization.
+- Files carry `updateTime` and `source` (`UPLOADED`), both modeled since
+  0.14.0 (live 2026-11-05). `sizeBytes` is a JSON string (`"17"`);
+  `FileMetadata::size_bytes` is an `i64` that reads a string or a number.
+- A file that fails processing (an undecodable video) carries
+  `{"error": {"code": 3, "message": "The file failed to be processed."}}`
+  with no `details` (live 2026-11-05). `FileError` models `details` and
+  keeps any other key in `extra`.
 
 ### File Search
 
@@ -625,8 +634,12 @@ Behavior, all verified live 2026-08-16:
 - **Deleting a non-empty document or store needs `force=true`**. Otherwise:
   `400 Cannot delete non-empty Document` / `... FileSearchStore`
   (`FAILED_PRECONDITION`).
-- **Uploads accept `raw` and `multipart`.** The crate uses `raw`, with
-  `display_name` as a query parameter.
+- **Uploads accept `raw`, `multipart` and `resumable`.** The crate used
+  `raw`, with `display_name` as a query parameter, until 0.14.0; it now uses
+  `resumable`, as the Files API does, because only a JSON body carries
+  `customMetadata` and `chunkingConfig` (live 2026-11-05). The start request's
+  body is `{"displayName", "mimeType", "customMetadata", "chunkingConfig"}`;
+  a body `mimeType` wins over the session's content-type header.
 - **The upload response is an operation wrapper**:
   `{"name": ".../upload/operations/...", "response": {"documentName": ...}}`.
   The crate resolves it with a follow-up GET.
@@ -652,14 +665,44 @@ documents:
   `page_size`, or none, continues the list). An unknown token is a 400
   `Requested page_token is invalid.`; a document token sent to another store
   lists nothing (`{}`).
-- **Raw uploads take any body**, so in-memory bytes upload exactly as a
-  file does. Without `display_name`, the document is named after the
+- **Uploads take any body**, so in-memory bytes upload exactly as a file
+  does. Without `display_name`, the document is named after the
   `X-Goog-Upload-File-Name` header (`"notes.txt"` becomes the display name
   and the ID prefix `notestxt-`); with neither, it has no display name and a
   random ID. With both, `display_name` wins. The crate sends the header for
-  path uploads only, so an unnamed in-memory upload stays unnamed.
+  path uploads only, so an unnamed in-memory upload stays unnamed. The
+  resumable protocol names documents the same way (live 2026-11-05).
 - Deleting an empty store needs no `force`; a non-empty one is a 400
   `Cannot delete non-empty FileSearchStore`.
+
+Stores, documents and imports, verified live 2026-11-05:
+
+- A store serves `activeDocumentsCount`, `pendingDocumentsCount` (only while
+  a document indexes) and `sizeBytes` as string int64s; an empty store has
+  none of them. `failedDocumentsCount` was not seen: a document that cannot
+  be indexed (random bytes as `application/pdf`) fails its upload with a 500
+  instead.
+- `embeddingModel` on create picks the model (`models/gemini-embedding-2`);
+  unset, it is `models/gemini-embedding-001` (the server's default, which
+  the live test checks only as a `models/` name), and an unknown model is a
+  `400 INVALID_ARGUMENT`.
+- `customMetadata` entries are `{"key", "stringValue" | "numericValue" |
+  "stringListValue": {"values": [...]}}`, served back on the document in the
+  order sent. A whole `numericValue` comes back without a fraction (`2026`).
+- `chunkingConfig` is `{"whiteSpaceConfig": {"maxTokensPerChunk",
+  "maxOverlapTokens"}}`. An unknown key is a `400 Invalid JSON payload`; an
+  overlap as large as the chunk or larger fails the upload or import with a
+  500, and creates no document. The crate rejects such an overlap before any
+  request.
+- `POST {store}:importFile` with `{"fileName": "files/<id>", "customMetadata",
+  "chunkingConfig"}` answers with an unfinished operation
+  (`{"name": "fileSearchStores/<s>/operations/<id>", "response": {"@type":
+  ...}}`). `GET` on that name reports `"done": true` and the document's
+  **bare** ID in `response.documentName` (and the store's bare ID as
+  `parent`). The document is named after the file's ID and is a copy. Its
+  ID is the operation's, and it exists, `STATE_PENDING`, as soon as the
+  `POST` answers; importing the same file again makes a second document
+  under a new ID.
 
 Covered by `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
 
@@ -922,6 +965,11 @@ string or a remote environment object:
   (`Invalid input at 'environment'`) and lands in `extra` if read.
 - The response echoes the assigned `environment_id`, which works as the
   string form on later turns.
+- The remote object's own `environment_id` runs an interaction in that
+  existing environment, with its files; the response's `environment_id` is
+  that ID, and one that does not exist is a 404. On an agent's
+  `base_environment` it is accepted, dropped and unchecked (live
+  2026-11-05).
 
 Verified live 2026-07 (Antigravity agent, `background: true`): the inline
 source, `"disabled"`, an allowlist with `transform`, and the id string form.
@@ -968,6 +1016,12 @@ Verified live 2026-09-27 (list paging and IDs):
 - `GET /v1beta/voices/{id}` finds stored custom voices (`voice_...`) only.
   Prebuilt IDs (`achernar`, `kore`, `en-gb-storyteller-1`), an upper-cased
   custom ID and a percent-encoded `voices/<id>` resource name are 404s.
+
+Verified live 2026-11-05: a create's `description`, `language_code`,
+`region_code`, `accent`, `persona`, `context`, `gender` and `pitch` are
+stored, echoed and matched by the list filters. `sample_audio` is output
+only: a value sent is ignored, and the response carries a sample the API
+generated.
 
 ### ResponseFormat
 

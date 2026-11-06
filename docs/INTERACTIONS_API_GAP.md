@@ -48,9 +48,9 @@ entries are what is not modeled yet.
 
 What the first run found (google-genai 2.34.0, spec of 2026-11-01), live
 facts from 2026-11-04. The interaction-side items are closed below, in
-[Interaction residue](#interaction-residue-2026-11-05); the resource-side
-ones (files, file search stores, agents, voices, environments) are WP2b of
-#504.
+[Interaction residue](#interaction-residue-2026-11-05), and the
+resource-side ones (files, file search stores, agents, voices,
+environments) in [Resource residue](#resource-residue-live-2026-11-05).
 
 - **No wrong request keys.** Every key the crate sends is on its binding
   class, `response_format` included, except response data a caller sends
@@ -67,18 +67,17 @@ ones (files, file search stores, agents, voices, environments) are WP2b of
   (`speakers`, `stop_sequences`, `response_modalities`, `safety_settings`)
   comes back with each entry twice, which modeling them has to allow for.
   `FileSearchStore.activeDocumentsCount` and `sizeBytes` (string int64s);
-  `File.updateTime` and `File.source` (`UPLOADED`).
+  `File.updateTime` and `File.source` (`UPLOADED`); all four modeled since
+  (see "Resource residue" below).
 - **In the snapshot, not modeled, not seen live yet:** the `queued` status
   (#501); `Interaction.agent_config`, `environment`, `continuation_ids`,
-  `output_audio`/`_image`/`_video`, and the spec's `max_total_tokens`;
-  `Agent.agent_config`; the inline environment's `environment_id`; the
-  CodeMender agent config (#501); `CreateFileSearchStoreConfig.embeddingModel`;
-  the document upload config's `customMetadata` and `chunkingConfig`, and
-  `import_file` (`UploadToFileSearchStoreConfig`, `ImportFileConfig`);
-  nine `VoiceInput` fields (accent, context, description, gender,
-  language_code, persona, pitch, region_code, sample_audio);
-  `FileSearchStore.pending`/`failedDocumentsCount`; `Document.customMetadata`;
-  `File.downloadUri`; `FileStatus.details` (dropped, no `extra`).
+  `output_audio`/`_image`/`_video`, and the spec's `max_total_tokens`; the
+  CodeMender agent config (#501). The resource fields this bullet listed
+  (`Agent.agent_config`, the inline environment's `environment_id`,
+  `embeddingModel`, the document upload and import configs, the `VoiceInput`
+  fields, the store's document counts, `Document.customMetadata`,
+  `File.downloadUri`, `FileStatus.details`) are modeled or reasoned out
+  since; see "Resource residue" below.
 - **Read but lost:** `StreamChunk::StepDelta` drops the event's
   `metadata.total_usage`. The spec types `file_search_result` delta items
   as opaque objects, and `FileSearchResultItem` keeps only `title`, `text`
@@ -94,9 +93,10 @@ ones (files, file search stores, agents, voices, environments) are WP2b of
 
 Every interaction-side item the coverage oracle and #501 left open, and the
 three #489 questions, probed live on 2026-11-05 and then modeled or
-recorded. The oracle's `GAPS` now hold only resource-side items (WP2b of
-#504), and a new sparse-body pass reads every response class with only its
-required fields (`docs/TESTING.md`, "Sparse response bodies").
+recorded. That left the oracle's `GAPS` with only resource-side items,
+closed in [Resource residue](#resource-residue-live-2026-11-05), and a new
+sparse-body pass reads every response class with only its required fields
+(`docs/TESTING.md`, "Sparse response bodies").
 
 ### Modeled
 
@@ -133,7 +133,63 @@ required fields (`docs/TESTING.md`, "Sparse response bodies").
 | `Interaction.output_audio`/`_image`/`_video` (#501) | Never served: not on a create response or stored read of a TTS or image interaction, nor on a stream's completed event. `output_text` is not served either. The output is in `steps` |
 | `Interaction.continuation_ids` | Never served, not even on the reads of a decode continued twice; rejected as a request field (2026-11-01) |
 | `Interaction.max_total_tokens` (spec only) | `400 Unknown parameter 'max_total_tokens'` on model and agent interactions alike (D-005); the agent budget is `agent_config.max_total_tokens` |
-| The inline environment's `environment_id` | Accepted and checked on create (`404 Requested entity was not found` for an unknown id), never echoed. Belongs on `RemoteEnvironment` (WP2b) |
+
+## Resource residue (live, 2026-11-05)
+
+Every field the bindings' classes define for the resources (Files, File
+Search Stores and their documents, agents, voices, environments,
+credentials, webhooks, triggers), and every endpoint they list, is modeled
+or listed in the coverage oracle's tables with a dated reason. The Python
+SDK has verbs beyond those, listed under "Deferred" below with dated
+reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
+
+- **Files:** `updateTime` and `source` (`FileSource`, `UPLOADED` on every
+  upload) are modeled, and `sizeBytes` reads a string or a number. A file
+  that fails processing serves `error: {code: 3, message}` with no
+  `details`; `FileError` models `details` and keeps other keys in `extra`.
+  `downloadUri` stays a `GAPS` entry: no uploaded or failed file carries it,
+  and only a generated file (a video generation) would.
+- **File Search Stores:** `activeDocumentsCount`, `pendingDocumentsCount`
+  (served only while a document indexes) and `sizeBytes` are string int64s,
+  all modeled; `failedDocumentsCount`, never seen because an unindexable
+  document fails its upload with a 500, is modeled beside them.
+  `embeddingModel` on create is read (another model is kept; an unknown one
+  is a 400). Documents serve `customMetadata` in the order sent.
+- **Uploads and imports:** the document upload moved from the `raw` to the
+  `resumable` protocol so its JSON body can carry `customMetadata` and
+  `chunkingConfig` (`DocumentUpload`). `file_search_stores.import_file` is
+  `FileSearchStores::import_file` (`DocumentImport`): its operation
+  finishes on the first `GET` and names the document by bare ID, which is
+  the operation's; the document exists, pending, as soon as the `POST`
+  answers, and a second import makes a second document, so a timed-out
+  import's error names both. The bindings' `ImportFileConfig` lacks
+  `fileName`, which the body needs. A white-space overlap as large as the
+  chunk is a 500, so the crate rejects it first.
+- **Agents:** `agent_config` is stored and echoed (`max_total_tokens` as a
+  string); a config of another type is stored as `{"type": "antigravity"}`,
+  and an unknown field is a 400.
+- **Voices:** eight `VoiceInput` fields (`description`, `language_code`,
+  `region_code`, `accent`, `persona`, `context`, `gender`, `pitch`) are
+  stored, echoed and filterable. `sample_audio` is output only: a value sent
+  is ignored and replaced by a generated sample (`NOT_SENT`).
+- **Environments:** the remote environment's `environment_id` runs an agent
+  interaction in that existing environment (the agent read a file the
+  environment was created with, which the live test checks); an unknown ID
+  is a 404. On an agent's `base_environment` it is accepted and dropped. A
+  stored agent interaction serves `environment: {"environment_id", "type":
+  "remote"}`. `environments.files.download` is
+  `EnvironmentFiles::download`: `GET` on the listing's path with
+  `alt=media` serves the file's bytes under its own content type, and a
+  directory as `application/x-tar`. The bindings list that endpoint once,
+  for both verbs, so the oracle maps both to it.
+- **Deferred** (SDK verbs outside the bindings' classes and endpoints):
+  `files.download` (an uploaded file is a `400 Only GENERATED files can be
+  downloaded`), `files.register_files` (`401 API keys are not supported`),
+  `files.upload(config={"name"})` (accepted, but `FileUpload` is shared with
+  store uploads, which take no name), `file_search_stores.download_media`
+  (needs a `file_citation` `media_id`, never served) and
+  `triggers.list(filter_=)` (every expression tried is a `400 Invalid filter
+  expression`, syntax undocumented).
 
 ## Protocol facts (live, 2026-09-24)
 

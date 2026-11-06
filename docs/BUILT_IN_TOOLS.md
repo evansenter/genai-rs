@@ -219,8 +219,9 @@ pages.
 ## File Search
 
 Semantic search over *file search stores* (resource names like
-`fileSearchStores/my-store-123`), not over Files API uploads. Create a store,
-upload documents into it, and wait for indexing before searching:
+`fileSearchStores/my-store-123`), not over Files API uploads directly
+(`import_file`, below, copies one into a store). Create a store, upload
+documents into it, and wait for indexing before searching:
 
 ```rust,no_run
 use genai_rs::{CreateFileSearchStoreRequest, FileUpload, PollOptions};
@@ -250,6 +251,54 @@ client
 # Ok(())
 # }
 ```
+
+A document can carry custom metadata and its own chunking, and a file
+already in the Files API can be imported instead of uploaded again. A store
+can also pick its embedding model when it is created
+(`CreateFileSearchStoreRequest::with_embedding_model("models/gemini-embedding-2")`;
+unset, the API uses `models/gemini-embedding-001`, live 2026-11-05):
+
+```rust,no_run
+use genai_rs::{ChunkingConfig, CustomMetadata, DocumentImport, DocumentUpload, FileUpload};
+
+# async fn run(client: genai_rs::Client, store_name: &str) -> Result<(), genai_rs::GenaiError> {
+// Metadata entries are strings, numbers or lists of strings, read back on
+// `FileSearchDocument::custom_metadata` in the order sent. The chunk overlap
+// must be smaller than the chunk, or the upload fails before any request.
+let memo = client
+    .file_search_stores()
+    .upload(
+        store_name,
+        DocumentUpload::new(FileUpload::from_path("q4-memo.md"))
+            .add_custom_metadata(CustomMetadata::string("team", "finance"))
+            .add_custom_metadata(CustomMetadata::numeric("year", 2026.0))
+            .add_custom_metadata(CustomMetadata::string_list("tags", ["budget", "q4"]))
+            .with_chunking_config(ChunkingConfig::white_space(200, 20)),
+    )
+    .await?;
+
+// Import a Files API upload: the document is a copy named after the file's
+// ID, so deleting the file afterwards leaves it.
+let file = client.files().upload(FileUpload::from_path("faq.md")).await?;
+let faq = client
+    .file_search_stores()
+    .import_file(
+        store_name,
+        DocumentImport::new(&file.name).add_custom_metadata(CustomMetadata::string("source", "faq")),
+    )
+    .await?;
+# let _ = (memo, faq);
+# Ok(())
+# }
+```
+
+`import_file` waits for the import operation (up to 60 s by default, set
+with `DocumentImport::with_poll_options`). Don't retry one that times out:
+the document already exists, pending, and a second import makes a second
+copy. The error names the operation and the document to wait for instead.
+Both uploaded and imported documents start pending, so wait for them as
+above. Whether `with_metadata_filter` matches custom metadata has not been
+verified live yet.
 
 A store created in Google AI Studio works the same way; pass its resource
 name. `client.file_search_stores().list()` and `.documents().list(store)` list

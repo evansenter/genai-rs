@@ -9,7 +9,7 @@
 mod common;
 use futures_util::StreamExt;
 use genai_rs::wire::{WireEvent, WireInspector};
-use genai_rs::{Client, Content, FileMetadata, FileUpload, GenaiError, PollOptions};
+use genai_rs::{Client, Content, FileMetadata, FileSource, FileUpload, GenaiError, PollOptions};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -123,11 +123,17 @@ async fn test_files_get() {
         .await
         .expect("Failed to get file");
 
+    // Clean up first, so a failed assertion below does not leak the file.
+    client.files().delete(&uploaded.name).await.unwrap();
+
     assert_eq!(retrieved.name, uploaded.name);
     assert_eq!(retrieved.mime_type, uploaded.mime_type);
-
-    // Clean up
-    client.files().delete(&uploaded.name).await.unwrap();
+    // Served on every uploaded file (live 2026-11-05), and modeled: nothing
+    // lands in `extra`.
+    assert_eq!(retrieved.size_bytes, Some(content.len() as i64));
+    assert_eq!(retrieved.source, Some(FileSource::Uploaded));
+    assert!(retrieved.update_time.is_some(), "{retrieved:?}");
+    assert!(retrieved.extra.is_empty(), "{:?}", retrieved.extra);
 }
 
 /// Tests listing files.
@@ -459,8 +465,8 @@ async fn test_path_upload_streams_a_file_larger_than_the_read_buffer() {
     assert_eq!(file.display_name.as_deref(), Some("large_test.txt"));
     assert!(!file.uri.is_empty(), "URI should not be empty");
     assert_eq!(
-        file.size_bytes_as_u64(),
-        Some(data.len() as u64),
+        file.size_bytes,
+        Some(data.len() as i64),
         "File size should match uploaded data"
     );
 

@@ -415,6 +415,28 @@ pure moves with public paths unchanged:
 
 `files.rs` drops to about 750 lines and leaves WP8's split list (#504).
 
+**And for the resource residue (2026-11-05, #504 WP2).** Modeling the
+remaining Files and File Search Store surface would have pushed both past
+the bar again, so they split first, public paths unchanged
+(`genai_rs::file_search_stores::*` and `genai_rs::files::*` re-export
+everything):
+
+| From | To |
+|------|----|
+| `FileUpload` and `UploadSource` in `src/files.rs`, with their tests from `src/files_tests.rs` | `src/files/upload.rs`, `src/files/upload_tests.rs` |
+| The store, document, list-page and create types in `src/file_search_stores.rs` | `src/file_search_stores/types.rs` (with the new `CustomMetadata` and `ChunkingConfig` types) |
+| `ListFileSearchStores` and `ListFileSearchDocuments` | `src/file_search_stores/list.rs` |
+| The inline `mod tests` in `src/file_search_stores.rs` | `src/file_search_stores/types_tests.rs`, `list_tests.rs`, and `src/file_search_stores_tests.rs` for the handles |
+
+`src/file_search_stores.rs` keeps the handles and their verbs, and the new
+`src/file_search_stores/document_input.rs` holds `DocumentUpload` and
+`DocumentImport`. Counted up to the first `#[cfg(test)]`, after the new
+surface landed: `src/file_search_stores.rs` 592 lines (963 before),
+`src/files.rs` 644 (about 750 after #500), `types.rs` 497, `list.rs` 240,
+`document_input.rs` 182, `src/files/upload.rs` 153, and
+`src/http/file_search_stores.rs` 526. Both modules leave the oversized list
+of WP8 and #504.
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)

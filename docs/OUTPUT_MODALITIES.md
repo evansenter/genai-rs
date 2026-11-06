@@ -118,7 +118,7 @@ voices. Prebuilt ids are lowercase (`kore`, `puck`, and locale voices like
 `ar-001-advisor-2`); the capitalized spellings are accepted too.
 
 ```rust,no_run
-use genai_rs::{CreateVoiceRequest, VoiceType};
+use genai_rs::{CreateVoiceRequest, VoicePitch, VoiceType};
 
 # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let page = client
@@ -133,10 +133,22 @@ for voice in &page.voices {
     println!("{:?}: {:?}", voice.id, voice.description);
 }
 
-// Design a voice from a prompt; its id works anywhere a prebuilt name does
+// Design a voice from a prompt; its id works anywhere a prebuilt name does.
+// The discovery fields are optional: stored, echoed, and matched by the
+// list filters (verified live 2026-11-05).
 let voice = client
     .voices()
-    .create(&CreateVoiceRequest::prompted("A calm, low-pitched narrator."))
+    .create(
+        &CreateVoiceRequest::prompted("A calm, low-pitched narrator.")
+            .with_description("Narrator for audiobook samples")
+            .with_language_code("en-US")
+            .with_region_code("US")
+            .with_accent("General American")
+            .with_persona("Storyteller & Narrator")
+            .with_context("Content & Media")
+            .with_gender("male")
+            .with_pitch(VoicePitch::Low),
+    )
     .await?;
 let id = voice.id.clone().expect("stored voices have an id");
 // ... .with_voice(&id) ...
@@ -153,7 +165,9 @@ pages, resending the filters with each page, which the API requires.
 a 404 there (2026-09-27), though it works as a voice name.
 
 Prompted voices must be stored (`store: true`, the default for
-`CreateVoiceRequest::prompted`) and expire after a year. A custom voice
+`CreateVoiceRequest::prompted`) and expire after a year. A voice's
+`sample_audio` is output only: the API generates it and ignores a value
+sent on create (live 2026-11-05). A custom voice
 worked on the 3.8 and 2.5-pro TTS models; `gemini-3.1-flash-tts-preview`
 returned 500.
 

@@ -251,9 +251,10 @@ const ENDPOINTS: &[(&str, &[&str])] = &[
     ("GET /{}/credentials/{}", &["Credentials::get"]),
     ("GET /{}/environments", &["Environments::list"]),
     ("GET /{}/environments/{}", &["Environments::get"]),
+    // One path: a listing, or with `alt=media` the file itself.
     (
         "GET /{}/environments/{}/files/{}",
-        &["EnvironmentFiles::list"],
+        &["EnvironmentFiles::list", "EnvironmentFiles::download"],
     ),
     (
         "GET /{}/interactions/{}",

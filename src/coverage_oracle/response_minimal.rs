@@ -26,8 +26,9 @@ const SPARSE: &[Allowed] = &[
         "legacy.File.name",
         "`FileMetadata` requires `name`, the file's resource name, which every \
          served file carries (live 2026-11-05: files().get and list); the \
-         hand-written legacy classes mark every field optional. src/files.rs is \
-         WP2b's (#504).",
+         hand-written legacy classes mark every field optional. Kept required \
+         after the resource residue (#504, 2026-11-05): the `Files` verbs and \
+         `import_file` address a file by it.",
     ),
     ("interactions.StepDeltaMetadata.total_usage", EMPTY_METADATA),
     ("StepDeltaMetadata.total_usage", EMPTY_METADATA),

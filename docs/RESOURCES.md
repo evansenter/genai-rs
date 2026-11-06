@@ -31,6 +31,11 @@ Creating an interaction is not a handle method: `client.interaction()` (the
 builder), `client.execute(request)` and `client.execute_stream(request)`
 stay on `Client`.
 
+A client built with `with_api_version("v1")` reaches interactions, the
+Files API and file search stores; agents, environments, webhooks,
+credentials, voices and triggers answer 404 there (live 2026-11-05,
+[Client configuration](CONFIGURATION.md#client-configuration)).
+
 ```rust,no_run
 use futures_util::TryStreamExt;
 use genai_rs::Agent;
@@ -52,6 +57,7 @@ become `with_*` setters.
 | Python (`google-genai` 2.25) | genai-rs |
 |------------------------------|----------|
 | `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id, base_agent)...)` |
+| `client.agents.create(..., agent_config={"type": "antigravity", "model": m, "max_total_tokens": n})` | `Agent::new(id, base_agent).with_agent_config(AntigravityConfig::new().with_model(m).with_max_total_tokens(n))` |
 | `client.agents.get(id)` | `client.agents().get(id)` |
 | `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).with_parent(p).send()` |
 | (no equivalent) | `client.agents().list().pages()` / `.items()` |
@@ -75,7 +81,7 @@ become `with_*` setters.
 | `client.triggers.create(schedule=, time_zone=, interaction=, display_name=, ...)` | `client.triggers().create(&TriggerCreateParams::new(schedule, time_zone, interaction).with_display_name(n))` |
 | `client.triggers.get(id)` | `client.triggers().get(id)` |
 | `client.triggers.list(page_size=, page_token=)` | `client.triggers().list().with_page_size(n).with_page_token(t).send()` |
-| `client.triggers.list(filter_=)` | Not modeled yet: the filter syntax is unverified |
+| `client.triggers.list(filter_=)` | Not modeled: the API parses the filter, but every expression tried (`status = "ACTIVE"`, `status:ACTIVE`, `display_name = "x"`, `environment_id = "abc"`, ...) is a `400 Invalid filter expression`, and the syntax is not documented (live 2026-11-05) |
 | (no equivalent) | `client.triggers().list().pages()` / `.items()` |
 | `client.triggers.update(id, display_name=, status=)` | `client.triggers().update(id, &TriggerUpdate::new().with_status(s))` |
 | `client.triggers.delete(id)` | `client.triggers().delete(id)` |
@@ -91,7 +97,7 @@ become `with_*` setters.
 | `client.environments.files.list(environment, path, recursive=, page_size=, page_token=)` | `client.environments().files().list(environment_id, path).with_recursive(r).with_page_size(n).with_page_token(t).send()` |
 | (no equivalent) | `client.environments().files().list(environment_id, path).pages()` / `.items()` |
 | `client.environments.files.upload(path=, file=, environment_id=, mime_type=, overwrite=, extract=)` | `client.environments().files().upload(environment_id, path, EnvironmentFileUpload::new(data, mime_type).with_overwrite(o).with_extract(x))` |
-| `client.environments.files.download(path=, environment_id=)` | Not modeled yet |
+| `client.environments.files.download(path=, environment_id=)` | `client.environments().files().download(environment_id, path)` (a directory comes back as a tar archive) |
 | `client.credentials.create(id=, type_="bearer_token", token=, ...)` | `client.credentials().create(&CreateCredentialRequest::bearer_token(token).with_id(id))` |
 | `client.credentials.create(type_=, ...)` (any type) | `client.credentials().create(&CreateCredentialRequest::new(CredentialConfig::...))` |
 | `client.credentials.get(id)` | `client.credentials().get(id)` |
@@ -101,21 +107,24 @@ become `with_*` setters.
 | `client.credentials.delete(id)` | `client.credentials().delete(id)` |
 | `client.voices.create(voice={"type": "prompted", ...}, store=True)` | `client.voices().create(&CreateVoiceRequest::prompted(prompt).with_display_name(n))` |
 | `client.voices.create(voice={"type": "replicated", ...}, store=)` | `client.voices().create(&CreateVoiceRequest::replicated(source, consent).with_store(s))` |
+| `client.voices.create(voice={..., "description": d, "language_code": l, "region_code": r, "accent": a, "persona": p, "context": c, "gender": g, "pitch": t})` | `CreateVoiceRequest::prompted(prompt).with_description(d).with_language_code(l).with_region_code(r).with_accent(a).with_persona(p).with_context(c).with_gender(g).with_pitch(t)` |
+| `client.voices.create(voice={..., "sample_audio": ...})` | Not sent: output only, the API ignores it and generates the sample (live 2026-11-05); read it on `Voice::sample_audio` |
 | `client.voices.get(id)` | `client.voices().get(id)` |
 | `client.voices.list(page_size=, page_token=, search=, type_=, gender=, language_code=, region_code=, accent=, persona=, contexts=, pitch=)` | `client.voices().list().with_page_size(n).with_page_token(t).with_search(q).with_voice_type(v).with_gender(g).with_language_code(l).with_region_code(r).with_accent(a).with_persona(p).with_context(c).with_pitch(p).send()` |
 | (no equivalent) | `client.voices().list().pages()` / `.items()` |
 | `client.voices.delete(id)` | `client.voices().delete(id)` |
 | `client.files.upload(file=path, config={"mime_type": m, "display_name": n})` | `client.files().upload(FileUpload::from_path(path).with_mime_type(m).with_display_name(n))` |
 | `client.files.upload(file=io_object, config={"mime_type": m})` | `client.files().upload(FileUpload::from_bytes(data, m))` |
-| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled yet: the server assigns the name |
+| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled: the API accepts a chosen name on the start request (live 2026-11-05), but `FileUpload` is shared with store uploads, which have no such name; outside the bindings' classes |
 | `client.files.get(name=)` | `client.files().get(name)` |
 | `client.files.list(config={"page_size": n, "page_token": t})` (one page) | `client.files().list().with_page_size(n).with_page_token(t).send()` |
 | iterating `client.files.list()` | `client.files().list().items()` (or `.pages()`) |
 | `client.files.delete(name=)` | `client.files().delete(name)` |
 | (no equivalent) | `client.files().wait_until_active(name, PollOptions::new())` |
-| `client.files.download(file=)`, `client.files.register_files(uris=)` | Not modeled yet |
+| `client.files.download(file=)` | Not modeled: only a generated file can be downloaded (an uploaded one is a `400 Only GENERATED files can be downloaded`, live 2026-11-05), and nothing the crate makes is one |
+| `client.files.register_files(uris=)` | Not modeled: the endpoint refuses API keys (`401 API keys are not supported by this API`, live 2026-11-05) and wants OAuth, which the crate does not do |
 | `client.file_search_stores.create(config={"display_name": n})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_display_name(n))` |
-| `client.file_search_stores.create(config={"embedding_model": "models/<m>"})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_extra("embeddingModel", "models/<m>"))` |
+| `client.file_search_stores.create(config={"embedding_model": "models/<m>"})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_embedding_model("models/<m>"))` |
 | `client.file_search_stores.get(name=)` | `client.file_search_stores().get(name)` |
 | `client.file_search_stores.list(config={"page_size": n, "page_token": t})` (one page) | `client.file_search_stores().list().with_page_size(n).with_page_token(t).send()` |
 | iterating `client.file_search_stores.list()` | `client.file_search_stores().list().items()` (or `.pages()`) |
@@ -123,8 +132,10 @@ become `with_*` setters.
 | `client.file_search_stores.delete(name=, config={"force": True})` | `client.file_search_stores().force_delete(name)` |
 | `client.file_search_stores.upload_to_file_search_store(file_search_store_name=, file=path, config={"display_name": n, "mime_type": m})` | `client.file_search_stores().upload(store_name, FileUpload::from_path(path).with_display_name(n).with_mime_type(m))` |
 | `client.file_search_stores.upload_to_file_search_store(file_search_store_name=, file=io_object, config={"mime_type": m})` | `client.file_search_stores().upload(store_name, FileUpload::from_bytes(data, m))` |
-| `upload_to_file_search_store(config={"custom_metadata": ..., "chunking_config": ...})` | Not modeled yet |
-| `client.file_search_stores.import_file(file_search_store_name=, file_name=)`, `client.file_search_stores.download_media(media_id=)` | Not modeled yet |
+| `upload_to_file_search_store(config={"custom_metadata": [...], "chunking_config": {...}})` | `client.file_search_stores().upload(store_name, DocumentUpload::new(FileUpload::from_path(path)).add_custom_metadata(CustomMetadata::string(k, v)).with_chunking_config(ChunkingConfig::white_space(max_tokens, overlap)))` |
+| `client.file_search_stores.import_file(file_search_store_name=, file_name=)` | `client.file_search_stores().import_file(store_name, file_name)` (or `&file`) |
+| `client.file_search_stores.import_file(..., config={"custom_metadata": [...], "chunking_config": {...}})` | `client.file_search_stores().import_file(store_name, DocumentImport::new(file_name).add_custom_metadata(m).with_chunking_config(c))` |
+| `client.file_search_stores.download_media(media_id=)` | Not modeled: it takes a `file_citation`'s `media_id`, which no live file search has served, and its endpoint is in neither the bindings dump nor the spec snapshot (2026-11-05) |
 | `client.file_search_stores.documents.list(parent=, config={"page_size": n, "page_token": t})` (one page) | `client.file_search_stores().documents().list(store_name).with_page_size(n).with_page_token(t).send()` |
 | iterating `client.file_search_stores.documents.list(parent=)` | `client.file_search_stores().documents().list(store_name).items()` (or `.pages()`) |
 | `client.file_search_stores.documents.get(name=)` | `client.file_search_stores().documents().get(name)` |
@@ -141,10 +152,16 @@ Python's `files.upload` guesses a missing `mime_type` from a path, as
 object, as `FileUpload::from_bytes` does. A path upload's display name
 defaults to the file name.
 
-Python's `file_search_stores.upload_to_file_search_store` returns the
-upload operation; `upload` resolves it and returns the new
+Python's `file_search_stores.upload_to_file_search_store` and
+`import_file` return an operation; `upload` and `import_file` resolve it
+(an import polls the operation until it is done, up to 60 s by default,
+set with `DocumentImport::with_poll_options`) and return the new
 `FileSearchDocument`. A document is named by its display name, else a path
-upload's file name; an in-memory upload without one is unnamed.
+upload's file name; an in-memory upload without one is unnamed. An imported
+document is named after the file's ID, and is a copy: deleting the file
+leaves it in place. Its document exists, pending, as soon as the import is
+accepted, so an import that timed out is not retried: the error names the
+operation and the document, and a second import makes a second document.
 
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them (verified live 2026-09-27). genai-rs sends one value per

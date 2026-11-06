@@ -1,7 +1,7 @@
 //! HTTP calls for the Files API; the types live in [`crate::files`].
 
 use super::common::{
-    API_KEY_HEADER, NO_BODY, file_body, mime_type_header, path_segment, require_id, send_and_read,
+    NO_BODY, api_request, file_body, mime_type_header, path_segment, require_id, send_and_read,
     send_checked, with_query,
 };
 use super::context::HttpContext;
@@ -35,7 +35,74 @@ pub(super) fn check_upload_size(file_size: u64) -> Result<(), GenaiError> {
     Ok(())
 }
 
-/// Starts a resumable upload session and returns its upload URL.
+/// One resumable upload: where it starts, its JSON metadata, and the file's
+/// size and MIME type. The Files API and file search store uploads share
+/// the protocol.
+pub(super) struct ResumableUpload<'a, M> {
+    /// The upload URL the session starts at.
+    pub(super) url: String,
+    /// The start request's JSON body.
+    pub(super) metadata: &'a M,
+    pub(super) file_size: u64,
+    pub(super) mime_type: reqwest::header::HeaderValue,
+    /// An `X-Goog-Upload-File-Name` header, sent with the start request.
+    pub(super) file_name: Option<reqwest::header::HeaderValue>,
+}
+
+impl<M: serde::Serialize> ResumableUpload<'_, M> {
+    /// Starts the session and returns its upload URL.
+    pub(super) async fn start(
+        &self,
+        ctx: &HttpContext,
+        request_id: u64,
+    ) -> Result<String, GenaiError> {
+        let mut builder = api_request(ctx, reqwest::Method::POST, &self.url)
+            .header("X-Goog-Upload-Protocol", "resumable")
+            .header("X-Goog-Upload-Command", "start")
+            .header(
+                "X-Goog-Upload-Header-Content-Length",
+                self.file_size.to_string(),
+            )
+            .header("X-Goog-Upload-Header-Content-Type", self.mime_type.clone());
+        if let Some(file_name) = &self.file_name {
+            builder = builder.header("X-Goog-Upload-File-Name", file_name.clone());
+        }
+        let response = send_checked(ctx, request_id, builder.json(self.metadata)).await?;
+
+        response
+            .headers()
+            .get("x-goog-upload-url")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                GenaiError::MalformedResponse(
+                    "Upload session response is missing the x-goog-upload-url header".to_string(),
+                )
+            })
+    }
+}
+
+/// Sends the whole body to an upload session, finalizes it, and returns the
+/// response text.
+pub(super) async fn finish_resumable_upload(
+    ctx: &HttpContext,
+    request_id: u64,
+    upload_url: &str,
+    file_size: u64,
+    body: reqwest::Body,
+) -> Result<String, GenaiError> {
+    let builder = ctx
+        .http_client
+        .post(upload_url)
+        .header("X-Goog-Upload-Offset", "0")
+        .header("X-Goog-Upload-Command", "upload, finalize")
+        .header("Content-Length", file_size.to_string())
+        .body(body);
+    let response = send_checked(ctx, request_id, builder).await?;
+    Ok(response.text().await?)
+}
+
+/// Starts a Files API upload session and returns its upload URL.
 ///
 /// Emits [`WireEvent::UploadStart`] under `request_id`.
 async fn start_upload_session(
@@ -60,27 +127,15 @@ async fn start_upload_session(
         Some(name) => serde_json::json!({ "file": { "displayName": name } }),
         None => serde_json::json!({ "file": {} }),
     };
-    let builder = ctx
-        .http_client
-        .post(ctx.upload_url("files"))
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header("X-Goog-Upload-Protocol", "resumable")
-        .header("X-Goog-Upload-Command", "start")
-        .header("X-Goog-Upload-Header-Content-Length", file_size.to_string())
-        .header("X-Goog-Upload-Header-Content-Type", mime_type_value)
-        .json(&metadata);
-    let response = send_checked(ctx, request_id, builder).await?;
-
-    response
-        .headers()
-        .get("x-goog-upload-url")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            GenaiError::MalformedResponse(
-                "Upload session response is missing the x-goog-upload-url header".to_string(),
-            )
-        })
+    ResumableUpload {
+        url: ctx.upload_url("files"),
+        metadata: &metadata,
+        file_size,
+        mime_type: mime_type_value,
+        file_name: None,
+    }
+    .start(ctx, request_id)
+    .await
 }
 
 /// Sends the whole body to an upload session and finalizes it.
@@ -93,15 +148,8 @@ async fn finish_upload(
     file_size: u64,
     body: reqwest::Body,
 ) -> Result<FileMetadata, GenaiError> {
-    let builder = ctx
-        .http_client
-        .post(upload_url)
-        .header("X-Goog-Upload-Offset", "0")
-        .header("X-Goog-Upload-Command", "upload, finalize")
-        .header("Content-Length", file_size.to_string())
-        .body(body);
-    let response = send_checked(ctx, request_id, builder).await?;
-    let response_text = response.text().await?;
+    let response_text =
+        finish_resumable_upload(ctx, request_id, upload_url, file_size, body).await?;
     let file =
         deserialize_with_context::<FileUploadResponse>(&response_text, "FileUploadResponse")?.file;
 

@@ -229,9 +229,41 @@ pub struct VoiceSpec {
     /// Model to design with; the API defaults to its latest voice model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Discovery metadata (`description`, `language_code`, `gender`, ...)
-    /// and anything else not modeled here. Not persisted when `store` is
-    /// false.
+    /// Summary of timbre, personality and tone.
+    ///
+    /// This and the discovery fields below are stored with the voice, served
+    /// back on create, get and list, and matched by [`ListVoices`]'s filters
+    /// (live 2026-11-05). They are free text, except
+    /// [`pitch`](Self::pitch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// BCP-47 language tag, e.g. `en-US`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_code: Option<String>,
+    /// Region code, e.g. `US`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_code: Option<String>,
+    /// Accent descriptor, e.g. `General American`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accent: Option<String>,
+    /// Persona, e.g. `Storyteller & Narrator`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
+    /// Usage context, e.g. `Content & Media`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    /// Perceived gender presentation, e.g. `male`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gender: Option<String>,
+    /// Perceived pitch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<VoicePitch>,
+    /// Anything else to send that is not modeled here.
+    ///
+    /// The bindings' `sample_audio` is output only: a value sent on create
+    /// is ignored, and the response carries a sample the API generated
+    /// (live 2026-11-05), so it is read on [`Voice::sample_audio`] and not
+    /// modeled here.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -322,6 +354,62 @@ impl CreateVoiceRequest {
     #[must_use]
     pub const fn with_store(mut self, store: bool) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    /// Sets the description, a summary of timbre, personality and tone.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.voice.description = Some(description.into());
+        self
+    }
+
+    /// Sets the language, a BCP-47 tag such as `en-US`.
+    #[must_use]
+    pub fn with_language_code(mut self, language_code: impl Into<String>) -> Self {
+        self.voice.language_code = Some(language_code.into());
+        self
+    }
+
+    /// Sets the region, e.g. `US`.
+    #[must_use]
+    pub fn with_region_code(mut self, region_code: impl Into<String>) -> Self {
+        self.voice.region_code = Some(region_code.into());
+        self
+    }
+
+    /// Sets the accent, e.g. `General American`.
+    #[must_use]
+    pub fn with_accent(mut self, accent: impl Into<String>) -> Self {
+        self.voice.accent = Some(accent.into());
+        self
+    }
+
+    /// Sets the persona, e.g. `Storyteller & Narrator`.
+    #[must_use]
+    pub fn with_persona(mut self, persona: impl Into<String>) -> Self {
+        self.voice.persona = Some(persona.into());
+        self
+    }
+
+    /// Sets the usage context, e.g. `Content & Media`.
+    #[must_use]
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.voice.context = Some(context.into());
+        self
+    }
+
+    /// Sets the gender presentation, e.g. `male`.
+    #[must_use]
+    pub fn with_gender(mut self, gender: impl Into<String>) -> Self {
+        self.voice.gender = Some(gender.into());
+        self
+    }
+
+    /// Sets the pitch.
+    #[must_use]
+    pub fn with_pitch(mut self, pitch: VoicePitch) -> Self {
+        self.voice.pitch = Some(pitch);
         self
     }
 }
@@ -807,5 +895,42 @@ mod tests {
     fn empty_list_response_deserializes() {
         let list: VoiceListResponse = serde_json::from_value(json!({})).unwrap();
         assert!(list.voices.is_empty());
+    }
+
+    /// The discovery fields a create sends, as the live create of 2026-11-05
+    /// sent and echoed them.
+    #[test]
+    fn create_request_sends_the_discovery_fields() {
+        let request = CreateVoiceRequest::prompted("A calm, low-pitched narrator.")
+            .with_display_name("narrator")
+            .with_description("wp2b probe narrator")
+            .with_language_code("en-US")
+            .with_region_code("US")
+            .with_accent("General American")
+            .with_persona("Storyteller & Narrator")
+            .with_context("Content & Media")
+            .with_gender("male")
+            .with_pitch(VoicePitch::Low)
+            // `with_*` replaces.
+            .with_gender("female");
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({
+                "voice": {
+                    "type": "prompted",
+                    "prompted": {"input": "A calm, low-pitched narrator."},
+                    "display_name": "narrator",
+                    "description": "wp2b probe narrator",
+                    "language_code": "en-US",
+                    "region_code": "US",
+                    "accent": "General American",
+                    "persona": "Storyteller & Narrator",
+                    "context": "Content & Media",
+                    "gender": "female",
+                    "pitch": "low"
+                },
+                "store": true
+            })
+        );
     }
 }

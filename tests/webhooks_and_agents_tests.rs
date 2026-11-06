@@ -306,6 +306,11 @@ async fn test_agent_crud_lifecycle() {
     let agent = Agent::new(&agent_id, genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
         .with_system_instruction(instruction)
         .with_description(description)
+        .with_agent_config(
+            genai_rs::AntigravityConfig::new()
+                .with_model(genai_rs::DEFAULT_MODEL)
+                .with_max_total_tokens(50_000),
+        )
         .add_tool(Tool::CodeExecution);
 
     // Not retried: a retry after a lost response would 409 on the id.
@@ -334,6 +339,16 @@ async fn test_agent_crud_lifecycle() {
         );
         assert_eq!(fetched.system_instruction.as_deref(), Some(instruction));
         assert_eq!(fetched.description.as_deref(), Some(description));
+        // The config is stored, the token cap as a string int64 (live
+        // 2026-11-05).
+        let config = fetched.agent_config.as_ref().expect("agent_config");
+        assert_eq!(config.config_type(), Some("antigravity"), "{config:?}");
+        assert_eq!(
+            config.as_value()["model"],
+            genai_rs::DEFAULT_MODEL,
+            "{config:?}"
+        );
+        assert_eq!(config.as_value()["max_total_tokens"], "50000", "{config:?}");
 
         // Every page: agents leaked by runs that died before cleanup can
         // push this one past the first.
@@ -970,6 +985,123 @@ async fn test_environment_crud_lifecycle() {
         Ok(env) => panic!("environment should be gone after delete, got: {env:?}"),
         Err(e) => panic!("expected a 404 for the deleted environment, got: {e}"),
     }
+}
+
+/// An inline environment's `environment_id` runs an agent interaction in
+/// that existing environment: the agent reads a file seeded into it at
+/// creation, the interaction reports the ID back, and an ID that does not
+/// exist is a 404 (live 2026-11-05).
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_interaction_runs_in_an_existing_environment() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{
+        AntigravityConfig, CreateEnvironmentRequest, EnvironmentSource, InteractionStatus,
+        RemoteEnvironment,
+    };
+
+    let run_in = |environment: RemoteEnvironment| {
+        client
+            .interaction()
+            .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
+            .with_text(
+                "This is an automated integration test of the genai-rs client library. \
+                 Run `cat /etc/motd` once and reply with its raw output only.",
+            )
+            .with_background(true)
+            .with_store_enabled()
+            .with_environment(environment)
+            .with_agent_config(AntigravityConfig::new().with_max_total_tokens(50_000))
+            .create()
+    };
+
+    // Only this environment holds the marker, so reading it back proves the
+    // interaction ran there.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .subsec_nanos();
+    let marker = format!("genai-rs-environment-marker-{nanos}");
+    // Not retried: a lost response would only cost an unreferenced
+    // environment, but a second create would hide that the first one leaked.
+    let request =
+        CreateEnvironmentRequest::new().add_source(EnvironmentSource::inline("/etc/motd", &marker));
+    let created = client
+        .environments()
+        .create(&request)
+        .await
+        .expect("environments.create");
+    let env_id = created
+        .id
+        .clone()
+        .expect("environments.create returned no ID; the container is leaked");
+    println!("Created environment {env_id}");
+
+    let interaction_id = std::sync::Mutex::new(None::<String>);
+    let checks = async {
+        let missing = run_in(
+            RemoteEnvironment::new().with_environment_id("00000000000000000000000000000000"),
+        )
+        .await;
+        assert!(
+            matches!(
+                missing,
+                Err(genai_rs::GenaiError::Api {
+                    status_code: 404,
+                    ..
+                })
+            ),
+            "an environment ID that does not exist should be a 404, got {missing:?}"
+        );
+
+        let response = run_in(RemoteEnvironment::new().with_environment_id(&env_id))
+            .await
+            .expect("an interaction in an existing environment");
+        let id = response.id.clone().expect("stored interaction id");
+        *interaction_id.lock().unwrap() = Some(id.clone());
+        assert_eq!(
+            response.environment_id.as_deref(),
+            Some(env_id.as_str()),
+            "the interaction should report the given environment"
+        );
+
+        let done = common::poll_until_done(&client, &id, std::time::Duration::from_secs(300)).await;
+        assert_eq!(done.status, InteractionStatus::Completed, "{done:?}");
+        let mut output: Vec<String> = done
+            .code_execution_results()
+            .iter()
+            .map(|r| r.result.to_string())
+            .collect();
+        output.extend(done.as_text().map(str::to_string));
+        assert!(
+            output.iter().any(|text| text.contains(&marker)),
+            "the agent did not read the file seeded into the environment; \
+             output: {output:?}"
+        );
+    };
+    let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
+
+    let started = interaction_id.lock().unwrap().clone();
+    if let Some(id) = started {
+        if outcome.is_err() {
+            // A failed check may leave the run going.
+            let _ = client.interactions().cancel(&id).await;
+        }
+        if let Err(e) = client.interactions().delete(&id).await {
+            println!("interactions().delete({id}) failed (tolerated): {e}");
+        }
+    }
+    let deleted = crate::retry_request!([client, env_id] => {
+        client.environments().delete(&env_id).await
+    });
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    deleted.expect("environments.delete");
 }
 
 // =============================================================================

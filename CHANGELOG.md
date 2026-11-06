@@ -198,6 +198,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   'agent_config.type' on the Gemini API, it is allowed on the Gemini
   Enterprise Agent Platform` (live 2026-11-05), so it is modeled and
   documented per D-005 but not exercised live.
+- `FileSearchStores::import_file(store_name, import)` imports a Files API
+  file into a file search store, waits for the import operation, and
+  returns the new `FileSearchDocument`. It takes a file name, a
+  `&FileMetadata`, or a `DocumentImport` that adds custom metadata, a
+  chunking config and the wait's `PollOptions` (default 60 s, every
+  500 ms). The document is named after the file's ID and is a copy, so
+  deleting the file leaves it. The document exists, pending, under the
+  operation's ID as soon as the import is accepted, and a second import
+  makes a second document, so a timeout or a failed poll returns an error
+  that names the operation and that document, and says not to import again
+  (all verified live 2026-11-05).
+- `DocumentUpload` wraps a `FileUpload` with the custom metadata and
+  chunking config of a document `FileSearchStores::upload` adds.
+  `CustomMetadata` (`string`, `numeric`, `string_list`, with `StringList`
+  for the last) and `ChunkingConfig::white_space(max_tokens_per_chunk,
+  max_overlap_tokens)` (with `WhiteSpaceConfig`) build them, and
+  `FileSearchDocument::custom_metadata` reads them back, in the order sent
+  (verified live 2026-11-05). An upload or import whose white-space overlap
+  is not smaller than its chunk fails with `GenaiError::InvalidInput` before
+  any request: the API answers it with a 500 (live 2026-11-05).
+- `CreateFileSearchStoreRequest::embedding_model` and
+  `with_embedding_model` pick a store's embedding model. Unset, the API
+  uses `models/gemini-embedding-001`; an unknown model is a 400 (verified
+  live 2026-11-05).
+- `FileSearchStore::active_documents_count`, `pending_documents_count`,
+  `failed_documents_count` and `size_bytes`, read from the API's string
+  int64s. The first two and the size were served live on 2026-11-05;
+  `failed_documents_count` was not seen.
+- `FileMetadata::update_time` and `FileMetadata::source` (the new
+  `FileSource` enum: `Uploaded`, `Generated`, `Registered`), served on
+  every file (verified live 2026-11-05). `FileError::details` and
+  `FileError::extra` keep a failed file's `google.rpc.Status` whole.
+- `Agent::agent_config` and `Agent::with_agent_config(AntigravityConfig)`
+  set the base agent's configuration. It is stored and echoed,
+  `max_total_tokens` as a string; a config of another type is stored as a
+  bare `{"type": "antigravity"}`, its settings lost (verified live
+  2026-11-05), so the setter takes only an `AntigravityConfig`.
+- `VoiceSpec::description`, `language_code`, `region_code`, `accent`,
+  `persona`, `context`, `gender` and `pitch`, set with the matching
+  `CreateVoiceRequest::with_*` builders. A created voice stores and echoes
+  them, and the list filters match them (verified live 2026-11-05). The
+  bindings' `sample_audio` is output only: a value sent is ignored, so it
+  is not modeled on the request.
+- `RemoteEnvironment::environment_id` and `with_environment_id` run an
+  agent interaction in an existing environment, with its files: the live
+  test's agent reads back a file seeded into it. The interaction reports
+  the ID as its `environment_id`; an ID that does not exist is a 404. On an
+  agent's `base_environment` the API accepts and drops it (all verified
+  live 2026-11-05).
+- `EnvironmentFiles::download(environment_id, path)` reads a file out of an
+  environment, as an `EnvironmentFileDownload` (its bytes and served
+  content type); a directory comes back as a tar archive
+  (`is_tar_archive()`). It is `GET` on the listing's path with `alt=media`
+  (verified live 2026-11-05).
 
 ### Changed
 
@@ -457,6 +511,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a struct literal, match `Some(InteractionInput::Steps(..))` where you
   read it, and replace `InteractionInput::default()` with the input you
   mean (or `None`).
+- **Breaking: `FileMetadata::size_bytes` is an `Option<i64>`, and
+  `FileMetadata::size_bytes_as_u64()` is gone.** The field reads the API's
+  string (`"17"`) or a plain number, and serializes back as a string, like
+  `FileSearchDocument::size_bytes`. Migration: read `file.size_bytes`
+  directly; where a `u64` is needed, `file.size_bytes.and_then(|n|
+  u64::try_from(n).ok())`.
+- **Breaking: `RemoteEnvironment` and `VoiceSpec` have new public
+  fields** (`environment_id`; `description`, `language_code`, `region_code`,
+  `accent`, `persona`, `context`, `gender`, `pitch`), so struct literals
+  that list every field stop compiling. Migration: add
+  `..Default::default()`, or build them with `RemoteEnvironment::new()` and
+  `CreateVoiceRequest`'s constructors and `with_*` setters.
+- **Breaking: `FileSearchDocument` and `DocumentListResponse` no longer
+  implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration: `==`
+  still works (`PartialEq`); drop `Eq` bounds that required it.
+- **Breaking: `FileSearchStores::upload` takes `impl Into<DocumentUpload>`
+  and uses the resumable upload protocol.** A `FileUpload` converts, so
+  existing calls compile unchanged. The upload is now a start request
+  carrying the document's settings as JSON (`displayName`, `mimeType`,
+  `customMetadata`, `chunkingConfig`), then the file, then the read-back,
+  where it used to be one `raw` request with the display name in the query
+  string. Documents are named as before (verified live 2026-11-05).
+  Migration: none for callers; a test double that answered the `raw`
+  request must answer the start request with an `x-goog-upload-url`
+  header.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
@@ -533,6 +612,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `file_search` tool with no store names no longer writes
   `"file_search_store_names": []`; the key is left out, as for the other
   optional lists.
+- A Files API or file search store upload's start request now sends
+  `Api-Revision`, as every other API request does; the request that sends
+  the file goes to the session URL and still carries neither it nor the
+  key.
 
 ### Fixed
 
@@ -648,6 +731,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent's `curl` in either sandbox got the egress proxy's 403, and 200 in
   one with no network config), and `NetworkConfig::is_disabled()` is true
   for both (#489).
+- `FileMetadata` failed to deserialize when `sizeBytes` was a JSON number
+  rather than the protobuf string, so `Files::get` returned an error and a
+  list page dropped the file. It now reads the number.
+- `FileError` dropped a failed file's `details` and any other unmodeled
+  key; it keeps them now.
 
 ## [0.13.0] - 2026-11-03
 

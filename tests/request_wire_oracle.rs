@@ -18,39 +18,41 @@ mod live_verbs;
 use api_surface::Surface;
 use common::http_stub::{Recorded, Reply, Stub};
 use genai_rs::{
-    Agent, AllowlistEntry, CreateCredentialRequest, CreateEnvironmentRequest,
-    CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
-    CredentialUpdate, DeepResearchConfig, EnvVar, EnvironmentSource, FileUpload, GenerationConfig,
-    HarmCategory, InjectionLocation, InteractionInput, InteractionRequest, NetworkConfig,
-    RemoteEnvironment, ResponseFormat, ResponseFormatSpec, RevocationBehavior, SafetySetting,
-    SafetyThreshold, SigningSecret, SpeechConfig, ThinkingLevel, Tool, TriggerCreateParams,
-    TriggerStatus, TriggerUpdate, VoiceAudio, Webhook, WebhookConfig, WebhookEvent, WebhookState,
+    Agent, AllowlistEntry, AntigravityConfig, ChunkingConfig, CreateCredentialRequest,
+    CreateEnvironmentRequest, CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig,
+    CredentialType, CredentialUpdate, CustomMetadata, DeepResearchConfig, DocumentImport,
+    DocumentUpload, EnvVar, EnvironmentSource, FileUpload, GenerationConfig, HarmCategory,
+    InjectionLocation, InteractionInput, InteractionRequest, NetworkConfig, RemoteEnvironment,
+    ResponseFormat, ResponseFormatSpec, RevocationBehavior, SafetySetting, SafetyThreshold,
+    SigningSecret, SpeechConfig, ThinkingLevel, Tool, TriggerCreateParams, TriggerStatus,
+    TriggerUpdate, VoiceAudio, VoicePitch, Webhook, WebhookConfig, WebhookEvent, WebhookState,
     WebhookUpdate,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 /// Findings the bindings get wrong for the live API, each with its evidence.
-const ALLOWED: &[(&str, &str)] = &[(
-    "credentials.OAuth2Config.id",
-    "Required in the bindings, optional live: a create without one gets a \
-     server-assigned UUID (live 2026-11-04).",
-)];
+const ALLOWED: &[(&str, &str)] = &[
+    (
+        "credentials.OAuth2Config.id",
+        "Required in the bindings, optional live: a create without one gets a \
+         server-assigned UUID (live 2026-11-04).",
+    ),
+    (
+        "legacy.ImportFileConfig.fileName",
+        "google-genai's `import_file` takes `file_name` as its own argument and \
+         sends it in the body beside the config's fields; the API requires it \
+         there (live 2026-11-05).",
+    ),
+];
 
 /// Verbs that make a POST, PATCH or PUT request with no JSON body, each with
 /// its reason.
-const NO_JSON_BODY: &[(&str, &str)] = &[
-    (
-        "EnvironmentFiles::upload",
-        "A resumable upload: an empty PUT starts the session, then a POST \
+const NO_JSON_BODY: &[(&str, &str)] = &[(
+    "EnvironmentFiles::upload",
+    "A resumable upload: an empty PUT starts the session, then a POST \
          carries the file's bytes.",
-    ),
-    (
-        "FileSearchStores::upload",
-        "A raw-protocol upload: the file's bytes, with the display name as a \
-         query parameter and the MIME type as the Content-Type.",
-    ),
-];
+)];
 
 /// Stands for an endpoint whose binding method takes no request body. The
 /// crate sends `{}` there, and nothing else may be sent.
@@ -84,6 +86,15 @@ fn class_for(request: &Recorded) -> Option<(&'static str, Value)> {
         ("PATCH", ["v1beta", "credentials", _]) => "credentials.CredentialUpdate",
         ("POST", ["v1beta", "voices"]) => "voices.CreateVoiceRequest",
         ("POST", ["v1beta", "fileSearchStores"]) => "legacy.CreateFileSearchStoreConfig",
+        ("POST", ["v1beta", "fileSearchStores", id]) if id.ends_with(":importFile") => {
+            "legacy.ImportFileConfig"
+        }
+        // The resumable upload's start request carries the document's settings.
+        ("POST", ["upload", "v1beta", "fileSearchStores", id])
+            if id.ends_with(":uploadToFileSearchStore") =>
+        {
+            "legacy.UploadToFileSearchStoreConfig"
+        }
         // The resumable upload's start request wraps the file metadata.
         ("POST", ["upload", "v1beta", "files"]) => {
             return Some(("legacy.File", body["file"].clone()));
@@ -99,6 +110,14 @@ async fn stub() -> Stub {
         let path = request.target.split('?').next().unwrap_or_default();
         if path == "/upload/v1beta/files" {
             Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f")
+        } else if path.ends_with(":uploadToFileSearchStore") {
+            Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/doc")
+        } else if path == "/upload-session/doc" || path.ends_with(":importFile") {
+            Reply::json(
+                200,
+                json!({"name": "fileSearchStores/s/operations/o", "done": true,
+                       "response": {"documentName": "fileSearchStores/s/documents/d"}}),
+            )
         } else if path.starts_with("/upload-session/") {
             Reply::json(
                 200,
@@ -160,6 +179,7 @@ fn interaction(agent: bool) -> InteractionRequest {
         ),
         environment: agent.then(|| {
             RemoteEnvironment::new()
+                .with_environment_id("e")
                 .add_source(EnvironmentSource::inline("/a.txt", "x"))
                 .add_env_var("K", EnvVar::value("v"))
                 .into()
@@ -259,6 +279,11 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
                 .with_system_instruction("be brief")
                 .with_description("d")
                 .add_tool(Tool::CodeExecution)
+                .with_agent_config(
+                    AntigravityConfig::new()
+                        .with_model("m")
+                        .with_max_total_tokens(1000),
+                )
                 .with_base_environment(RemoteEnvironment::new().with_network(network())),
         )
         .await
@@ -310,6 +335,14 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
             &CreateVoiceRequest::prompted("a calm narrator")
                 .with_display_name("narrator")
                 .with_base_voice("Kore")
+                .with_description("a calm narrator")
+                .with_language_code("en-US")
+                .with_region_code("US")
+                .with_accent("General American")
+                .with_persona("Storyteller & Narrator")
+                .with_context("Content & Media")
+                .with_gender("male")
+                .with_pitch(VoicePitch::Low)
                 .with_store(true),
         )
         .await
@@ -324,9 +357,37 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         .expect("voices.create (replicated)");
     client
         .file_search_stores()
-        .create(&CreateFileSearchStoreRequest::new().with_display_name("docs"))
+        .create(
+            &CreateFileSearchStoreRequest::new()
+                .with_display_name("docs")
+                .with_embedding_model("models/gemini-embedding-2"),
+        )
         .await
         .expect("file_search_stores.create");
+    client
+        .file_search_stores()
+        .upload(
+            "fileSearchStores/s",
+            DocumentUpload::new(
+                FileUpload::from_bytes(b"hi".to_vec(), "text/plain").with_display_name("d"),
+            )
+            .add_custom_metadata(CustomMetadata::string("team", "search"))
+            .add_custom_metadata(CustomMetadata::numeric("year", 2026.0))
+            .add_custom_metadata(CustomMetadata::string_list("tags", ["a", "b"]))
+            .with_chunking_config(ChunkingConfig::white_space(200, 20)),
+        )
+        .await
+        .expect("file_search_stores.upload");
+    client
+        .file_search_stores()
+        .import_file(
+            "fileSearchStores/s",
+            DocumentImport::new("files/f")
+                .add_custom_metadata(CustomMetadata::string("team", "search"))
+                .with_chunking_config(ChunkingConfig::white_space(200, 20)),
+        )
+        .await
+        .expect("file_search_stores.import_file");
     client
         .files()
         .upload(FileUpload::from_bytes(b"hi".to_vec(), "text/plain").with_display_name("f"))
@@ -377,7 +438,7 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
             }
         }
     }
-    assert_eq!(bodies, 19, "one body per call above");
+    assert_eq!(bodies, 21, "one body per call above");
     for (site, _) in ALLOWED {
         if !used.contains(site) {
             problems.push(format!(
