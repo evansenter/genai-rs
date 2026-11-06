@@ -148,7 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them flat beside the modeled ones.
 - `InteractionBuilder::continue_decode(&response)` continues a decode that
   stopped early without resending the input: it sets the response's model,
-  its id as the previous interaction and its `continuation_token`. The API
+  its id as the previous interaction and its `continuation_token`, replacing
+  any id or token set earlier on the builder, and clearing them when the
+  response has none (a token continues only its own interaction). The API
   continues a stored interaction from those alone, and with no
   `max_output_tokens` the continuation ran to the end (verified live
   2026-11-05 on `CONTINUATION_MODEL`). `build()` names the problem when the
