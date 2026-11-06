@@ -1082,3 +1082,41 @@ turn: the API accepted it and the model answered from both.
 `docs/BUILDER_API.md`'s composition tree spells the rule out. An empty
 content list is now refused in `build()` (#452), since with history it
 would otherwise be an empty final turn.
+
+---
+
+## D-032 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
+
+**Context.** The leaked-resource janitor (#492) deletes only resources
+that carry a live test's marker, but environments cannot carry one except
+in their inline sources: the resource is `id`, `sources`, `network`,
+`status`, `file_count`, `size_bytes` and three timestamps, with no name,
+label or metadata (google-genai 2.34.0, and a read-only listing of the
+shared key on 2026-11-06). The tests' own sourceless environments come
+from calls that take no sources: an agent interaction run without an
+environment creates one, a fork (`from_environment`) lists none, and so
+does a network-only create. The janitor's first cut deleted every
+sourceless environment on the key, a person's included.
+
+**Decision.** Narrow the rule to what the data allows: no sources, no
+files (`file_count` and `size_bytes` zero or absent), and no activity
+within the age floor, an environment's age being the latest of its
+create, update and last-access times. Such an environment holds nothing
+to lose. A sourceless environment that holds files, a leaked fork for one,
+is kept and listed in the run's summary for a person to check. The
+workflow header, the script and `docs/TESTING.md` say plainly that opting
+in (`JANITOR_DELETE`) deletes every empty, idle, sourceless environment on
+the key, whoever made it.
+
+Rejected for now: giving every test's sourceless environment a marker
+source (a marked inline environment on each agent interaction, a marker
+source on the network-only create) and dropping the sourceless rule. It
+changes live tests that would each need a live run to verify, and a fork
+lists no sources whatever its parent had, so forks would still need a
+rule of their own.
+
+**Consequences.** The rule still matches an empty, idle environment a
+person made without sources; whether that is acceptable on the shared key
+is the owner's call when setting `JANITOR_DELETE`. On 2026-11-06 the key
+held 35 sourceless environments, all empty, 34 of them from July. A leaked
+fork, which holds its parent's files, is listed rather than deleted.

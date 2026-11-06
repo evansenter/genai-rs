@@ -39,9 +39,10 @@ On 2026-11-06 the shared key held 35 sourceless environments, all empty
 (34 from July, one from October).
 
 Age comes from the resource's create time, and for an environment from the
-latest of its create, update and last-access times. Agents have none, and prompted
-voices only an `expire_time` (a year after creation, 2026-11-05), so for
-them it is read from the Unix timestamp `test_resource_name` embeds
+latest of its create, update and last-access times. Agents have no create
+time, and prompted voices only an `expire_time` (a year after creation,
+2026-11-05), so for them it is read from the Unix timestamp
+`test_resource_name` embeds
 (`genai-rs-test-<label>-<unix seconds>-<nanos>`), else from the voice's
 `expire_time`. A marked resource whose age cannot be told is kept and
 reported.
