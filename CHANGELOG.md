@@ -261,6 +261,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serde_json::Map::new()` for `SafetySetting`, which has no `Default`), or
   use the constructors (`SpeechConfig::for_speaker`, `AllowedTools::new`,
   `SafetySetting::new`, `VideoConfig::new`, `WebhookConfig::new`).
+- **Breaking: the Antigravity types read from the harness that dropped
+  unmodeled fields have a new `extra` field**, as their siblings do:
+  `ModalityTokenCount`, `TrajectoryUsageEntry`, `ListDirectoryEntry`,
+  `DiffBlock`, `DiffLine`, `PreTurnArgs`, `PostTurnArgs`,
+  `OnToolErrorArgs`, `OnCompactionArgs`, `StopArgs`, and the input types
+  the harness echoes back (`UserInput`, `UserInputPart`, `Media`,
+  `SlashCommand`, `ToolResponse`). `OutputEvent::extra` keeps an envelope
+  key a newer harness adds beside a recognized payload, which used to be
+  dropped. Migration: add `..Default::default()` to a struct literal.
 - **Breaking: a known step, delta, content block or annotation whose
   modeled field is malformed now deserializes as `Unknown`.** `Unknown`
   keeps the whole object. Examples: a non-object `arguments`, a non-string

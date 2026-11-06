@@ -59,6 +59,7 @@ impl Prompt {
         self.parts.push(protocol::UserInputPart {
             slash_command: Some(protocol::SlashCommand {
                 name: Some(command.name().to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         });
@@ -80,6 +81,7 @@ impl Prompt {
     pub(crate) fn to_wire(&self) -> protocol::UserInput {
         protocol::UserInput {
             parts: self.parts.clone(),
+            ..Default::default()
         }
     }
 }
@@ -281,6 +283,7 @@ impl Media {
             mime_type: Some(self.mime_type.clone()),
             description: self.description.clone(),
             data: Some(base64::engine::general_purpose::STANDARD.encode(&self.data)),
+            ..Default::default()
         }
     }
 }

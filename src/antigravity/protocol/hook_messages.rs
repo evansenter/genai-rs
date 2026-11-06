@@ -136,6 +136,9 @@ pub struct PreTurnArgs {
     /// The trajectory the turn runs on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trajectory_id: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `PostTurnArgs`.
@@ -148,6 +151,9 @@ pub struct PostTurnArgs {
     /// The trajectory the turn ran on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trajectory_id: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `OnToolErrorArgs` — a harness-run or custom tool failed. `tool_name`
@@ -177,6 +183,9 @@ pub struct OnToolErrorArgs {
         skip_serializing_if = "Option::is_none"
     )]
     pub step_index: Option<u32>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `OnCompactionArgs` — the harness compacted a trajectory's history.
@@ -196,6 +205,9 @@ pub struct OnCompactionArgs {
     /// The summary that replaced the compacted history.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `StopArgs` — the root trajectory is about to go idle.
@@ -221,6 +233,9 @@ pub struct StopArgs {
     /// The error that ended the turn, if one did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `PolicyDecisionRequest` — the harness asking this client to judge a
