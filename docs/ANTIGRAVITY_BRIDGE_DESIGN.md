@@ -486,6 +486,13 @@ model; the sandbox one on CI's runners):
   reports no sandbox available, as on GitHub's Ubuntu 24.04 runners,
   rather than running unsandboxed.
 
+Cancellation (0.1.23, 2026-11-06, scripted model,
+`test_scripted_cancel_halts_a_turn_waiting_on_the_model`): a halt sent
+while the turn waits on the model ends the turn without `STATE_CANCELLED`,
+so `chat` resolves normally, as on 0.1.10 and 0.1.18, and the next turn
+runs. The live `test_antigravity_cancel_handle_halts_an_in_flight_turn`
+accepts a `Turn` error as well, so it is not the evidence for this.
+
 ## Python SDK parity (google-antigravity 0.1.23)
 
 Every option the 0.1.23 Python SDK exposes for the harness, and what this

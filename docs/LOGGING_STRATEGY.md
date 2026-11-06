@@ -11,9 +11,10 @@
   which your application does.
 
 **What works where.** `LOUD_WIRE` works out of the box. `RUST_LOG` needs a
-subscriber the application installs, and none of this repository's
-examples or tests installs one, so `RUST_LOG` does nothing there; use
-`LOUD_WIRE` with them.
+subscriber the application installs. No example or test in this repository
+installs one that reads `RUST_LOG` (a few unit tests install a scoped
+recorder that captures events for an assertion and ignores it), so
+`RUST_LOG` does nothing there; use `LOUD_WIRE` with them.
 
 ## Library logs
 

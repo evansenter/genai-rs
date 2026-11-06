@@ -93,7 +93,8 @@ impl std::fmt::Debug for AntigravityAgent {
 ///
 /// # What a cancelled turn returns
 ///
-/// Harness 0.1.10 (and still 0.1.18) answers a halt by taking the trajectory to
+/// Every harness from 0.1.10 through the pinned 0.1.23 answers a halt by
+/// taking the trajectory to
 /// `STATE_FULLY_IDLE` — the same terminal state as a natural completion,
 /// not `STATE_CANCELLED`. So the in-flight `chat`/stream **resolves
 /// normally**, returning whatever partial output the turn had produced;
@@ -104,7 +105,7 @@ impl std::fmt::Debug for AntigravityAgent {
 /// [`AntigravityError::Turn`] remains the outcome when the *harness*
 /// cancels a turn itself (`STATE_CANCELLED`), which is a different event
 /// from this handle's halt request. Pinned by
-/// `test_antigravity_cancel_handle_halts_an_in_flight_turn`.
+/// `test_scripted_cancel_halts_a_turn_waiting_on_the_model`.
 #[derive(Debug, Clone)]
 pub struct CancelHandle {
     sink: SinkHandle,

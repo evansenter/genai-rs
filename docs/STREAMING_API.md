@@ -90,9 +90,7 @@ and `status()` for the common checks.
 ### Read to the end
 
 The stored interaction is readable once the stream has ended, not when
-`Completed` arrives, provided the stream read its tail to the end: the
-read gives up after 5 s, and a client-level timeout
-(`ClientBuilder::with_timeout`) can end it sooner, each with a `warn!`. After `interaction.completed` the API sends
+`Completed` arrives. After `interaction.completed` the API sends
 `event: done` / `data: [DONE]` and closes the connection about a second
 later, and finishes storing the interaction during that tail: a `GET` sent
 right after closing the connection at `interaction.completed` has answered
@@ -105,9 +103,10 @@ So to `get` the interaction or chain on it with `previous_interaction_id`
 right away, read the stream until `next()` returns `None`, as the loops on
 this page do, rather than `break` at `Completed`.
 `create_stream_with_auto_functions()` reads each round to its end before
-sending the next, and before it ends. The read is bounded: a body still
-open 5 s after the terminal event is closed with a `warn!`, and the stream
-ends cleanly. `with_timeout()`'s per-chunk limit doesn't apply to it.
+sending the next, and before it ends. The read of the tail is bounded at
+5 s, and a stream whose tail read is cut short still ends cleanly, with a
+`warn!`; how that read meets the client's timeouts is under
+[Read a stream to its end](RELIABILITY.md#read-a-stream-to-its-end).
 
 A successful response that is not `text/event-stream` (a captive portal's
 page) is `GenaiError::MalformedResponse`, not a cut-off: no stream started.

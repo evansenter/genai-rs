@@ -78,8 +78,9 @@ cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravit
 
 Live tests take minutes and can flake on model variability. `LOUD_WIRE=1`
 prints the wire, with no setup. `RUST_LOG` needs a `tracing` subscriber the
-application installs, and no test or example installs one, so it does
-nothing there (`docs/LOGGING_STRATEGY.md` has the snippet).
+application installs, and no test or example installs one that reads it
+(`src/test_subscriber.rs`'s scoped recorder ignores it), so it does nothing
+there (`docs/LOGGING_STRATEGY.md` has the snippet).
 
 ## Layout
 

@@ -149,15 +149,11 @@ already arrived.
 
 ### Read a stream to its end
 
-The stored interaction is readable once the stream has ended, unless the
-read of its tail was cut short (below). After
-`interaction.completed` the API sends `event: done` / `data: [DONE]` and
-closes the connection about a second later, and finishes storing the
-interaction during that tail: a `GET` sent right after closing the
-connection at `interaction.completed` has answered `500 Internal error
-encountered`, while one sent after reading to the end answers `200` at once
-(dated under Streaming in the
-[gap tracker](INTERACTIONS_API_GAP.md#streaming)). So to `get` a streamed
+The server finishes storing a streamed interaction during the stream's
+tail, after `interaction.completed`, so the stored interaction is readable
+once the stream has ended, unless the read of its tail was cut short
+(below); what the tail holds is under
+[Read to the end](STREAMING_API.md#read-to-the-end). So to `get` a streamed
 interaction or chain on it with `previous_interaction_id` right away, read
 the stream until `next()` returns `None`; dropping it at `Completed` races
 the server. `create_stream_with_auto_functions()` reads each round to its

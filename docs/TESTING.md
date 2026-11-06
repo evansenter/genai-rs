@@ -41,7 +41,7 @@ build is not evicted. Tests that exercise an `Unknown` value carry
 | `GEMINI_API_KEY` | Required for live tests |
 | `TEST_TIMEOUT_SECS` | Per-test budget (default 60) |
 | `EXTENDED_TEST_TIMEOUT_SECS` | Budget for multi-turn tests (default 120) |
-| `LOUD_WIRE=1` | Wire logging (tests install no `tracing` subscriber, so `RUST_LOG` does nothing) |
+| `LOUD_WIRE=1` | Wire logging (no test installs a `tracing` subscriber that reads `RUST_LOG`, so it does nothing) |
 
 ## Offline HTTP tests
 
