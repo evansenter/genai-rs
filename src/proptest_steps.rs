@@ -785,3 +785,78 @@ proptest! {
         prop_assert_eq!(json, restored_json);
     }
 }
+
+// =============================================================================
+// Recorded regressions
+// =============================================================================
+//
+// A seed in `proptest-regressions/proptest_steps.txt` replays whatever value
+// the strategy now draws from it, which drifts as the strategies change (the
+// `CodeExecutionCall` step seed now draws a `UserInput`). The value each
+// seed shrank to when it was recorded is pinned here, so the regression
+// stays covered whatever the strategy generates.
+
+/// Seed `f68b3f22` (`function_result_payload_roundtrip`): a content payload
+/// holding a bare video whose only field is an unknown resolution.
+#[cfg(not(genai_strict_unknown))]
+#[test]
+fn recorded_seed_video_with_unknown_resolution_payload_roundtrips() {
+    let payload = FunctionResultPayload::Contents(vec![Content::Video {
+        data: None,
+        uri: None,
+        mime_type: None,
+        resolution: Some(Resolution::Unknown {
+            resolution_type: "zz_0".to_string(),
+            data: serde_json::Value::String("zz_0".to_string()),
+        }),
+        processing: None,
+        name: None,
+        extra: Default::default(),
+    }]);
+    let json = serde_json::to_value(&payload).expect("Serialization should succeed");
+    let restored: FunctionResultPayload =
+        serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+    assert_eq!(
+        std::mem::discriminant(&payload),
+        std::mem::discriminant(&restored)
+    );
+    let restored_json = serde_json::to_value(&restored).expect("Re-serialization should succeed");
+    assert_eq!(json, restored_json);
+}
+
+/// Seed `7b13b8ed` (`step_delta_roundtrip`): a code execution delta with an
+/// unknown language and no code.
+#[cfg(not(genai_strict_unknown))]
+#[test]
+fn recorded_seed_code_execution_delta_with_unknown_language_roundtrips() {
+    let delta = StepDelta::CodeExecutionCall {
+        language: Some(CodeExecutionLanguage::Unknown {
+            language_type: "zz_a".to_string(),
+            data: serde_json::Value::String("zz_a".to_string()),
+        }),
+        code: None,
+        signature: None,
+        arguments_extra: Default::default(),
+        extra: Default::default(),
+    };
+    assert_value_roundtrip(&delta).unwrap();
+}
+
+/// Seed `77c35343` (`step_roundtrip`): a code execution call with an unknown
+/// language and empty code.
+#[cfg(not(genai_strict_unknown))]
+#[test]
+fn recorded_seed_code_execution_step_with_unknown_language_roundtrips() {
+    let step = Step::CodeExecutionCall {
+        id: "a".to_string(),
+        language: CodeExecutionLanguage::Unknown {
+            language_type: "zz_a".to_string(),
+            data: serde_json::Value::String("zz_a".to_string()),
+        },
+        code: String::new(),
+        signature: None,
+        arguments_extra: Default::default(),
+        extra: Default::default(),
+    };
+    assert_value_roundtrip(&step).unwrap();
+}
