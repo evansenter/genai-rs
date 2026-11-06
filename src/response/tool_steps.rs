@@ -297,3 +297,7 @@ impl InteractionResponse {
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "tool_steps_tests.rs"]
+mod tests;
