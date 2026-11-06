@@ -854,3 +854,65 @@ pass, which shares both.
 
 **Consequences.** Links to `src/coverage_oracle/response.rs:<line>` for the
 target table, written before 2026-11-05, point at the old layout.
+
+---
+
+## D-026 — `CallableFunction::call` returns a boxed future; `async-trait` is gone (2026-11-06)
+
+**Context.** #490: `CallableFunction` was declared with `#[async_trait]`,
+which made `async-trait` part of the public API (a hand-written impl needed
+it as a direct dependency) and pulled `syn` 3 into every consumer's build
+beside the `syn` 2 everything else uses. Native `async fn` in traits is
+stable well within the 1.88 MSRV, but a trait with an `async fn` (or a
+return-position `impl Future`) is not dyn-compatible, and the crate holds
+tools as `dyn CallableFunction`: `ToolService::tools` returns
+`Arc<dyn CallableFunction>`, the `#[tool]` registry holds
+`Box<dyn CallableFunction>`, and the auto-function loop and the Antigravity
+dispatcher call through those objects, on spawned tasks that need the
+future to be `Send`.
+
+**Decision.** `call` returns `FunctionFuture<'a>`, an exported alias for
+`Pin<Box<dyn Future<Output = Result<Value, FunctionError>> + Send + 'a>>`:
+the type `#[async_trait]` generated, written out. `#[tool]` emits it, so
+macro users see no change. No other trait in the crate is async, so
+`async-trait` leaves the dependency graph entirely; nothing still uses it.
+
+Rejected: a native `async fn call` plus a second, dyn-compatible trait with
+a blanket impl that boxes it. Users would meet two traits, and the `Send`
+bound the dispatcher needs cannot be put on a native `async fn` without
+return-type notation (unstable), so implementors would have to write
+`-> impl Future<Output = ...> + Send` by hand anyway.
+
+**Consequences.** A hand-written impl wraps its body in
+`Box::pin(async move { ... })`. One allocation per call, as before.
+
+---
+
+## D-027 — `GenaiError` variants: one per cause a caller acts on (2026-11-06)
+
+**Context.** #490's audit of `GenaiError`: `Json` had no producer; `Parse`
+(an SSE event that does not parse) and `MalformedResponse` (a body that
+does not parse) meant the same thing to a caller; `Internal` covered a
+file that failed processing, a poll deadline and client-side bugs alike,
+told apart only by message; `ClientBuild(String)` dropped the
+`reqwest::Error`.
+
+**Decision.**
+
+- `Json` is removed, and `Parse` folds into `MalformedResponse`.
+- A poll deadline is `PollTimeout { timeout, message }`, not the existing
+  `Timeout(Duration)`. `Timeout` is the request-level timeout and is
+  retryable; a poll deadline must not be, because the resource may still
+  be processing and re-sending an import makes a second document. The
+  message keeps what was awaited, the last state seen and what to do next.
+- A resource that reaches a terminal failure (a file, a file search
+  document, an import operation's error) is `ProcessingFailed(String)`,
+  not retryable: only a new upload recovers.
+- `Internal` keeps the client's own failures: a request body that will not
+  serialize, and an unexpected failure reading back a document an upload or
+  import already made (the message names it).
+- `ClientBuild` holds the `reqwest::Error` as its `source()`.
+
+**Consequences.** Code that matched `Internal` and parsed its message for
+these cases needs the new arms. `GenaiError` was already
+`#[non_exhaustive]`, so the new variants cost wildcard matches nothing.

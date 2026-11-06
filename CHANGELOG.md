@@ -520,6 +520,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings (`HTTPS_PROXY` and the OS configuration) and charset decoding.
   Migration: add `features = ["http2", "system-proxy", "charset"]` to keep
   them.
+- **Breaking: `CallableFunction::call` returns a `FunctionFuture` instead
+  of being an `#[async_trait]` method, and genai-rs no longer depends on
+  `async-trait`** (#490). `FunctionFuture<'a>` is
+  `Pin<Box<dyn Future<Output = Result<Value, FunctionError>> + Send + 'a>>`,
+  the type `#[async_trait]` generated, written out, so tools are still
+  `dyn CallableFunction` (D-026). `async-trait` brought in a second `syn`
+  that every consumer compiled. `#[tool]` functions are unaffected.
+  Migration: in a hand-written impl, drop `#[async_trait]` and write
+  `fn call(&self, args: Value) -> FunctionFuture<'_> { Box::pin(async move { ... }) }`
+  around the old body; remove `async-trait` from your dependencies if
+  nothing else uses it.
+- **Breaking: `genai_rs::function_calling::submit` and
+  `CallableFunctionFactory` are no longer public API** (#490). They were
+  `#[tool]`'s `inventory` registration, and live in the doc-hidden
+  `genai_rs::__private` now, with no semver guarantee. A `genai-rs-macros`
+  must match its `genai-rs` release: a 0.13 `genai-rs-macros` does not
+  compile against this release, nor a new one against 0.13. Migration:
+  register functions with `#[tool]`, or return them from a `ToolService`;
+  bump `genai-rs` and `genai-rs-macros` together.
+- **Breaking: `GenaiError::Json` and `GenaiError::Parse` are removed**
+  (#490, D-027). `Json` had no producer. A streamed SSE event that does not
+  parse, or one that grows past 64 MiB, is `MalformedResponse` now, as a
+  non-streamed body that does not parse already was. Migration: match
+  `MalformedResponse` where you matched `Parse`, and drop `Json` arms.
+- **Breaking: a `wait_until_active` timeout is
+  `GenaiError::PollTimeout { timeout, message }`, and a file, document or
+  import that fails processing is `GenaiError::ProcessingFailed(String)`;
+  both were `Internal`** (#490, D-027). Neither is retryable, as before. A
+  file search store import's wait that times out is `PollTimeout` too.
+  `Internal` is left with the client's own failures: a request body that
+  would not serialize, and a read-back of a document an upload or import
+  already made that fails unexpectedly. Migration: match the new variants
+  where you told these cases apart by `Internal`'s message.
+- **Breaking: `GenaiError::ClientBuild` holds the `reqwest::Error` instead
+  of its message**, and returns it from `source()` (#490). Migration:
+  `ClientBuild(e)` binds a `reqwest::Error`; `e.to_string()` gives the old
+  string.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
