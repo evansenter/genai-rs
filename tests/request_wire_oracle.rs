@@ -164,6 +164,7 @@ fn interaction(agent: bool) -> InteractionRequest {
                 voice: Some("Kore".into()),
                 language: Some("en-US".into()),
                 speaker: None,
+                ..Default::default()
             }]),
             ..Default::default()
         }),

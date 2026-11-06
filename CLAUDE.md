@@ -105,11 +105,13 @@ there (`docs/LOGGING_STRATEGY.md` has the snippet).
 
 Submodules are private; a directory's `mod.rs` re-exports its public items
 explicitly, so public paths do not depend on file layout. Keep implementation
-modules under roughly 800 lines excluding tests: add a module rather than
-growing a large file (D-014). Split a unit-test file past about 1,500 lines,
-an integration-test file past about 2,000 and a shared test module past 800,
-by the feature its tests verify (D-008). When a module or directory moves,
-record it in `DECISIONS.md` (D-011).
+modules at most 800 lines before their test module: add a module rather than
+growing a large file (D-014). A unit-test file is split past 1,500 lines, an
+integration-test file past 2,000 and a shared test module (`tests/common/`,
+`tests/live_verbs/`) past 800, by the feature its tests verify (D-008).
+`tests/module_size.rs` enforces all four bars and names the file, its count
+and the limit. When a module or directory moves, record it in
+`DECISIONS.md` (D-011).
 
 ## Rules
 

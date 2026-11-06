@@ -32,11 +32,12 @@ jobs:
 
           DAYS_BACK=7
           WORKFLOW_NAME="Rust"
-          # The jobs that run nextest with --retries, whose green runs can
-          # hide a flake: the live integration groups and the antigravity
-          # job's harness step. count_retried_flakes.sh counts only the
-          # steps that retry, so the antigravity job's offline suite, in
-          # the same log, stays out of the rate.
+          # The jobs that run nextest with retries (NEXTEST_RETRIES in the
+          # step's env), whose green runs can hide a flake: the live
+          # integration groups and the antigravity job's harness step.
+          # count_retried_flakes.sh counts only the steps that retry, so the
+          # antigravity job's offline suite, in the same log, stays out of
+          # the rate.
           RETRY_JOBS='^(Integration Tests \(.*\)|Test Suite \(antigravity\))$'
 
           END_DATE=$(date -u +"%Y-%m-%d")

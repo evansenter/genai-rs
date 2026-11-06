@@ -208,6 +208,11 @@ pub struct RankService {
     /// The rank service model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_name: Option<String>,
+    /// Additional fields to send that this struct does not model, sent flat
+    /// beside the modeled ones; a stored interaction's unmodeled fields
+    /// land here too.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RankService {
@@ -216,6 +221,7 @@ impl RankService {
     pub fn new(model_name: impl Into<String>) -> Self {
         Self {
             model_name: Some(model_name.into()),
+            extra: serde_json::Map::new(),
         }
     }
 }

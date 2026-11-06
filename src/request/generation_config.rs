@@ -174,6 +174,11 @@ pub struct TranscriptionConfig {
     /// difference was observed on general models.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<TranscriptionMode>,
+    /// Fields this crate does not model, kept from a deserialized config (such
+    /// as one a stored interaction serves) and sent flat beside the modeled
+    /// ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Transcription mode (`transcription_config.mode`).
@@ -406,7 +411,7 @@ where
 /// let config = SpeechConfig {
 ///     voice: Some("Kore".to_string()),
 ///     language: Some("en-US".to_string()),
-///     speaker: None,
+///     ..Default::default()
 /// };
 /// ```
 ///
@@ -435,6 +440,11 @@ pub struct SpeechConfig {
     /// multi-speaker text-to-speech.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    /// Fields this crate does not model, kept from a deserialized config (such
+    /// as one a stored interaction serves) and sent flat beside the modeled
+    /// ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl SpeechConfig {
@@ -476,6 +486,7 @@ impl SpeechConfig {
             voice: Some(voice.into()),
             language: Some(language.into()),
             speaker: Some(speaker.into()),
+            ..Default::default()
         }
     }
 }
@@ -492,6 +503,7 @@ impl SpeechConfig {
 /// let config = ImageConfig {
 ///     aspect_ratio: Some(ImageAspectRatio::Square),
 ///     image_size: Some(ImageSize::Hd1k),
+///     ..Default::default()
 /// };
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -503,6 +515,11 @@ pub struct ImageConfig {
     /// The size/resolution for generated images.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_size: Option<ImageSize>,
+    /// Fields this crate does not model, kept from a deserialized config (such
+    /// as one a stored interaction serves) and sent flat beside the modeled
+    /// ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 wire_enum! {
@@ -607,6 +624,11 @@ pub struct VideoConfig {
     /// the mode based on the prompt and input media.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<VideoTask>,
+    /// Fields this crate does not model, kept from a deserialized config (such
+    /// as one a stored interaction serves) and sent flat beside the modeled
+    /// ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl VideoConfig {

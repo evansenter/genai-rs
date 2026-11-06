@@ -26,6 +26,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_image_config(ImageConfig {
             aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
             image_size: Some(ImageSize::Hd1k),
+            ..Default::default()
         })
         .create()
         .await?;

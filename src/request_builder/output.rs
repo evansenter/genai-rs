@@ -131,7 +131,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let config = SpeechConfig {
     ///     voice: Some("Puck".to_string()),
     ///     language: Some("en-US".to_string()),
-    ///     speaker: None,
+    ///     ..Default::default()
     /// };
     ///
     /// let response = client
@@ -179,8 +179,8 @@ impl<'a> InteractionBuilder<'a> {
     ///     ]))
     ///     .with_audio_output()
     ///     .with_speech_configs(vec![
-    ///         SpeechConfig { voice: Some("Kore".into()), language: Some("en-US".into()), speaker: Some("Alice".into()) },
-    ///         SpeechConfig { voice: Some("Puck".into()), language: Some("en-US".into()), speaker: Some("Bob".into()) },
+    ///         SpeechConfig::for_speaker("Alice", "Kore", "en-US"),
+    ///         SpeechConfig::for_speaker("Bob", "Puck", "en-US"),
     ///     ])
     ///     .create()
     ///     .await?;
@@ -222,6 +222,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let config = ImageConfig {
     ///     aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
     ///     image_size: Some(ImageSize::Hd2k),
+    ///     ..Default::default()
     /// };
     ///
     /// let response = client

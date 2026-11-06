@@ -366,9 +366,7 @@ pub async fn import_file(
                 },
             )
             .await
-            .map_err(|e| {
-                unfinished_import(e, &format!("Polling {what} failed. {handle} Cause: "))
-            })?
+            .map_err(|e| unfinished_import(e, &what, &handle))?
     };
     if let Some(error) = &operation.error {
         return Err(GenaiError::ProcessingFailed(format!(
@@ -447,12 +445,15 @@ fn operation_url<'n>(
     ))
 }
 
-/// An error from polling an unfinished import, with `context` (which names
-/// the operation and the document it creates) put in front of its message.
-/// The wait's own deadline error names them already. Only non-retryable
-/// errors reach here (the wait polls through the rest), so nothing is made
-/// retryable that was not.
-fn unfinished_import(e: GenaiError, context: &str) -> GenaiError {
+/// An error from polling an unfinished import, made to carry `handle`,
+/// which names the operation and the document it creates, so the caller
+/// waits on that document instead of importing again. The wait's deadline
+/// error (`PollTimeout`) ends with the handle already, as its advice; any
+/// other error gets it in front of its message. Only non-retryable errors
+/// and the deadline reach here (the wait polls through the rest), so
+/// nothing is made retryable that was not.
+fn unfinished_import(e: GenaiError, what: &str, handle: &str) -> GenaiError {
+    let context = format!("Polling {what} failed. {handle} Cause: ");
     match e {
         GenaiError::Api {
             status_code,
@@ -465,7 +466,13 @@ fn unfinished_import(e: GenaiError, context: &str) -> GenaiError {
             request_id,
             retry_after,
         },
-        timeout @ GenaiError::PollTimeout { .. } => timeout,
+        GenaiError::PollTimeout { timeout, message } if message.contains(handle) => {
+            GenaiError::PollTimeout { timeout, message }
+        }
+        GenaiError::PollTimeout { timeout, message } => GenaiError::PollTimeout {
+            timeout,
+            message: format!("{message} {handle}"),
+        },
         GenaiError::MalformedResponse(message) => {
             GenaiError::MalformedResponse(format!("{context}{message}"))
         }
@@ -532,6 +539,7 @@ fn upload_file_name_header(file_name: &str) -> HeaderValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poll::PollOptions;
 
     fn ctx() -> HttpContext {
         HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![])
@@ -628,5 +636,111 @@ mod tests {
             document_url(&ctx(), "fileSearchStores/a b/documents/c d").unwrap(),
             "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/a%20b/documents/c%20d"
         );
+    }
+
+    const WHAT: &str = "the import of 'files/abc' into 'fileSearchStores/s'";
+    const HANDLE: &str = "It may still be running on the server as operation \
+        'fileSearchStores/s/operations/op1', which creates document \
+        'fileSearchStores/s/documents/op1': wait for that document.";
+
+    /// Every error from polling an unfinished import names the operation and
+    /// the document it creates, keeping its variant where it has one a
+    /// caller acts on.
+    #[test]
+    fn unfinished_import_errors_name_the_operation_and_document() {
+        let api = unfinished_import(
+            GenaiError::Api {
+                status_code: 403,
+                message: "denied".into(),
+                request_id: Some("r1".into()),
+                retry_after: None,
+            },
+            WHAT,
+            HANDLE,
+        );
+        match api {
+            GenaiError::Api {
+                status_code: 403,
+                message,
+                request_id: Some(id),
+                ..
+            } => {
+                assert!(
+                    message.contains(HANDLE) && message.ends_with("denied"),
+                    "{message}"
+                );
+                assert_eq!(id, "r1");
+            }
+            other => panic!("expected Api, got {other:?}"),
+        }
+
+        let malformed = unfinished_import(
+            GenaiError::MalformedResponse("bad json".into()),
+            WHAT,
+            HANDLE,
+        );
+        assert!(
+            matches!(&malformed, GenaiError::MalformedResponse(m) if m.contains(HANDLE)),
+            "{malformed:?}"
+        );
+
+        // `Internal` is not taken for the deadline: it gets the handle too.
+        for e in [
+            GenaiError::Internal("request body did not serialize".into()),
+            GenaiError::InvalidInput("bad name".into()),
+        ] {
+            let wrapped = unfinished_import(e, WHAT, HANDLE);
+            assert!(
+                matches!(&wrapped, GenaiError::Internal(m)
+                    if m.contains(HANDLE) && m.contains(WHAT)),
+                "{wrapped:?}"
+            );
+        }
+
+        // A deadline error without the handle gets it appended, and stays a
+        // (non-retryable) `PollTimeout`.
+        let timeout = unfinished_import(
+            GenaiError::PollTimeout {
+                timeout: Duration::from_secs(60),
+                message: "Timeout waiting.".into(),
+            },
+            WHAT,
+            HANDLE,
+        );
+        match &timeout {
+            GenaiError::PollTimeout { message, .. } => {
+                assert_eq!(message, &format!("Timeout waiting. {HANDLE}"));
+            }
+            other => panic!("expected PollTimeout, got {other:?}"),
+        }
+        assert!(!timeout.is_retryable());
+    }
+
+    /// The import wait's own deadline error ends with the handle, so it
+    /// passes through unchanged rather than naming it twice.
+    #[tokio::test(start_paused = true)]
+    async fn the_import_deadline_names_the_operation_and_document_once() {
+        let e = PollOptions::new()
+            .with_timeout(Duration::from_secs(2))
+            .with_poll_interval(Duration::from_millis(500))
+            .wait_with_advice(
+                WHAT,
+                HANDLE,
+                (IMPORT_WAIT_TIMEOUT, IMPORT_POLL_INTERVAL),
+                || async { Ok(()) },
+                |()| Ok(PollStep::<()>::Pending("running".to_string())),
+            )
+            .await
+            .unwrap_err();
+        let before = format!("{e:?}");
+        let e = unfinished_import(e, WHAT, HANDLE);
+        assert_eq!(format!("{e:?}"), before);
+        match e {
+            GenaiError::PollTimeout { message, .. } => {
+                assert_eq!(message.matches(HANDLE).count(), 1, "{message}");
+                assert!(message.contains(WHAT), "{message}");
+            }
+            other => panic!("expected PollTimeout, got {other:?}"),
+        }
     }
 }

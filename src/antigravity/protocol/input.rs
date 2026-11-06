@@ -170,6 +170,9 @@ pub struct UserInput {
     /// The content parts, in order.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub parts: Vec<UserInputPart>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 impl UserInput {
@@ -178,6 +181,7 @@ impl UserInput {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             parts: vec![UserInputPart::text(text)],
+            ..Default::default()
         }
     }
 }
@@ -195,6 +199,9 @@ pub struct UserInputPart {
     /// A named slash command.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slash_command: Option<SlashCommand>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 impl UserInputPart {
@@ -221,6 +228,9 @@ pub struct Media {
     /// Base64-encoded content.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `UserInput.SlashCommand`.
@@ -230,6 +240,9 @@ pub struct SlashCommand {
     /// Command name (without the slash).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `ToolConfirmation` — approve or reject a pending harness-side tool step.
@@ -269,6 +282,9 @@ pub struct ToolResponse {
     /// `response_json`. Never written by this crate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `UserQuestionsResponse` — answers to a `questions_request`.

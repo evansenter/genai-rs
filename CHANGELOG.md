@@ -148,7 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them flat beside the modeled ones.
 - `InteractionBuilder::continue_decode(&response)` continues a decode that
   stopped early without resending the input: it sets the response's model,
-  its id as the previous interaction and its `continuation_token`. The API
+  its id as the previous interaction and its `continuation_token`, replacing
+  any id or token set earlier on the builder, and clearing them when the
+  response has none (a token continues only its own interaction). The API
   continues a stored interaction from those alone, and with no
   `max_output_tokens` the continuation ran to the end (verified live
   2026-11-05 on `CONTINUATION_MODEL`). `build()` names the problem when the
@@ -187,7 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chunking config of a document `FileSearchStores::upload` adds.
   `CustomMetadata` (`string`, `numeric`, `string_list`, with `StringList`
   for the last) and `ChunkingConfig::white_space(max_tokens_per_chunk,
-  max_overlap_tokens)` (with `WhiteSpaceConfig`) build them, and
+  max_overlap_tokens)` (with `WhiteSpaceConfig`, which keeps unmodeled
+  fields in `extra` like `ChunkingConfig`) build them, and
   `FileSearchDocument::custom_metadata` reads them back, in the order sent
   (verified live 2026-11-05). An upload or import whose white-space overlap
   is not smaller than its chunk fails with `GenaiError::InvalidInput` before
@@ -246,6 +249,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
   `extra` map cannot be built in a const context. Migration: call it at
   runtime.
+- **Breaking: the request configs a stored interaction serves back have a
+  new `extra` field**: `SpeechConfig`, `ImageConfig`, `VideoConfig`,
+  `TranscriptionConfig`, `AllowedTools`, `SafetySetting` and
+  `WebhookConfig`. It keeps the fields the crate does not model, from a
+  response's `generation_config`, `safety_settings` and `webhook_config` or
+  any other deserialized config, and sends them flat beside the modeled
+  ones, as `GenerationConfig::extra` already did; a round trip used to drop
+  them. `SafetySetting::new` is no longer a `const fn`. Migration: in a
+  struct literal, add `..Default::default()` (`extra:
+  serde_json::Map::new()` for `SafetySetting`, which has no `Default`), or
+  use the constructors (`SpeechConfig::for_speaker`, `AllowedTools::new`,
+  `SafetySetting::new`, `VideoConfig::new`, `WebhookConfig::new`).
+- **Breaking: the Antigravity types read from the harness that dropped
+  unmodeled fields have a new `extra` field**, as their siblings do:
+  `ModalityTokenCount`, `TrajectoryUsageEntry`, `ListDirectoryEntry`,
+  `DiffBlock`, `DiffLine`, `PreTurnArgs`, `PostTurnArgs`,
+  `OnToolErrorArgs`, `OnCompactionArgs`, `StopArgs`, and the input types
+  the harness echoes back (`UserInput`, `UserInputPart`, `Media`,
+  `SlashCommand`, `ToolResponse`). `OutputEvent::extra` keeps an envelope
+  key a newer harness adds beside a recognized payload, which used to be
+  dropped. Migration: add `..Default::default()` to a struct literal.
 - **Breaking: a known step, delta, content block or annotation whose
   modeled field is malformed now deserializes as `Unknown`.** `Unknown`
   keeps the whole object. Examples: a non-object `arguments`, a non-string
@@ -794,9 +818,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the last audio block whatever its format. A video or document delta now
   follows the image rule: one that names a `mime_type` or `uri` starts a
   block, so two whole files in one step no longer merge into one corrupt
-  string (no model streams either to observe, 2026-11-05). A base64 chunk
-  that ends in padding is joined to the next as bytes, so the result stays
-  valid base64; no live chunk has carried padding.
+  string (no model streams either to observe, 2026-11-05). Chunks join as
+  text only when both are whole base64 quanta (a multiple of 4 characters,
+  with no padding before the join); otherwise, a padded chunk or an
+  unpadded one of another length, they are joined as bytes, so the result
+  stays valid base64. Every live chunk has been whole quanta.
 - `VideoMetadata` keeps the keys it does not model in a new `extra` map,
   as the other response types do; it used to drop them. The bindings type
   it `dict[str, Any]`, and the API serves `videoDuration` (live
@@ -810,6 +836,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent's `curl` in either sandbox got the egress proxy's 403, and 200 in
   one with no network config), and `NetworkConfig::is_disabled()` is true
   for both (#489).
+- `ModalityTokens`, `GroundingToolCount`, `RotateSigningSecretResponse`,
+  `VoiceAudio` and `RankService` keep the fields they do not model in a new
+  `extra` map and write them back, as the other response types do; a
+  deserialize/serialize round trip dropped them.
 - `FileMetadata` failed to deserialize when `sizeBytes` was a JSON number
   rather than the protobuf string, so `Files::get` returned an error and a
   list page dropped the file. It now reads the number.

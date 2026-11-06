@@ -16,15 +16,33 @@ The markers, by kind (`tests/common/mod.rs`, `test_resource_name`):
   `uri`, or a `name` starting `genai-rs-test`.
 - triggers, file search stores, prompted voices: a display name starting
   `genai-rs-test`.
-- environments: no `sources` (an Antigravity interaction's own environment,
-  and a fork, which lists none: both verified 2026-11-05), or every source
-  inline and a fixture: content starting `genai-rs-test`, a target under
-  `genai_rs_test/`, or one of the /etc/motd strings the tests used before
-  they carried the prefix (`LEGACY_ENV_SOURCES`).
+- environments: every source inline and a fixture: content starting
+  `genai-rs-test`, a target under `genai_rs_test/`, or one of the /etc/motd
+  strings the tests used before they carried the prefix
+  (`LEGACY_ENV_SOURCES`). Or no sources and no files: see below.
 
-Age comes from the resource's create time. Agents have none, and prompted
-voices only an `expire_time` (a year after creation, 2026-11-05), so for
-them it is read from the Unix timestamp `test_resource_name` embeds
+Environments have no field a test can mark. The resource is `id`,
+`sources`, `network`, `status`, `file_count`, `size_bytes` and three
+timestamps, with no name, display name, label or metadata (google-genai
+2.34.0's `Environment` and `CreateEnvironmentRequest`, and the live listing
+of 2026-11-06), so only inline sources can carry a marker. An environment
+with no sources cannot be told apart from one a person made: an agent
+interaction run without an environment creates one, a fork
+(`from_environment`) lists none (both verified 2026-11-05), and so does a
+create with only a network. The janitor takes such an environment only
+when it also holds no files (`file_count` and `size_bytes` zero or absent)
+and has not been used within the age floor: it then has nothing in it to
+lose. That still matches an empty sourceless environment that is not a
+test's, so opting in deletes those too. A sourceless environment that holds
+files, a leaked fork for one, is kept and listed for a person to check.
+On 2026-11-06 the shared key held 35 sourceless environments, all empty
+(34 from July, one from October).
+
+Age comes from the resource's create time, and for an environment from the
+latest of its create, update and last-access times. Agents have no create
+time, and prompted voices only an `expire_time` (a year after creation,
+2026-11-05), so for them it is read from the Unix timestamp
+`test_resource_name` embeds
 (`genai-rs-test-<label>-<unix seconds>-<nanos>`), else from the voice's
 `expire_time`. A marked resource whose age cannot be told is kept and
 reported.
@@ -42,10 +60,12 @@ is what the daily workflow passes: a dry run unless the environment
 variable `JANITOR_DELETE` is `true` (any case), when it deletes. The
 workflow sets it from the repository variable of that name, so deleting on
 a schedule is the key owner's opt-in: the first run against the shared key
-would remove about 112 environments and 3 credentials (2026-11-05).
+would remove 112 environments (77 holding only fixture sources, 35 with no
+sources and no files) and 3 credentials (dry run, 2026-11-06).
 `--summary` appends a Markdown report to FILE (the job summary): the
 mode, every resource deleted or that would be, the marked resources whose
-age is unknown, and the per-kind table. A delete
+age is unknown, the unmarked ones kept for a person to check (sourceless
+environments that hold files), and the per-kind table. A delete
 that answers 404 counts as done: the resource is already gone (a test's own
 cleanup got there first, or a retried delete whose first try went through).
 Credentials and webhooks answer a delete of a missing id with 404;
@@ -189,13 +209,53 @@ def is_fixture_source(source: dict) -> bool:
 # Each kind: how to list it, how to name one, why it is a test's, when it
 # was created, and how to delete it. `marker` returns a reason, or None for
 # a resource that is not a test's.
+def count(value) -> int:
+    """An int64 the API may send as a string, a number, or (when zero) not
+    at all."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        # Unreadable: count it as something there, so nothing is assumed
+        # empty.
+        return 1
+
+
+def holds_files(env: dict) -> bool:
+    return count(env.get("file_count")) > 0 or count(env.get("size_bytes")) > 0
+
+
 def environment_marker(env: dict):
     sources = env.get("sources") or []
     if not sources:
-        return "no sources (an agent interaction's or a fork)"
+        # No field marks a test's sourceless environment (see the module
+        # docs), so only an empty one is taken: it holds nothing to lose.
+        if holds_files(env):
+            return None
+        return "no sources and no files"
     if all(is_fixture_source(s) for s in sources):
         return "only test fixture sources"
     return None
+
+
+def environment_review(env: dict):
+    """A note for an unmarked environment a person should look at: one with
+    no sources that holds files, as a leaked fork does. It is kept."""
+    if env.get("sources") or not holds_files(env):
+        return None
+    return (f"no sources, but it holds {count(env.get('file_count'))} file(s) "
+            f"({count(env.get('size_bytes'))} bytes): "
+            "a fork or an agent's workspace, a test's or a person's")
+
+
+def last_active(env: dict) -> dt.datetime | None:
+    """When an environment was last created, updated or used: a test's is
+    never touched after its test, so recent use means someone has it."""
+    created = create_time(env)
+    if created is None:
+        return None
+    times = [created] + [t for t in (parse_time(env.get("updated")),
+                                     parse_time(env.get("last_accessed"))) if t]
+    return max(times)
 
 
 def webhook_marker(hook: dict):
@@ -231,7 +291,9 @@ KINDS = {
         "token": ("page_token", "next_page_token"),
         "id": lambda r: r.get("id"),
         "marker": environment_marker,
-        "created": create_time,
+        "review": environment_review,
+        "created": last_active,
+        "age_label": "last active",
         "delete": lambda r: (f"/v1beta/environments/{r['id']}", {}),
     },
     "credentials": {
@@ -340,7 +402,8 @@ def md_code(text) -> str:
 
 
 def write_summary(path: str, title: str, notes: list[str], acted: list[tuple],
-                  unknown: list[tuple], verb: str, totals: list[tuple], closing: str) -> None:
+                  unknown: list[tuple], review: list[tuple], verb: str,
+                  totals: list[tuple], closing: str) -> None:
     out = [f"## Test resource janitor ({title})", ""]
     for note in notes:
         out += [note, ""]
@@ -353,6 +416,10 @@ def write_summary(path: str, title: str, notes: list[str], acted: list[tuple],
     if unknown:
         out += [f"### Marked, age unknown: delete by hand ({len(unknown)})", ""]
         out += [f"- {md_code(ref)}: {detail}" for ref, detail in unknown]
+        out.append("")
+    if review:
+        out += [f"### Unmarked, kept: check by hand ({len(review)})", ""]
+        out += [f"- {md_code(ref)}: {detail}" for ref, detail in review]
         out.append("")
     out += table(totals, verb)
     out += ["", closing, ""]
@@ -391,6 +458,7 @@ def run(args) -> int:
     totals = []
     acted = []    # (kind/id, detail): deleted, or would be
     unknown = []  # (kind/id, detail): marked, but its age cannot be told
+    review = []   # (kind/id, detail): unmarked, kept, worth a person's look
 
     for name in args.kinds:
         kind = KINDS[name]
@@ -402,15 +470,22 @@ def run(args) -> int:
             totals.append((name, "list failed", 0, 0, 0, 0))
             continue
 
+        age_label = kind.get("age_label", "created")
         marked = removed = too_new = unknown_age = 0
         for resource in resources:
             ident = kind["id"](resource)
             reason = kind["marker"](resource)
-            if not reason or not ident:
+            if not ident:
+                continue
+            if not reason:
+                note = kind.get("review", lambda r: None)(resource)
+                if note:
+                    review.append((f"{name}/{ident}", note))
+                    print(f"{'review':<8} {name}/{ident}: {note}; kept")
                 continue
             marked += 1
             created = kind["created"](resource)
-            when = created.isoformat(timespec="seconds") if created else "unknown"
+            when = f"{age_label} {created.isoformat(timespec='seconds')}" if created else f"{age_label} unknown"
             if created is None:
                 unknown_age += 1
                 unknown.append((f"{name}/{ident}", reason))
@@ -418,7 +493,7 @@ def run(args) -> int:
                 continue
             if created > cutoff:
                 too_new += 1
-                print(f"kept     {name}/{ident}: {reason}, created {when}, under {args.min_age_hours:g}h old")
+                print(f"kept     {name}/{ident}: {reason}, {when}, under {args.min_age_hours:g}h ago")
                 continue
             if not args.dry_run:
                 path, query = kind["delete"](resource)
@@ -432,12 +507,12 @@ def run(args) -> int:
                     # Gone already: a retry after a delete that went through
                     # but answered 5xx, or the test's own cleanup.
                     removed += 1
-                    acted.append((f"{name}/{ident}", f"{reason}, created {when}; already deleted (404)"))
-                    print(f"{'gone':<8} {name}/{ident}: {reason}, created {when}; already deleted (404)")
+                    acted.append((f"{name}/{ident}", f"{reason}, {when}; already deleted (404)"))
+                    print(f"{'gone':<8} {name}/{ident}: {reason}, {when}; already deleted (404)")
                     continue
             removed += 1
-            acted.append((f"{name}/{ident}", f"{reason}, created {when}"))
-            print(f"{verb:<8} {name}/{ident}: {reason}, created {when}")
+            acted.append((f"{name}/{ident}", f"{reason}, {when}"))
+            print(f"{verb:<8} {name}/{ident}: {reason}, {when}")
         totals.append((name, len(resources), marked, removed, too_new, unknown_age))
 
     print()
@@ -454,7 +529,7 @@ def run(args) -> int:
         title = "dry run" if args.dry_run else "delete"
         if args.scheduled:
             title = f"scheduled, {title}"
-        write_summary(args.summary, title, notes, acted, unknown, verb, totals, closing)
+        write_summary(args.summary, title, notes, acted, unknown, review, verb, totals, closing)
     return 1 if failed else 0
 
 

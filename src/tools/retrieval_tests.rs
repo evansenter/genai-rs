@@ -176,3 +176,15 @@ fn test_rag_ranking_nested_rank_service() {
     assert_eq!(serde_json::to_value(&ranking).unwrap(), wire);
     assert_eq!(serde_json::from_value::<RagRanking>(wire).unwrap(), ranking);
 }
+
+/// A rank-service field the crate does not model survives a round trip
+/// (D-001).
+#[test]
+fn test_rank_service_keeps_unmodeled_fields() {
+    let wire = serde_json::json!({"model_name": "ranker-v3", "top_n": 5});
+    let service: RankService = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(service.model_name.as_deref(), Some("ranker-v3"));
+    assert_eq!(service.extra["top_n"], 5);
+    assert_eq!(serde_json::to_value(&service).unwrap(), wire);
+    assert!(RankService::new("ranker-v3").extra.is_empty());
+}

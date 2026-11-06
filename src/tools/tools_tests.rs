@@ -474,6 +474,7 @@ fn test_tool_serializes_type_first_then_fields_in_order() {
             allowed_tools: Some(vec![AllowedTools {
                 mode: None,
                 tools: vec!["t".to_string()],
+                ..Default::default()
             }]),
             headers: Some(HashMap::from([("X-Key".to_string(), "k".to_string())])),
         }),

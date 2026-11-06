@@ -97,6 +97,7 @@ pub(crate) fn arb_webhook_config() -> impl Strategy<Value = WebhookConfig> {
         .prop_map(|(uris, user_metadata)| WebhookConfig {
             uris,
             user_metadata,
+            ..Default::default()
         })
 }
 

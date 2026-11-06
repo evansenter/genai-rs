@@ -105,6 +105,7 @@ pub(super) fn arb_image_config() -> impl Strategy<Value = ImageConfig> {
         .prop_map(|(aspect_ratio, image_size)| ImageConfig {
             aspect_ratio,
             image_size,
+            ..Default::default()
         })
 }
 
@@ -151,6 +152,7 @@ pub(crate) fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
             voice,
             language,
             speaker,
+            ..Default::default()
         })
 }
 
@@ -176,6 +178,7 @@ pub(crate) fn arb_transcription_config() -> impl Strategy<Value = TranscriptionC
                 language_codes,
                 timestamp_granularities,
                 mode: None,
+                ..Default::default()
             },
         )
 }
@@ -245,7 +248,10 @@ pub(super) fn arb_video_task() -> impl Strategy<Value = VideoTask> {
 }
 
 pub(super) fn arb_video_config() -> impl Strategy<Value = VideoConfig> {
-    proptest::option::of(arb_video_task()).prop_map(|task| VideoConfig { task })
+    proptest::option::of(arb_video_task()).prop_map(|task| VideoConfig {
+        task,
+        ..Default::default()
+    })
 }
 
 // =============================================================================
@@ -338,6 +344,7 @@ pub(crate) fn arb_safety_setting() -> impl Strategy<Value = SafetySetting> {
             category,
             threshold,
             method,
+            extra: serde_json::Map::new(),
         })
 }
 
@@ -616,4 +623,28 @@ proptest! {
         let by_hand_json = serde_json::to_value(&by_hand).expect("Serialization should succeed");
         prop_assert_eq!(input_json, &by_hand_json["input"]);
     }
+}
+
+// =============================================================================
+// Recorded regressions
+// =============================================================================
+//
+// A seed in `proptest-regressions/proptest_request.txt` replays whatever
+// value the strategy now draws from it, which drifts as the strategies
+// change. The value each seed shrank to when it was recorded is pinned here,
+// so the regression stays covered whatever the strategy generates.
+
+/// Seed `49fdbe18` (`image_aspect_ratio_roundtrip`): an unknown ratio whose
+/// data is its own type string.
+#[cfg(not(genai_strict_unknown))]
+#[test]
+fn recorded_seed_unknown_image_aspect_ratio_roundtrips() {
+    let ratio = ImageAspectRatio::Unknown {
+        ratio_type: "zz__".to_string(),
+        data: serde_json::Value::String("zz__".to_string()),
+    };
+    let json = serde_json::to_string(&ratio).expect("Serialization should succeed");
+    let restored: ImageAspectRatio =
+        serde_json::from_str(&json).expect("Deserialization should succeed");
+    assert_eq!(ratio, restored);
 }
