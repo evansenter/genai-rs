@@ -343,9 +343,9 @@ agent interaction run without one, a fork, a network-only create) looks
 exactly like anyone else's. The janitor takes a sourceless environment
 when it holds no files and has not been created, updated or used within
 the six hours, **whoever made it**: opting in deletes every empty, idle,
-sourceless environment on the key, not only the tests'. A sourceless
-environment that holds files, such as a leaked fork, is kept and listed in
-the summary for a person to check. On 2026-11-06 the key held 35
+sourceless environment on the key, not only the tests' (D-032). A
+sourceless environment that holds files, such as a leaked fork, is kept
+and listed in the summary for a person to check. On 2026-11-06 the key held 35
 sourceless environments, all empty, 34 of them from July. To see what it
 would delete:
 
