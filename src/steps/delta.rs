@@ -87,8 +87,10 @@ pub enum StepDelta {
     },
     /// Thought summary content (`type: "thought_summary"`).
     ThoughtSummary {
-        /// The summary content block (text or image).
-        content: Option<Content>,
+        /// The summary content block (text or image). Boxed: a `Content` is
+        /// the largest field of any delta, and every delta pays for the
+        /// largest (#490).
+        content: Option<Box<Content>>,
         /// Unmodeled wire fields ([`StepDelta::extra`]).
         extra: serde_json::Map<String, serde_json::Value>,
     },

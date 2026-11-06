@@ -312,6 +312,7 @@ impl StepAccumulator {
             ) => {
                 // Consecutive text summaries merge, keeping each chunk's
                 // unmodeled fields on the block; other content appends.
+                let c: &Content = c;
                 if let (
                     Some(Content::Text {
                         text: Some(t),

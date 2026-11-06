@@ -338,13 +338,17 @@ impl<'a> InteractionBuilder<'a> {
     /// # }
     /// ```
     ///
+    /// The stream owns a clone of the client, so it can be stored or
+    /// `tokio::spawn`ed. Nothing is sent until it is polled; a request the
+    /// builder rejects is the stream's only item.
+    ///
     /// [`GenaiError::Timeout`]: crate::GenaiError::Timeout
-    pub fn create_stream(self) -> BoxStream<'a, Result<StreamEvent, GenaiError>> {
-        let client = self.client;
+    pub fn create_stream(self) -> BoxStream<'static, Result<StreamEvent, GenaiError>> {
+        let client = self.client.clone();
         let timeout = self.timeout;
+        let request = self.build();
         Box::pin(async_stream::try_stream! {
-            let request = self.build()?;
-            let mut stream = client.execute_stream(request);
+            let mut stream = client.execute_stream(request?);
             let mut finished = false;
 
             loop {

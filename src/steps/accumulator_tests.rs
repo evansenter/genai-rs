@@ -270,14 +270,14 @@ fn test_accumulator_thought_summary_and_signature() {
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSummary {
-            content: Some(Content::text("Consider ")),
+            content: Some(Box::new(Content::text("Consider "))),
             extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSummary {
-            content: Some(Content::text("the problem")),
+            content: Some(Box::new(Content::text("the problem"))),
             extra: Default::default(),
         },
     );

@@ -1122,7 +1122,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
             }),
         // thought_summary
         proptest::option::of(arb_content()).prop_map(|content| StepDelta::ThoughtSummary {
-            content,
+            content: content.map(Box::new),
             extra: Default::default()
         }),
         // thought_signature
@@ -2269,7 +2269,9 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
 fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
     prop_oneof![
         // Created variant
-        arb_interaction_response().prop_map(|interaction| StreamChunk::Created { interaction }),
+        arb_interaction_response().prop_map(|interaction| StreamChunk::Created {
+            interaction: Box::new(interaction)
+        }),
         // StatusUpdate variant
         (
             proptest::option::of(arb_identifier()),
@@ -2281,7 +2283,7 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
                 StreamChunk::StatusUpdate {
                     interaction_id,
                     status,
-                    usage,
+                    usage: usage.map(Box::new),
                     continuation_token,
                 }
             }),
@@ -2297,7 +2299,7 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
             .prop_map(|(index, delta, total_usage)| StreamChunk::StepDelta {
                 index,
                 delta,
-                total_usage
+                total_usage: total_usage.map(Box::new)
             }),
         // StepStop variant
         (
@@ -2307,11 +2309,11 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
         )
             .prop_map(|(index, usage, step_usage)| StreamChunk::StepStop {
                 index,
-                usage,
-                step_usage,
+                usage: usage.map(Box::new),
+                step_usage: step_usage.map(Box::new),
             }),
         // Completed variant
-        arb_interaction_response().prop_map(StreamChunk::Completed),
+        arb_interaction_response().prop_map(|r| StreamChunk::Completed(Box::new(r))),
         // Error variant
         (arb_text(), proptest::option::of(arb_identifier()))
             .prop_map(|(message, code)| { StreamChunk::Error { message, code } }),
@@ -3021,14 +3023,15 @@ fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunctionStreamC
         )
             .prop_map(|(response, pending_calls)| {
                 AutoFunctionStreamChunk::ExecutingFunctions {
-                    response,
+                    response: Box::new(response),
                     pending_calls,
                 }
             }),
         prop::collection::vec(arb_function_execution_result(), 0..5)
             .prop_map(AutoFunctionStreamChunk::FunctionResults),
-        arb_interaction_response().prop_map(AutoFunctionStreamChunk::Complete),
-        arb_interaction_response().prop_map(AutoFunctionStreamChunk::MaxLoopsReached),
+        arb_interaction_response().prop_map(|r| AutoFunctionStreamChunk::Complete(Box::new(r))),
+        arb_interaction_response()
+            .prop_map(|r| AutoFunctionStreamChunk::MaxLoopsReached(Box::new(r))),
         (arb_unknown_type(), arb_json_value()).prop_map(|(chunk_type, data)| {
             AutoFunctionStreamChunk::Unknown { chunk_type, data }
         }),

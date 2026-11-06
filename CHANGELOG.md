@@ -579,6 +579,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after them, write `.len()` for `.count()`, `.first()` for `.next()`, and
   `.into_iter()` before any other iterator adapter (`.into_iter().map(..)`).
   A `for` loop over them is unchanged.
+- **Breaking: the large, rare payloads of the stream types are boxed**
+  (#490). `StreamChunk::Created { interaction }`, `StreamChunk::Completed`,
+  and `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
+  `Complete` and `MaxLoopsReached` hold a `Box<InteractionResponse>`;
+  `StreamChunk`'s `usage`, `total_usage` and `step_usage` fields are
+  `Option<Box<UsageMetadata>>`; and `StepDelta::ThoughtSummary`'s `content`
+  is an `Option<Box<Content>>`. An enum is as large as its largest variant,
+  so every `StreamEvent`, a one-word text delta included, was 1.9 KB; it is
+  216 bytes now. Migration: method calls and field reads go through the box
+  unchanged (`response.as_text()`, `usage.total_tokens`); where you need the
+  value itself, write `*response`
+  (`StreamChunk::Completed(response) => Some(*response)`); build a chunk
+  with `Box::new(..)`.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
@@ -646,6 +659,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `file_search` tool with no store names no longer writes
   `"file_search_store_names": []`; the key is left out, as for the other
   optional lists.
+- `create_stream()`, `create_stream_with_auto_functions()` and
+  `Client::execute_stream()` return `BoxStream<'static, _>`: the stream owns
+  a clone of the client, as `interactions().stream()` and the list streams
+  do, so it can be stored or `tokio::spawn`ed (#498). `create_stream()` and
+  `create_stream_with_auto_functions()` now build the request when called;
+  a request the builder rejects is still the stream's only item, and
+  nothing is sent until the stream is polled.
 
 ### Fixed
 

@@ -29,7 +29,6 @@ mod serde_impls;
 /// with their data preserved.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
 pub enum StreamChunk {
     /// Interaction created (first event, contains ID).
     ///
@@ -38,8 +37,10 @@ pub enum StreamChunk {
     /// partial interaction resource (some fields present only on the final
     /// response may be absent).
     Created {
-        /// The (partial) interaction resource at creation time
-        interaction: InteractionResponse,
+        /// The (partial) interaction resource at creation time. Boxed, like
+        /// every large payload here, so that the common event, a delta, stays
+        /// small (#490).
+        interaction: Box<InteractionResponse>,
     },
 
     /// Status update for in-progress interaction.
@@ -54,7 +55,7 @@ pub enum StreamChunk {
         status: InteractionStatus,
         /// Usage so far. Background streams send it mid-run (google-genai
         /// 2.34.0; live 2026-11-01).
-        usage: Option<UsageMetadata>,
+        usage: Option<Box<UsageMetadata>>,
         /// A continuation token (google-genai 2.34.0; not observed live,
         /// where it arrives on the completed interaction instead).
         continuation_token: Option<String>,
@@ -79,7 +80,7 @@ pub enum StreamChunk {
         /// `metadata.total_usage` (google-genai 2.34.0 and the spec). Not
         /// observed live: text, TTS and agent streams sent no `metadata` on
         /// a `step.delta` (2026-11-05), so expect `None`.
-        total_usage: Option<UsageMetadata>,
+        total_usage: Option<Box<UsageMetadata>>,
     },
 
     /// The step at the given index finished.
@@ -87,13 +88,13 @@ pub enum StreamChunk {
         /// Position index for the completed step
         index: usize,
         /// Cumulative interaction usage, if reported
-        usage: Option<UsageMetadata>,
+        usage: Option<Box<UsageMetadata>>,
         /// Usage attributable to this step, if reported
-        step_usage: Option<UsageMetadata>,
+        step_usage: Option<Box<UsageMetadata>>,
     },
 
     /// Complete interaction response (terminal event).
-    Completed(InteractionResponse),
+    Completed(Box<InteractionResponse>),
 
     /// Error occurred during streaming (terminal event).
     Error {
@@ -373,10 +374,23 @@ pub(crate) struct InteractionStreamEvent {
     /// the stream from this point after a network interruption.
     pub event_id: Option<String>,
 
-    /// The full raw event JSON, preserved so unknown event types can be
-    /// surfaced losslessly (Evergreen).
-    pub raw: serde_json::Value,
+    /// The full raw event JSON of an event type this crate does not
+    /// dispatch, preserved so it can be surfaced losslessly (Evergreen).
+    /// `None` for the known types, which are parsed by value (#498).
+    pub raw: Option<serde_json::Value>,
 }
+
+/// The event types `dispatch_stream_event` handles, whose raw JSON is not
+/// kept.
+const KNOWN_EVENT_TYPES: &[&str] = &[
+    "interaction.created",
+    "interaction.status_update",
+    "step.start",
+    "step.delta",
+    "step.stop",
+    "interaction.completed",
+    "error",
+];
 
 impl<'de> Deserialize<'de> for InteractionStreamEvent {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -403,8 +417,18 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
             event_id: Option<String>,
         }
 
-        let fields: Fields =
-            serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+        // A known event is parsed by value; only an unknown one keeps a copy
+        // of its JSON for `StreamChunk::Unknown`.
+        let known = raw
+            .get("event_type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|event_type| KNOWN_EVENT_TYPES.contains(&event_type));
+        let (fields, raw) = if known {
+            (Fields::deserialize(raw), None)
+        } else {
+            (Fields::deserialize(&raw), Some(raw))
+        };
+        let fields = fields.map_err(serde::de::Error::custom)?;
 
         // A bare `{"error": {...}}` line (see `http::sse_parser`) carries no
         // event_type; it is the stream's error event.
@@ -456,6 +480,25 @@ mod tests {
     use super::*;
     use crate::content::Content;
 
+    /// A delta is the event a stream sends most, and every event is as big
+    /// as the largest variant, so the large, rare payloads are boxed: the
+    /// interaction responses, the usage fields and a thought summary's
+    /// content (#490). Unboxed, an event was 1.9 KB.
+    #[test]
+    fn stream_event_size_is_bounded() {
+        use std::mem::size_of;
+        assert!(
+            size_of::<StreamEvent>() <= 256,
+            "StreamEvent is {} bytes",
+            size_of::<StreamEvent>()
+        );
+        assert!(
+            size_of::<crate::AutoFunctionStreamEvent>() <= 256,
+            "AutoFunctionStreamEvent is {} bytes",
+            size_of::<crate::AutoFunctionStreamEvent>()
+        );
+    }
+
     #[test]
     fn test_stream_chunk_step_delta_roundtrip() {
         let chunk = StreamChunk::StepDelta {
@@ -497,7 +540,7 @@ mod tests {
             ..Default::default()
         };
 
-        let chunk = StreamChunk::Completed(response);
+        let chunk = StreamChunk::Completed(Box::new(response));
 
         let json = serde_json::to_string(&chunk).expect("Serialization should succeed");
         assert!(json.contains("completed"), "Should have completed variant");
@@ -565,7 +608,7 @@ mod tests {
     fn written_chunk_types() -> std::collections::BTreeSet<String> {
         let samples = [
             StreamChunk::Created {
-                interaction: InteractionResponse::default(),
+                interaction: Box::default(),
             },
             StreamChunk::StatusUpdate {
                 interaction_id: None,
@@ -590,7 +633,7 @@ mod tests {
                 usage: None,
                 step_usage: None,
             },
-            StreamChunk::Completed(InteractionResponse::default()),
+            StreamChunk::Completed(Box::default()),
             StreamChunk::Error {
                 message: String::new(),
                 code: None,
@@ -662,7 +705,7 @@ mod tests {
         };
 
         let chunk = StreamChunk::Created {
-            interaction: response,
+            interaction: Box::new(response),
         };
 
         let json = serde_json::to_string(&chunk).expect("Serialization should succeed");
@@ -685,10 +728,10 @@ mod tests {
         let chunk = StreamChunk::StatusUpdate {
             interaction_id: Some("test-interaction-789".to_string()),
             status: InteractionStatus::RequiresAction,
-            usage: Some(UsageMetadata {
+            usage: Some(Box::new(UsageMetadata {
                 total_tokens: Some(12),
                 ..Default::default()
-            }),
+            })),
             continuation_token: None,
         };
 
@@ -742,10 +785,10 @@ mod tests {
         let chunk = StreamChunk::StepStop {
             index: 1,
             usage: None,
-            step_usage: Some(UsageMetadata {
+            step_usage: Some(Box::new(UsageMetadata {
                 total_output_tokens: Some(7),
                 ..Default::default()
-            }),
+            })),
         };
 
         let json = serde_json::to_string(&chunk).expect("Serialization should succeed");
@@ -789,11 +832,11 @@ mod tests {
     #[test]
     fn test_stream_chunk_helper_methods() {
         let created_chunk = StreamChunk::Created {
-            interaction: InteractionResponse {
+            interaction: Box::new(InteractionResponse {
                 id: Some("start-id".to_string()),
                 status: InteractionStatus::InProgress,
                 ..Default::default()
-            },
+            }),
         };
         assert_eq!(created_chunk.interaction_id(), Some("start-id"));
         assert!(!created_chunk.is_terminal());
@@ -818,10 +861,10 @@ mod tests {
         assert_eq!(delta_chunk.delta_text(), Some("test"));
         assert!(!delta_chunk.is_terminal());
 
-        let completed_chunk = StreamChunk::Completed(InteractionResponse {
+        let completed_chunk = StreamChunk::Completed(Box::new(InteractionResponse {
             status: InteractionStatus::Completed,
             ..Default::default()
-        });
+        }));
         assert!(completed_chunk.is_terminal());
         assert_eq!(
             completed_chunk.status(),
@@ -882,7 +925,19 @@ mod tests {
             event.delta.as_ref().and_then(|d| d.as_text()),
             Some("Hello")
         );
-        assert_eq!(event.raw["event_type"], "step.delta");
+        // Known events are parsed by value, without a copy of their JSON.
+        assert!(event.raw.is_none());
+    }
+
+    #[test]
+    fn test_unknown_stream_event_keeps_its_raw_json() {
+        let json = r#"{"event_type": "step.pause", "index": 1, "reason": "x"}"#;
+        let event: InteractionStreamEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type, "step.pause");
+        assert_eq!(
+            event.raw,
+            Some(serde_json::json!({"event_type": "step.pause", "index": 1, "reason": "x"}))
+        );
     }
 
     #[test]
@@ -893,10 +948,10 @@ mod tests {
                 text: "hi".to_string(),
                 extra: Default::default(),
             },
-            total_usage: Some(UsageMetadata {
+            total_usage: Some(Box::new(UsageMetadata {
                 total_tokens: Some(40),
                 ..Default::default()
-            }),
+            })),
         };
         let value = serde_json::to_value(&chunk).unwrap();
         assert_eq!(value["data"]["total_usage"]["total_tokens"], 40);

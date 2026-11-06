@@ -203,6 +203,61 @@ async fn execute_stream_sends_stream_true() {
     assert_eq!(request.json()["stream"], json!(true));
 }
 
+/// The create streams own a clone of the client, like `interactions().stream()`
+/// (D-017), so a task can drive one after the client and the builder are
+/// gone (#498).
+#[tokio::test]
+async fn create_stream_can_be_spawned() {
+    let completed = "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n";
+    let stub = Stub::replying(vec![
+        Reply::sse(&[completed]),
+        Reply::sse(&[completed]),
+        Reply::sse(&[completed]),
+    ])
+    .await;
+
+    let (create, execute, auto) = {
+        let client = stub.client();
+        let request = client
+            .interaction()
+            .with_model("test-model")
+            .with_text("Hi")
+            .build()
+            .unwrap();
+        (
+            client
+                .interaction()
+                .with_model("test-model")
+                .with_text("Hi")
+                .create_stream(),
+            client.execute_stream(request),
+            client
+                .interaction()
+                .with_model("test-model")
+                .with_text("Hi")
+                .create_stream_with_auto_functions(),
+        )
+        // `client` is dropped here.
+    };
+
+    let create = tokio::spawn(create.collect::<Vec<_>>()).await.unwrap();
+    assert!(
+        matches!(create.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed(_))),
+        "{create:?}"
+    );
+    let execute = tokio::spawn(execute.collect::<Vec<_>>()).await.unwrap();
+    assert!(
+        matches!(execute.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed(_))),
+        "{execute:?}"
+    );
+    let auto = tokio::spawn(auto.collect::<Vec<_>>()).await.unwrap();
+    assert!(
+        matches!(auto.as_slice(), [Ok(e)] if matches!(e.chunk, AutoFunctionStreamChunk::Complete(_))),
+        "{auto:?}"
+    );
+    assert_eq!(stub.requests().len(), 3);
+}
+
 /// `stream` belongs to the transport. `extra` is written after the modeled
 /// fields and the API keeps the last of a repeated key, so a copy there
 /// would win: an SSE answer to `create()`. Both send paths drop it.
@@ -446,7 +501,7 @@ async fn sse_step_accumulation_fills_the_completed_response() {
 /// The `Completed` response the accumulator assembles from a stream.
 async fn completed_from(chunks: &[String]) -> genai_rs::InteractionResponse {
     let chunks: Vec<&str> = chunks.iter().map(String::as_str).collect();
-    stream_events(&chunks)
+    *stream_events(&chunks)
         .await
         .into_iter()
         .find_map(|event| match event.expect("stream event").chunk {
