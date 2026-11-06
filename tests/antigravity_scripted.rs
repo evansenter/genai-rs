@@ -105,6 +105,20 @@ fn function_response_text(fake: &FakeGemini, n: usize) -> String {
         .join("\n")
 }
 
+// Option, hook, policy and trigger tests, by feature (#493).
+#[path = "antigravity_scripted/hooks.rs"]
+mod hooks;
+#[path = "antigravity_scripted/options.rs"]
+mod options;
+#[path = "antigravity_scripted/parity.rs"]
+mod parity;
+#[path = "antigravity_scripted/policies.rs"]
+mod policies;
+#[path = "antigravity_scripted/subagents.rs"]
+mod subagents;
+#[path = "antigravity_scripted/triggers.rs"]
+mod triggers;
+
 // =============================================================================
 // Plain turns
 // =============================================================================

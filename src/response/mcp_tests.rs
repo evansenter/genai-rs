@@ -115,6 +115,34 @@ fn mcp_calls_skips_answered_calls_without_a_server_prefix() {
 }
 
 #[test]
+fn mcp_calls_strips_the_server_prefix_from_the_live_spec_shape() {
+    // Live 2026-11-05: `name` carries the `<server>:` prefix next to an
+    // explicit `server_name`, so the tool must come back bare, and a colon
+    // inside the server name must not split it.
+    let response = response(json!([
+        {"type": "mcp_server_tool_call", "id": "c1",
+         "name": "deepwiki:read_wiki_structure", "server_name": "deepwiki",
+         "arguments": {"repoName": "facebook/react"}, "signature": "s"},
+        {"type": "mcp_server_tool_result", "call_id": "c1",
+         "name": "deepwiki:read_wiki_structure", "server_name": "deepwiki",
+         "result": {"result": "pages", "call_tool_result_json": "{}",
+                    "structured_content": {"result": "pages"}}},
+        {"type": "mcp_server_tool_call", "id": "c2", "name": "corp:search:lookup",
+         "server_name": "corp:search", "arguments": {}},
+    ]));
+    let calls = response.mcp_calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        (calls[0].server, calls[0].tool),
+        ("deepwiki", "read_wiki_structure")
+    );
+    assert_eq!(calls[0].is_error, None);
+    assert!(calls[0].result.is_some());
+    assert_eq!((calls[1].server, calls[1].tool), ("corp:search", "lookup"));
+    assert!(calls[1].result.is_none());
+}
+
+#[test]
 fn mcp_calls_reads_the_spec_mcp_server_tool_steps() {
     let response = response(json!([
         {"type": "mcp_server_tool_call", "id": "m1", "name": "search",

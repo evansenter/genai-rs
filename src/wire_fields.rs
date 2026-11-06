@@ -17,6 +17,10 @@
 //! `ReviewSnippet`, `StepError`) derive `Deserialize` with a flattened
 //! `extra`, and serialize through [`ModeledMap::untagged`] for the same
 //! guarantee. They have no tag, so a `type` key in their extras is data.
+//!
+//! An optional modeled field reads `null` the same as absent: the key counts
+//! as modeled, so an explicit `"field": null` is neither kept in `extra` nor
+//! written back. That is the one value a round trip does not preserve.
 
 use serde::Deserialize;
 use serde::de::Error as _;

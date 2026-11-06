@@ -243,6 +243,21 @@ name = "cancellable_turn"
 path = "examples/antigravity/cancellable_turn/main.rs"
 required-features = ["antigravity"]
 
+[[example]]
+name = "lifecycle_hooks"
+path = "examples/antigravity/lifecycle_hooks/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
+name = "file_watcher"
+path = "examples/antigravity/file_watcher/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
+name = "command_guard"
+path = "examples/antigravity/command_guard/main.rs"
+required-features = ["antigravity"]
+
 # Real-world example applications
 [[example]]
 name = "multi_turn_agent_auto"

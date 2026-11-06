@@ -1,4 +1,5 @@
-use super::hooks::{self, PolicyEngine};
+use super::hooks;
+use super::policies::{self, PolicyEngine};
 use super::protocol::{self, StepUpdate};
 use super::{
     AgentQuestion, PreToolDecision, PreToolHook, QuestionReply, ToolInvocation, streaming,
@@ -15,10 +16,9 @@ use serde_json::Value;
 /// Two normalizations, both observed on the 0.1.18 wire, so that one
 /// policy rule matches the same call on every path it can arrive by:
 ///
-/// - **Name**: the harness sends a builtin's `StepUpdate` field name
-///   (`invoke_subagent`) and an MCP tool's bare name beside its
-///   `server_name`; policies target `start_subagent` and
-///   `mcp_<server>_<tool>` (see [`protocol::PreToolArgs`]).
+/// - **Name**: the harness sends an MCP tool's bare name beside its
+///   `server_name`; policies target `mcp_<server>_<tool>` (see
+///   [`protocol::PreToolArgs`]). Builtins arrive by their wire names.
 /// - **MCP arguments**: the harness wraps them as
 ///   `{"Arguments": {..}, "ServerName": .., "ToolName": ..}`. The inner
 ///   object is what the model passed, and what [`ToolAction::args`]
@@ -48,6 +48,7 @@ pub(super) fn pre_tool_invocation(args: &protocol::PreToolArgs) -> ToolInvocatio
         name,
         args: value,
         id: args.call_id.clone().filter(|id| !id.is_empty()),
+        server: server.map(str::to_owned),
     }
 }
 
@@ -187,8 +188,14 @@ pub(super) fn confirmation_decision(
             name: name.clone(),
             args,
             id: None,
+            server: match &action {
+                streaming::ToolAction::McpTool(mcp) => {
+                    mcp.server_name.clone().filter(|s| !s.is_empty())
+                }
+                _ => None,
+            },
         };
-        let decision = hooks::decide(engine, pre_tool, &invocation);
+        let decision = confirmation_only(policies::decide(engine, pre_tool, &invocation), &name);
         if let PreToolDecision::Deny { reason } = &decision {
             tracing::info!("Rejecting harness tool '{name}': {reason}");
         }
@@ -212,22 +219,46 @@ pub(super) fn confirmation_decision(
         name: name.clone(),
         args,
         id: None,
+        server: None,
     };
-    let decision = hooks::decide_with_default(
-        engine,
-        pre_tool,
-        &invocation,
-        PreToolDecision::deny(
-            "unrecognized tool confirmation matched no policy rule (failing closed)",
+    let decision = confirmation_only(
+        policies::decide_with_default(
+            engine,
+            pre_tool,
+            &invocation,
+            PreToolDecision::deny(
+                "unrecognized tool confirmation matched no policy rule (failing closed)",
+            ),
         ),
+        &name,
     );
-    let accepted = matches!(decision, PreToolDecision::Allow);
+    let accepted = decision.allows();
     tracing::warn!(
         "Unrecognized tool confirmation (unknown step fields {keys:?}); {} '{name}'. \
          Add a policy rule for the wire field name to control this explicitly.",
         if accepted { "allowing" } else { "denying" }
     );
     decision
+}
+
+/// A tool confirmation answers yes or no: it cannot carry arguments. A
+/// [`PreToolDecision::Modify`] is therefore turned into a denial (failing
+/// closed), since running the call on the model's arguments would ignore
+/// the hook's replacement; the caller announces it like any denial.
+fn confirmation_only(decision: PreToolDecision, name: &str) -> PreToolDecision {
+    match decision {
+        PreToolDecision::Modify { .. } => {
+            tracing::warn!(
+                "The pre-tool hook modified the arguments of '{name}', but it reached this \
+                 client as a tool confirmation, which cannot carry them; denying it."
+            );
+            PreToolDecision::deny(format!(
+                "Tool '{name}' denied: the pre-tool hook replaced its arguments, and a tool \
+                 confirmation cannot apply them (failing closed)."
+            ))
+        }
+        other => other,
+    }
 }
 
 /// Unwraps the dispatcher's result envelope for a post-tool hook. A scalar

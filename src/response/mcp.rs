@@ -53,20 +53,37 @@ fn call_failed(step_flag: Option<bool>, result: Option<&FunctionResultPayload>) 
     }
 }
 
-/// Splits a `<server>:<tool>` function name at its first colon.
+/// Splits a `<server>:<tool>` function name at its first colon, so a server
+/// name containing `:` splits wrongly on this shape; the
+/// `mcp_server_tool_call` shape names its server separately.
 fn split_mcp_name(name: &str) -> Option<(&str, &str)> {
     name.split_once(':')
         .filter(|(server, tool)| !server.is_empty() && !tool.is_empty())
+}
+
+/// The tool of an `mcp_server_tool_call`: its `name` without the
+/// `<server_name>:` prefix the live API puts there (2026-11-05), or the whole
+/// name when there is no such prefix (the bindings' form).
+fn strip_server<'a>(name: &'a str, server: &str) -> &'a str {
+    name.strip_prefix(server)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .filter(|tool| !tool.is_empty())
+        .unwrap_or(name)
 }
 
 impl InteractionResponse {
     /// The MCP tool calls the server ran in this response, in order, with
     /// the server and tool each one named.
     ///
-    /// Reads both shapes that identify the server:
+    /// Reads both shapes the live API has used to identify the server:
     ///
-    /// - **Live (since 2026-10-01, re-verified 2026-11-04 on
-    ///   `gemini-3.8-flash`, streamed and not):** a `function_call` named
+    /// - **Live since 2026-11-05 (`gemini-3.8-flash`):** an
+    ///   `mcp_server_tool_call` step carrying `server_name`, with `name` as
+    ///   `<server>:<tool>`, paired with an `mcp_server_tool_result` by id.
+    ///   The tool is `name` without that prefix, so a server name may
+    ///   contain `:` here.
+    /// - **Live 2026-10-01 to 2026-11-04 (`gemini-3.8-flash`, streamed and
+    ///   not):** a `function_call` named
     ///   `<server>:<tool>`, where `<server>` is the name the request gave
     ///   [`McpServerConfig`](crate::McpServerConfig), answered by a
     ///   `function_result` with the same id in the same response. A call
@@ -77,10 +94,8 @@ impl InteractionResponse {
     ///   server. The name splits at its first colon. A failed call is
     ///   marked in the result object (`is_error: true`) while the step's
     ///   own `is_error` stays `false`, which [`McpCallInfo::is_error`]
-    ///   accounts for.
-    /// - **Spec-only:** `mcp_server_tool_call` steps, which carry
-    ///   `server_name` and `name` directly, paired with
-    ///   `mcp_server_tool_result` by id. Never observed.
+    ///   accounts for. This shape splits at the name's first colon, so it
+    ///   misreads a server name that contains `:`.
     ///
     /// The 2026-08-16 shape, a bare [`Step::ToolCall`], names neither and
     /// is not returned; see [`tool_calls`](Self::tool_calls).
@@ -140,7 +155,7 @@ impl InteractionResponse {
                     Some(McpCallInfo {
                         id,
                         server: server_name,
-                        tool: name,
+                        tool: strip_server(name, server_name),
                         arguments,
                         result,
                         is_error: call_failed(None, result),
