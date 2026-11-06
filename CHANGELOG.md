@@ -796,9 +796,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the last audio block whatever its format. A video or document delta now
   follows the image rule: one that names a `mime_type` or `uri` starts a
   block, so two whole files in one step no longer merge into one corrupt
-  string (no model streams either to observe, 2026-11-05). A base64 chunk
-  that ends in padding is joined to the next as bytes, so the result stays
-  valid base64; no live chunk has carried padding.
+  string (no model streams either to observe, 2026-11-05). Chunks join as
+  text only when both are whole base64 quanta (a multiple of 4 characters,
+  with no padding before the join); otherwise, a padded chunk or an
+  unpadded one of another length, they are joined as bytes, so the result
+  stays valid base64. Every live chunk has been whole quanta.
 - `VideoMetadata` keeps the keys it does not model in a new `extra` map,
   as the other response types do; it used to drop them. The bindings type
   it `dict[str, Any]`, and the API serves `videoDuration` (live

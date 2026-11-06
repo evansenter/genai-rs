@@ -624,3 +624,47 @@ fn test_accumulator_joins_padded_base64_as_bytes() {
     let joined = engine.decode(blocks[0]["data"].as_str().unwrap()).unwrap();
     assert_eq!(joined, b"abc");
 }
+
+#[test]
+fn test_accumulator_joins_unpadded_partial_base64_as_bytes() {
+    use base64::Engine;
+    let unpadded = base64::engine::general_purpose::STANDARD_NO_PAD;
+    let standard = base64::engine::general_purpose::STANDARD;
+    // "a" and "bc" encode unpadded to 2 and 3 characters, not whole quanta:
+    // as text, "YQ" + "YmM" + "ZGVm" would decode to garbage.
+    let chunks = [
+        unpadded.encode("a"),
+        unpadded.encode("bc"),
+        unpadded.encode("def"),
+    ];
+    assert_eq!(chunks, ["YQ", "YmM", "ZGVm"]);
+    let blocks = stream_blocks(&[
+        json!({"type": "audio", "mime_type": "audio/l16", "data": chunks[0]}),
+        json!({"type": "audio", "data": chunks[1]}),
+        json!({"type": "audio", "data": chunks[2]}),
+    ]);
+    assert_eq!(blocks.len(), 1);
+    let joined = blocks[0]["data"].as_str().unwrap();
+    assert_eq!(standard.decode(joined).unwrap(), b"abcdef");
+
+    // A partial chunk after whole quanta re-encodes only the end: the whole
+    // quanta before it are kept as they came.
+    let blocks = stream_blocks(&[
+        json!({"type": "audio", "mime_type": "audio/l16", "data": "ZGVm"}),
+        json!({"type": "audio", "data": "YQ"}),
+        json!({"type": "audio", "data": "YmM"}),
+    ]);
+    let joined = blocks[0]["data"].as_str().unwrap();
+    assert!(joined.starts_with("ZGVm"), "{joined}");
+    assert_eq!(standard.decode(joined).unwrap(), b"defabc");
+}
+
+#[test]
+fn test_accumulator_concatenates_undecodable_base64_as_text() {
+    // Not base64 at all: kept as text rather than lost.
+    let blocks = stream_blocks(&[
+        json!({"type": "audio", "mime_type": "audio/l16", "data": "not base64!"}),
+        json!({"type": "audio", "data": "??"}),
+    ]);
+    assert_eq!(blocks[0]["data"], "not base64!??");
+}
