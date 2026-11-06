@@ -8,8 +8,9 @@
 //!
 //! Run with: `cargo run --example tool_service`
 
-use async_trait::async_trait;
-use genai_rs::{CallableFunction, Client, FunctionDeclaration, FunctionError, ToolService};
+use genai_rs::{
+    CallableFunction, Client, FunctionDeclaration, FunctionError, FunctionFuture, ToolService,
+};
 use serde_json::{Value, json};
 use std::env;
 use std::error::Error;
@@ -39,7 +40,6 @@ fn evaluate(expression: &str) -> Result<f64, String> {
     }
 }
 
-#[async_trait]
 impl CallableFunction for Calculator {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("calculate")
@@ -55,15 +55,17 @@ impl CallableFunction for Calculator {
             .build()
     }
 
-    async fn call(&self, args: Value) -> Result<Value, FunctionError> {
-        let expression = args["expression"]
-            .as_str()
-            .ok_or_else(|| FunctionError::ArgumentMismatch("missing 'expression'".into()))?;
-        // An Err here is sent back to the model as an error result, so it can
-        // correct the expression instead of receiving a made-up number.
-        let value = evaluate(expression).map_err(FunctionError::ArgumentMismatch)?;
-        let precision = *self.precision.read().expect("precision lock poisoned");
-        Ok(json!({"expression": expression, "result": format!("{value:.precision$}")}))
+    fn call(&self, args: Value) -> FunctionFuture<'_> {
+        Box::pin(async move {
+            let expression = args["expression"]
+                .as_str()
+                .ok_or_else(|| FunctionError::ArgumentMismatch("missing 'expression'".into()))?;
+            // An Err here is sent back to the model as an error result, so it can
+            // correct the expression instead of receiving a made-up number.
+            let value = evaluate(expression).map_err(FunctionError::ArgumentMismatch)?;
+            let precision = *self.precision.read().expect("precision lock poisoned");
+            Ok(json!({"expression": expression, "result": format!("{value:.precision$}")}))
+        })
     }
 }
 

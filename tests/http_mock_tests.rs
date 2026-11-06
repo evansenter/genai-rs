@@ -10,12 +10,11 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, CallableFunction, Client, FileUpload, FunctionDeclaration,
-    FunctionError, GenaiError, PollOptions, StreamChunk, StreamEvent, ToolService,
+    FunctionFuture, GenaiError, PollOptions, StreamChunk, StreamEvent, ToolService,
 };
 use serde_json::{Value, json};
 
@@ -64,7 +63,6 @@ struct ServiceTool {
     name: &'static str,
 }
 
-#[async_trait]
 impl CallableFunction for ServiceTool {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder(self.name)
@@ -72,8 +70,8 @@ impl CallableFunction for ServiceTool {
             .build()
     }
 
-    async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-        Ok(json!({"source": "service"}))
+    fn call(&self, _args: Value) -> FunctionFuture<'_> {
+        Box::pin(async move { Ok(json!({"source": "service"})) })
     }
 }
 
@@ -741,7 +739,7 @@ async fn wait_until_active_failure_is_terminal_not_retryable() {
         .wait_until_active("files/abc", poll)
         .await
         .unwrap_err();
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::ProcessingFailed(_)), "{err:?}");
     assert!(!err.is_retryable(), "a failed file never recovers: {err:?}");
     assert!(err.to_string().contains("transcoding failed"), "{err}");
 }

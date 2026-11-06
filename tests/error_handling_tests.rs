@@ -21,11 +21,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 // =============================================================================
 
 #[test]
-fn test_genai_error_parse_display() {
-    // We can't easily create a reqwest::Error, so we test Parse error instead
-    let error = GenaiError::Parse("Connection reset".to_string());
+fn test_genai_error_malformed_stream_event_display() {
+    // An SSE event that does not parse is a malformed response.
+    let error = GenaiError::MalformedResponse("Invalid SSE event".to_string());
     let display = format!("{}", error);
-    assert!(display.contains("SSE parsing error"));
+    assert!(display.contains("Malformed API response"));
 }
 
 #[test]
@@ -200,10 +200,10 @@ fn test_is_transient_error_requires_both_keywords() {
 #[test]
 fn test_is_transient_error_non_api_errors() {
     // Non-API errors are never transient
-    let parse_error = GenaiError::Parse("Invalid SSE".to_string());
+    let parse_error = GenaiError::MalformedResponse("Invalid SSE".to_string());
     assert!(
         !is_transient_error(&parse_error),
-        "Parse errors are not transient"
+        "Malformed responses are not transient"
     );
 
     let internal_error = GenaiError::Internal("Max loops".to_string());

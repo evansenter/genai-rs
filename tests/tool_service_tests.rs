@@ -7,12 +7,11 @@
 
 mod common;
 
-use async_trait::async_trait;
 use common::{
     assert_response_semantic, consume_auto_function_stream, extended_test_timeout, get_client,
     interaction_builder, test_timeout, with_timeout,
 };
-use genai_rs::{CallableFunction, FunctionDeclaration, FunctionError, ToolService};
+use genai_rs::{CallableFunction, FunctionDeclaration, FunctionError, FunctionFuture, ToolService};
 use genai_rs_macros::tool;
 use serde_json::json;
 use std::sync::Arc;
@@ -39,7 +38,6 @@ struct CalculatorTool {
     config: Arc<CalculatorConfig>,
 }
 
-#[async_trait]
 impl CallableFunction for CalculatorTool {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("calculate")
@@ -64,34 +62,36 @@ impl CallableFunction for CalculatorTool {
             .build()
     }
 
-    async fn call(&self, args: serde_json::Value) -> Result<serde_json::Value, FunctionError> {
-        let op = args
-            .get("operation")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'operation'".into()))?;
-        let a = args
-            .get("a")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'a'".into()))?;
-        let b = args
-            .get("b")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'b'".into()))?;
+    fn call(&self, args: serde_json::Value) -> FunctionFuture<'_> {
+        Box::pin(async move {
+            let op = args
+                .get("operation")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'operation'".into()))?;
+            let a = args
+                .get("a")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'a'".into()))?;
+            let b = args
+                .get("b")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| FunctionError::ArgumentMismatch("Missing 'b'".into()))?;
 
-        let result = match op {
-            "add" => a + b,
-            "subtract" => a - b,
-            "multiply" => a * b,
-            _ => return Err(FunctionError::ArgumentMismatch("Invalid operation".into())),
-        };
+            let result = match op {
+                "add" => a + b,
+                "subtract" => a - b,
+                "multiply" => a * b,
+                _ => return Err(FunctionError::ArgumentMismatch("Invalid operation".into())),
+            };
 
-        // Apply precision from config
-        let formatted = format!("{:.prec$}", result, prec = self.config.precision as usize);
+            // Apply precision from config
+            let formatted = format!("{:.prec$}", result, prec = self.config.precision as usize);
 
-        Ok(json!({
-            "result": formatted,
-            "precision": self.config.precision
-        }))
+            Ok(json!({
+                "result": formatted,
+                "precision": self.config.precision
+            }))
+        })
     }
 }
 
@@ -240,7 +240,6 @@ async fn test_tool_service_overrides_global_registry() {
         // Create a custom weather tool that returns a distinct response
         struct CustomWeatherTool;
 
-        #[async_trait]
         impl CallableFunction for CustomWeatherTool {
             fn declaration(&self) -> FunctionDeclaration {
                 // Same name as the global get_weather_test function
@@ -254,22 +253,21 @@ async fn test_tool_service_overrides_global_registry() {
                     .build()
             }
 
-            async fn call(
-                &self,
-                args: serde_json::Value,
-            ) -> Result<serde_json::Value, FunctionError> {
-                let city = args
-                    .get("city")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown");
+            fn call(&self, args: serde_json::Value) -> FunctionFuture<'_> {
+                Box::pin(async move {
+                    let city = args
+                        .get("city")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
 
-                // Return a distinctive response to prove this override was used
-                Ok(json!({
-                    "city": city,
-                    "temperature": "999°C",
-                    "conditions": "OVERRIDE_FROM_TOOL_SERVICE",
-                    "source": "custom_service"
-                }))
+                    // Return a distinctive response to prove this override was used
+                    Ok(json!({
+                        "city": city,
+                        "temperature": "999°C",
+                        "conditions": "OVERRIDE_FROM_TOOL_SERVICE",
+                        "source": "custom_service"
+                    }))
+                })
             }
         }
 
@@ -337,7 +335,6 @@ async fn test_tool_service_streaming_with_multiple_functions() {
 
         struct AddTool;
 
-        #[async_trait]
         impl CallableFunction for AddTool {
             fn declaration(&self) -> FunctionDeclaration {
                 FunctionDeclaration::builder("add_numbers")
@@ -348,16 +345,17 @@ async fn test_tool_service_streaming_with_multiple_functions() {
                     .build()
             }
 
-            async fn call(&self, args: serde_json::Value) -> Result<serde_json::Value, FunctionError> {
+            fn call(&self, args: serde_json::Value) -> FunctionFuture<'_> {
+ Box::pin(async move {
                 let a = args.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let b = args.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 Ok(json!({ "sum": a + b }))
-            }
+            })
+}
         }
 
         struct MultiplyTool;
 
-        #[async_trait]
         impl CallableFunction for MultiplyTool {
             fn declaration(&self) -> FunctionDeclaration {
                 FunctionDeclaration::builder("multiply_numbers")
@@ -368,11 +366,13 @@ async fn test_tool_service_streaming_with_multiple_functions() {
                     .build()
             }
 
-            async fn call(&self, args: serde_json::Value) -> Result<serde_json::Value, FunctionError> {
+            fn call(&self, args: serde_json::Value) -> FunctionFuture<'_> {
+ Box::pin(async move {
                 let a = args.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let b = args.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 Ok(json!({ "product": a * b }))
-            }
+            })
+}
         }
 
         impl ToolService for MultiToolService {

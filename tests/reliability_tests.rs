@@ -18,11 +18,10 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use common::http_stub::{Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
-    AutoFunctionStreamChunk, CallableFunction, FunctionDeclaration, FunctionError, GenaiError,
+    AutoFunctionStreamChunk, CallableFunction, FunctionDeclaration, FunctionFuture, GenaiError,
     PollOptions, StreamChunk, StreamEvent, ToolService,
 };
 use serde_json::{Value, json};
@@ -468,7 +467,6 @@ async fn per_chunk_timeout_does_not_bound_the_tail_read() {
 
 struct Echo;
 
-#[async_trait]
 impl CallableFunction for Echo {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("echo")
@@ -476,8 +474,8 @@ impl CallableFunction for Echo {
             .build()
     }
 
-    async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-        Ok(json!({"echoed": true}))
+    fn call(&self, _args: Value) -> FunctionFuture<'_> {
+        Box::pin(async move { Ok(json!({"echoed": true})) })
     }
 }
 

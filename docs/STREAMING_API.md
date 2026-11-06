@@ -107,7 +107,7 @@ none.
 ### Event size limit
 
 One SSE event may grow to 64 MiB before it ends; past that the stream fails
-with `GenaiError::Parse`, so a server that never sends a newline can't grow
+with `GenaiError::MalformedResponse`, so a server that never sends a newline can't grow
 the buffer without bound. The largest events measured live (2026-11-04,
 `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`) are a 16.0 MB `image` delta of
 base64 JPEG and a 15.7 MB `thought_signature` delta in the same stream; TTS

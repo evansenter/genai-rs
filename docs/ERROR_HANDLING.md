@@ -16,14 +16,14 @@ wildcard arm.
 | `Http(reqwest::Error)` | Network, connect (including the default 30 s connect timeout), TLS, or a client-level timeout before the response headers | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
 | `StreamInterrupted { message, source }` | A stream's body ended before its terminal event: the server closed early, or the transport failed mid-body (`source` holds that `reqwest::Error`) | Yes; see [Cut-off streams](RELIABILITY.md#cut-off-streams) |
-| `Json(serde_json::Error)` | JSON (de)serialization failed outside response parsing, e.g. inside a stream event | No |
-| `Parse(String)` | A complete SSE event could not be parsed, or one event grew past 64 MiB without ending | No |
 | `Utf8(Utf8Error)` | A response was not valid UTF-8 | No |
 | `InvalidInput(String)` | The builder rejected the request before sending (for example: no input, neither or both of model and agent, or `with_store_disabled()` combined with chaining or background) | No |
-| `MalformedResponse(String)` | A 2xx response did not parse or did not have the expected shape, including a streaming response that is not `text/event-stream` | No |
+| `MalformedResponse(String)` | A 2xx response did not parse or did not have the expected shape, including a streaming response that is not `text/event-stream`, an SSE event that does not parse, and one that grows past 64 MiB without ending | No |
+| `PollTimeout { timeout, message }` | A `wait_until_active` (or a file search store import's wait) reached its `PollOptions` timeout; the resource may still be processing | No: wait again rather than re-send |
+| `ProcessingFailed(String)` | A file or file search document failed processing, or an import's operation reported an error | No: only a new upload recovers |
 | `Stream { message, code }` | The server sent an in-stream `error` event (auto-function streaming loop only; plain streams yield `StreamChunk::Error`) | No |
-| `Internal(String)` | A client-side invariant failed | No |
-| `ClientBuild(String)` | The HTTP client could not be built (TLS backend init) | No |
+| `Internal(String)` | The client failed in a way that is neither the API's answer nor your input (a request body that would not serialize) | No |
+| `ClientBuild(reqwest::Error)` | The HTTP client could not be built (TLS backend init); the reqwest error is the `source()` | No |
 
 ```rust
 use genai_rs::GenaiError;

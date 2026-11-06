@@ -166,7 +166,6 @@ pub fn generate_declaration_function(
             }
         }
 
-        #[::genai_rs::__private::async_trait::async_trait]
         impl ::genai_rs::function_calling::CallableFunction for #callable_struct_name {
             fn declaration(&self) -> ::genai_rs::FunctionDeclaration {
                 ::genai_rs::FunctionDeclaration::new(
@@ -180,23 +179,25 @@ pub fn generate_declaration_function(
                 )
             }
 
-            async fn call(&self, args: ::genai_rs::__private::serde_json::Value) -> Result<::genai_rs::__private::serde_json::Value, ::genai_rs::function_calling::FunctionError> {
-                #(#arg_extraction_tokens)*
+            fn call(&self, args: ::genai_rs::__private::serde_json::Value) -> ::genai_rs::function_calling::FunctionFuture<'_> {
+                ::std::boxed::Box::pin(async move {
+                    #(#arg_extraction_tokens)*
 
-                let original_fn_result = #fn_call_expr;
+                    let original_fn_result = #fn_call_expr;
 
-                match ::genai_rs::__private::serde_json::to_value(original_fn_result) {
-                    Ok(value_from_fn_result) => {
-                        // If the value is already a JSON object, return it as is.
-                        // Otherwise, wrap it in a {"result": ...} object.
-                        if value_from_fn_result.is_object() {
-                            Ok(value_from_fn_result)
-                        } else {
-                            Ok(::genai_rs::__private::serde_json::json!({ "result": value_from_fn_result }))
+                    match ::genai_rs::__private::serde_json::to_value(original_fn_result) {
+                        Ok(value_from_fn_result) => {
+                            // If the value is already a JSON object, return it as is.
+                            // Otherwise, wrap it in a {"result": ...} object.
+                            if value_from_fn_result.is_object() {
+                                Ok(value_from_fn_result)
+                            } else {
+                                Ok(::genai_rs::__private::serde_json::json!({ "result": value_from_fn_result }))
+                            }
                         }
+                        Err(e) => Err(::genai_rs::function_calling::FunctionError::ExecutionError(::std::boxed::Box::new(e)))
                     }
-                    Err(e) => Err(::genai_rs::function_calling::FunctionError::ExecutionError(Box::new(e)))
-                }
+                })
             }
         }
 
@@ -211,8 +212,8 @@ pub fn generate_declaration_function(
             Box::new(#callable_struct_name::new())
         }
 
-        ::genai_rs::function_calling::submit! {
-            ::genai_rs::function_calling::CallableFunctionFactory::new(#generated_callable_factory_fn_name)
+        ::genai_rs::__private::submit! {
+            ::genai_rs::__private::CallableFunctionFactory::new(#generated_callable_factory_fn_name)
         }
     };
 

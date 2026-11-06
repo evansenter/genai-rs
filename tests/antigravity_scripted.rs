@@ -26,7 +26,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use common::fake_gemini::{FakeGemini, ModelTurn};
 use futures_util::StreamExt;
 use genai_rs::antigravity::{
@@ -34,7 +33,7 @@ use genai_rs::antigravity::{
     ChatResponse, PreToolDecision, SUPPORTED_HARNESS_VERSION, ToolDecision, ToolInvocation,
     ToolOutcome, TriggerConfig, policy,
 };
-use genai_rs::{CallableFunction, FunctionDeclaration, FunctionError, ToolService};
+use genai_rs::{CallableFunction, FunctionDeclaration, FunctionFuture, ToolService};
 use genai_rs_macros::tool;
 use serde_json::{Value, json};
 
@@ -634,7 +633,6 @@ impl Started {
 /// A custom tool that never returns in any reasonable time.
 struct HangingTool(Started);
 
-#[async_trait]
 impl CallableFunction for HangingTool {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("hanging_tool")
@@ -642,10 +640,12 @@ impl CallableFunction for HangingTool {
             .build()
     }
 
-    async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
-        self.0.mark();
-        tokio::time::sleep(Duration::from_secs(600)).await;
-        Ok(json!("unreachable"))
+    fn call(&self, _args: Value) -> FunctionFuture<'_> {
+        Box::pin(async move {
+            self.0.mark();
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            Ok(json!("unreachable"))
+        })
     }
 }
 

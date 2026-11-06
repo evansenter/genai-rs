@@ -2583,7 +2583,7 @@ async fn file_search_store_upload_read_back_failure_names_the_document() {
             (GenaiError::Api { status_code, .. }, Some(expected)) => {
                 assert_eq!(*status_code, expected, "{err:?}");
             }
-            (GenaiError::Internal(_), None) => {}
+            (GenaiError::MalformedResponse(_), None) => {}
             _ => panic!("unexpected error shape for {status:?}: {err:?}"),
         }
         let message = err.to_string();
@@ -2700,7 +2700,7 @@ async fn import_file_reports_a_failed_or_unnamed_operation() {
         .import_file(STORE, full_import())
         .await
         .unwrap_err();
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::ProcessingFailed(_)), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("files/f1"), "{message}");
     assert!(message.contains("error 5: File not found."), "{message}");
@@ -2755,7 +2755,7 @@ async fn import_file_times_out_on_an_operation_that_never_finishes() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     // The import goes on, and a second one makes a second document: the
@@ -2943,7 +2943,7 @@ async fn document_wait_until_active_failed_state_is_terminal() {
         wait_for_document(vec![document(Some("STATE_FAILED"))], Duration::from_secs(5)).await;
 
     let err = result.unwrap_err();
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::ProcessingFailed(_)), "{err:?}");
     assert!(!err.is_retryable(), "a failed document never recovers");
     assert!(err.to_string().contains(DOC), "{err}");
     assert_eq!(targets.len(), 1, "no polling past a terminal state");
@@ -2966,7 +2966,7 @@ async fn document_wait_until_active_times_out_with_the_last_state() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     assert!(message.contains("waited 50ms"), "{message}");
@@ -4024,7 +4024,7 @@ async fn wait_until_active_times_out_with_the_last_state() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     assert!(message.contains("waited 50ms"), "{message}");
@@ -4073,7 +4073,7 @@ async fn wait_until_active_bounds_a_stalled_request() {
         .unwrap_err();
     gate.await.unwrap();
 
-    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
     assert!(

@@ -273,21 +273,35 @@ pub use request_builder::{ConversationBuilder, InteractionBuilder};
 // =============================================================================
 
 pub mod function_calling;
-pub use function_calling::{CallableFunction, FunctionError, ToolService};
+pub use function_calling::{CallableFunction, FunctionError, FunctionFuture, ToolService};
 
-/// Re-exports for `genai-rs-macros`. **Not a public API** — no semver
-/// guarantee, and nothing outside the generated code should name it.
+/// The plumbing `#[tool]` expands to. **Not a public API** — no semver
+/// guarantee, and nothing outside the generated code should name it (#490).
 ///
-/// `#[tool]` expands to code referencing `async_trait` and `serde_json`.
-/// Resolving those as `::async_trait` / `::serde_json` looks them up in the
+/// The generated code registers each function with `inventory` through
+/// `submit!` and `CallableFunctionFactory`, and builds JSON with
+/// `serde_json`. Resolving `::serde_json` would look it up in the
 /// *consumer's* dependency graph, which forced every downstream crate to add
-/// both as direct dependencies just to use the macro (#402). Routing through
-/// here resolves them in this crate's graph instead, so `genai-rs` +
+/// it as a direct dependency just to use the macro (#402). Routing through
+/// here resolves both in this crate's graph instead, so `genai-rs` +
 /// `genai-rs-macros` is the whole dependency list.
 #[doc(hidden)]
 pub mod __private {
-    pub use async_trait;
+    pub use inventory::submit;
     pub use serde_json;
+
+    /// A `#[tool]` function's registration, collected by `inventory` into
+    /// the registry `create_with_auto_functions` consults.
+    pub struct CallableFunctionFactory {
+        pub(crate) factory_fn: fn() -> Box<dyn crate::CallableFunction>,
+    }
+
+    impl CallableFunctionFactory {
+        /// Registers the function `factory_fn` builds.
+        pub const fn new(factory_fn: fn() -> Box<dyn crate::CallableFunction>) -> Self {
+            Self { factory_fn }
+        }
+    }
 }
 
 /// Entry points for the `cargo fuzz` targets in `fuzz/`. **Not a public

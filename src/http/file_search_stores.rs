@@ -371,7 +371,7 @@ pub async fn import_file(
             })?
     };
     if let Some(error) = &operation.error {
-        return Err(GenaiError::Internal(format!(
+        return Err(GenaiError::ProcessingFailed(format!(
             "{what} failed (operation '{}'): {error}",
             operation.name
         )));
@@ -465,7 +465,7 @@ fn unfinished_import(e: GenaiError, context: &str) -> GenaiError {
             request_id,
             retry_after,
         },
-        timeout @ GenaiError::Internal(_) => timeout,
+        timeout @ GenaiError::PollTimeout { .. } => timeout,
         GenaiError::MalformedResponse(message) => {
             GenaiError::MalformedResponse(format!("{context}{message}"))
         }
@@ -506,6 +506,9 @@ async fn read_back(
                 retry_after,
             },
             other if other.is_retryable() => other,
+            GenaiError::MalformedResponse(message) => {
+                GenaiError::MalformedResponse(format!("{context}{message}"))
+            }
             other => GenaiError::Internal(format!("{context}{other}")),
         }
     })

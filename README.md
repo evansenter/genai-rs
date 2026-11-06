@@ -101,13 +101,13 @@ genai-rs-macros = "0.13"
 futures-util = "0.3"     # For streaming
 ```
 
-`#[tool]` needs nothing beyond these two crates — no `async-trait` or
-`serde_json` dependency, and no trait import at the expansion site.
+`#[tool]` needs nothing beyond these two crates — no `serde_json`
+dependency, and no trait import at the expansion site.
 
 Writing a **manual** `CallableFunction` impl instead (the `ToolService`
-path) does still need `async-trait = "0.1"` and `serde_json = "1.0"` as
-direct dependencies: the trait is declared with `#[async_trait]`, and its
-`call` signature names `serde_json::Value`.
+path) needs `serde_json = "1.0"` as a direct dependency, since its `call`
+signature names `serde_json::Value`. `call` returns a boxed future
+(`FunctionFuture`), so no `async-trait` is needed.
 
 **Requirements:** Rust 1.88+ (edition 2024), [Gemini API key](https://ai.dev/)
 

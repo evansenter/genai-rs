@@ -324,9 +324,7 @@ impl ClientBuilder {
     /// happen in exceptional circumstances such as TLS backend initialization failures.
     pub fn build(self) -> Result<Client, GenaiError> {
         let (builder, connect_timeout) = self.reqwest_builder();
-        let http_client = builder
-            .build()
-            .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
+        let http_client = builder.build().map_err(GenaiError::ClientBuild)?;
         Ok(self.finish(http_client, connect_timeout))
     }
 

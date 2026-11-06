@@ -476,10 +476,11 @@ impl<'a> Files<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::Internal`] if processing fails (terminal, so not
-    /// retryable: only a new upload recovers) or the timeout passes,
-    /// [`GenaiError::InvalidInput`] for a name that is not `files/<id>`, or
-    /// the error of a failed status request.
+    /// Returns [`GenaiError::ProcessingFailed`] if processing fails
+    /// (terminal: only a new upload recovers), [`GenaiError::PollTimeout`] if
+    /// the timeout passes (the file may still be processing; neither is
+    /// retryable), [`GenaiError::InvalidInput`] for a name that is not
+    /// `files/<id>`, or the error of a failed status request.
     ///
     /// # Example
     ///
@@ -514,15 +515,15 @@ impl<'a> Files<'a> {
                     return Ok(PollStep::Ready(current));
                 }
                 if current.is_failed() {
-                    // `Internal`, not `Api`: the file will never process, and a
-                    // fabricated 5xx would make `is_retryable()` say otherwise.
+                    // Not `Api`: the file will never process, and a fabricated
+                    // 5xx would make `is_retryable()` say otherwise.
                     // `FileError::code` is a google.rpc code, not an HTTP status.
                     let detail = current
                         .error
                         .as_ref()
                         .map_or_else(|| "no details".to_string(), ToString::to_string);
                     tracing::error!("File '{file_name}' processing failed: {detail}");
-                    return Err(GenaiError::Internal(format!(
+                    return Err(GenaiError::ProcessingFailed(format!(
                         "File '{file_name}' failed processing ({detail}). This is terminal — \
                          re-uploading is the only recovery."
                     )));
