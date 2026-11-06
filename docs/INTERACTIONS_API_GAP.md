@@ -47,7 +47,10 @@ lists are this file's working list: the `GAPS`, `NOT_SENT` and `UNMAPPED`
 entries are what is not modeled yet.
 
 What the first run found (google-genai 2.34.0, spec of 2026-11-01), live
-facts from 2026-11-04:
+facts from 2026-11-04. The interaction-side items are closed below, in
+[Interaction residue](#interaction-residue-2026-11-05); the resource-side
+ones (files, file search stores, agents, voices, environments) are WP2b of
+#504.
 
 - **No wrong request keys.** Every key the crate sends is on its binding
   class, `response_format` included, except response data a caller sends
@@ -86,6 +89,51 @@ facts from 2026-11-04:
 - **Live coverage:** `FileSearchDocuments::get` and
   `Interactions::get_with_input` had no live test; both have one now.
   `include_input=true` now echoes the input as a `user_input` step.
+
+## Interaction residue (2026-11-05)
+
+Every interaction-side item the coverage oracle and #501 left open, and the
+three #489 questions, probed live on 2026-11-05 and then modeled or
+recorded. The oracle's `GAPS` now hold only resource-side items (WP2b of
+#504), and a new sparse-body pass reads every response class with only its
+required fields (`docs/TESTING.md`, "Sparse response bodies").
+
+### Modeled
+
+| Surface | Where | Live result |
+|---|---|---|
+| Continuation without input (#489) | `InteractionRequest::input` is an `Option`; `InteractionBuilder::continue_decode(&response)` | `previous_interaction_id` and `continuation_token` alone continue a stored decode, and with no `max_output_tokens` it runs to the end. Without the id: `400 previous_interaction_id is required when continuation_token is set for a stored interaction`. A `store: false` continuation without input: `400 contents is not specified`. No input and no token: a misleading `404 Model ... not found`, which `build()` heads off |
+| `{"allowlist": "disabled"}` (#489) | `NetworkConfig::AllowlistDisabled`, `NetworkConfig::is_disabled()` | Accepted; a GET echoes `{"allowlist": [{"mode": "disabled"}]}`, which read as an entry with an empty domain until now. An agent's `curl` got the egress proxy's 403 under it and under `network: "disabled"`, and 200 with no network config, so the two forms block egress alike. It is the bindings' `Disabled` arm of the allowlist |
+| The `/v1` endpoint (#489) | `ClientBuilder::with_api_version("v1")` | Interactions in full, the same protocol as `/v1beta` (create, get, delete, cancel, streaming, and continuation, which the v1 spec leaves out), plus files and file search stores; `404` for agents, environments, webhooks, credentials, voices and triggers. An interaction created on one version reads on the other. `v1beta` stays the default |
+| `queued` status (#501) | `InteractionStatus::Queued` | In the bindings (interaction, stream interaction, status update), not the spec; never observed: background interactions report `in_progress` from their create response on |
+| CodeMender agent config (#501) | `CodeMenderConfig` and its find/fix request types | Vertex-only: `400 The value 'code-mender' is not supported for 'agent_config.type' on the Gemini API, it is allowed on the Gemini Enterprise Agent Platform`. Kept and documented (D-005) |
+| Stored request config | `InteractionResponse::generation_config`, `response_format`, `response_modalities`, `safety_settings` | All four on a stored read; the create response echoes `safety_settings`. `speech_config` comes back as `{"speakers": [...]}` and reads into the same list. With `include_input=true` every list holds each entry twice (also 2026-11-04); kept as served |
+| Agent echoes | `InteractionResponse::agent_config`, `environment` | `agent_config` on an agent's create response and stored read; `environment` (the id string, or the inline definition without an `environment_id`) on the stored read |
+| `GenerationConfig` unknown keys | `GenerationConfig::extra` | Needed now that a response carries it |
+| `step.delta` `metadata.total_usage` | `StreamChunk::StepDelta::total_usage` | In the bindings and the spec; no text, TTS or agent stream sent `metadata` on a `step.delta` |
+| Streamed audio | The stream accumulator | A streamed TTS answer is 243 raw PCM deltas (`audio/l16`, 24000 Hz, mono) in one step, each naming the format and carrying padding-free base64; they assemble into one block, and a different format or a `uri` starts a new one. No model streams video or documents; they follow the image rule |
+| Tools without optional fields | `Tool::Function` (`description`, `parameters` now `Option`), `ComputerUse`, `McpServer`, `FileSearch`; `FunctionParameters` keeps unmodeled schema keywords | A function tool sent with only a `name` is accepted and called, and a stored read serves it that way; it read as `Tool::Unknown`. Found by the sparse-body pass |
+| `VideoMetadata` unknown keys | `VideoMetadata::extra` | A file's `videoMetadata` is `{"videoDuration": "1s"}`; the bindings type it `dict[str, Any]` |
+| Non-string unknown enum values | `wire_enum!` | A number or object read into `Unknown` serializes back as itself |
+
+### Removed or kept, after a live check
+
+| Surface | Outcome | Live result |
+|---|---|---|
+| `GoogleSearchResultItem.title`/`url`/`rendered_content` | Removed | Items carry only `search_suggestions`, the one field of the bindings' `GoogleSearchResult` |
+| `Place` address, coordinates, types, rating, ratings count, website, phone | Removed | 30 places across three Maps results carried only `name`, `place_id` and `url` (the bindings add `review_snippets`) |
+| `Step::FileSearchResult.result`, `FileSearchResultItem`, `file_search_results()` | Removed; the delta's `result` is opaque JSON | The step and its delta carry only `call_id`/`signature`, stored and streamed. Neither the bindings nor the spec give the step a `result`; the spec gives the delta a list of field-less objects |
+| `FunctionResult.signature` | Kept | A server-run MCP call's `function_result` carries one (a deepwiki call); not in the bindings |
+| `InteractionResponse.output_text` | Kept | Never served: not on TTS, image or text create responses, stored reads, or stream completed events. Kept because it is in the bindings and `as_text()`/`all_text()`/`has_text()` fall back to it at no cost; removing it would break struct literals for nothing. Its siblings `output_audio`/`_image`/`_video` stay unmodeled (below) |
+
+### Not modeled, with the reason
+
+| Surface | Why |
+|---|---|
+| `Interaction.output_audio`/`_image`/`_video` (#501) | Never served: not on a create response or stored read of a TTS or image interaction, nor on a stream's completed event. `output_text` is not served either. The output is in `steps` |
+| `Interaction.continuation_ids` | Never served, not even on the reads of a decode continued twice; rejected as a request field (2026-11-01) |
+| `Interaction.max_total_tokens` (spec only) | `400 Unknown parameter 'max_total_tokens'` on model and agent interactions alike (D-005); the agent budget is `agent_config.max_total_tokens` |
+| The inline environment's `environment_id` | Accepted and checked on create (`404 Requested entity was not found` for an unknown id), never echoed. Belongs on `RemoteEnvironment` (WP2b) |
 
 ## Protocol facts (live, 2026-09-24)
 
@@ -182,21 +230,15 @@ and the bindings don't list. Deprecated upstream but still accepted:
 | Surface | Why |
 |---|---|
 | `VideoTask` `upscale` | `400 ... Supported values: text_to_video, image_to_video, reference_to_video, edit, extend` |
-| `continuation_ids` | Never returned; as a request field, `400 Unknown parameter` |
+| `continuation_ids` | Never returned (again on 2026-11-05, on a decode continued twice); as a request field, `400 Unknown parameter` |
 | Server-only tool types (`bash`, `filesystem`, `tool_search`, `manage_task`, `schedule`) | Now rejected with a 400 that lists the supported tool types (they were accepted bare in 2.25.0's sweep) |
 | New model ids (`gemini-4-argon`, `gemini-3.5-flash-lite`, `gemini-nano-banana-2.1`, `gemini-omni-*`, `lyria-3.5`, ...) | Model ids are open strings. All eight exist via `/v1beta/models`. |
 
-### Found, NOT yet modeled
+### Found, then modeled (2026-11-05)
 
-- **Continuation from a stored interaction without input.** With
-  `previous_interaction_id` and the token, the API accepts a request with
-  *no* `input`, but the crate always sends one. Needs an omittable input.
-- **`{"allowlist": "disabled"}` network form.** Accepted; the echo reads back
-  as `{"allowlist": [{"mode": "disabled"}]}`, which `NetworkConfig` parses
-  as an allowlist entry with an empty domain. Its meaning next to
-  `network: "disabled"` is undocumented.
-- **The stable `/v1` endpoint.** Create, get, delete and cancel only; no
-  continuation, environments or agent configs. The crate targets `v1beta`.
+The three items left open here (continuation without input, the
+`{"allowlist": "disabled"}` form, the `/v1` endpoint) were probed and
+modeled on 2026-11-05; see [Interaction residue](#interaction-residue-2026-11-05).
 
 ## Sweep 2.18.1 → 2.25.0 (2026-09-24)
 

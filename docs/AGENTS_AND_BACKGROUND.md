@@ -137,6 +137,12 @@ let env_id = response.environment_id.clone().expect("assigned environment");
   interaction with 404 `not_found`.
 - A custom agent can carry a default environment via
   `Agent::with_base_environment`.
+- **`CodeMenderConfig`** (`agent_config.type: "code-mender"`, with
+  `CodeMenderFindRequest`, `CodeMenderFixRequest` and `CodeMenderFile`)
+  models the bindings' CodeMender agent config. It is Vertex-only: the
+  Gemini API answers `400 The value 'code-mender' is not supported for
+  'agent_config.type' on the Gemini API, it is allowed on the Gemini
+  Enterprise Agent Platform` (live 2026-11-05).
 
 ### Managing environments
 
@@ -262,7 +268,7 @@ use genai_rs::{
 # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let interaction = InteractionRequest {
     agent: Some("my-custom-agent".to_string()),
-    input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
+    input: Some(InteractionInput::Text("Summarize yesterday's alerts".to_string())),
     ..Default::default()
 };
 
@@ -430,6 +436,7 @@ async fn poll_until_done(
 | `Incomplete` | Ended before completion (for example a token limit); inspect partial results. On `CONTINUATION_MODEL` it carries a `continuation_token` to resume the decode |
 | `RequiresContinuation` | In the spec, never observed: continuable responses report `Incomplete` |
 | `BudgetExceeded` | The configured budget ran out; inspect partial results |
+| `Queued` | Accepted, not started. In the bindings, never observed: background interactions report `InProgress` from their create response on (2026-11-05) |
 
 Persist the interaction id as soon as `create()` returns, so a restart can
 resume with `client.interactions().get(&id)`. `response.steps` can be non-empty while

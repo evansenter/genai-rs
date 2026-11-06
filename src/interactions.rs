@@ -83,8 +83,9 @@ impl Interactions<'_> {
     /// text prompt (live 2026-11-04; it was not echoed in 2026-07). On this
     /// read the API also repeats every entry of the stored request's lists
     /// (`stop_sequences`, `response_modalities`, `safety_settings`, speech
-    /// speakers), which arrive unmodeled in
-    /// [`extra`](InteractionResponse::extra) (live 2026-11-04).
+    /// speakers; live 2026-11-04 and 2026-11-05), and the crate keeps them
+    /// as served: see
+    /// [`generation_config`](InteractionResponse::generation_config).
     ///
     /// # Errors
     ///

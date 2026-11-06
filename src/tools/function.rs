@@ -10,13 +10,23 @@ pub struct FunctionDeclaration {
 }
 
 /// Represents the parameters schema for a function.
+///
+/// A JSON Schema object. `type`, `properties` and `required` are read out;
+/// any other keyword (`additionalProperties`, `$defs`, ...) is kept as it
+/// came, so a function tool echoed on a stored interaction serializes back
+/// unchanged. A schema without `type` or `properties` (`{}`, or
+/// `{"type": "object"}` for a function with no arguments) reads too.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct FunctionParameters {
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]
     type_: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     properties: serde_json::Value,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     required: Vec<String>,
+    /// The schema's other keywords, kept for round trip.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl FunctionDeclaration {
@@ -62,8 +72,8 @@ impl FunctionDeclaration {
     pub fn into_tool(self) -> Tool {
         Tool::Function {
             name: self.name,
-            description: self.description,
-            parameters: self.parameters,
+            description: Some(self.description),
+            parameters: Some(self.parameters),
         }
     }
 }
@@ -79,16 +89,18 @@ impl FunctionParameters {
             type_,
             properties,
             required,
+            extra: serde_json::Map::new(),
         }
     }
 
-    /// Returns the parameter type (typically "object")
+    /// Returns the parameter type (typically "object"; empty when the schema
+    /// has none)
     #[must_use]
     pub fn type_(&self) -> &str {
         &self.type_
     }
 
-    /// Returns the properties schema
+    /// Returns the properties schema (`Null` when the schema has none)
     #[must_use]
     pub fn properties(&self) -> &serde_json::Value {
         &self.properties
@@ -98,6 +110,13 @@ impl FunctionParameters {
     #[must_use]
     pub fn required(&self) -> &[String] {
         &self.required
+    }
+
+    /// Returns the schema's other keywords (`additionalProperties`, `$defs`,
+    /// ...), kept as they came.
+    #[must_use]
+    pub fn extra(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.extra
     }
 }
 
@@ -185,6 +204,7 @@ impl FunctionDeclarationBuilder {
                 type_: "object".to_string(),
                 properties: self.properties,
                 required: self.required,
+                extra: serde_json::Map::new(),
             },
         }
     }

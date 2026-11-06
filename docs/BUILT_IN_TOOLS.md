@@ -54,9 +54,10 @@ if response.has_google_search_calls() {
         println!("Searched: {}", query);
     }
 
-    // Get source URLs
-    for result in response.google_search_results() {
-        println!("Source: {} - {}", result.title, result.url);
+    // Sources arrive as citations on the answer; the result items carry
+    // only a rendering of the search suggestions.
+    for annotation in response.all_annotations() {
+        println!("Source: {}", annotation.source().unwrap_or("<none>"));
     }
 }
 ```
@@ -274,11 +275,12 @@ println!("{}", response.as_text().unwrap_or_default());
 `FileSearchConfig` also takes `.with_top_k(n)` (maximum retrieved chunks) and
 `.with_metadata_filter("category:technical")`.
 
-> **`file_search_results()` returns nothing on this API.** The live API never
-> emits the step it reads. This was verified against a store whose indexed,
-> `STATE_ACTIVE` documents demonstrably grounded the answer. Retrieved chunks
-> are folded into the response text, so an empty result set is expected
-> (#429).
+> **The `file_search_result` step carries no chunks.** It has only `call_id`
+> and `signature`, in the bindings, the spec and on the wire (live
+> 2026-11-05, streamed and stored). Retrieved chunks are folded into the
+> answer, which cites them with `file_citation` annotations
+> (`all_annotations()`); `has_file_search_results()` says whether a search
+> ran (#429).
 
 ## Retrieval
 
@@ -345,11 +347,7 @@ let response = client
 for result in response.google_maps_results() {
     for item in result.items {
         for place in item.places.iter().flatten() {
-            println!(
-                "{} - {}",
-                place.name.as_deref().unwrap_or("<unnamed>"),
-                place.formatted_address.as_deref().unwrap_or("<no address>")
-            );
+            println!("{}", place.name.as_deref().unwrap_or("<unnamed>"));
             if let Some(url) = &place.url {
                 println!("  Maps URL: {}", url);
             }
@@ -479,8 +477,7 @@ let result = client
 | `url_context_call_urls()` | URL Context | `Vec<&str>` |
 | `has_url_context_results()` | URL Context | `bool` |
 | `url_context_results()` | URL Context | `Vec<UrlContextResultInfo>` |
-| `has_file_search_results()` | File Search | `bool` |
-| `file_search_results()` | File Search | `Vec<&FileSearchResultItem>` |
+| `has_file_search_results()` | File Search | `bool` (whether a search ran; its step carries no chunks) |
 | `has_google_maps_results()` | Google Maps | `bool` |
 | `google_maps_results()` | Google Maps | `Vec<GoogleMapsResultInfo>` |
 | `function_calls()` | MCP (`<server>:<tool>`) and your functions | `Vec<FunctionCallInfo>` |

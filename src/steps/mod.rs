@@ -19,8 +19,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::content::{
-    CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, UrlContextResultItem,
+    CodeExecutionLanguage, Content, GoogleMapsResultItem, GoogleSearchResultItem,
+    UrlContextResultItem,
 };
 
 mod accumulator;
@@ -463,13 +463,15 @@ pub enum Step {
         extra: serde_json::Map<String, serde_json::Value>,
     },
     /// File Search result (`type: "file_search_result"`).
+    ///
+    /// Carries no results: the step has only `call_id` and `signature` in
+    /// the google-genai 2.34.0 bindings and the spec, and that is all a
+    /// stored or streamed interaction serves (live 2026-11-05). The
+    /// retrieved chunks are folded into the model's answer, cited by
+    /// `file_citation` annotations.
     FileSearchResult {
         /// The `id` of the corresponding call.
         call_id: String,
-        /// Retrieved chunks. Note: the 2026-05-20 spec does not document a
-        /// `result` field on this step; it is kept here (deserialized when
-        /// present) because earlier revisions returned it.
-        result: Vec<FileSearchResultItem>,
         /// Opaque signature; pass through unchanged.
         signature: Option<String>,
         /// Unmodeled wire fields, kept for round trip ([`Step::extra`]).

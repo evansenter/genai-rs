@@ -201,6 +201,9 @@ impl std::fmt::Display for FileError {
 }
 
 /// Metadata for video files.
+///
+/// The bindings type it `dict[str, Any]`; the API serves `videoDuration`
+/// (live 2026-11-05: `{"videoDuration": "1s"}` for a one-second clip).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
@@ -208,6 +211,9 @@ pub struct VideoMetadata {
     /// Duration of the video
     #[serde(skip_serializing_if = "Option::is_none")]
     pub video_duration: Option<String>,
+    /// Keys the crate does not model, kept for round trip (Evergreen).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Response from listing files.

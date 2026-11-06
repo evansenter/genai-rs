@@ -437,7 +437,7 @@ impl<'a> InteractionBuilder<'a> {
             // Create new request with function results
             // The server maintains function call context via previous_interaction_id
             request.previous_interaction_id = response.id;
-            request.input = InteractionInput::Steps(function_results);
+            request.input = Some(InteractionInput::Steps(function_results));
         }
 
         // Max loops reached - return partial result with whatever we have
@@ -794,7 +794,7 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Create new request with function results
                 request.previous_interaction_id = response.id;
-                request.input = InteractionInput::Steps(function_result_steps);
+                request.input = Some(InteractionInput::Steps(function_result_steps));
             }
 
             // Max loops reached - yield partial result with the last response

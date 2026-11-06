@@ -137,9 +137,9 @@ pub use errors::GenaiError;
 // Content types (Content and related)
 pub mod content;
 pub use content::{
-    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
-    VideoProcessing, VideoProcessingBuilder,
+    Annotation, CodeExecutionLanguage, Content, GoogleMapsResultItem, GoogleSearchResultItem,
+    Place, Resolution, ReviewSnippet, UrlContextResultItem, VideoProcessing,
+    VideoProcessingBuilder,
 };
 
 // Step types (revision 2026-05-20 response model)
@@ -149,7 +149,8 @@ pub use steps::{FunctionResultPayload, Step, StepDelta, StepError};
 // Request types (includes agent configuration)
 pub mod request;
 pub use request::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role,
     ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig,
     TranscriptionMode, TurnContent, VideoConfig, VideoTask, Visualization,

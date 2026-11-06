@@ -342,8 +342,11 @@ impl<'a> InteractionBuilder<'a> {
     /// [`continuation_token`](crate::InteractionResponse::continuation_token)
     /// of the response that stopped.
     ///
-    /// Build the request as before, with the same input, and raise
-    /// `max_output_tokens`: the API counts it across continuations. Only
+    /// For a stored interaction, [`continue_decode`](Self::continue_decode)
+    /// is simpler: it needs no input. This method is for a `store: false`
+    /// one, which has no id to continue from: build the request as before,
+    /// with the same input, and raise `max_output_tokens`, which the API
+    /// counts across continuations. Only
     /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports continuation
     /// (verified live 2026-11-01).
     ///
@@ -371,6 +374,64 @@ impl<'a> InteractionBuilder<'a> {
     #[must_use]
     pub fn with_continuation_token(mut self, token: impl Into<String>) -> Self {
         self.continuation_token = Some(token.into());
+        self
+    }
+
+    /// Continues the decode `response` stopped early, without resending the
+    /// input: sets the model (or agent) the response names, its `id` as the
+    /// previous interaction, and its
+    /// [`continuation_token`](crate::InteractionResponse::continuation_token).
+    ///
+    /// The API continues a stored interaction from its id and token alone
+    /// (verified live 2026-11-05 on
+    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL), the only model
+    /// that supports continuation). No `max_output_tokens` is sent unless
+    /// you set one; the continuation then ran to completion (live
+    /// 2026-11-05). A budget you set counts what the decode already
+    /// produced, so it must exceed that.
+    ///
+    /// [`build`](Self::build) fails with
+    /// [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput) when
+    /// `response` carries no token and no input was set, and when it has no
+    /// `id` (a `store: false` interaction): for that one, resend the
+    /// original input with [`with_continuation_token`](Self::with_continuation_token).
+    ///
+    /// ```no_run
+    /// # use genai_rs::{Client, GenerationConfig, InteractionStatus};
+    /// # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
+    /// let mut response = client
+    ///     .interaction()
+    ///     .with_model(genai_rs::CONTINUATION_MODEL)
+    ///     .with_text("Write a sonnet about the sea.")
+    ///     .with_generation_config(GenerationConfig {
+    ///         max_output_tokens: Some(30),
+    ///         ..Default::default()
+    ///     })
+    ///     .create()
+    ///     .await?;
+    /// let mut text = response.all_text();
+    /// while response.status == InteractionStatus::Incomplete
+    ///     && response.continuation_token.is_some()
+    /// {
+    ///     response = client.interaction().continue_decode(&response).create().await?;
+    ///     text.push_str(&response.all_text());
+    /// }
+    /// println!("{text}");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn continue_decode(mut self, response: &crate::InteractionResponse) -> Self {
+        if let Some(model) = &response.model {
+            self.model = Some(model.clone());
+            self.agent = None;
+        } else if let Some(agent) = &response.agent {
+            self.agent = Some(agent.clone());
+            self.model = None;
+        }
+        self.previous_interaction_id.clone_from(&response.id);
+        self.continuation_token
+            .clone_from(&response.continuation_token);
         self
     }
 

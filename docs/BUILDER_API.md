@@ -19,6 +19,11 @@ rules. For every method and its arguments, see the
 `add_label(key, value)` and `add_extra(key, value)` add one entry to a keyed
 map: entries added earlier are kept, and a repeated key replaces its value.
 
+`continue_decode(&response)` sets several settings at once from a response
+whose decode stopped early: its model, its id as the previous interaction,
+and its continuation token (see
+[Decoding continuation](CONFIGURATION.md#decoding-continuation)).
+
 The option-free built-in tool setters (`with_google_search()`,
 `with_google_maps()`, `with_code_execution()`, `with_url_context()`) follow the
 `with_*` rule: each replaces any earlier tool of its kind, so calling one
@@ -52,7 +57,9 @@ with_content() set?
 └── No ─── with_history() set?
            ├── Yes → Steps([...history, user_text(text)?])                 (text appended if set)
            └── No  → with_text() set?  Yes → Text(text)
-                                       No  → ERROR ("Input is required for interaction")
+                                       No  → no input: only a continuation
+                                             (continue_decode()) may send none,
+                                             else ERROR ("Input is required")
 ```
 
 A `Content` input is sent on the wire as a single `user_input` step.
@@ -89,7 +96,8 @@ every `create*()`), before any request is sent:
 | Neither or both of `with_model()` and `with_agent()` | Exactly one target is required |
 | `with_agent_config()` without `with_agent()` | Agent config only applies to agents |
 | `with_content()` together with `with_history()` | Wrap the content in `Step::user_input` instead (above) |
-| No input at all | Nothing to send |
+| No input at all, outside a continuation | Nothing to send; without input the API answers a misleading `404 Model ... not found` (live 2026-11-05) |
+| A continuation token with no input and no `with_previous_interaction()` | A continuation without input continues a stored interaction by its id (a `store: false` one resends its input) |
 | `with_store_disabled()` + `with_previous_interaction()` | Chaining needs the previous interaction stored |
 | `with_store_disabled()` + `with_background(true)` | Background results are fetched by id, so they must be stored |
 | `with_store_disabled()` + `create_with_auto_functions()` | The loop chains rounds by `previous_interaction_id` |

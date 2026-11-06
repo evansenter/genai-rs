@@ -9,8 +9,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::content::{Annotation, Content};
+use crate::environments::EnvironmentSpec;
 use crate::errors::GenaiError;
-use crate::request::{InteractionInput, ServiceTier};
+use crate::request::{AgentConfig, GenerationConfig, InteractionInput, ServiceTier};
+use crate::response_format::ResponseFormatSpec;
+use crate::safety::SafetySetting;
 use crate::steps::Step;
 use crate::tools::Tool;
 use crate::wire_enum::wire_enum;
@@ -61,6 +64,14 @@ wire_enum! {
         /// `max_output_tokens`) reported [`Incomplete`](Self::Incomplete)
         /// with a token instead.
         RequiresContinuation = "requires_continuation",
+        /// Accepted but not started yet.
+        ///
+        /// In the google-genai 2.34.0 bindings (on the interaction, the
+        /// stream's interaction and its status updates) but not in the
+        /// spec, and never observed live: on 2026-11-05 background agent
+        /// and model interactions reported
+        /// [`InProgress`](Self::InProgress) from their create response on.
+        Queued = "queued",
     }
     unknown(status_type, unknown_status_type)
 }
@@ -165,10 +176,15 @@ pub struct InteractionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_config: Option<crate::webhooks::WebhookConfig>,
 
-    /// Convenience field: concatenated output text, when provided by the API.
+    /// Convenience field: concatenated output text, from the google-genai
+    /// 2.34.0 bindings.
     ///
-    /// Prefer [`as_text()`](Self::as_text) / [`all_text()`](Self::all_text),
-    /// which fall back to this field when steps are absent.
+    /// Not served: create responses, stored reads and stream completed
+    /// events carry none (live 2026-11-05); the text is in the steps. Kept
+    /// because it is in the bindings and the text helpers' fallback to it
+    /// costs nothing. Use [`as_text()`](Self::as_text) /
+    /// [`all_text()`](Self::all_text), which fall back to this field when
+    /// no step has text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_text: Option<String>,
 
@@ -195,6 +211,54 @@ pub struct InteractionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
 
+    /// The generation config the interaction ran with. Like
+    /// [`system_instruction`](Self::system_instruction), only a stored
+    /// interaction read back carries it (verified live 2026-11-05); the spec
+    /// marks it `writeOnly`, but it is served.
+    ///
+    /// `speech_config` comes back in the `{"speakers": [...]}` form whichever
+    /// form was sent, and reads into the same list
+    /// ([`GenerationConfig::speech_config`]). Read with
+    /// [`get_with_input`](crate::Interactions::get_with_input), every list in
+    /// it (`stop_sequences`, the speakers) holds each entry twice, as do
+    /// [`response_modalities`](Self::response_modalities) and
+    /// [`safety_settings`](Self::safety_settings) (live 2026-11-04 and
+    /// 2026-11-05); a plain [`get`](crate::Interactions::get) serves them
+    /// once. The crate keeps what was served and does not deduplicate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_config: Option<GenerationConfig>,
+
+    /// The request's response format. Only a stored interaction read back
+    /// carries it (verified live 2026-11-05).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormatSpec>,
+
+    /// The request's response modalities (`"text"`, `"image"`, `"audio"`).
+    /// Only a stored interaction read back carries them (verified live
+    /// 2026-11-05); see [`generation_config`](Self::generation_config) on
+    /// the repeated entries of an `include_input` read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_modalities: Option<Vec<String>>,
+
+    /// The request's safety settings. Echoed on the create response as well
+    /// as on a stored read (verified live 2026-11-05); see
+    /// [`generation_config`](Self::generation_config) on the repeated entries
+    /// of an `include_input` read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safety_settings: Option<Vec<SafetySetting>>,
+
+    /// The agent's config, echoed on an agent interaction's create response
+    /// and stored read (verified live 2026-11-05, `{"type": "antigravity"}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_config: Option<AgentConfig>,
+
+    /// The environment the request named: the id string when it named one by
+    /// id (verified live 2026-11-05, on a stored read), or the inline
+    /// definition. [`environment_id`](Self::environment_id) holds the id the
+    /// interaction ran in either way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<EnvironmentSpec>,
+
     /// Resumes a decode that stopped early; pass it back with
     /// [`InteractionBuilder::with_continuation_token`](crate::InteractionBuilder::with_continuation_token).
     ///
@@ -213,8 +277,7 @@ pub struct InteractionResponse {
     pub errors: Option<Vec<InteractionError>>,
 
     /// Fields the API returned that this struct does not model, preserved
-    /// for roundtrip (Evergreen): e.g. the `environment`, `generation_config`
-    /// and `agent_config` a stored interaction carries.
+    /// for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -271,7 +334,8 @@ impl InteractionResponse {
 
     /// Extract the first text content from the model output steps.
     ///
-    /// Falls back to the API-provided `output_text` convenience field when no
+    /// Falls back to the [`output_text`](Self::output_text) convenience
+    /// field (in the bindings, not served as of 2026-11-05) when no
     /// text-bearing steps are present.
     ///
     /// # Example

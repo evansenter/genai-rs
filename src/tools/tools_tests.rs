@@ -83,8 +83,12 @@ fn test_tool_google_maps_with_widget_roundtrip() {
 fn test_tool_function_roundtrip() {
     let tool = Tool::Function {
         name: "get_weather".to_string(),
-        description: "Get weather".to_string(),
-        parameters: FunctionParameters::new("object".to_string(), serde_json::json!({}), vec![]),
+        description: Some("Get weather".to_string()),
+        parameters: Some(FunctionParameters::new(
+            "object".to_string(),
+            serde_json::json!({}),
+            vec![],
+        )),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
@@ -314,8 +318,12 @@ fn test_tool_known_types_helper_methods() {
 
     let function = Tool::Function {
         name: "test".to_string(),
-        description: "Test function".to_string(),
-        parameters: FunctionParameters::new("object".to_string(), serde_json::json!({}), vec![]),
+        description: Some("Test function".to_string()),
+        parameters: Some(FunctionParameters::new(
+            "object".to_string(),
+            serde_json::json!({}),
+            vec![],
+        )),
     };
     assert!(!function.is_unknown());
     assert_eq!(function.unknown_tool_type(), None);
@@ -422,12 +430,12 @@ fn test_tool_serializes_type_first_then_fields_in_order() {
     assert_eq!(
         to_json(&Tool::Function {
             name: "get_weather".to_string(),
-            description: "Weather".to_string(),
-            parameters: FunctionParameters::new(
+            description: Some("Weather".to_string()),
+            parameters: Some(FunctionParameters::new(
                 "object".to_string(),
                 serde_json::json!({}),
                 vec![]
-            ),
+            )),
         }),
         r#"{"type":"function","name":"get_weather","description":"Weather","parameters":{"type":"object","properties":{}}}"#
     );
@@ -541,15 +549,16 @@ fn test_tool_omits_none_and_empty_optional_fields() {
 }
 
 #[test]
-fn test_tool_file_search_always_writes_store_names() {
-    // Unlike the optional collections, the store list is written even empty.
+fn test_tool_file_search_leaves_out_an_empty_store_list() {
+    // Optional in the bindings, like the other collections: an empty list is
+    // not written, so a served tool without one round-trips.
     assert_eq!(
         to_json(&Tool::FileSearch {
             store_names: vec![],
             top_k: None,
             metadata_filter: None,
         }),
-        r#"{"type":"file_search","file_search_store_names":[]}"#
+        r#"{"type":"file_search"}"#
     );
 }
 
@@ -593,4 +602,60 @@ fn test_tool_unknown_serializes_type_merged_into_data() {
     let parsed: Tool = serde_json::from_str(r#"{"setting":1}"#).expect("Deserialization failed");
     assert_eq!(parsed.unknown_tool_type(), Some("<missing type>"));
     assert_eq!(to_json(&parsed), r#"{"type":"<missing type>","setting":1}"#);
+}
+
+#[test]
+fn a_tool_missing_its_optional_fields_reads_as_that_tool() {
+    // Every field of a tool is optional in the google-genai 2.34.0
+    // bindings. A stored interaction serves a function tool sent with only
+    // a name as just that (live 2026-11-05); it used to read as Unknown.
+    let cases = [
+        r#"{"type":"function","name":"get_time"}"#,
+        r#"{"type":"function"}"#,
+        r#"{"type":"computer_use"}"#,
+        r#"{"type":"mcp_server"}"#,
+        r#"{"type":"file_search"}"#,
+    ];
+    for wire in cases {
+        let tool: Tool = serde_json::from_str(wire).expect("Deserialization failed");
+        assert!(!tool.is_unknown(), "{wire} read as {tool:?}");
+        assert_eq!(to_json(&tool), wire, "round trip of {wire}");
+    }
+    let tool: Tool = serde_json::from_str(r#"{"type":"function","name":"get_time"}"#).unwrap();
+    assert!(matches!(
+        tool,
+        Tool::Function { ref name, description: None, parameters: None } if name == "get_time"
+    ));
+}
+
+#[test]
+fn function_parameters_keep_every_schema_keyword() {
+    let wire = serde_json::json!({
+        "type": "function",
+        "name": "f",
+        "parameters": {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "required": ["a"],
+            "additionalProperties": false,
+            "$defs": {"x": {"type": "integer"}}
+        }
+    });
+    let tool: Tool = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&tool).unwrap(), wire);
+    let Tool::Function {
+        parameters: Some(parameters),
+        ..
+    } = &tool
+    else {
+        panic!("{tool:?}");
+    };
+    assert_eq!(parameters.extra()["additionalProperties"], false);
+
+    // A function with no arguments may send a schema with no properties.
+    let bare =
+        serde_json::json!({"type": "function", "name": "f", "parameters": {"type": "object"}});
+    let tool: Tool = serde_json::from_value(bare.clone()).unwrap();
+    assert!(!tool.is_unknown());
+    assert_eq!(serde_json::to_value(&tool).unwrap(), bare);
 }

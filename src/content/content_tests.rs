@@ -1184,8 +1184,8 @@ fn test_deserialize_google_search_call_step() {
 
 #[test]
 fn test_deserialize_google_search_result_step() {
-    // Wire format: result is an array of objects with title/url
-    let json = r#"{"type": "google_search_result", "call_id": "call123", "result": [{"title": "Rust", "url": "https://rust-lang.org", "rendered_content": "Some content"}]}"#;
+    // Wire format (live 2026-11-05): items carry only `search_suggestions`.
+    let json = r#"{"type": "google_search_result", "call_id": "call123", "result": [{"search_suggestions": "<div/>"}]}"#;
     let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
     match &step {
@@ -1194,9 +1194,8 @@ fn test_deserialize_google_search_result_step() {
         } => {
             assert_eq!(call_id, "call123");
             assert_eq!(result.len(), 1);
-            assert_eq!(result[0].title, "Rust");
-            assert_eq!(result[0].url, "https://rust-lang.org");
-            assert_eq!(result[0].rendered_content.as_deref(), Some("Some content"));
+            assert_eq!(result[0].search_suggestions.as_deref(), Some("<div/>"));
+            assert!(result[0].extra.is_empty());
         }
         _ => panic!("Expected GoogleSearchResult variant, got {:?}", step),
     }
@@ -2102,150 +2101,41 @@ fn test_resolution_unknown_object_form() {
 // --- File Search Steps ---
 
 #[test]
-fn test_deserialize_file_search_result_step() {
-    // Test the actual API format
-    let json = r#"{"type": "file_search_result", "call_id": "call123", "result": [{"title": "Document.pdf", "text": "Relevant content", "file_search_store": "store-1"}]}"#;
-    let step: Step = serde_json::from_str(json).expect("Should deserialize");
-
+fn test_file_search_result_step_wire_shape() {
+    // What a stored interaction serves (live 2026-11-05): no `result`.
+    let wire = serde_json::json!({
+        "type": "file_search_result",
+        "call_id": "call123",
+        "signature": "c2ln"
+    });
+    let step: Step = serde_json::from_value(wire.clone()).expect("Should deserialize");
     match &step {
         Step::FileSearchResult {
-            call_id, result, ..
+            call_id,
+            signature,
+            extra,
         } => {
             assert_eq!(call_id, "call123");
-            assert_eq!(result.len(), 1);
-            assert_eq!(result[0].title, "Document.pdf");
-            assert_eq!(result[0].text, "Relevant content");
-            assert_eq!(result[0].store, "store-1");
+            assert_eq!(signature.as_deref(), Some("c2ln"));
+            assert!(extra.is_empty());
         }
         _ => panic!("Expected FileSearchResult variant, got {:?}", step),
     }
-
-    assert!(!step.is_unknown());
+    assert_eq!(serde_json::to_value(&step).unwrap(), wire);
 }
 
 #[test]
-fn test_deserialize_file_search_result_step_multiple_items() {
-    let json = r#"{
+fn test_file_search_result_step_keeps_a_result_it_is_sent() {
+    // Neither the bindings nor the spec give the step a `result`; one that
+    // arrives is kept in `extra`, unchanged.
+    let wire = serde_json::json!({
         "type": "file_search_result",
         "call_id": "call456",
-        "result": [
-            {"title": "First.pdf", "text": "First content", "file_search_store": "store-a"},
-            {"title": "Second.pdf", "text": "Second content", "file_search_store": "store-b"}
-        ]
-    }"#;
-    let step: Step = serde_json::from_str(json).expect("Should deserialize");
-
-    match &step {
-        Step::FileSearchResult {
-            call_id, result, ..
-        } => {
-            assert_eq!(call_id, "call456");
-            assert_eq!(result.len(), 2);
-            assert_eq!(result[0].title, "First.pdf");
-            assert_eq!(result[1].title, "Second.pdf");
-        }
-        _ => panic!("Expected FileSearchResult variant"),
-    }
-}
-
-#[test]
-fn test_serialize_file_search_result_step() {
-    let step = Step::FileSearchResult {
-        call_id: "call789".to_string(),
-        result: vec![FileSearchResultItem {
-            title: "Results.pdf".to_string(),
-            text: "Found text".to_string(),
-            store: "my-store".to_string(),
-            extra: Default::default(),
-        }],
-        signature: None,
-        extra: Default::default(),
-    };
-
-    let json = serde_json::to_string(&step).expect("Serialization should work");
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(value["type"], "file_search_result");
-    assert_eq!(value["call_id"], "call789");
-    assert!(value["result"].is_array());
-    assert_eq!(value["result"][0]["title"], "Results.pdf");
-    assert_eq!(value["result"][0]["text"], "Found text");
-    assert_eq!(value["result"][0]["file_search_store"], "my-store");
-}
-
-#[test]
-fn test_file_search_result_step_roundtrip() {
-    let original = Step::FileSearchResult {
-        call_id: "roundtrip_test".to_string(),
-        result: vec![
-            FileSearchResultItem {
-                title: "Doc1.pdf".to_string(),
-                text: "Content one".to_string(),
-                store: "store-1".to_string(),
-                extra: Default::default(),
-            },
-            FileSearchResultItem {
-                title: "Doc2.pdf".to_string(),
-                text: "Content two".to_string(),
-                store: "store-2".to_string(),
-                extra: Default::default(),
-            },
-        ],
-        signature: None,
-        extra: Default::default(),
-    };
-
-    let json = serde_json::to_string(&original).unwrap();
-    let restored: Step = serde_json::from_str(&json).unwrap();
-
-    match restored {
-        Step::FileSearchResult {
-            call_id, result, ..
-        } => {
-            assert_eq!(call_id, "roundtrip_test");
-            assert_eq!(result.len(), 2);
-            assert_eq!(result[0].title, "Doc1.pdf");
-            assert_eq!(result[0].text, "Content one");
-            assert_eq!(result[1].title, "Doc2.pdf");
-        }
-        _ => panic!("Expected FileSearchResult variant"),
-    }
-}
-
-#[test]
-fn test_file_search_result_step_empty_results() {
-    // Empty results are omitted from the wire but roundtrip to an empty vec
-    let step = Step::FileSearchResult {
-        call_id: "no_results".to_string(),
-        result: vec![],
-        signature: None,
-        extra: Default::default(),
-    };
-
-    let json = serde_json::to_string(&step).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // The 2026-05-20 spec doesn't document a result field, so empty results
-    // are not serialized.
-    assert!(value.get("result").is_none());
-
-    let restored: Step = serde_json::from_str(&json).unwrap();
-    match restored {
-        Step::FileSearchResult {
-            call_id, result, ..
-        } => {
-            assert_eq!(call_id, "no_results");
-            assert!(result.is_empty());
-        }
-        _ => panic!("Expected FileSearchResult variant"),
-    }
-}
-
-#[test]
-fn test_file_search_result_item_default() {
-    let item = FileSearchResultItem::default();
-    assert!(item.title.is_empty());
-    assert!(item.text.is_empty());
-    assert!(item.store.is_empty());
+        "result": [{"title": "First.pdf", "text": "First content"}]
+    });
+    let step: Step = serde_json::from_value(wire.clone()).expect("Should deserialize");
+    assert_eq!(step.extra().unwrap()["result"][0]["title"], "First.pdf");
+    assert_eq!(serde_json::to_value(&step).unwrap(), wire);
 }
 
 // =============================================================================
@@ -2605,32 +2495,14 @@ fn test_constructor_serialization_roundtrip() {
 }
 
 // =============================================================================
-// GoogleSearchResultItem / FileSearchResultItem Constructor Tests
+// GoogleSearchResultItem Constructor Tests
 // =============================================================================
 
 #[test]
 fn test_google_search_result_item_new() {
-    let item = GoogleSearchResultItem::new("Rust Lang", "https://rust-lang.org");
-    assert_eq!(item.title, "Rust Lang");
-    assert_eq!(item.url, "https://rust-lang.org");
-    assert!(!item.has_rendered_content());
-    assert!(item.rendered_content.is_none());
-    assert!(item.search_suggestions.is_none());
-}
-
-#[test]
-fn test_file_search_result_item_new() {
-    let item = FileSearchResultItem::new("Document Title", "Extracted text content", "my-store");
-    assert_eq!(item.title, "Document Title");
-    assert_eq!(item.text, "Extracted text content");
-    assert_eq!(item.store, "my-store");
-    assert!(item.has_text());
-}
-
-#[test]
-fn test_file_search_result_item_has_text_empty() {
-    let item = FileSearchResultItem::new("Title", "", "store");
-    assert!(!item.has_text());
+    let item = GoogleSearchResultItem::new("<div/>");
+    assert_eq!(item.search_suggestions.as_deref(), Some("<div/>"));
+    assert!(item.extra.is_empty());
 }
 
 // =============================================================================
@@ -2797,16 +2669,12 @@ fn test_from_uri_and_mime_preserves_values() {
 
 #[test]
 fn test_google_search_result_item_suggestions_only_roundtrip() {
-    // Live wire shape (verified 2026-07): result items may carry ONLY
-    // `search_suggestions` (an HTML rendering payload) with no title/url.
-    // Deserialize must default title/url to empty, and re-serialization
-    // must NOT synthesize empty `title`/`url` fields the wire never sent.
+    // Live wire shape (verified 2026-07 and 2026-11-05): result items carry
+    // only `search_suggestions` (an HTML rendering payload).
     let wire = serde_json::json!({"search_suggestions": "<style>.container{}</style>"});
 
     let item: GoogleSearchResultItem =
         serde_json::from_value(wire.clone()).expect("Deserialization failed");
-    assert_eq!(item.title, "");
-    assert_eq!(item.url, "");
     assert_eq!(
         item.search_suggestions.as_deref(),
         Some("<style>.container{}</style>")
@@ -2817,12 +2685,13 @@ fn test_google_search_result_item_suggestions_only_roundtrip() {
 }
 
 #[test]
-fn test_google_search_result_item_populated_fields_serialize() {
-    // Non-empty title/url must still serialize.
-    let item = GoogleSearchResultItem::new("wikipedia.org", "https://example.com/r");
-    let json = serde_json::to_value(&item).unwrap();
-    assert_eq!(json["title"], "wikipedia.org");
-    assert_eq!(json["url"], "https://example.com/r");
+fn test_google_search_result_item_keeps_a_removed_field() {
+    // `title`, `url` and `rendered_content` were modeled from an older
+    // spec and never served; one that arrives is kept in `extra`.
+    let wire = serde_json::json!({"title": "wikipedia.org", "url": "https://example.com/r"});
+    let item: GoogleSearchResultItem = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(item.extra["title"], "wikipedia.org");
+    assert_eq!(serde_json::to_value(&item).unwrap(), wire);
 }
 
 // --- VideoProcessing (wire: `processing` on video content) ---

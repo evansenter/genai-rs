@@ -80,7 +80,10 @@ pub struct GenerationConfig {
     /// Three forms are accepted on deserialize, all normalizing to the list:
     /// the list itself, a bare single object (legacy), and a
     /// `{"speakers": [...]}` wrapper (the spec's `SpeakerConfig`). Only the
-    /// list is ever sent.
+    /// list is ever sent. A stored interaction read back serves the
+    /// `{"speakers": [...]}` form whichever was sent (live 2026-11-05), and
+    /// it serializes back as the list, which every TTS model accepts (live
+    /// 2026-09-24).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -104,6 +107,17 @@ pub struct GenerationConfig {
     /// timestamp granularity when transcribing audio input.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription_config: Option<TranscriptionConfig>,
+    /// Fields this crate does not model, sent flat beside the modeled ones
+    /// and kept from a deserialized config, such as the
+    /// [`generation_config`](crate::InteractionResponse::generation_config)
+    /// a stored interaction serves.
+    ///
+    /// The server checks these like any other key: a name it doesn't know
+    /// is `400 Unknown parameter`. An entry named after a modeled field is
+    /// written after it, and the API keeps the last of a repeated key (live
+    /// 2026-11-04), so it overrides that field.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Audio transcription configuration.

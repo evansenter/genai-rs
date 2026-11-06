@@ -124,6 +124,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FileSearchResultItem`, `ReviewSnippet` and `StepError` have a public
   `extra` map for unmodeled fields, like `Place`. As on the unions, an
   entry named after a modeled field is never serialized.
+- `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
+  ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
+  Since 2026-10-01 the API returns each MCP call as an answered
+  `function_call` named `<server>:<tool>`, where `<server>` is the name the
+  request gave `McpServerConfig` (verified live 2026-11-04 on
+  `gemini-3.8-flash`, streamed and not). A client function may also contain
+  a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
+  only when its result is in the same response. `is_error` is `Some(true)`
+  when either the result step's `is_error` or the result object's own
+  `is_error` key is `true`: on failed calls the API leaves the step's flag
+  `false` (verified live 2026-11-04). The result object holds `result`,
+  `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
+  and `is_error: true` on failure or `structured_content` on success. The
+  spec-only `mcp_server_tool_call` / `mcp_server_tool_result` pair is read
+  too (#459).
+- `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
+  `ReviewSnippet` and `StepError` have a public `extra` map for unmodeled
+  fields, like `Place`. As on the unions, an
+  entry named after a modeled field is never serialized.
+- `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
+  send a request field the crate doesn't model yet, flat beside the modeled
+  ones, as `TriggerCreateParams::extra` already allowed. A repeated key
+  replaces its value, as with `add_label`. The server validates the field
+  like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
+  that names a modeled field overrides it, since the API keeps the last of a
+  repeated key (both verified live 2026-11-04). A stored
+  `Trigger::interaction` now keeps the interaction fields the crate doesn't
+  model, such as `object: "interaction"`, which the API accepts back on
+  create (verified live 2026-11-04).
+- `InteractionStatus::Queued` (`"queued"`), from the google-genai 2.34.0
+  bindings, where the interaction, the stream's interaction and its status
+  updates all list it (#501). It used to read as `Unknown`. Not observed
+  live: on 2026-11-05 background agent and model interactions reported
+  `in_progress` from their create response on.
+- `InteractionResponse` models the request fields a stored interaction
+  serves, which used to land in `extra`: `generation_config`,
+  `response_format`, `response_modalities` and `safety_settings` (a stored
+  read carries all four, and the create response echoes
+  `safety_settings`), and on an agent interaction `agent_config` and
+  `environment` (the create response and the stored read echo
+  `agent_config`, the stored read `environment`; all verified live
+  2026-11-05). `generation_config.speech_config` reads the
+  `{"speakers": [...]}` form the read serves into the same list as the
+  request's form. With `get_with_input` every list in them repeats each
+  entry (live 2026-11-04 and 2026-11-05); the crate keeps what is served.
+- `GenerationConfig::extra` keeps the generation-config fields the crate
+  does not model, from a stored read or a deserialized config, and sends
+  them flat beside the modeled ones.
+- `InteractionBuilder::continue_decode(&response)` continues a decode that
+  stopped early without resending the input: it sets the response's model,
+  its id as the previous interaction and its `continuation_token`. The API
+  continues a stored interaction from those alone, and with no
+  `max_output_tokens` the continuation ran to the end (verified live
+  2026-11-05 on `CONTINUATION_MODEL`). `build()` names the problem when the
+  response has no token, or no id (a `store: false` interaction, whose
+  continuation must resend its input with `with_continuation_token`) (#489).
+- `ClientBuilder::with_api_version(version)` replaces the `v1beta` path
+  segment of every URL; `"v1"` selects the stable endpoint (#489). Measured
+  live 2026-11-05: `/v1` serves interactions with the same protocol as
+  `/v1beta` (create, get, delete, cancel, streaming, and decoding
+  continuation, which the v1 spec leaves out), the Files API (uploads
+  included, under `/upload/v1`) and the File Search Store API, and answers
+  404 for agents, environments, webhooks, credentials, voices and triggers.
+  An interaction created on one version reads on the other. `v1beta` stays the default, since only it has every
+  resource.
+- `CodeMenderConfig`, with `CodeMenderFindRequest`, `CodeMenderFixRequest`,
+  `CodeMenderFile` and `CodeMenderMode`, builds the CodeMender agent config
+  of the google-genai 2.34.0 bindings (`agent_config.type: "code-mender"`:
+  a find or fix request over source files, a model, a session id and
+  `session_config.max_rounds`) (#501). It is Vertex-only: the Gemini API
+  answers `400 The value 'code-mender' is not supported for
+  'agent_config.type' on the Gemini API, it is allowed on the Gemini
+  Enterprise Agent Platform` (live 2026-11-05), so it is modeled and
+  documented per D-005 but not exercised live.
 
 ### Changed
 
@@ -319,6 +393,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still kept as `StepDelta::Unknown`. Well-formed API responses are
   unaffected. Migration: none, unless you
   relied on the lenient reading.
+- **Breaking: `Tool::Function`'s `description` is an `Option<String>` and
+  its `parameters` an `Option<FunctionParameters>`.** The bindings make
+  both optional, the API accepts a function tool with only a `name`, and a
+  stored interaction read back serves it that way (verified live
+  2026-11-05). Migration: wrap the values in `Some(..)` where you build a
+  `Tool::Function` by hand, and match `description: Some(d)` /
+  `parameters: Some(p)` where you read one. `FunctionDeclaration::into_tool`
+  sets both, so the builder path sends what it sent before.
+- **Breaking: response fields the API never serves are removed.** Each was
+  modeled from an older spec, is in neither the google-genai 2.34.0
+  bindings nor the spec, and was checked live on 2026-11-05:
+  - `GoogleSearchResultItem` keeps only `search_suggestions`: `title`,
+    `url`, `rendered_content` and `has_rendered_content()` are gone, and
+    `GoogleSearchResultItem::new` takes the suggestions payload instead of a
+    title and URL. Search result items carry only `search_suggestions`.
+  - `Place` keeps `name`, `place_id`, `url` and `review_snippets`:
+    `formatted_address`, `lat`, `lng`, `types`, `rating`,
+    `user_ratings_total`, `website` and `phone_number` are gone (30 places
+    across three Maps results carried only the first three). `Place` is now
+    `Eq`.
+  - `FileSearchResultItem` and `InteractionResponse::file_search_results()`
+    are gone, and `Step::FileSearchResult` has no `result`: the step
+    carries only `call_id` and `signature`, stored and streamed (#429).
+    `StepDelta::FileSearchResult::result` is a `Vec<serde_json::Value>`,
+    the opaque objects the spec gives the delta; the stream accumulator
+    keeps any it receives in the step's `extra` under `result`.
+
+  Migration: a removed key that ever arrives lands in the type's `extra`,
+  so read it there (`item.extra.get("title")`). For file search, read the
+  `file_citation` annotations on the answer (`all_annotations()`);
+  `has_file_search_results()` still says whether a search ran.
+- **Breaking: `GenerationConfig` has a new public field, `extra`.**
+  Migration: a struct literal needs `extra: Default::default()`, or
+  `..Default::default()`.
+- **Breaking: `generation_config`, `response_format`,
+  `response_modalities`, `safety_settings`, `agent_config` and
+  `environment` no longer land in `InteractionResponse::extra`.**
+  Migration: read the new fields (`response.safety_settings` instead of
+  `response.extra["safety_settings"]`). The environment echo's `env`, a
+  list of single-key maps on the wire, serializes back as the map a request
+  sends.
+- **Breaking: `StreamChunk::StepDelta` has a new field, `total_usage`.**
+  It carries the `step.delta` event's `metadata.total_usage`, which the
+  google-genai 2.34.0 bindings and the spec define and the crate dropped.
+  Not observed live: text, TTS and agent streams sent no `metadata` on a
+  `step.delta` (2026-11-05). When it arrives it also serves as the usage
+  of a `Completed` event that carries none, like a `step.stop`'s. The
+  serialized chunk writes it as `data.total_usage`. Migration: add `..` to
+  a pattern that lists every field (`StreamChunk::StepDelta { index, delta,
+  .. }`), and `total_usage: None` to a hand-built chunk.
+- **Breaking: `InteractionRequest::input` is an `Option<InteractionInput>`,
+  and `InteractionInput` no longer implements `Default`.** The bindings make
+  `input` optional, and a decoding continuation of a stored interaction
+  sends none (#489). `None` is left out of the body. A deserialized
+  `InteractionRequest` without `input` now reads as `None` instead of
+  failing; a `TriggerCreateParams` config file still fails on a missing (or
+  misspelled `inputs`) input, since a trigger never fires a continuation,
+  and a malformed `input` value is still a parse error. A stored trigger's
+  interaction without an input, or with one that does not parse, reads as
+  `None` where it read as empty text. `build()` still requires input, except for
+  a continuation. Migration: write `input: Some(InteractionInput::Text(..))`
+  in a struct literal, match `Some(InteractionInput::Steps(..))` where you
+  read it, and replace `InteractionInput::default()` with the input you
+  mean (or `None`).
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
@@ -377,6 +515,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without bound. The largest real events, measured live 2026-11-04 on
   `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
   and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
+- `Interactions::get_with_input` docs no longer say the input is not
+  echoed. With `include_input=true` the API returns the input as a list
+  holding one `user_input` step, and on that read it repeats every entry of
+  the stored request's lists (`stop_sequences`, `response_modalities`,
+  `safety_settings`, speech speakers; verified live 2026-11-04).
+- `docs/ENUM_WIRE_FORMATS.md` no longer says reads echo no
+  `generation_config`. A stored interaction read back carries it, with
+  `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
+  and `response_format`, `response_modalities` and `safety_settings` too
+  (verified live 2026-11-04); see Added for the fields that model them.
+- A stream ends at its first terminal event (`Completed` or `Error`) and
+  reads nothing after it. A late error, such as a reset while the server
+  closes, no longer follows a finished interaction or fails a finished
+  auto-function round. The API sends only `event: done` / `data: [DONE]`
+  after `interaction.completed` (verified live 2026-11-04).
+- A `file_search` tool with no store names no longer writes
+  `"file_search_store_names": []`; the key is left out, as for the other
+  optional lists.
 
 ### Fixed
 
@@ -445,6 +601,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including every chunk of a merged thought summary.
 - `StepDelta::CodeExecutionCall` no longer serializes an absent `language`
   or `code` as `null`.
+- A string enum that read a non-string wire value (a number, an object,
+  `null`) into `Unknown` now serializes that value back unchanged. It used
+  to write the `"<non-string: ...>"` descriptor its `Unknown` carries, so
+  the one case did not round-trip. This covers every enum built on the
+  crate's string-enum pattern, such as `InteractionStatus`, `ServiceTier`
+  and `HarmCategory`. A hand-built `Unknown` still serializes its type
+  string.
+- A tool that leaves out a field the bindings make optional reads as that
+  tool instead of `Tool::Unknown`: a `function` with no `description` or
+  `parameters` (a stored interaction serves one sent with only a `name`
+  that way, live 2026-11-05), a `computer_use` with no `environment`, an
+  `mcp_server` with no `name` or `url`, and a `file_search` with no store
+  names. Each serializes back without the missing key.
+- `FunctionParameters` keeps every JSON Schema keyword it does not model
+  (`additionalProperties`, `$defs`, ...) and writes it back; it used to
+  drop them. It also reads a schema with no `type` or `properties`
+  (`{"type": "object"}` for a function without arguments), which made the
+  whole tool `Unknown`. `FunctionParameters::extra()` returns the kept
+  keywords.
+- A per-modality usage entry (`ModalityTokens`) without a `tokens` count
+  reads as 0 (protobuf JSON leaves out a zero), and one without a
+  `modality` as an empty one. Either used to fail the whole response.
+- Streaming: the assembled `Completed` response keeps media deltas apart
+  by what they are. Streamed TTS sends one recording as hundreds of raw PCM
+  deltas in one step, each naming the same format (live 2026-11-05,
+  `DEFAULT_TTS_MODEL`: `audio/l16`, 24000 Hz, mono), so an audio delta
+  continues the last audio block unless it names a `uri` or a different
+  `mime_type`, `sample_rate` or `channels`; before, every audio delta joined
+  the last audio block whatever its format. A video or document delta now
+  follows the image rule: one that names a `mime_type` or `uri` starts a
+  block, so two whole files in one step no longer merge into one corrupt
+  string (no model streams either to observe, 2026-11-05). A base64 chunk
+  that ends in padding is joined to the next as bytes, so the result stays
+  valid base64; no live chunk has carried padding.
+- `VideoMetadata` keeps the keys it does not model in a new `extra` map,
+  as the other response types do; it used to drop them. The bindings type
+  it `dict[str, Any]`, and the API serves `videoDuration` (live
+  2026-11-05).
+- An environment's network read back as `{"allowlist": [{"mode":
+  "disabled"}]}`, the echo of `{"allowlist": "disabled"}`, parsed as an
+  allowlist entry with an empty domain. Both forms now read as the new
+  `NetworkConfig::AllowlistDisabled`, which sends `{"allowlist":
+  "disabled"}` (the bindings' `Disabled` arm of the allowlist). It blocks
+  egress exactly as `NetworkConfig::Disabled` does (live 2026-11-05: an
+  agent's `curl` in either sandbox got the egress proxy's 403, and 200 in
+  one with no network config), and `NetworkConfig::is_disabled()` is true
+  for both (#489).
 
 ## [0.13.0] - 2026-11-03
 

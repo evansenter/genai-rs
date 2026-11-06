@@ -80,7 +80,7 @@ fn test_interaction_input_single_content_object() {
 fn request_input_json(input: InteractionInput) -> serde_json::Value {
     let request = InteractionRequest {
         model: Some("test-model".into()),
-        input,
+        input: Some(input),
         ..Default::default()
     };
     serde_json::to_value(&request).unwrap()["input"].clone()
@@ -150,13 +150,13 @@ fn test_wrap_does_not_touch_text_or_steps_input() {
 fn test_request_content_input_round_trips_as_a_user_input_step() {
     let request = InteractionRequest {
         model: Some("test-model".into()),
-        input: InteractionInput::Content(vec![Content::text("hi")]),
+        input: Some(InteractionInput::Content(vec![Content::text("hi")])),
         ..Default::default()
     };
     let json = serde_json::to_string(&request).unwrap();
     let back: InteractionRequest = serde_json::from_str(&json).unwrap();
 
-    match &back.input {
+    match back.input.as_ref().expect("input") {
         InteractionInput::Steps(steps) => {
             assert_eq!(steps.len(), 1, "one wrapping step, got {steps:?}");
             assert_eq!(
