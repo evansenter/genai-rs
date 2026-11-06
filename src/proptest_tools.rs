@@ -42,7 +42,11 @@ pub(super) fn arb_allowed_tools() -> impl Strategy<Value = AllowedTools> {
         proptest::option::of(arb_function_calling_mode()),
         prop::collection::vec(arb_identifier(), 0..3),
     )
-        .prop_map(|(mode, tools)| AllowedTools { mode, tools })
+        .prop_map(|(mode, tools)| AllowedTools {
+            mode,
+            tools,
+            ..Default::default()
+        })
 }
 
 pub(crate) fn arb_tool_choice() -> impl Strategy<Value = ToolChoice> {
@@ -423,6 +427,7 @@ fn recorded_seed_allowed_tools_with_unknown_mode_roundtrips() {
             data: serde_json::Value::String("zz_0".to_string()),
         }),
         tools: vec![],
+        ..Default::default()
     };
     let json = serde_json::to_string(&allowed).expect("Serialization should succeed");
     let restored: AllowedTools =

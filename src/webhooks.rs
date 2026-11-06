@@ -421,6 +421,11 @@ pub struct WebhookConfig {
     /// User metadata returned on each event emission to the webhooks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_metadata: Option<serde_json::Value>,
+    /// Fields this crate does not model, kept from a deserialized config (such
+    /// as the one a stored interaction serves) and sent flat beside the modeled
+    /// ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl WebhookConfig {

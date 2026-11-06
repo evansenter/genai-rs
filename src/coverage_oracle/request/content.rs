@@ -411,6 +411,7 @@ pub(super) fn tools() -> Vec<Tool> {
             allowed_tools: Some(vec![AllowedTools {
                 mode: Some(FunctionCallingMode::Validated),
                 tools: vec!["t".into()],
+                ..Default::default()
             }]),
             headers: Some(HashMap::from([("Authorization".into(), "Bearer x".into())])),
         },

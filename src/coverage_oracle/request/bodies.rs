@@ -56,20 +56,24 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
         tool_choice: Some(ToolChoice::AllowedTools(AllowedTools {
             mode: Some(FunctionCallingMode::Any),
             tools: vec!["get_weather".into()],
+            ..Default::default()
         })),
         speech_config: Some(vec![SpeechConfig {
             voice: Some("Kore".into()),
             language: Some("en-US".into()),
             speaker: Some("Joe".into()),
+            ..Default::default()
         }]),
         // The caller's keys, not the crate's (see `cases`).
         extra: serde_json::Map::new(),
         image_config: Some(ImageConfig {
             aspect_ratio: Some(ImageAspectRatio::Square),
             image_size: Some(ImageSize::Hd1k),
+            ..Default::default()
         }),
         video_config: Some(VideoConfig {
             task: Some(VideoTask::TextToVideo),
+            ..Default::default()
         }),
         transcription_config: Some(TranscriptionConfig {
             adaptation_phrases: Some(vec!["genai".into()]),
@@ -81,6 +85,7 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
                 diarization_mode: Some("speaker".into()),
                 timestamp_granularities: Some(vec!["word".into()]),
             }),
+            ..Default::default()
         }),
     };
     let mut modes = full.clone();
@@ -97,6 +102,7 @@ pub(super) fn safety_settings() -> Vec<SafetySetting> {
         category: HarmCategory::Harassment,
         threshold: SafetyThreshold::BlockOnlyHigh,
         method: Some(SafetyMethod::Probability),
+        extra: serde_json::Map::new(),
     }]
 }
 
@@ -237,6 +243,7 @@ pub(super) fn webhook_config() -> WebhookConfig {
     WebhookConfig {
         uris: Some(vec!["https://example.com/hook".into()]),
         user_metadata: Some(json!({"k": "v"})),
+        ..Default::default()
     }
 }
 

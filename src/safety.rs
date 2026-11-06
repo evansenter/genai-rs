@@ -127,16 +127,22 @@ pub struct SafetySetting {
     /// the probability score.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<SafetyMethod>,
+    /// Fields this crate does not model, kept from a deserialized setting (such
+    /// as one a stored interaction serves) and sent flat beside the modeled
+    /// ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl SafetySetting {
     /// Creates a safety setting for `category` at `threshold`.
     #[must_use]
-    pub const fn new(category: HarmCategory, threshold: SafetyThreshold) -> Self {
+    pub fn new(category: HarmCategory, threshold: SafetyThreshold) -> Self {
         Self {
             category,
             threshold,
             method: None,
+            extra: serde_json::Map::new(),
         }
     }
 

@@ -1258,3 +1258,75 @@ fn stored_read_request_config_is_modeled() {
     assert_eq!(back["agent_config"]["type"], "antigravity");
     assert_eq!(back["environment"], "835e59966a2fa3c2d4541ce46ebc26d6");
 }
+
+/// The request config a stored interaction serves back keeps a field the
+/// crate does not model, at every level, and writes it back (D-001): the
+/// generation config's own `extra` already did, but its speech, image,
+/// video and transcription configs, a `tool_choice` restriction, a safety
+/// setting and the webhook config dropped theirs until #504's follow-ups.
+#[test]
+fn stored_request_config_keeps_unmodeled_nested_fields() {
+    let served = serde_json::json!({
+        "id": "i4",
+        "status": "completed",
+        "generation_config": {
+            "speech_config": [{"voice": "Kore", "future_voice_knob": 1}],
+            "image_config": {"aspect_ratio": "1:1", "future_image_knob": "x"},
+            "video_config": {"task": "text_to_video", "future_video_knob": true},
+            "transcription_config": {"language_codes": ["en-US"], "future_transcription_knob": [1]},
+            "tool_choice": {"allowed_tools": {"mode": "any", "tools": ["f"], "future_choice_knob": 2}}
+        },
+        "safety_settings": [{"type": "hate_speech", "threshold": "block_only_high", "future_safety_knob": 3}],
+        "webhook_config": {"uris": ["https://example.com/hook"], "future_webhook_knob": {"a": 1}}
+    });
+    let response: InteractionResponse = serde_json::from_value(served.clone()).unwrap();
+
+    let config = response.generation_config.as_ref().unwrap();
+    assert!(config.extra.is_empty(), "{:?}", config.extra);
+    let speech = &config.speech_config.as_ref().unwrap()[0];
+    assert_eq!(speech.extra["future_voice_knob"], 1);
+    assert_eq!(
+        config.image_config.as_ref().unwrap().extra["future_image_knob"],
+        "x"
+    );
+    assert_eq!(
+        config.video_config.as_ref().unwrap().extra["future_video_knob"],
+        true
+    );
+    assert_eq!(
+        config.transcription_config.as_ref().unwrap().extra["future_transcription_knob"],
+        serde_json::json!([1])
+    );
+    let Some(crate::ToolChoice::AllowedTools(allowed)) = &config.tool_choice else {
+        panic!(
+            "expected an allowed_tools restriction: {:?}",
+            config.tool_choice
+        );
+    };
+    assert_eq!(allowed.extra["future_choice_knob"], 2);
+    assert_eq!(
+        response.safety_settings.as_ref().unwrap()[0].extra["future_safety_knob"],
+        3
+    );
+    assert_eq!(
+        response.webhook_config.as_ref().unwrap().extra["future_webhook_knob"],
+        serde_json::json!({"a": 1})
+    );
+
+    let back = serde_json::to_value(&response).unwrap();
+    for pointer in [
+        "/generation_config/speech_config/0/future_voice_knob",
+        "/generation_config/image_config/future_image_knob",
+        "/generation_config/video_config/future_video_knob",
+        "/generation_config/transcription_config/future_transcription_knob",
+        "/generation_config/tool_choice/allowed_tools/future_choice_knob",
+        "/safety_settings/0/future_safety_knob",
+        "/webhook_config/future_webhook_knob",
+    ] {
+        assert_eq!(
+            back.pointer(pointer),
+            served.pointer(pointer),
+            "{pointer} did not round-trip"
+        );
+    }
+}

@@ -249,6 +249,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
   `extra` map cannot be built in a const context. Migration: call it at
   runtime.
+- **Breaking: the request configs a stored interaction serves back have a
+  new `extra` field**: `SpeechConfig`, `ImageConfig`, `VideoConfig`,
+  `TranscriptionConfig`, `AllowedTools`, `SafetySetting` and
+  `WebhookConfig`. It keeps the fields the crate does not model, from a
+  response's `generation_config`, `safety_settings` and `webhook_config` or
+  any other deserialized config, and sends them flat beside the modeled
+  ones, as `GenerationConfig::extra` already did; a round trip used to drop
+  them. `SafetySetting::new` is no longer a `const fn`. Migration: in a
+  struct literal, add `..Default::default()` (`extra:
+  serde_json::Map::new()` for `SafetySetting`, which has no `Default`), or
+  use the constructors (`SpeechConfig::for_speaker`, `AllowedTools::new`,
+  `SafetySetting::new`, `VideoConfig::new`, `WebhookConfig::new`).
 - **Breaking: a known step, delta, content block or annotation whose
   modeled field is malformed now deserializes as `Unknown`.** `Unknown`
   keeps the whole object. Examples: a non-object `arguments`, a non-string
