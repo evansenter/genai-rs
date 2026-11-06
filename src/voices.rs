@@ -75,6 +75,10 @@ pub struct VoiceAudio {
     pub data: String,
     /// MIME type, e.g. `audio/wav`.
     pub mime_type: String,
+    /// Fields the API sent that this struct does not model, kept so a
+    /// deserialize/serialize round trip preserves them (Evergreen).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl VoiceAudio {
@@ -84,6 +88,7 @@ impl VoiceAudio {
         Self {
             data: data.into(),
             mime_type: mime_type.into(),
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -687,6 +692,17 @@ impl ListVoices<'_> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An audio-payload field the crate does not model survives a round
+    /// trip (D-001).
+    #[test]
+    fn voice_audio_keeps_unmodeled_fields() {
+        let wire = json!({"data": "c3Jj", "mime_type": "audio/wav", "duration": "3s"});
+        let audio: VoiceAudio = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(audio.extra["duration"], "3s");
+        assert_eq!(serde_json::to_value(&audio).unwrap(), wire);
+        assert!(VoiceAudio::new("c3Jj", "audio/wav").extra.is_empty());
+    }
 
     /// Captured from a live `GET /v1beta/voices` (2026-09-24).
     #[test]

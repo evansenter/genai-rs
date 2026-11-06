@@ -1,9 +1,16 @@
-//! Guards the `#[non_exhaustive]` convention for response structs.
+//! Guards the `#[non_exhaustive]` and `extra` conventions for response
+//! structs.
 //!
 //! Every public, deserializable struct in `src/` outside test-only code must
 //! carry `#[non_exhaustive]`, so the crate can add fields the API grows
 //! without a breaking change (#430 found five that had drifted). Request-side
 //! types, which callers build to send, are exempt by name in `REQUEST_SIDE`.
+//!
+//! The same structs keep the fields they do not model in a
+//! `#[serde(flatten)] extra` map (D-001), so a field the API adds survives a
+//! deserialize/serialize round trip instead of being dropped. Types the
+//! crate makes itself, which never come off the wire, are exempt with a
+//! reason in `CRATE_MADE`.
 //!
 //! The source is parsed with `syn`, so attributes and `cfg` gates are read as
 //! syntax: wrapped derives, multi-line gates and braces inside string
@@ -65,6 +72,34 @@ const REQUEST_SIDE: &[&str] = &[
     "src/webhooks.rs:WebhookConfig",
 ];
 
+/// Deserializable structs with no `extra` map, because the crate makes them
+/// itself: no API response carries them, so there is no unmodeled field to
+/// keep. Keyed like `REQUEST_SIDE`, each with its reason.
+const CRATE_MADE: &[(&str, &str)] = &[
+    (
+        "src/response/views.rs:OwnedFunctionCallInfo",
+        "an owned copy of a function call the crate already parsed",
+    ),
+    (
+        "src/streaming.rs:FunctionExecutionResult",
+        "a record of a function the auto-function loop ran",
+    ),
+    (
+        "src/streaming.rs:AutoFunctionResult",
+        "the auto-function loop's result; its response keeps its own extra",
+    ),
+    (
+        "src/streaming.rs:AutoFunctionStreamEvent",
+        "the crate's envelope around an auto-function chunk; the wire's \
+         unmodeled fields live in the chunk's response and steps",
+    ),
+    (
+        "src/wire_streaming/mod.rs:StreamEvent",
+        "the crate's `{chunk_type, data, event_id}` envelope, made from the \
+         wire event after parsing; the chunk inside keeps the unmodeled fields",
+    ),
+];
+
 /// Test-only modules declared out of line; finding them proves the gate
 /// detection works, since otherwise test files would be scanned as API.
 const EXPECTED_TEST_MODULES: &[&str] = &[
@@ -80,8 +115,9 @@ const EXPECTED_TEST_MODULES: &[&str] = &[
     "src/request_builder/tests",
 ];
 
-#[test]
-fn response_structs_are_non_exhaustive() {
+/// `(repo-relative path, text)` of every `.rs` file in `src/` outside
+/// `src/antigravity/`.
+fn sources() -> Vec<(String, String)> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let root = manifest.join("src");
     // A root that cannot be read must not read as a tree that is clean.
@@ -104,8 +140,12 @@ fn response_structs_are_non_exhaustive() {
         .filter(|(rel, _)| !rel.starts_with("src/antigravity/"))
         .collect();
     assert!(!sources.is_empty(), "no .rs files under {}", root.display());
+    sources
+}
 
-    let report = analyze(&sources, REQUEST_SIDE);
+#[test]
+fn response_structs_are_non_exhaustive() {
+    let report = analyze(&sources(), REQUEST_SIDE, &crate_made());
 
     for expected in EXPECTED_TEST_MODULES {
         assert!(
@@ -143,17 +183,62 @@ fn response_structs_are_non_exhaustive() {
     );
 }
 
+/// Every response struct keeps unmodeled fields in a flattened map (D-001):
+/// one without it drops a field the API adds on the next round trip
+/// (`WhiteSpaceConfig` did, until #504's follow-ups).
+#[test]
+fn response_structs_keep_unmodeled_fields() {
+    let crate_made = crate_made();
+    let report = analyze(&sources(), REQUEST_SIDE, &crate_made);
+
+    let stale: Vec<&str> = crate_made
+        .iter()
+        .copied()
+        .filter(|key| !report.extra_exempted.contains(*key))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "These CRATE_MADE exemptions no longer match a struct without an \
+         `extra` map:\n  {}\n\nRemove them, or update the path if the type moved.",
+        stale.join("\n  ")
+    );
+
+    assert!(
+        report.without_extra.is_empty(),
+        "These deserializable response structs have no `#[serde(flatten)] extra` \
+         map, so a field the API adds is dropped on a round trip:\n  {}\n\n\
+         Add one, as `ChunkingConfig` has (D-001). If the crate makes the type \
+         itself and it never comes off the wire, add it to CRATE_MADE in this \
+         file with the reason.",
+        report
+            .without_extra
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
+fn crate_made() -> Vec<&'static str> {
+    CRATE_MADE.iter().map(|(key, _)| *key).collect()
+}
+
 #[derive(Debug, Default)]
 struct Report {
     /// `path:Name` of each offending struct.
     offenders: BTreeSet<String>,
+    /// `path:Name` of each response struct with named fields and no
+    /// flattened `extra` map.
+    without_extra: BTreeSet<String>,
+    /// `path:Name` of each `CRATE_MADE` exemption that matched.
+    extra_exempted: BTreeSet<String>,
     /// `path:Name` of each exemption that matched a deserializable struct.
     exempted: BTreeSet<String>,
     /// Out-of-line test-only modules, as extension-less repo paths.
     test_modules: BTreeSet<String>,
 }
 
-fn analyze(sources: &[(String, String)], exemptions: &[&str]) -> Report {
+fn analyze(sources: &[(String, String)], exemptions: &[&str], crate_made: &[&str]) -> Report {
     let parsed: Vec<(&str, syn::File)> = sources
         .iter()
         .map(|(rel, text)| {
@@ -193,6 +278,7 @@ fn analyze(sources: &[(String, String)], exemptions: &[&str]) -> Report {
             path: rel,
             manual: &manual,
             exemptions,
+            crate_made,
             report: &mut report,
         };
         check.visit_file(file);
@@ -234,6 +320,20 @@ fn derives_deserialize(attrs: &[Attribute]) -> bool {
                         .iter()
                         .any(|p| p.segments.last().is_some_and(|s| s.ident == "Deserialize"))
                 })
+    })
+}
+
+/// Whether the struct keeps unmodeled fields: a field named `extra`, or one
+/// with `#[serde(flatten)]`.
+fn has_extra(fields: &syn::Fields) -> bool {
+    fields.iter().any(|field| {
+        field.ident.as_ref().is_some_and(|ident| ident == "extra")
+            || field.attrs.iter().any(|attr| {
+                attr.path().is_ident("serde")
+                    && attr
+                        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+                        .is_ok_and(|metas| metas.iter().any(|m| m.path().is_ident("flatten")))
+            })
     })
 }
 
@@ -354,6 +454,7 @@ struct StructCheck<'a> {
     path: &'a str,
     manual: &'a BTreeSet<String>,
     exemptions: &'a [&'a str],
+    crate_made: &'a [&'a str],
     report: &'a mut Report,
 }
 
@@ -368,12 +469,21 @@ impl<'ast> Visit<'ast> for StructCheck<'_> {
         let name = item.ident.to_string();
         let public = matches!(item.vis, syn::Visibility::Public(_));
         let deserializable = derives_deserialize(&item.attrs) || self.manual.contains(&name);
+        let key = format!("{}:{name}", self.path);
+        let request_side = self.exemptions.contains(&key.as_str());
         if public && deserializable && !has_non_exhaustive(&item.attrs) {
-            let key = format!("{}:{name}", self.path);
-            if self.exemptions.contains(&key.as_str()) {
-                self.report.exempted.insert(key);
+            if request_side {
+                self.report.exempted.insert(key.clone());
             } else {
-                self.report.offenders.insert(key);
+                self.report.offenders.insert(key.clone());
+            }
+        }
+        let named = matches!(item.fields, syn::Fields::Named(_));
+        if public && deserializable && named && !request_side && !has_extra(&item.fields) {
+            if self.crate_made.contains(&key.as_str()) {
+                self.report.extra_exempted.insert(key);
+            } else {
+                self.report.without_extra.insert(key);
             }
         }
         visit::visit_item_struct(self, item);
@@ -489,7 +599,7 @@ fn the_scan_detects_what_it_claims_to() {
     .map(|(p, t)| (p.to_string(), t.to_string()))
     .collect();
 
-    let report = analyze(&sources, &["src/request.rs:GenerationConfig"]);
+    let report = analyze(&sources, &["src/request.rs:GenerationConfig"], &[]);
 
     let expected_offenders: BTreeSet<String> = [
         "src/request.rs:Bare",
@@ -515,6 +625,81 @@ fn the_scan_detects_what_it_claims_to() {
             "src/helper".to_string(),
             "src/http/helpers".to_string(),
         ])
+    );
+}
+
+#[test]
+fn the_extra_scan_detects_what_it_claims_to() {
+    let types = r#"
+        #[derive(Deserialize)]
+        #[non_exhaustive]
+        pub struct Flattened {
+            pub name: Option<String>,
+            #[serde(flatten)]
+            pub extra: serde_json::Map<String, serde_json::Value>,
+        }
+
+        #[derive(Deserialize)]
+        #[non_exhaustive]
+        pub struct FlattenedUnderAnotherName {
+            #[serde(default, flatten)]
+            pub unmodeled: serde_json::Map<String, serde_json::Value>,
+        }
+
+        // A hand-written Deserialize that fills `extra` itself.
+        #[non_exhaustive]
+        pub struct ManualWithExtra {
+            pub extra: serde_json::Map<String, serde_json::Value>,
+        }
+        impl<'de> Deserialize<'de> for ManualWithExtra {}
+
+        #[derive(Deserialize, Serialize)]
+        #[non_exhaustive]
+        pub struct DropsUnknownFields {
+            #[serde(rename = "flatten")]
+            pub max_tokens: Option<u32>,
+        }
+
+        #[derive(Deserialize)]
+        pub struct RequestBody {
+            pub max_tokens: Option<u32>,
+        }
+
+        #[derive(Deserialize)]
+        #[non_exhaustive]
+        pub struct LoopRecord {
+            pub name: String,
+        }
+
+        #[derive(Deserialize)]
+        #[non_exhaustive]
+        pub struct Newtype(pub String);
+
+        #[derive(Serialize)]
+        #[non_exhaustive]
+        pub struct SerializeOnlyView {
+            pub name: String,
+        }
+
+        #[derive(Deserialize)]
+        #[non_exhaustive]
+        pub(crate) struct CrateVisible {
+            pub name: String,
+        }
+    "#;
+    let sources = vec![("src/types.rs".to_string(), types.to_string())];
+    let report = analyze(
+        &sources,
+        &["src/types.rs:RequestBody"],
+        &["src/types.rs:LoopRecord"],
+    );
+    assert_eq!(
+        report.without_extra,
+        BTreeSet::from(["src/types.rs:DropsUnknownFields".to_string()])
+    );
+    assert_eq!(
+        report.extra_exempted,
+        BTreeSet::from(["src/types.rs:LoopRecord".to_string()])
     );
 }
 

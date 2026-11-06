@@ -189,7 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chunking config of a document `FileSearchStores::upload` adds.
   `CustomMetadata` (`string`, `numeric`, `string_list`, with `StringList`
   for the last) and `ChunkingConfig::white_space(max_tokens_per_chunk,
-  max_overlap_tokens)` (with `WhiteSpaceConfig`) build them, and
+  max_overlap_tokens)` (with `WhiteSpaceConfig`, which keeps unmodeled
+  fields in `extra` like `ChunkingConfig`) build them, and
   `FileSearchDocument::custom_metadata` reads them back, in the order sent
   (verified live 2026-11-05). An upload or import whose white-space overlap
   is not smaller than its chunk fails with `GenaiError::InvalidInput` before
@@ -814,6 +815,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent's `curl` in either sandbox got the egress proxy's 403, and 200 in
   one with no network config), and `NetworkConfig::is_disabled()` is true
   for both (#489).
+- `ModalityTokens`, `GroundingToolCount`, `RotateSigningSecretResponse`,
+  `VoiceAudio` and `RankService` keep the fields they do not model in a new
+  `extra` map and write them back, as the other response types do; a
+  deserialize/serialize round trip dropped them.
 - `FileMetadata` failed to deserialize when `sizeBytes` was a JSON number
   rather than the protobuf string, so `Files::get` returned an error and a
   list page dropped the file. It now reads the number.

@@ -408,15 +408,21 @@ pub struct WhiteSpaceConfig {
     /// The most tokens two neighboring chunks share.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_overlap_tokens: Option<u32>,
+    /// Additional fields to send that this struct does not model, sent flat
+    /// beside the modeled ones; a stored document's unmodeled fields land
+    /// here too.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl WhiteSpaceConfig {
     /// Both limits.
     #[must_use]
-    pub const fn new(max_tokens_per_chunk: u32, max_overlap_tokens: u32) -> Self {
+    pub fn new(max_tokens_per_chunk: u32, max_overlap_tokens: u32) -> Self {
         Self {
             max_tokens_per_chunk: Some(max_tokens_per_chunk),
             max_overlap_tokens: Some(max_overlap_tokens),
+            extra: serde_json::Map::new(),
         }
     }
 }

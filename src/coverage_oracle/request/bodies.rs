@@ -511,6 +511,7 @@ pub(super) fn voice_requests() -> Vec<Value> {
     let audio = || VoiceAudio {
         data: "AAAA".into(),
         mime_type: "audio/wav".into(),
+        extra: serde_json::Map::new(),
     };
     vec![
         to_value(&CreateVoiceRequest {
@@ -582,6 +583,7 @@ fn document_options() -> DocumentOptions {
             white_space_config: Some(WhiteSpaceConfig {
                 max_tokens_per_chunk: Some(200),
                 max_overlap_tokens: Some(20),
+                extra: serde_json::Map::new(),
             }),
             extra: serde_json::Map::new(),
         }),

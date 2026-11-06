@@ -366,6 +366,7 @@ fn rag_store_config() -> RagStoreConfig {
                 model_name: Some("m".into()),
                 rank_service: Some(RankService {
                     model_name: Some("m".into()),
+                    extra: serde_json::Map::new(),
                 }),
             }),
         }),

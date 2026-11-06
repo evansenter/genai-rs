@@ -28,10 +28,7 @@ fn modality_tokens_new_sets_both_fields() {
 
 #[test]
 fn test_modality_tokens_serialization() {
-    let tokens = ModalityTokens {
-        modality: "text".to_string(),
-        tokens: 100,
-    };
+    let tokens = ModalityTokens::new("text", 100);
 
     let json = serde_json::to_string(&tokens).unwrap();
     assert!(json.contains("\"modality\":\"text\""));
@@ -59,14 +56,8 @@ fn test_grounding_tool_count_wire_format() {
 fn test_input_tokens_for_modality() {
     let usage = UsageMetadata {
         input_tokens_by_modality: Some(vec![
-            ModalityTokens {
-                modality: "text".to_string(),
-                tokens: 100,
-            },
-            ModalityTokens {
-                modality: "image".to_string(),
-                tokens: 500,
-            },
+            ModalityTokens::new("text", 100),
+            ModalityTokens::new("image", 500),
         ]),
         ..Default::default()
     };
@@ -102,6 +93,7 @@ fn test_has_data_with_grounding_tool_count() {
         grounding_tool_count: Some(vec![GroundingToolCount {
             tool_type: Some("retrieval".into()),
             count: Some(1),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -309,4 +301,18 @@ fn test_usage_metadata_grounding_tool_count() {
         reserialized["grounding_tool_count"][0]["type"],
         "google_search"
     );
+}
+
+/// Fields the crate does not model survive a round trip (D-001).
+#[test]
+fn modality_tokens_and_grounding_tool_count_keep_unmodeled_fields() {
+    let wire = serde_json::json!({"modality": "text", "tokens": 7, "cached": true});
+    let tokens: ModalityTokens = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(tokens.extra["cached"], true);
+    assert_eq!(serde_json::to_value(&tokens).unwrap(), wire);
+
+    let wire = serde_json::json!({"type": "google_search", "count": 2, "queries": 3});
+    let count: GroundingToolCount = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(count.extra["queries"], 3);
+    assert_eq!(serde_json::to_value(&count).unwrap(), wire);
 }

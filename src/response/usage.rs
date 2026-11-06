@@ -88,6 +88,10 @@ pub struct ModalityTokens {
     /// entry without a count reads as 0, the value protobuf JSON leaves out.
     #[serde(default, deserialize_with = "deserialize_token_count")]
     pub tokens: u32,
+    /// Fields the API sent that this struct does not model, kept so a
+    /// deserialize/serialize round trip preserves them (Evergreen).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ModalityTokens {
@@ -101,6 +105,7 @@ impl ModalityTokens {
         Self {
             modality: modality.into(),
             tokens,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -120,6 +125,10 @@ pub struct GroundingToolCount {
     /// Number of invocations of this tool.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+    /// Fields the API sent that this struct does not model, kept so a
+    /// deserialize/serialize round trip preserves them (Evergreen).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Token usage information from the Interactions API.

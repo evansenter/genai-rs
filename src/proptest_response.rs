@@ -46,7 +46,7 @@ pub(super) fn arb_modality_tokens() -> impl Strategy<Value = ModalityTokens> {
         ],
         any::<u32>(),
     )
-        .prop_map(|(modality, tokens)| ModalityTokens { modality, tokens })
+        .prop_map(|(modality, tokens)| ModalityTokens::new(modality, tokens))
 }
 
 /// Strategy for generating an optional Vec of ModalityTokens.
@@ -65,7 +65,11 @@ pub(super) fn arb_grounding_tool_count() -> impl Strategy<Value = GroundingToolC
         ]),
         proptest::option::of(any::<u32>()),
     )
-        .prop_map(|(tool_type, count)| GroundingToolCount { tool_type, count })
+        .prop_map(|(tool_type, count)| GroundingToolCount {
+            tool_type,
+            count,
+            extra: serde_json::Map::new(),
+        })
 }
 
 pub(super) fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
