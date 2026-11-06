@@ -451,6 +451,7 @@ defines what they test. Pure moves, public paths unchanged:
 |------|----|
 | `Serialize` and `Deserialize` for `AutoFunctionStreamChunk` and `AutoFunctionStreamEvent` in `src/streaming.rs`, with their round-trip tests | `src/streaming/serde_impls.rs`, `serde_impls_tests.rs` |
 | `src/proptest_tests.rs` (3,098 lines) | The root keeps the shared helpers and primitive strategies; the rest, each strategy with its properties, go to `src/proptest_content.rs`, `proptest_steps.rs`, `proptest_request.rs`, `proptest_tools.rs`, `proptest_response.rs` and `proptest_resources.rs` (declared with `#[path]`, as `proptest_unknown_fields.rs` was). The root re-exports the strategies the coverage oracle samples |
+| The regression seeds in `proptest-regressions/proptest_tests.txt` | `proptest_tools.txt`, `proptest_response.txt`, `proptest_steps.txt` and `proptest_request.txt`, each seed beside the property that recorded it: proptest replays the seed file named after a test's source file, so the seeds move with their tests |
 | The step wire-format tests in `src/content/content_tests.rs` (the tool steps that were `Content` variants before revision 2026-05-20) | `src/steps/step_serde_tests.rs` |
 | The annotation and `VideoProcessing` tests in `content_tests.rs` | `src/content/annotation_tests.rs`, `src/content/video_processing_tests.rs` |
 | The built-in tool accessor tests in `src/response/response_tests.rs` | `src/response/tool_steps_tests.rs` |

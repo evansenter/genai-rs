@@ -86,7 +86,7 @@ installs a `tracing` subscriber.
 | `src/wire/` | `WireInspector`, `LOUD_WIRE` printer and `WireFilter` (`printer.rs`), `TracingForwarder` |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
-| `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `request`, `tools`, `response`, `resources`, `unknown_fields`) |
+| `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `request`, `tools`, `response`, `resources`, `unknown_fields`). Past failures replay from `proptest-regressions/<source file>.txt`, so a property's seeds move with it |
 | `fuzz/`, `src/fuzzing.rs` | cargo-fuzz targets (own workspace and lockfile, nightly; `fuzz/README.md`) and their entry points, the `#[doc(hidden)] __fuzz` module, compiled only under `cfg(fuzzing)` and in tests (`fuzzing_tests.rs` replays past crashes) |
 
 Submodules are private; a directory's `mod.rs` re-exports its public items

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 49fdbe18baa531f822c6695388dd13c5489c41196c7e3e929f85be71fc8645cc # shrinks to ratio = Unknown { ratio_type: "zz__", data: String("zz__") }
