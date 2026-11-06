@@ -688,6 +688,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build()` used to refuse the pair, a rule left from when content went on
   the wire as a bare array; the API takes the composed form like any
   history (verified live 2026-11-06).
+- `detect_mime_type`, `FunctionDeclaration::new` and
+  `FunctionParameters::new` are `#[must_use]`, so a call that discards the
+  result warns.
 
 ### Fixed
 
