@@ -1,5 +1,6 @@
+use super::wire::workspace_announcement;
 use super::*;
-use crate::antigravity::policy;
+use crate::antigravity::{BuiltinTool, PreToolDecision, policy};
 
 #[tokio::test]
 async fn test_spawn_requires_policy_for_write_tools() {
@@ -168,17 +169,16 @@ fn test_builder_harness_config_assembly() {
     assert_eq!(config.mcp_servers[0].name.as_deref(), Some("git"));
     // Policies enable the pre-tool lifecycle hook.
     assert_eq!(config.enabled_hooks, vec![protocol::LifecycleHook::PreTool]);
-    // Custom instructions round through the `custom.part` shape.
+    // A plain string is added to the harness's prompt (Python parity),
+    // with no workspace note: the harness's prompt lists the workspaces.
     let instructions = config.system_instructions.as_ref().unwrap();
-    assert_eq!(
-        instructions.custom.as_ref().unwrap().part[0]
-            .text
-            .as_deref(),
-        Some("Be brief.")
-    );
+    assert!(instructions.custom.is_none());
+    let sections = &instructions.appended.as_ref().unwrap().appended_sections;
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0].content.as_deref(), Some("Be brief."));
     // run_command was enabled on top of the read-only set.
     let side_tools = config.harness_side_tools.as_ref().unwrap();
-    assert!(side_tools.run_command.unwrap().enabled);
+    assert!(side_tools.run_command.as_ref().unwrap().enabled);
     assert!(!side_tools.file_edit.unwrap().enabled);
 }
 
@@ -388,34 +388,34 @@ fn test_workspace_announcement_lists_roots() {
 }
 
 #[test]
-fn test_build_system_instructions_composition() {
-    // User + note: two custom parts, user text unmutated and first.
-    let si = build_system_instructions(Some("Be brief."), Some("ROOTS")).unwrap();
-    let parts = si.custom.unwrap().part;
-    assert_eq!(parts.len(), 2);
-    assert_eq!(parts[0].text.as_deref(), Some("Be brief."));
-    assert_eq!(parts[1].text.as_deref(), Some("ROOTS"));
+fn test_appended_instructions_keep_the_harness_prompt() {
+    // #493 item 1: plain text is appended, never `custom`, and needs no
+    // workspace note (the harness's own prompt lists the workspaces,
+    // verified on 0.1.23).
+    let builder = AntigravityAgent::builder()
+        .with_system_instructions("Audit it.")
+        .add_workspace("/repo");
+    let config = builder.build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    let instructions = config.system_instructions.unwrap();
+    assert!(instructions.custom.is_none(), "{instructions:?}");
+    let appended = instructions.appended.unwrap();
+    assert_eq!(appended.appended_sections.len(), 1);
+    assert_eq!(
+        appended.appended_sections[0].title.as_deref(),
+        Some("user_system_instructions")
+    );
 
-    // Note only (no user instructions): an appended section preserves
-    // the harness defaults.
-    let si = build_system_instructions(None, Some("ROOTS")).unwrap();
-    assert!(si.custom.is_none());
-    let sections = si.appended.unwrap().appended_sections;
-    assert_eq!(sections[0].title.as_deref(), Some("Workspace"));
-    assert_eq!(sections[0].content.as_deref(), Some("ROOTS"));
-
-    // User only: fully-custom single part.
-    let si = build_system_instructions(Some("Hi"), None).unwrap();
-    assert_eq!(si.custom.unwrap().part[0].text.as_deref(), Some("Hi"));
-
-    // Neither: no instructions.
-    assert!(build_system_instructions(None, None).is_none());
+    // No instructions at all: none sent, so the harness prompt is whole.
+    let config = AntigravityAgent::builder()
+        .add_workspace("/repo")
+        .build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    assert!(config.system_instructions.is_none());
 }
 
 #[test]
-fn test_builder_announces_workspace_by_default() {
+fn test_builder_announces_workspace_with_custom_instructions() {
     let builder = AntigravityAgent::builder()
-        .with_system_instructions("Audit it.")
+        .with_system_instructions(SystemInstructions::custom("Audit it."))
         .add_workspace("/repo");
     let dispatcher = ToolDispatcher::new(vec![], &[]);
     let config = builder.build_harness_config(&dispatcher);
@@ -427,7 +427,7 @@ fn test_builder_announces_workspace_by_default() {
 #[test]
 fn test_builder_workspace_announcement_opt_out() {
     let builder = AntigravityAgent::builder()
-        .with_system_instructions("Audit it.")
+        .with_system_instructions(SystemInstructions::custom("Audit it."))
         .add_workspace("/repo")
         .with_workspace_announcement(false);
     let dispatcher = ToolDispatcher::new(vec![], &[]);
@@ -441,7 +441,8 @@ fn test_builder_workspace_announcement_opt_out() {
 #[test]
 fn test_builder_no_workspace_no_announcement() {
     // No workspace → nothing to announce, instructions untouched.
-    let builder = AntigravityAgent::builder().with_system_instructions("Hi");
+    let builder =
+        AntigravityAgent::builder().with_system_instructions(SystemInstructions::custom("Hi"));
     let dispatcher = ToolDispatcher::new(vec![], &[]);
     let config = builder.build_harness_config(&dispatcher);
     let parts = config.system_instructions.unwrap().custom.unwrap().part;
@@ -490,4 +491,19 @@ async fn test_spawn_rejects_containment_without_a_workspace() {
         matches!(&err, AntigravityError::Config(m) if m.contains("needs a workspace")),
         "{err:?}"
     );
+}
+
+#[test]
+fn test_overlapping_mcp_server_names_are_found() {
+    let names = ["git", "git_admin", "github", "gi", "git_admin_x"];
+    let pairs = super::validate::overlapping_mcp_servers(names.into_iter());
+    assert_eq!(
+        pairs,
+        [
+            ("git", "git_admin"),
+            ("git", "git_admin_x"),
+            ("git_admin", "git_admin_x"),
+        ]
+    );
+    assert!(super::validate::overlapping_mcp_servers(["git", "github"].into_iter()).is_empty());
 }

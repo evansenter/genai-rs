@@ -91,7 +91,10 @@ impl AntigravityAgent {
             }
             Some(OutputPayload::ToolCall(call)) => self.process_tool_call(call, turn).await?,
             Some(OutputPayload::CallHookRequest(request)) => {
-                self.process_hook_request(request, turn).await?;
+                self.process_hook_request(*request, turn).await?;
+            }
+            Some(OutputPayload::PolicyDecisionRequest(request)) => {
+                self.process_policy_decision(request, turn).await?;
             }
             Some(OutputPayload::SessionEndResponse(_)) => {}
             Some(OutputPayload::InitializeConversationResponse(_)) => {
@@ -147,16 +150,33 @@ impl AntigravityAgent {
 
         // Completed tool actions surface once. A denied action was already
         // announced (with its `Denied` decision) at its confirmation step,
-        // so `announced_actions` dedups it here. A call the pre-tool *hook*
-        // denied has no confirmation step: the harness turns it into an
-        // error step carrying the hook's reason, which `take_hook_denial`
-        // recognizes. Anything else reaching a terminal state executed.
-        if is_terminal && let Some(action) = streaming::ToolAction::from_step(&step) {
-            let decision = match turn.take_hook_denial(&step) {
-                Some(reason) => ToolDecision::Denied { reason },
-                None => ToolDecision::Allowed,
-            };
-            turn.announce_tool_action(&step_key, action, decision, step.trajectory_id.clone());
+        // so `announced_actions` dedups it here. A call the pre-tool hook (or
+        // the auto policy's verdict) denied has no confirmation step: the
+        // harness turns it into an error step carrying the reason and no
+        // action, which `take_hook_denial` recognizes and names from what
+        // the hook was handed. Anything else reaching a terminal state
+        // executed.
+        if is_terminal {
+            if let Some(denial) = turn.take_hook_denial(&step) {
+                turn.announce_tool_action(
+                    &step_key,
+                    streaming::ToolAction::Denied {
+                        name: denial.name,
+                        args: denial.args,
+                    },
+                    ToolDecision::Denied {
+                        reason: denial.reason,
+                    },
+                    step.trajectory_id.clone(),
+                );
+            } else if let Some(action) = streaming::ToolAction::from_step(&step) {
+                turn.announce_tool_action(
+                    &step_key,
+                    action,
+                    ToolDecision::Allowed,
+                    step.trajectory_id.clone(),
+                );
+            }
         }
 
         // Structured output from the finish action.
@@ -333,8 +353,13 @@ fn classify_error_severity(http_code: Option<u32>) -> ErrorSeverity {
 /// `TARGET_USER` — the reference SDK's `receive_chunks` filter. Thinking
 /// needs only `SOURCE_MODEL`: reasoning ahead of a tool call is still the
 /// model's (the reference SDK drops it; keeping it loses nothing).
+///
+/// A step in an error state streams nothing: harness 0.1.23 puts the error
+/// text in the delta of a `SOURCE_MODEL`/`TARGET_USER` error step (a hook
+/// denial, for one), which would otherwise read as the model's answer. The
+/// error surfaces as [`AgentEvent::Error`] instead, as in the Python SDK.
 fn stream_deltas(step: &StepUpdate) -> (Option<&str>, Option<&str>) {
-    if step.source != Some(StepSource::Model) {
+    if step.source != Some(StepSource::Model) || step.state == Some(StepState::Error) {
         return (None, None);
     }
     let thinking = step.thinking_delta.as_deref().filter(|d| !d.is_empty());
@@ -360,11 +385,16 @@ fn non_blank(value: Option<&str>) -> Option<&str> {
 // Per-turn state
 // =============================================================================
 
-/// A pre-tool hook denial this client sent, awaiting the error step the
-/// harness turns it into (see [`TurnState::take_hook_denial`]).
+/// A denial this client sent (from its policies, pre-tool hook, or an auto
+/// policy verdict), awaiting the error step the harness turns it into (see
+/// [`TurnState::take_hook_denial`]). It keeps the call's name and arguments,
+/// which that error step does not carry.
+#[derive(Debug, Clone)]
 pub(super) struct HookDenial {
     pub(super) trajectory_id: Option<String>,
     pub(super) reason: String,
+    pub(super) name: String,
+    pub(super) args: Value,
 }
 
 pub(super) struct TurnState {
@@ -518,7 +548,7 @@ impl TurnState {
     /// — the one this client itself sent — in the same trajectory, so it is
     /// structural rather than message-sniffing: nothing the model or a tool
     /// wrote can produce it by accident.
-    fn take_hook_denial(&mut self, step: &StepUpdate) -> Option<String> {
+    fn take_hook_denial(&mut self, step: &StepUpdate) -> Option<HookDenial> {
         if step.state != Some(StepState::Error) {
             return None;
         }
@@ -528,7 +558,7 @@ impl TurnState {
                 && (denial.trajectory_id.is_none()
                     || denial.trajectory_id.as_deref() == step.trajectory_id.as_deref())
         })?;
-        Some(self.hook_denials.remove(index).reason)
+        Some(self.hook_denials.remove(index))
     }
 
     /// Whether the harness post-tool callback for `call_id` duplicates an

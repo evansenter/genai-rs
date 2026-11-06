@@ -1,40 +1,48 @@
-//! Client-side triggers: interval timers that inject
-//! [`InputEvent::AutomatedTrigger`](super::protocol::InputEvent) messages
-//! into the conversation outside a user turn.
+//! Client-side triggers: messages injected into the conversation outside a
+//! user turn, as [`InputEvent::AutomatedTrigger`](super::protocol::InputEvent).
 //!
-//! Register triggers with
-//! [`AgentBuilder::add_trigger`](super::AgentBuilder::add_trigger); the
-//! agent spawns one timer task per trigger after a successful `spawn()`,
-//! mirroring the reference SDK's `TriggerRunner` (independent tasks, no
-//! ordering guarantees, a failing trigger never crashes the session).
+//! Three kinds, mirroring the Python SDK's `triggers` module:
+//!
+//! - **Interval** ([`TriggerConfig`], the Python SDK's `every`): a fixed
+//!   message every interval, added with
+//!   [`AgentBuilder::add_trigger`](super::AgentBuilder::add_trigger).
+//! - **File change** ([`on_file_change`]): a message built from the changes
+//!   under a path.
+//! - **Custom**: any async function handed a [`TriggerContext`], added with
+//!   [`AgentBuilder::add_custom_trigger`](super::AgentBuilder::add_custom_trigger),
+//!   that calls [`TriggerContext::send`] when it wants the agent to act — on
+//!   a queue message, a webhook, a cron schedule.
+//!
+//! Each runs as a task of its own after a successful `spawn()`, as in the
+//! Python SDK's `TriggerRunner`: no ordering between them, and one that
+//! fails or returns never takes the session down.
 //!
 //! # Delivery semantics
 //!
-//! - The first firing happens after the first `interval` elapses (not
-//!   immediately) — same as the reference SDK's `every()` helper.
-//! - A firing is **delivered only while the agent is idle** (no turn is
-//!   currently being driven by `chat`/`send_streaming`). If a firing comes
-//!   due while a turn is in flight, delivery is *deferred* until the agent
-//!   becomes idle again. The reference SDK's `TriggerDelivery` enum names
-//!   this mode `WAIT_IDLE` (its default `send_immediately` mode does not
-//!   suit this crate's sequential turn loop, where nothing reads the
-//!   WebSocket between turns of a busy agent). Delivery is serialized
-//!   with `chat`/`send_streaming`'s turn begin through a shared lock, so
-//!   a trigger can never slip its message into a turn that begins
-//!   concurrently with the idle check.
-//! - **Overlap suppression**: intervals missed while busy collapse into a
-//!   single delivery — the timer restarts only after the deferred delivery
-//!   lands, so a long turn produces one trigger message, not a backlog.
-//! - Idleness is tracked client-side. A trigger delivered while idle starts
-//!   a harness-side turn that runs unobserved: **its output is not
-//!   surfaced** (no consumer reads the WebSocket between client-driven
-//!   turns). The next `chat`/`send_streaming` call halts that turn if it is
-//!   still running and discards its events before sending the new input, so
-//!   trigger turns can never desync or leak into a user turn's response.
+//! - The interval trigger's first firing happens after the first `interval`
+//!   elapses (not immediately) — same as the reference SDK's `every()`.
+//! - A message is **delivered only while the agent is idle** (no turn is
+//!   being driven by `chat`/`send_streaming`). [`TriggerContext::send`]
+//!   waits for the current turn to end. The reference SDK's
+//!   `TriggerDelivery` names this mode `WAIT_IDLE` (its default
+//!   `send_immediately` mode does not suit this crate's sequential turn
+//!   loop, where nothing reads the WebSocket between turns of a busy
+//!   agent). Delivery is serialized with `chat`/`send_streaming`'s turn
+//!   begin through a shared lock, so a trigger can never slip its message
+//!   into a turn that begins concurrently with the idle check.
+//! - **Overlap suppression**: interval firings missed while busy collapse
+//!   into a single delivery — the timer restarts only after the deferred
+//!   delivery lands, so a long turn produces one trigger message, not a
+//!   backlog. The file watcher does the same: changes made during a turn
+//!   arrive as one batch.
+//! - A delivered message starts a harness-side turn. Its output is
+//!   surfaced only if you consume it with
+//!   [`AntigravityAgent::next_trigger_turn`](super::AntigravityAgent::next_trigger_turn).
+//!   Otherwise the next `chat`/`send_streaming` call halts that turn if it
+//!   is still running and discards its events before sending the new input,
+//!   so trigger turns can never desync or leak into a user turn's response.
 //!   The trigger's effects on conversation history (and any tool calls the
-//!   harness completed before the halt) persist. Surfacing trigger-turn
-//!   output through a dedicated consumer is a follow-up (see
-//!   `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
+//!   harness completed before the halt) persist.
 //!
 //! # Lifecycle
 //!
@@ -46,16 +54,23 @@
 //! - a failed send (session gone) or a closed idle channel (agent dropped)
 //!   ends the task on its own.
 
+use std::collections::BTreeMap;
 use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::AntigravityError;
 
-/// Configuration for a recurring client-side trigger.
+/// A boxed, sendable future.
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// Configuration for a recurring client-side trigger (the Python SDK's
+/// `every`).
 ///
 /// Register with [`AgentBuilder::add_trigger`](super::AgentBuilder::add_trigger).
 /// See the [module docs](self) for delivery semantics.
@@ -79,6 +94,96 @@ impl TriggerConfig {
         }
     }
 }
+
+/// Delivers one trigger message to the harness.
+pub(crate) type Deliver =
+    Arc<dyn Fn(String) -> BoxFuture<Result<(), AntigravityError>> + Send + Sync>;
+
+/// What a trigger is handed: the way to send the agent a message (the
+/// Python SDK's `TriggerContext`). Cheap to clone.
+#[derive(Clone)]
+pub struct TriggerContext {
+    idle: watch::Receiver<bool>,
+    turn_sync: Arc<tokio::sync::Mutex<()>>,
+    deliver: Deliver,
+}
+
+impl std::fmt::Debug for TriggerContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TriggerContext")
+            .field("idle", &*self.idle.borrow())
+            .finish_non_exhaustive()
+    }
+}
+
+impl TriggerContext {
+    /// `idle` reports whether the agent is between turns (`true` = idle);
+    /// the sender side lives on the agent. `deliver` sends the message — in
+    /// production it wraps the session's shared sink handle (and sets the
+    /// agent's `trigger_fired` flag first), in tests a channel.
+    ///
+    /// `turn_sync` makes the delivery decision and the agent's turn begin
+    /// mutually exclusive: [`send`](Self::send) holds it across [idle
+    /// re-check → deliver], and `AntigravityAgent::begin_turn` holds the
+    /// same lock across [mark busy → consume `trigger_fired`]. Without it, a
+    /// delivery could race a starting turn — pass the idle check, lose the
+    /// race to the turn's flag swap, and land its message inside the user's
+    /// turn with nobody left to drain the trigger-initiated harness turn.
+    pub(crate) fn new(
+        idle: watch::Receiver<bool>,
+        turn_sync: Arc<tokio::sync::Mutex<()>>,
+        deliver: Deliver,
+    ) -> Self {
+        Self {
+            idle,
+            turn_sync,
+            deliver,
+        }
+    }
+
+    /// Sends `message` to the agent as an automated trigger, which starts a
+    /// turn on it. Waits while a turn is in flight (see the
+    /// [module docs](self)).
+    ///
+    /// # Errors
+    ///
+    /// [`AntigravityError::ConnectionClosed`] once the agent is shut down
+    /// or dropped, or the transport error when the send fails. A trigger
+    /// should stop on either.
+    pub async fn send(&self, message: impl Into<String>) -> Result<(), AntigravityError> {
+        let message = message.into();
+        let mut idle = self.idle.clone();
+        loop {
+            if idle.wait_for(|is_idle| *is_idle).await.is_err() {
+                return Err(AntigravityError::ConnectionClosed {
+                    message: "the agent was shut down or dropped".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            // Re-check idleness under the turn lock: a turn may have begun
+            // between the wait above and the lock acquisition — if so,
+            // defer again instead of delivering into that turn.
+            let sync = self.turn_sync.lock().await;
+            if !*idle.borrow() {
+                drop(sync);
+                continue;
+            }
+            let delivered = (self.deliver)(message.clone()).await;
+            drop(sync);
+            return delivered;
+        }
+    }
+
+    /// Whether the agent is between turns right now.
+    fn is_idle(&self) -> bool {
+        *self.idle.borrow()
+    }
+}
+
+/// A custom trigger, as added with
+/// [`AgentBuilder::add_custom_trigger`](super::AgentBuilder::add_custom_trigger).
+pub(crate) type CustomTrigger =
+    Box<dyn FnOnce(TriggerContext) -> BoxFuture<Result<(), AntigravityError>> + Send>;
 
 /// Owns the spawned trigger tasks; aborts them all on drop so a dropped or
 /// shut-down agent can never leak timer tasks.
@@ -105,58 +210,30 @@ impl Drop for TriggerTasks {
     }
 }
 
-/// Spawns the timer task for one trigger.
-///
-/// `idle` reports whether the agent is between turns (`true` = idle); the
-/// sender side lives on the agent. `send` delivers the trigger message —
-/// in production it wraps the session's shared sink handle (and sets the
-/// agent's `trigger_fired` flag before sending), in tests a channel.
-///
-/// `turn_sync` makes the fire decision and the agent's turn begin
-/// mutually exclusive: the task holds it across [idle re-check → send],
-/// and `AntigravityAgent::begin_turn` holds the same lock across [mark
-/// busy → consume `trigger_fired`]. Without it, a delivery could race a
-/// starting turn — pass the idle check, lose the race to the turn's flag
-/// swap, and land its message inside the user's turn with nobody left to
-/// drain the trigger-initiated harness turn.
+/// Spawns the timer task for one interval trigger.
 ///
 /// The task ends on its own when the idle channel closes (agent dropped)
 /// or a send fails (session closed); otherwise it runs until aborted.
 pub(crate) fn spawn_trigger_task<F, Fut>(
     config: TriggerConfig,
-    mut idle: watch::Receiver<bool>,
+    idle: watch::Receiver<bool>,
     turn_sync: Arc<tokio::sync::Mutex<()>>,
     send: F,
 ) -> JoinHandle<()>
 where
-    F: Fn(String) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<(), AntigravityError>> + Send,
+    F: Fn(String) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), AntigravityError>> + Send + 'static,
 {
+    let context = TriggerContext::new(idle, turn_sync, Arc::new(move |m| Box::pin(send(m))));
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(config.interval).await;
             // Deliver only while idle; a firing that comes due mid-turn is
             // deferred until the turn ends. Missed intervals collapse into
             // this single deferred delivery (overlap suppression).
-            loop {
-                if idle.wait_for(|is_idle| *is_idle).await.is_err() {
-                    tracing::debug!("Trigger task exiting: agent dropped");
-                    return;
-                }
-                // Re-check idleness under the turn lock (see the fn docs):
-                // a turn may have begun between the wait above and the
-                // lock acquisition — if so, defer again instead of
-                // delivering into that turn.
-                let sync = turn_sync.lock().await;
-                if !*idle.borrow() {
-                    drop(sync);
-                    continue;
-                }
-                if let Err(e) = send(config.message.clone()).await {
-                    tracing::warn!("Trigger delivery failed; stopping trigger task: {e}");
-                    return;
-                }
-                break;
+            if let Err(e) = context.send(config.message.clone()).await {
+                tracing::debug!("Interval trigger stopping: {e}");
+                return;
             }
             tracing::debug!(
                 interval = ?config.interval,
@@ -166,161 +243,212 @@ where
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::sync::mpsc;
+/// Spawns a custom trigger's task. An error it returns is logged; it ends
+/// that trigger only.
+pub(crate) fn spawn_custom_trigger(
+    trigger: CustomTrigger,
+    context: TriggerContext,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        if let Err(e) = trigger(context).await {
+            tracing::warn!("A custom trigger ended with an error: {e}");
+        }
+    })
+}
 
-    #[test]
-    fn test_trigger_config_construction() {
-        let trigger = TriggerConfig::new("check the queue", Duration::from_secs(60));
-        assert_eq!(trigger.message, "check the queue");
-        assert_eq!(trigger.interval, Duration::from_secs(60));
-    }
+// =============================================================================
+// File-change trigger
+// =============================================================================
 
-    /// Spawns a trigger task whose sends are observable through an mpsc
-    /// channel.
-    fn observable_trigger_with_sync(
-        config: TriggerConfig,
-        idle: watch::Receiver<bool>,
-        turn_sync: Arc<tokio::sync::Mutex<()>>,
-    ) -> (JoinHandle<()>, mpsc::UnboundedReceiver<String>) {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let handle = spawn_trigger_task(config, idle, turn_sync, move |message| {
-            let tx = tx.clone();
-            async move {
-                tx.send(message)
-                    .map_err(|e| AntigravityError::WebSocket(e.to_string()))
+/// What happened to a path under an [`on_file_change`] watch (the Python
+/// SDK's `FileChangeKind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FileChangeKind {
+    /// The file appeared.
+    Added,
+    /// Its contents or modification time changed.
+    Modified,
+    /// It disappeared.
+    Deleted,
+}
+
+/// One change under an [`on_file_change`] watch (the Python SDK's
+/// `FileChange`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct FileChange {
+    /// What happened.
+    pub kind: FileChangeKind,
+    /// The file's path.
+    pub path: PathBuf,
+}
+
+/// Directories a watch skips, as the Python SDK's default `watchfiles`
+/// filter does.
+const IGNORED_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".idea",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".hypothesis",
+    "__pycache__",
+    "node_modules",
+];
+
+/// A trigger that watches `path` (a file, or a directory and everything
+/// under it) and hands each batch of changes to `on_change`; a message it
+/// returns is sent to the agent (the Python SDK's `on_file_change`). Add it
+/// with
+/// [`AgentBuilder::add_custom_trigger`](super::AgentBuilder::add_custom_trigger):
+///
+/// ```rust,ignore
+/// use genai_rs::antigravity::triggers;
+/// use std::time::Duration;
+///
+/// let agent = AntigravityAgent::builder()
+///     .add_custom_trigger(triggers::on_file_change(
+///         "/repo/docs",
+///         Duration::from_secs(2),
+///         |changes| Some(format!("{} doc file(s) changed; check the links.", changes.len())),
+///     ))
+///     // ...
+///     ;
+/// ```
+///
+/// The watch polls every `poll_interval`, comparing each file's size and
+/// modification time (no OS notification API, so it works the same on every
+/// platform and adds no dependency). It skips the directories the Python
+/// SDK's `watchfiles` filter skips (`.git`, `node_modules`, `__pycache__`,
+/// virtualenvs and tool caches) and does not follow symbolic links.
+///
+/// Changes that happen while a turn runs are held until the agent is idle,
+/// then handed to `on_change` as one batch: the net change since the last
+/// batch, so a file added and deleted within the turn is not reported.
+/// `on_change` runs when the batch is about to be delivered, on the
+/// trigger's task: keep it quick.
+///
+/// Edits the agent itself makes under `path` are reported too, so a trigger
+/// turn that writes there starts the next one: filter such changes in
+/// `on_change`, or watch a path the agent does not write. (The Python SDK's
+/// `watchfiles` behaves the same way.)
+///
+/// The baseline is the state of `path` when `on_file_change` is called, so
+/// a change made during `spawn()` or just after it is reported, with no
+/// wait for the watch to start. Taking it reads the tree once, on the
+/// calling thread.
+pub fn on_file_change(
+    path: impl Into<PathBuf>,
+    poll_interval: Duration,
+    on_change: impl Fn(&[FileChange]) -> Option<String> + Send + Sync + 'static,
+) -> impl FnOnce(TriggerContext) -> BoxFuture<Result<(), AntigravityError>> + Send + 'static {
+    let path = path.into();
+    let baseline = snapshot(&path);
+    move |context: TriggerContext| {
+        Box::pin(async move {
+            // The state the last batch was reported against.
+            let mut reported = baseline;
+            loop {
+                tokio::time::sleep(poll_interval).await;
+                // Hold changes while a turn runs: the next idle poll diffs
+                // against `reported`, so they arrive merged, in one batch.
+                if !context.is_idle() {
+                    continue;
+                }
+                let now = snapshot_of(&path).await;
+                let changes = diff_snapshots(&reported, &now);
+                reported = now;
+                if changes.is_empty() {
+                    continue;
+                }
+                // A turn that begins between the idle check and here makes
+                // `send` wait for it; changes made meanwhile go in the next
+                // batch, against the snapshot just taken.
+                if let Some(message) = on_change(&changes)
+                    && let Err(e) = context.send(message).await
+                {
+                    break Err::<(), _>(e);
+                }
             }
-        });
-        (handle, rx)
-    }
-
-    fn observable_trigger(
-        config: TriggerConfig,
-        idle: watch::Receiver<bool>,
-    ) -> (JoinHandle<()>, mpsc::UnboundedReceiver<String>) {
-        observable_trigger_with_sync(config, idle, Arc::new(tokio::sync::Mutex::new(())))
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_trigger_fires_repeatedly_when_idle() {
-        let (_idle_tx, idle_rx) = watch::channel(true);
-        let (handle, mut rx) =
-            observable_trigger(TriggerConfig::new("ping", Duration::from_secs(60)), idle_rx);
-
-        // Paused-clock auto-advance: each recv drives one interval.
-        assert_eq!(rx.recv().await.as_deref(), Some("ping"));
-        assert_eq!(rx.recv().await.as_deref(), Some("ping"));
-        assert_eq!(rx.recv().await.as_deref(), Some("ping"));
-        handle.abort();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_trigger_defers_while_busy_and_collapses_missed_intervals() {
-        let (idle_tx, idle_rx) = watch::channel(false); // busy
-        let (handle, mut rx) = observable_trigger(
-            TriggerConfig::new("check", Duration::from_millis(10)),
-            idle_rx,
-        );
-
-        // Ten intervals elapse while the agent is busy: nothing delivered.
-        tokio::time::sleep(Duration::from_millis(105)).await;
-        assert!(rx.try_recv().is_err(), "must not deliver while busy");
-
-        // Turn ends: exactly one deferred delivery for all missed intervals.
-        idle_tx.send_replace(true);
-        assert_eq!(rx.recv().await.as_deref(), Some("check"));
-        // Before the next interval elapses, nothing else is queued.
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        assert!(
-            rx.try_recv().is_err(),
-            "missed intervals must collapse into one delivery"
-        );
-        handle.abort();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_trigger_defers_when_turn_begins_during_delivery_window() {
-        // TOCTOU regression test: the trigger passes its idle check, but a
-        // turn begins (takes the lock, marks busy) before the trigger can
-        // send. The trigger must re-check idleness under the lock and
-        // defer, not deliver into the freshly started turn.
-        let (idle_tx, idle_rx) = watch::channel(true);
-        let turn_sync = Arc::new(tokio::sync::Mutex::new(()));
-        let (handle, mut rx) = observable_trigger_with_sync(
-            TriggerConfig::new("check", Duration::from_millis(10)),
-            idle_rx,
-            Arc::clone(&turn_sync),
-        );
-
-        // Simulate begin_turn acquiring the lock first: the trigger's
-        // interval elapses and its idle wait passes (idle is true), but it
-        // blocks on the lock before sending.
-        let sync = turn_sync.lock().await;
-        tokio::time::sleep(Duration::from_millis(15)).await;
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
-        }
-        assert!(
-            rx.try_recv().is_err(),
-            "must not deliver while the turn lock is held"
-        );
-
-        // The turn marks the agent busy and releases the lock (as
-        // begin_turn does). The trigger acquires the lock, re-checks
-        // idleness, sees the turn, and defers.
-        idle_tx.send_replace(false);
-        drop(sync);
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
-        }
-        assert!(
-            rx.try_recv().is_err(),
-            "must re-check idleness under the lock and defer"
-        );
-
-        // Turn ends: the deferred delivery lands.
-        idle_tx.send_replace(true);
-        assert_eq!(rx.recv().await.as_deref(), Some("check"));
-        handle.abort();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_trigger_task_exits_when_idle_channel_closes() {
-        let (idle_tx, idle_rx) = watch::channel(false);
-        let (handle, _rx) =
-            observable_trigger(TriggerConfig::new("x", Duration::from_millis(1)), idle_rx);
-        // Dropping the sender (the agent) ends the task without an abort.
-        drop(idle_tx);
-        handle.await.expect("task exits cleanly, not aborted");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_trigger_task_exits_when_send_fails() {
-        let (_idle_tx, idle_rx) = watch::channel(true);
-        let handle = spawn_trigger_task(
-            TriggerConfig::new("x", Duration::from_millis(1)),
-            idle_rx,
-            Arc::new(tokio::sync::Mutex::new(())),
-            |_message| async { Err(AntigravityError::WebSocket("closed".to_string())) },
-        );
-        handle.await.expect("task exits cleanly after send failure");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_trigger_tasks_abort_on_drop() {
-        let (_idle_tx, idle_rx) = watch::channel(false); // never idle: task runs forever
-        let (handle, _rx) =
-            observable_trigger(TriggerConfig::new("x", Duration::from_secs(1)), idle_rx);
-        let abort_handle = handle.abort_handle();
-
-        let mut tasks = TriggerTasks::default();
-        tasks.push(handle);
-        drop(tasks);
-
-        while !abort_handle.is_finished() {
-            tokio::task::yield_now().await;
-        }
+        }) as BoxFuture<Result<(), AntigravityError>>
     }
 }
+
+/// A file's modification time and size.
+type Stamp = (Option<SystemTime>, u64);
+
+/// Takes a snapshot of `path` off the runtime's worker threads.
+async fn snapshot_of(path: &Path) -> BTreeMap<PathBuf, Stamp> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || snapshot(&path))
+        .await
+        .unwrap_or_default()
+}
+
+/// Every file under `path` (or `path` itself, when it is a file) with its
+/// stamp. Unreadable entries are skipped; a missing path is empty.
+pub(crate) fn snapshot(path: &Path) -> BTreeMap<PathBuf, Stamp> {
+    let mut files = BTreeMap::new();
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        let Ok(metadata) = std::fs::symlink_metadata(&next) else {
+            continue;
+        };
+        if metadata.is_file() {
+            files.insert(next, (metadata.modified().ok(), metadata.len()));
+        } else if metadata.is_dir() {
+            let skipped = next != path
+                && next
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| IGNORED_DIRS.contains(&name));
+            if skipped {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(&next) {
+                pending.extend(entries.flatten().map(|entry| entry.path()));
+            }
+        }
+    }
+    files
+}
+
+/// The changes from `before` to `after`, ordered by path.
+pub(crate) fn diff_snapshots(
+    before: &BTreeMap<PathBuf, Stamp>,
+    after: &BTreeMap<PathBuf, Stamp>,
+) -> Vec<FileChange> {
+    let mut changes: Vec<FileChange> = after
+        .iter()
+        .filter_map(|(path, stamp)| {
+            let kind = match before.get(path) {
+                None => FileChangeKind::Added,
+                Some(old) if old != stamp => FileChangeKind::Modified,
+                Some(_) => return None,
+            };
+            Some(FileChange {
+                kind,
+                path: path.clone(),
+            })
+        })
+        .chain(
+            before
+                .keys()
+                .filter(|path| !after.contains_key(*path))
+                .map(|path| FileChange {
+                    kind: FileChangeKind::Deleted,
+                    path: path.clone(),
+                }),
+        )
+        .collect();
+    changes.sort_by(|a, b| a.path.cmp(&b.path));
+    changes
+}
+
+#[cfg(test)]
+#[path = "triggers_tests.rs"]
+mod tests;

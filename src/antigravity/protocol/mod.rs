@@ -25,7 +25,9 @@ use std::collections::BTreeMap;
 
 mod config;
 mod enums;
+mod hook_messages;
 mod input;
+mod options;
 mod output;
 mod step_update;
 
@@ -37,20 +39,30 @@ pub use config::{
     SystemInstructions, Tool, ToolToggle, VertexEndpoint, Workspace,
 };
 pub use enums::{
-    AgentBehavior, HookDecision, LifecycleHook, LineAction, Modality, ModelType, StepSource,
-    StepState, StepTarget, StopReason, TrajectoryState,
+    AgentBehavior, BudgetScope, HookDecision, LifecycleHook, LineAction, Modality, ModelType,
+    PolicyEvaluationOutcome, RuleDecision, SessionContinuationMode, StepSource, StepState,
+    StepTarget, StopDecision, StopReason, TrajectoryState, WorkspaceContainment,
 };
+pub use hook_messages::{
+    CallHookRequest, CallHookResponse, EmptyResult, HookVerdict, OnCompactionArgs, OnToolErrorArgs,
+    OnToolErrorResult, PolicyDecisionRequest, PolicyDecisionResponse, PostToolArgs, PostTurnArgs,
+    PreToolArgs, PreTurnArgs, StopArgs, StopResult,
+};
+pub(crate) use hook_messages::{decode_genai_struct, encode_genai_struct, hook_tool_name};
 pub use input::{
-    CallHookResponse, EmptyResult, HookVerdict, InputEvent, Media, MultipleChoiceAnswer,
-    QuestionsResponse, SlashCommand, ToolConfirmation, ToolResponse, UserInput, UserInputPart,
-    UserQuestionAnswer, UserQuestionsResponse,
+    InputEvent, Media, MultipleChoiceAnswer, QuestionsResponse, SlashCommand, ToolConfirmation,
+    ToolResponse, UserInput, UserInputPart, UserQuestionAnswer, UserQuestionsResponse,
+};
+pub use options::{
+    AutoPolicyConfig, BudgetConfig, CompactionConfig, ModelApiRetryConfig, ModelOutputRetryConfig,
+    PolicyRule, RetryConfig, RunCommandToolConfig, Skill, SkillSource, SkillsConfig,
+    SubagentSkillsConfig, SubagentSkillsInherit, SubagentSkillsNone, SubagentSkillsOverride,
+    SubagentsConfig, ToolOutputTruncation, TruncateStrategy,
 };
 pub use output::{
-    CallHookRequest, InitializeConversationResponse, ModalityTokenCount, OutputEvent,
-    OutputPayload, PostToolArgs, PostTurnArgs, PreToolArgs, PreTurnArgs, SandboxStatus, ToolCall,
-    TrajectoryStateUpdate, TrajectoryUsageEntry, UsageMetadata,
+    InitializeConversationResponse, ModalityTokenCount, OutputEvent, OutputPayload, SandboxStatus,
+    ToolCall, TrajectoryStateUpdate, TrajectoryUsageEntry, UsageMetadata,
 };
-pub(crate) use output::{decode_genai_struct, hook_tool_name};
 pub use step_update::{
     ActionCompaction, ActionCreateFile, ActionCustomTool, ActionEditFile, ActionError,
     ActionFindFile, ActionFinish, ActionGenerateImage, ActionInvokeSubagent, ActionListDirectory,

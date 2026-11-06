@@ -4,8 +4,9 @@
 //! agent's question batches through an `on_questions` hook.
 //!
 //! Things to know:
-//! - `on_questions` runs inline on the event pump. Never block in it waiting
-//!   for a human; answer from policy or state you already collected.
+//! - `on_questions` runs on a thread of its own, bounded by the turn
+//!   deadline: a human's answer has to arrive within it, so answer from
+//!   policy or state you already collected where you can.
 //! - `ask_question` needs `AgentBehavior::Interactive`, or the model is told
 //!   nobody will answer.
 //! - `ask_question` counts as write-capable: enabling it needs a policy or an
@@ -84,8 +85,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_agent_behavior(AgentBehavior::Interactive)
         // Answer agent questions (ask_question builtin) from policy: pick
         // the first choice when there is one, otherwise leave unanswered.
-        // The hook runs inline in the event pump — never block in it
-        // waiting for a human; answer from policy or pre-collected state.
+        // The hook runs on a thread of its own, bounded by the turn
+        // deadline; answer from policy or pre-collected state.
         .on_questions(|questions| {
             QuestionReply::Answers(
                 questions

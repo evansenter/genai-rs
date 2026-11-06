@@ -72,6 +72,12 @@ fn own_process_group() -> libc::pid_t {
 ///
 /// Linux reads `/proc`; macOS asks libproc. Elsewhere the list is empty and
 /// only the harness's own group is signalled.
+///
+/// On Linux this is a synchronous scan of every `/proc/<pid>/stat`, run from
+/// the forced paths (including `Drop`, often on a tokio worker). That is
+/// quick on an ordinary host, but on one with many thousands of processes (a
+/// busy container host or CI runner) it can stall the dropping thread
+/// noticeably.
 #[cfg(target_os = "linux")]
 pub(crate) fn child_process_groups(parent: libc::pid_t) -> Vec<libc::pid_t> {
     let Ok(entries) = std::fs::read_dir("/proc") else {

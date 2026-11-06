@@ -418,6 +418,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_dropping_the_runtime_waits_for_an_abandoned_blocking_tool() {
+        // Pins the doc note on with_turn_timeout and in docs/ANTIGRAVITY.md:
+        // an abandoned blocking body keeps its worker until it returns, and
+        // dropping the runtime (the end of `#[tokio::main]`) waits for it.
+        const HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+        let (d, release, started) = blocking_dispatcher();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let call = d.execute("antigravity_blocks", json!({}));
+            // Abandon the call once its body is running, as the deadline does.
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(100), call).await;
+        });
+        started
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the tool's body never started");
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(HOLD);
+            release.send(()).unwrap();
+        });
+        let start = std::time::Instant::now();
+        drop(runtime);
+        let elapsed = start.elapsed();
+        releaser.join().unwrap();
+        assert!(
+            elapsed >= HOLD - std::time::Duration::from_millis(50),
+            "the runtime dropped in {elapsed:?} while an abandoned body still held a \
+             worker; the runtime-drop note in the docs no longer holds"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_a_blocking_tool_holds_a_single_worker_runtimes_timer() {
         // Pins what with_turn_timeout, docs/ANTIGRAVITY.md and the CHANGELOG
