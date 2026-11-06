@@ -105,6 +105,43 @@ LOG
     expect_json "steps: a step without retries is left out, a later plain log is not" \
         '[.tests_run, .flaky]' '[10,1]'
 
+    # --- A command continued over lines with backslashes, as
+    #     `gh run view --log` prints a step header: `--retries` on a later
+    #     line than `nextest run` still makes the step a retried one. The
+    #     second step splits `nextest run` and `--retries` across two
+    #     separate commands, so it is not; neither is the third, a continued
+    #     command with no retries.
+    cat > "$WORK/continued.log" <<'LOG'
+Integration	Run tests	2026-11-05T10:00:00.0000000Z ##[group]Run cargo nextest run --test voices_tests \
+Integration	Run tests	2026-11-05T10:00:00.0000001Z ^[[36;1mcargo nextest run --test voices_tests \^[[0m
+Integration	Run tests	2026-11-05T10:00:00.0000002Z ^[[36;1m  --run-ignored all \^[[0m
+Integration	Run tests	2026-11-05T10:00:00.0000003Z ^[[36;1m  --retries 2 --no-fail-fast^[[0m
+Integration	Run tests	2026-11-05T10:00:00.0000004Z shell: /usr/bin/bash -e {0}
+Integration	Run tests	2026-11-05T10:00:00.0000005Z ##[endgroup]
+Integration	Run tests	2026-11-05T10:00:01.0000000Z     Starting 3 tests across 1 binary
+Integration	Run tests	2026-11-05T10:00:02.0000000Z    FLAKY 2/3 [   0.010s] genai-rs::voices_tests test_voice_list
+Integration	Run tests	2026-11-05T10:00:03.0000000Z      Summary [   0.020s] 3 tests run: 3 passed (1 flaky), 0 skipped
+Integration	Split	2026-11-05T10:00:04.0000000Z ##[group]Run cargo nextest run --workspace
+Integration	Split	2026-11-05T10:00:04.0000001Z ^[[36;1mcargo nextest run --workspace^[[0m
+Integration	Split	2026-11-05T10:00:04.0000002Z ^[[36;1mecho "--retries 2"^[[0m
+Integration	Split	2026-11-05T10:00:04.0000003Z ##[endgroup]
+Integration	Split	2026-11-05T10:00:05.0000000Z     Starting 900 tests across 30 binaries
+Integration	Split	2026-11-05T10:00:05.5000000Z    FLAKY 2/3 [   0.010s] genai-rs::voices_tests test_split_step
+Integration	Split	2026-11-05T10:00:06.0000000Z      Summary [   9.000s] 900 tests run: 900 passed, 0 skipped
+Integration	No retries	2026-11-05T10:00:07.0000000Z ##[group]Run cargo nextest run --workspace \
+Integration	No retries	2026-11-05T10:00:07.0000001Z ^[[36;1mcargo nextest run --workspace \^[[0m
+Integration	No retries	2026-11-05T10:00:07.0000002Z ^[[36;1m  --no-fail-fast^[[0m
+Integration	No retries	2026-11-05T10:00:07.0000003Z ^[[36;1mecho retried 2^[[0m
+Integration	No retries	2026-11-05T10:00:07.0000004Z ##[endgroup]
+Integration	No retries	2026-11-05T10:00:08.0000000Z     Starting 50 tests across 2 binaries
+Integration	No retries	2026-11-05T10:00:09.0000000Z      Summary [   1.000s] 50 tests run: 50 passed, 0 skipped
+LOG
+    out=$("$SCRIPT" "$WORK/continued.log")
+    expect_json "continued command: --retries on a later line counts the step" \
+        '[.tests_run, .flaky]' '[3,1]'
+    expect_json "continued command: only the retried step's flake is listed" \
+        '[.tests[] | .name]' '["test_voice_list"]'
+
     # --- One test flaky in two runs counts twice; a library unit test is
     #     reported under `lib`; a `TRY n PASS` with no FLAKY line still
     #     counts (a run with the final status list turned off).

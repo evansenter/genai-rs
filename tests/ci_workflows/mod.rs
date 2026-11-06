@@ -223,6 +223,39 @@ fn ui_tests_do_not_run_on_beta() {
     );
 }
 
+/// The flakiness report counts a step's tests only when the step retries,
+/// which `count_retried_flakes.sh` reads from the step header GitHub
+/// echoes into the log. Retries are set as `NEXTEST_RETRIES` in the step's
+/// env, which the header always lists, never as `--retries`, so the
+/// command's layout cannot hide them; and the jobs the report reads keep
+/// setting them (#504).
+#[test]
+fn nextest_retries_are_set_in_the_step_env() {
+    let mut retried = 0;
+    let mut problems = Vec::new();
+    for (name, text) in workflows() {
+        for line in command_lines(&text) {
+            if line.contains("--retries") && !line.starts_with("NEXTEST_RETRIES") {
+                problems.push(format!("{name}: `{line}` (set NEXTEST_RETRIES instead)"));
+            }
+            if line.starts_with("NEXTEST_RETRIES:") {
+                retried += 1;
+            }
+        }
+    }
+    // rust.yml's integration groups and harness step, and release.yml's two
+    // live steps.
+    assert!(
+        retried >= 4,
+        "only {retried} steps set NEXTEST_RETRIES; the live steps retry the shared key's 429s"
+    );
+    assert!(
+        problems.is_empty(),
+        "nextest retries must be set through NEXTEST_RETRIES:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
 #[test]
 fn the_job_parser_splits_jobs_and_finds_schedules() {
     let workflow = "name: X\n\non:\n  push:\n  schedule:\n    - cron: '1 2 3 4 5'\n\njobs:\n  first:\n    runs-on: x\n    steps:\n      - run: a\n  second:\n    steps:\n      - run: b\n";

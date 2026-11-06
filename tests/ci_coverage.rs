@@ -13,8 +13,9 @@
 //! called by a live test on that handle (`tests/live_verbs/`).
 //!
 //! The workflows themselves are guarded in `tests/ci_workflows/`: no nextest
-//! run fails fast, trybuild's `ui_tests` stay off beta, and every scheduled
-//! workflow escalates its failures.
+//! run fails fast, retries are set in `NEXTEST_RETRIES` where the flakiness
+//! report sees them, trybuild's `ui_tests` stay off beta, and every
+//! scheduled workflow escalates its failures.
 
 mod ci_workflows;
 mod live_verbs;

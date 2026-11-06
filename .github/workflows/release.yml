@@ -39,9 +39,11 @@ jobs:
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip"
             exit 1
           fi
-          cargo nextest run --features antigravity --run-ignored all --retries 2 --no-fail-fast -E 'binary(antigravity_harness)'
+          cargo nextest run --features antigravity --run-ignored all --no-fail-fast -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # As in rust.yml: retries in the env, where the log echoes them.
+          NEXTEST_RETRIES: 2
       - name: Run doctests (default features)
         run: cargo test --workspace --doc
       - name: Run doctests (all features)
@@ -57,9 +59,9 @@ jobs:
           fi
           rc=0
           # --no-fail-fast: report every drift in one run, not the first.
-          # --retries 2 as in rust.yml: a capacity 429/503 is retried rather
-          # than failing the release.
-          cargo nextest run --workspace --run-ignored all --retries 2 --no-fail-fast --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
+          # NEXTEST_RETRIES (env, below) as in rust.yml: a capacity 429/503
+          # is retried rather than failing the release.
+          cargo nextest run --workspace --run-ignored all --no-fail-fast --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
           # Both markers, as in rust.yml.
           skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/integration.log || true)
           # 10, not rust.yml's 3 per binary: this is one whole-workspace run
@@ -73,6 +75,7 @@ jobs:
           exit "$rc"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NEXTEST_RETRIES: 2
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run clippy
