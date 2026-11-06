@@ -442,10 +442,11 @@ of WP8 and #504.
 `src/streaming.rs` was the one implementation module over the bar (841
 lines before its tests). Test files get the same treatment, with guides
 sized for test code, which is longer per behavior: a unit-test file past
-about 1,500 lines, an integration-test file past about 2,000, and the
-shared `tests/common/mod.rs` at 800. Each splits by the feature its tests
-verify (D-008), usually into the sibling test file of the module that
-defines what they test. Pure moves, public paths unchanged:
+about 1,500 lines, an integration-test file past about 2,000, and a
+shared test module (`tests/common/`, `tests/live_verbs/`) at 800. Each
+splits by the feature its tests verify (D-008), usually into the sibling
+test file of the module that defines what they test. Pure moves, public
+paths unchanged:
 
 | From | To |
 |------|----|
@@ -459,6 +460,7 @@ defines what they test. Pure moves, public paths unchanged:
 | `src/request_builder/tests.rs` (2,056 lines) | `input_tests.rs`, `tools_tests.rs`, `output_tests.rs` and `generation_tests.rs` beside the files they test; `tests.rs` keeps the core setters and `build()` |
 | The retry, stream, semantic and fixture helpers in `tests/common/mod.rs` | `tests/common/retry.rs`, `streams.rs`, `semantic.rs`, `fixtures.rs`, re-exported from `mod.rs` |
 | The tests in `tests/http_mock_resources.rs` (4,934 lines) | `tests/http_mock_resources/<resource>.rs`, plus `paging.rs`, `ids.rs` and `errors.rs`; the file keeps the harness |
+| `body_verbs` and its call-graph walk in `tests/live_verbs/mod.rs` (823 lines), the part only `tests/request_wire_oracle.rs` uses | `tests/live_verbs/bodies.rs`, re-exported from `mod.rs` (621 lines left) |
 
 Test names in the split binaries gain their module
 (`http_mock_resources`'s `credentials::loud_wire_redacts_credential_secrets`,
