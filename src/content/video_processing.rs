@@ -345,3 +345,7 @@ impl fmt::Display for VideoProcessing {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "video_processing_tests.rs"]
+mod tests;

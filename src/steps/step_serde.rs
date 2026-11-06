@@ -551,3 +551,7 @@ impl<'de> Deserialize<'de> for Step {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "step_serde_tests.rs"]
+mod tests;
