@@ -257,8 +257,9 @@ pub fn create_interaction_stream(
 /// error (a reset while the server closes, a stray frame) can't follow a
 /// finished interaction and undo it, in particular a finished auto-function
 /// round, and once the stream has ended the server has stored the
-/// interaction, so a `get` or a chained request finds it (see
-/// [`STREAM_TAIL_LIMIT`], which bounds that read).
+/// interaction, so a `get` or a chained request finds it, unless the read
+/// was cut short: by [`STREAM_TAIL_LIMIT`], which bounds it, or by a
+/// client-level timeout. Either is logged at `warn`.
 ///
 /// A body that ends before a terminal event yields
 /// [`GenaiError::StreamInterrupted`] last, so a cut-off stream can't pass for
@@ -322,6 +323,16 @@ async fn drain_tail(body: impl Stream<Item = Result<bytes::Bytes, reqwest::Error
         while let Some(chunk) = body.next().await {
             match chunk {
                 Ok(chunk) => len += chunk.len(),
+                // A client-level read or total timeout cuts the read short,
+                // as the limit does: the server may not have stored the
+                // interaction yet.
+                Err(error) if error.is_timeout() => {
+                    warn!(
+                        "a client timeout ended the read of the stream's tail after its terminal \
+                         event: {error}. The stored interaction may not be readable for a moment"
+                    );
+                    break;
+                }
                 Err(error) => {
                     debug!("the body failed after the terminal event (ignored): {error}");
                     break;

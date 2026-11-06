@@ -659,7 +659,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `create_stream_with_auto_functions()` reads each round to its end before
   sending the next. The read gives up after 5 s with a `warn!`, so a
   connection left open after the terminal event can't hang the last poll,
-  and `with_timeout()`'s per-chunk limit doesn't apply to it.
+  and `with_timeout()`'s per-chunk limit doesn't apply to it. A
+  client-level timeout (`ClientBuilder::with_timeout`) that ends the read
+  early is logged at `warn` too; either way the stored interaction may not
+  be readable yet.
 - One SSE event may hold up to 64 MiB. Past that, the stream fails with
   `GenaiError::Parse`; before, a body that never sent a newline was buffered
   without bound. The largest real events, measured live 2026-11-04 on
@@ -809,6 +812,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GenaiError::InvalidInput` naming `with_content()`, as a missing input
   does, instead of costing a round trip for the API's
   `400 Request has empty input.` (#452).
+- Antigravity: a turn being halted and drained, because it hit its turn
+  timeout or no one consumes it, no longer runs the per-turn lifecycle hooks
+  (`on_pre_turn`, `on_post_turn`, `on_tool_error`, `on_compaction`,
+  `on_stop`). The drain answers the harness as if they were not set. Before,
+  a timed-out turn reported `stop` and an empty `post_turn` during the
+  drain (scripted against harness 0.1.23, 2026-11-06), and a stop hook's
+  `Continue` could keep the halted turn running.
 
 ## [0.13.0] - 2026-11-03
 

@@ -4,7 +4,8 @@
 //! maps the result onto the hook's wire answer.
 
 use super::hooks::{
-    CompactionEvent, StopDecision, StopRequest, ToolFailure, TurnDecision, TurnEnd, TurnStart,
+    CompactionEvent, LifecycleHooks, StopDecision, StopRequest, ToolFailure, TurnDecision, TurnEnd,
+    TurnStart,
 };
 use super::protocol::{self, HookDecision, HookVerdict, LifecycleHook};
 use super::turn::TurnState;
@@ -21,7 +22,19 @@ impl AntigravityAgent {
         response: &mut protocol::CallHookResponse,
         turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
-        let hooks = self.lifecycle.clone();
+        // A turn being drained has no consumer, so its per-turn hooks get
+        // the answer they would with no hook set: user code neither sees
+        // nor steers a turn the caller abandoned (a stop hook's `Continue`
+        // would keep a halted turn running). Session hooks still run.
+        let hooks = if turn.draining {
+            LifecycleHooks {
+                session_start: self.lifecycle.session_start.clone(),
+                session_end: self.lifecycle.session_end.clone(),
+                ..LifecycleHooks::default()
+            }
+        } else {
+            self.lifecycle.clone()
+        };
         response.empty_result = Some(protocol::EmptyResult {});
 
         if let Some(args) = &request.pre_turn_args {

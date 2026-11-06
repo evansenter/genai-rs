@@ -10,7 +10,16 @@ streams:
 | `client.interactions().stream(id)` / `.resume_stream(id, last_event_id)` | `StreamEvent` | Streaming a background interaction, or resuming a stream |
 
 Each event is a wrapper holding `chunk` (what happened) and
-`event_id: Option<String>` (the SSE event id, used to resume).
+`event_id: Option<String>` (the SSE event id, used to resume). Every
+stream owns a clone of the client (`BoxStream<'static, _>`), so it can be
+stored or handed to `tokio::spawn`, and nothing is sent until it is
+polled.
+
+The large payloads of a chunk are boxed, so that the common event, a
+delta, stays small: `StreamChunk::Created`'s and `Completed`'s interaction,
+the usage fields, and the auto-function chunks' responses are `Box`es.
+Method calls and field reads go through the box; write `*response` where
+the value itself is needed.
 
 ## Basic streaming
 
@@ -81,7 +90,9 @@ and `status()` for the common checks.
 ### Read to the end
 
 The stored interaction is readable once the stream has ended, not when
-`Completed` arrives. After `interaction.completed` the API sends
+`Completed` arrives, provided the stream read its tail to the end: the
+read gives up after 5 s, and a client-level timeout
+(`ClientBuilder::with_timeout`) can end it sooner, each with a `warn!`. After `interaction.completed` the API sends
 `event: done` / `data: [DONE]` and closes the connection about a second
 later, and finishes storing the interaction during that tail: a `GET` sent
 right after closing the connection at `interaction.completed` answered

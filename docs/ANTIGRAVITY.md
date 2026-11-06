@@ -609,6 +609,12 @@ until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn,
 then the tool hooks and tool errors as calls happen, then stop (again after
 each continue), then post-turn.
 
+A turn nobody consumes (one that hit its `with_turn_timeout`, or a trigger
+turn the next `chat` halts) is drained, and its per-turn hooks (pre-turn,
+post-turn, tool error, compaction, stop) don't run for it: the drain answers
+the harness as if they were not set, so a stop hook can't keep a halted
+turn going. Session hooks still run.
+
 ## Custom tools — the same `#[tool]` functions as the Interactions API
 
 Tool declarations are the crate's ordinary `FunctionDeclaration`; dispatch

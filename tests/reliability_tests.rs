@@ -90,6 +90,18 @@ fn sse_with_tail(events: &[&str], after: Duration) -> Reply {
     reply
 }
 
+/// [`sse_with_tail`] for a paused clock held until the terminal event
+/// (`Stub::paused_clock_client`): the events come at once, since no time
+/// passes while the clock is held, and only the tail waits.
+fn held_sse_with_tail(events: &[&str], after: Duration) -> Reply {
+    let mut reply = sse_with_tail(events, after);
+    let tail = reply.parts.len() - 1;
+    for part in &mut reply.parts[..tail] {
+        part.0 = Duration::ZERO;
+    }
+    reply
+}
+
 // =============================================================================
 // Default timeouts
 // =============================================================================
@@ -349,16 +361,16 @@ async fn stream_ends_at_completed_despite_a_bad_frame_after_it() {
 
 /// The tail is read as bytes, not events: a frame that doesn't parse
 /// neither surfaces nor stops the read before the body ends.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn bad_frame_after_completed_does_not_stop_the_tail_read() {
     let after = Duration::from_millis(300);
-    let stub = Stub::replying(vec![sse_with_tail(
+    let stub = Stub::replying(vec![held_sse_with_tail(
         &[&completed("int-1", "completed"), "data: {not json}\n\n"],
         after,
     )])
     .await;
 
-    let client = stub.client();
+    let client = stub.paused_clock_client();
     let request = client
         .interaction()
         .with_model("test-model")
@@ -366,8 +378,7 @@ async fn bad_frame_after_completed_does_not_stop_the_tail_read() {
         .build()
         .unwrap();
 
-    // Timed from the send: building a client can take longer than the tail.
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let events: Vec<_> = client.execute_stream(request).collect().await;
     assert!(
         matches!(events.as_slice(), [Ok(last)] if last.is_complete()),
@@ -437,26 +448,28 @@ async fn tail_that_never_ends_is_cut_at_the_limit() {
 
 /// A per-chunk timeout shorter than the tail doesn't fail a finished
 /// stream: the read after the terminal event is bounded by the tail limit
-/// instead.
-#[tokio::test]
+/// instead. The clock is held until `Completed` is in, so the 100 ms timeout
+/// can't fire on localhost I/O before it; the tail then takes 300 ms of
+/// virtual time.
+#[tokio::test(start_paused = true)]
 async fn per_chunk_timeout_does_not_bound_the_tail_read() {
     let after = Duration::from_millis(300);
-    let stub = Stub::replying(vec![sse_with_tail(
+    let stub = Stub::replying(vec![held_sse_with_tail(
         &[&delta("a"), &completed("int-1", "completed")],
         after,
     )])
     .await;
 
-    let client = stub.client();
-    let stream = client
+    let start = tokio::time::Instant::now();
+    let events: Vec<_> = stub
+        .paused_clock_client()
         .interaction()
         .with_model("test-model")
         .with_text("Hi")
         .with_timeout(Duration::from_millis(100))
-        .create_stream();
-
-    let start = std::time::Instant::now();
-    let events: Vec<_> = stream.collect().await;
+        .create_stream()
+        .collect()
+        .await;
 
     assert!(
         matches!(events.as_slice(), [Ok(_), Ok(last)] if last.is_complete()),
@@ -464,6 +477,9 @@ async fn per_chunk_timeout_does_not_bound_the_tail_read() {
     );
     assert!(start.elapsed() >= after, "{:?}", start.elapsed());
 }
+
+/// A round that asks for `echo`.
+const CALL_ECHO: &str = "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"call-1\",\"name\":\"echo\",\"arguments\":{}}}\n\n";
 
 struct Echo;
 
@@ -492,9 +508,8 @@ impl ToolService for EchoService {
 /// finished round and so the whole run.
 #[tokio::test]
 async fn auto_function_stream_survives_late_errors_after_each_round() {
-    let call = "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"call-1\",\"name\":\"echo\",\"arguments\":{}}}\n\n";
     let stub = Stub::replying(vec![
-        sse_then_transport_failure(&[call, &completed("int-1", "requires_action")]),
+        sse_then_transport_failure(&[CALL_ECHO, &completed("int-1", "requires_action")]),
         sse_then_transport_failure(&[&delta("done"), &completed("int-2", "completed")]),
     ])
     .await;
@@ -529,31 +544,30 @@ async fn auto_function_stream_survives_late_errors_after_each_round() {
 /// The next round chains on the previous round's id, which the server
 /// stores only once that round's stream is done, so its request waits for
 /// the tail. The per-chunk timeout, shorter than the tail, doesn't bound
-/// that read.
-#[tokio::test]
+/// that read. Each round holds the clock until its `Completed` is in.
+#[tokio::test(start_paused = true)]
 async fn auto_function_stream_reads_each_round_to_its_end_before_the_next() {
     let after = Duration::from_millis(300);
-    let call = "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"call-1\",\"name\":\"echo\",\"arguments\":{}}}\n\n";
     let arrivals = Arc::new(Mutex::new(Vec::new()));
     let seen = arrivals.clone();
     let replies = Mutex::new(vec![
-        Some(sse_with_tail(
-            &[call, &completed("int-1", "requires_action")],
+        Some(held_sse_with_tail(
+            &[CALL_ECHO, &completed("int-1", "requires_action")],
             after,
         )),
-        Some(sse_with_tail(
+        Some(held_sse_with_tail(
             &[&delta("done"), &completed("int-2", "completed")],
             Duration::ZERO,
         )),
     ]);
     let stub = Stub::start(move |_, n| {
-        seen.lock().unwrap().push(std::time::Instant::now());
+        seen.lock().unwrap().push(tokio::time::Instant::now());
         replies.lock().unwrap()[n].take().unwrap()
     })
     .await;
 
     let events: Vec<_> = stub
-        .client()
+        .paused_clock_client()
         .interaction()
         .with_model("test-model")
         .with_text("hi")
@@ -579,6 +593,47 @@ async fn auto_function_stream_reads_each_round_to_its_end_before_the_next() {
         stub.requests()[1].json()["previous_interaction_id"],
         json!("int-1")
     );
+}
+
+/// After the last round's `Complete`, the stream reads that round's tail
+/// before it ends, so a caller that gets or chains on the interaction once
+/// the stream is done finds it stored.
+#[tokio::test(start_paused = true)]
+async fn auto_function_stream_reads_the_final_round_to_its_end() {
+    let after = Duration::from_millis(300);
+    let stub = Stub::replying(vec![
+        held_sse_with_tail(
+            &[CALL_ECHO, &completed("int-1", "requires_action")],
+            Duration::ZERO,
+        ),
+        held_sse_with_tail(&[&delta("done"), &completed("int-2", "completed")], after),
+    ])
+    .await;
+
+    let start = tokio::time::Instant::now();
+    let mut stream = stub
+        .paused_clock_client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(EchoService))
+        .create_stream_with_auto_functions();
+    let mut completed_at = None;
+    while let Some(event) = stream.next().await {
+        if let AutoFunctionStreamChunk::Complete(response) = event.unwrap().chunk {
+            assert_eq!(response.id.as_deref(), Some("int-2"));
+            completed_at = Some(start.elapsed());
+        }
+    }
+    let ended_at = start.elapsed();
+
+    let completed_at = completed_at.expect("a Complete event");
+    assert!(
+        completed_at < after,
+        "Complete waited for the tail: {completed_at:?}"
+    );
+    assert!(ended_at >= after, "ended before the tail: {ended_at:?}");
+    assert_eq!(stub.requests().len(), 2);
 }
 
 #[tokio::test]

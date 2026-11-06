@@ -148,7 +148,8 @@ already arrived.
 
 ### Read a stream to its end
 
-The stored interaction is readable once the stream has ended. After
+The stored interaction is readable once the stream has ended, unless the
+read of its tail was cut short (below). After
 `interaction.completed` the API sends `event: done` / `data: [DONE]` and
 closes the connection about a second later, and finishes storing the
 interaction during that tail (verified live 2026-11-05): a `GET` sent right
@@ -164,7 +165,9 @@ The read is bounded at 5 s, since the default client has no read timeout: a
 connection left half-open after the terminal event is closed then, with a
 `warn!`, and the stream ends cleanly. The request-level per-chunk timeout
 (`with_timeout()`) doesn't apply to it; a client-level read or total
-timeout does, and is swallowed like any other error there.
+timeout does, and ends the read early with a `warn!` (the stream still
+ends cleanly). Either way the server may not have stored the interaction
+yet, so a `get` right after can still see `500`.
 
 ## Timeouts
 

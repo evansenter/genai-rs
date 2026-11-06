@@ -203,8 +203,9 @@ reaches the wire must use a real id.
 - Timing tests against the HTTP stub run on a paused clock and assert
   virtual time, never `std::time::Instant` (#501; `docs/TESTING.md`). The
   Antigravity suites drive real processes, so their bounds stay wall-clock,
-  as do the four stream-tail tests in `reliability_tests.rs` (#518), whose
-  tail arrives after a stub delay that a held clock would hold too.
+  as does `stream_ends_once_the_tail_after_completed_has_arrived` (#518),
+  which bounds a stream's tail read from above: a released paused clock
+  can overshoot it.
 - Don't assert `text.contains(..)` on non-deterministic model output; use
   `assert_response_semantic()` (see `docs/TESTING.md`). Exact computed values
   are fine.
