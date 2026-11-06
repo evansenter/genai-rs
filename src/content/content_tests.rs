@@ -19,6 +19,7 @@ fn test_serialize_interaction_content() {
     let content = Content::Text {
         text: Some("Hello".to_string()),
         annotations: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&content).expect("Serialization failed");
@@ -33,12 +34,14 @@ fn test_content_empty_text_returns_none() {
     let content = Content::Text {
         text: Some(String::new()),
         annotations: None,
+        extra: Default::default(),
     };
     assert_eq!(content.as_text(), None);
 
     let content_none = Content::Text {
         text: None,
         annotations: None,
+        extra: Default::default(),
     };
     assert_eq!(content_none.as_text(), None);
 }
@@ -93,6 +96,7 @@ fn test_audio_content_sample_rate_and_channels() {
         mime_type: Some("audio/L16;codec=pcm;rate=24000".to_string()),
         sample_rate: Some(24000),
         channels: Some(1),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&audio).expect("Serialization failed");
@@ -136,6 +140,7 @@ fn test_serialize_known_variant_with_none_fields() {
     let text = Content::Text {
         text: None,
         annotations: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&text).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -148,6 +153,7 @@ fn test_serialize_known_variant_with_none_fields() {
         uri: None,
         mime_type: None,
         resolution: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&image).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -163,6 +169,7 @@ fn test_serialize_known_variant_with_none_fields() {
         mime_type: None,
         sample_rate: None,
         channels: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&audio).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -419,7 +426,7 @@ fn test_deserialize_function_call_step() {
             id,
             name,
             arguments,
-            signature: _,
+            ..
         } => {
             assert_eq!(id, "call-1");
             assert_eq!(name, "get_weather");
@@ -441,7 +448,7 @@ fn test_deserialize_function_call_step_missing_arguments() {
             id,
             name,
             arguments,
-            signature: _,
+            ..
         } => {
             assert_eq!(id, "call-abc123");
             assert_eq!(name, "get_weather");
@@ -490,6 +497,7 @@ fn test_step_thought_signature_accessor() {
     let none = Step::Thought {
         signature: None,
         summary: vec![],
+        extra: Default::default(),
     };
     assert_eq!(none.signature(), None);
 
@@ -523,7 +531,7 @@ fn test_step_constructors() {
             id,
             name,
             arguments,
-            signature: _,
+            ..
         } => {
             assert_eq!(id, "call_9");
             assert_eq!(name, "get_weather");
@@ -544,7 +552,7 @@ fn test_step_constructors() {
             name,
             result,
             is_error,
-            signature: _,
+            ..
         } => {
             assert_eq!(call_id, "call_9");
             assert_eq!(name.as_deref(), Some("get_weather"));
@@ -566,7 +574,7 @@ fn test_step_constructors() {
             name,
             result,
             is_error,
-            signature: _,
+            ..
         } => {
             assert_eq!(call_id, "call_10");
             assert_eq!(name.as_deref(), Some("api_call"));
@@ -610,7 +618,7 @@ fn test_model_output_step_with_error() {
 
     let step: Step = serde_json::from_str(json).expect("Should deserialize");
     match step {
-        Step::ModelOutput { content, error } => {
+        Step::ModelOutput { content, error, .. } => {
             assert!(content.is_empty());
             let error = error.expect("Should have error");
             assert_eq!(error.code, Some(400));
@@ -776,6 +784,7 @@ fn test_deserialize_code_execution_call_step() {
             language,
             code,
             signature,
+            ..
         } => {
             assert_eq!(id, "call_123");
             assert_eq!(*language, CodeExecutionLanguage::Python);
@@ -819,6 +828,7 @@ fn test_deserialize_code_execution_result_step() {
             is_error,
             result,
             signature,
+            ..
         } => {
             assert_eq!(call_id, "call_123");
             assert!(!is_error);
@@ -856,6 +866,8 @@ fn test_serialize_code_execution_call_step() {
         language: CodeExecutionLanguage::Python,
         code: "print(42)".to_string(),
         signature: None,
+        arguments_extra: Default::default(),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&step).expect("Serialization should work");
@@ -875,6 +887,7 @@ fn test_serialize_code_execution_result_step() {
         is_error: false,
         result: "42".to_string(),
         signature: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&step).expect("Serialization should work");
@@ -893,6 +906,7 @@ fn test_serialize_code_execution_result_step_error() {
         is_error: true,
         result: "NameError: x not defined".to_string(),
         signature: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&step).expect("Serialization should work");
@@ -912,6 +926,8 @@ fn test_step_signature_preserved_on_tool_steps() {
         language: CodeExecutionLanguage::Python,
         code: "print(1)".to_string(),
         signature: Some("sig-abc".to_string()),
+        arguments_extra: Default::default(),
+        extra: Default::default(),
     };
     assert_eq!(step.signature(), Some("sig-abc"));
 
@@ -931,6 +947,8 @@ fn test_roundtrip_built_in_tool_steps() {
         language: CodeExecutionLanguage::Python,
         code: "print('hello')".to_string(),
         signature: None,
+        arguments_extra: Default::default(),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&original).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -942,6 +960,7 @@ fn test_roundtrip_built_in_tool_steps() {
         is_error: false,
         result: "hello\n".to_string(),
         signature: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&original).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -953,6 +972,8 @@ fn test_roundtrip_built_in_tool_steps() {
         queries: vec!["test query".to_string()],
         search_type: None,
         signature: None,
+        arguments_extra: Default::default(),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&original).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -967,6 +988,7 @@ fn test_roundtrip_built_in_tool_steps() {
         result: vec![],
         is_error: None,
         signature: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&original).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -977,6 +999,8 @@ fn test_roundtrip_built_in_tool_steps() {
         id: "ctx_123".to_string(),
         urls: vec!["https://example.com".to_string()],
         signature: None,
+        arguments_extra: Default::default(),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&original).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -991,6 +1015,7 @@ fn test_roundtrip_built_in_tool_steps() {
         result: vec![UrlContextResultItem::new("https://example.com", "success")],
         is_error: None,
         signature: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&original).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -1005,6 +1030,8 @@ fn test_step_edge_cases_empty_values() {
         language: CodeExecutionLanguage::Python,
         code: String::new(),
         signature: None,
+        arguments_extra: Default::default(),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&step).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -1025,6 +1052,7 @@ fn test_step_edge_cases_empty_values() {
         result: vec![],
         is_error: None,
         signature: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&step).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -1039,6 +1067,7 @@ fn test_step_edge_cases_empty_values() {
         )],
         is_error: None,
         signature: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&step).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -1059,6 +1088,7 @@ fn test_step_edge_cases_empty_values() {
         is_error: false,
         result: String::new(),
         signature: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&step).unwrap();
     let restored: Step = serde_json::from_str(&json).unwrap();
@@ -1226,6 +1256,7 @@ fn test_url_context_result_step_with_empty_result_array() {
         result: vec![],
         is_error: None,
         signature: None,
+        extra: Default::default(),
     };
 
     // Serialize and verify structure
@@ -1484,12 +1515,14 @@ fn test_serialize_text_with_annotations() {
             title: None,
             start_index: 10,
             end_index: 20,
+            extra: Default::default(),
         },
     ];
 
     let content = Content::Text {
         text: Some("Hello, world! This is grounded text.".to_string()),
         annotations: Some(annotations),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&content).expect("Serialization failed");
@@ -1515,6 +1548,7 @@ fn test_serialize_text_with_empty_annotations_omitted() {
     let content = Content::Text {
         text: Some("Plain text".to_string()),
         annotations: Some(vec![]),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&content).expect("Serialization failed");
@@ -1540,7 +1574,9 @@ fn test_deserialize_text_with_annotations() {
     let content: Content = serde_json::from_str(json).expect("Deserialization failed");
 
     match content {
-        Content::Text { text, annotations } => {
+        Content::Text {
+            text, annotations, ..
+        } => {
             assert_eq!(text, Some("This is grounded text.".to_string()));
             let annots = annotations.expect("Should have annotations");
             assert_eq!(annots.len(), 2);
@@ -1562,7 +1598,9 @@ fn test_deserialize_text_without_annotations() {
     let content: Content = serde_json::from_str(json).expect("Deserialization failed");
 
     match content {
-        Content::Text { text, annotations } => {
+        Content::Text {
+            text, annotations, ..
+        } => {
             assert_eq!(text, Some("Plain text".to_string()));
             assert!(annotations.is_none());
         }
@@ -1582,6 +1620,7 @@ fn test_text_with_annotations_roundtrip() {
     let original = Content::Text {
         text: Some("Some grounded content here.".to_string()),
         annotations: Some(annotations),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&original).expect("Serialization failed");
@@ -1593,7 +1632,9 @@ fn test_text_with_annotations_roundtrip() {
 
     // Also verify content matches
     match deserialized {
-        Content::Text { text, annotations } => {
+        Content::Text {
+            text, annotations, ..
+        } => {
             assert_eq!(text, Some("Some grounded content here.".to_string()));
             let annots = annotations.expect("Should have annotations");
             assert_eq!(annots.len(), 1);
@@ -1615,6 +1656,7 @@ fn test_annotations_helper_method() {
             0,
             5,
         )]),
+        extra: Default::default(),
     };
 
     assert!(content_with_annotations.annotations().is_some());
@@ -1623,6 +1665,7 @@ fn test_annotations_helper_method() {
     let content_without_annotations = Content::Text {
         text: Some("Hello".to_string()),
         annotations: None,
+        extra: Default::default(),
     };
 
     assert!(content_without_annotations.annotations().is_none());
@@ -1693,6 +1736,7 @@ fn test_annotation_place_citation_deserialize() {
             review_snippets,
             start_index,
             end_index,
+            ..
         } => {
             assert_eq!(place_id.as_deref(), Some("ChIJLU7jZClu5kcR"));
             assert_eq!(name.as_deref(), Some("Eiffel Tower"));
@@ -1792,6 +1836,7 @@ fn test_image_with_resolution_serialization() {
         uri: None,
         mime_type: Some("image/png".to_string()),
         resolution: Some(Resolution::High),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&image).unwrap();
@@ -1810,6 +1855,7 @@ fn test_image_with_ultra_high_resolution_serialization() {
         uri: Some("https://example.com/image.png".to_string()),
         mime_type: Some("image/png".to_string()),
         resolution: Some(Resolution::UltraHigh),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&image).unwrap();
@@ -1829,6 +1875,7 @@ fn test_video_with_resolution_serialization() {
         resolution: Some(Resolution::Low),
         processing: None,
         name: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&video).unwrap();
@@ -1851,6 +1898,7 @@ fn test_image_with_resolution_deserialization() {
             uri,
             mime_type,
             resolution,
+            ..
         } => {
             assert_eq!(data, Some("base64data".to_string()));
             assert_eq!(uri, None);
@@ -1906,6 +1954,7 @@ fn test_image_with_resolution_roundtrip() {
         uri: None,
         mime_type: Some("image/jpeg".to_string()),
         resolution: Some(Resolution::Medium),
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&original).unwrap();
@@ -1917,6 +1966,7 @@ fn test_image_with_resolution_roundtrip() {
             uri,
             mime_type,
             resolution,
+            ..
         } => {
             assert_eq!(data, Some("testdata".to_string()));
             assert_eq!(uri, None);
@@ -1936,6 +1986,7 @@ fn test_video_with_resolution_roundtrip() {
         resolution: Some(Resolution::High),
         processing: None,
         name: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&original).unwrap();
@@ -2105,8 +2156,10 @@ fn test_serialize_file_search_result_step() {
             title: "Results.pdf".to_string(),
             text: "Found text".to_string(),
             store: "my-store".to_string(),
+            extra: Default::default(),
         }],
         signature: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&step).expect("Serialization should work");
@@ -2129,14 +2182,17 @@ fn test_file_search_result_step_roundtrip() {
                 title: "Doc1.pdf".to_string(),
                 text: "Content one".to_string(),
                 store: "store-1".to_string(),
+                extra: Default::default(),
             },
             FileSearchResultItem {
                 title: "Doc2.pdf".to_string(),
                 text: "Content two".to_string(),
                 store: "store-2".to_string(),
+                extra: Default::default(),
             },
         ],
         signature: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&original).unwrap();
@@ -2163,6 +2219,7 @@ fn test_file_search_result_step_empty_results() {
         call_id: "no_results".to_string(),
         result: vec![],
         signature: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&step).unwrap();
@@ -2199,7 +2256,9 @@ fn test_file_search_result_item_default() {
 fn test_new_text_creates_correct_variant() {
     let content = Content::text("Hello world");
     match &content {
-        Content::Text { text, annotations } => {
+        Content::Text {
+            text, annotations, ..
+        } => {
             assert_eq!(*text, Some("Hello world".to_string()));
             assert!(annotations.is_none());
         }
@@ -2231,6 +2290,7 @@ fn test_new_image_data_creates_correct_variant() {
             uri,
             mime_type,
             resolution,
+            ..
         } => {
             assert_eq!(data, Some("base64encodeddata".to_string()));
             assert!(uri.is_none());
@@ -2251,6 +2311,7 @@ fn test_new_image_data_with_resolution_creates_correct_variant() {
             uri,
             mime_type,
             resolution,
+            ..
         } => {
             assert_eq!(data, Some("base64encodeddata".to_string()));
             assert!(uri.is_none());
@@ -2270,6 +2331,7 @@ fn test_new_image_uri_creates_correct_variant() {
             uri,
             mime_type,
             resolution,
+            ..
         } => {
             assert!(data.is_none());
             assert_eq!(uri, Some("https://example.com/image.png".to_string()));
@@ -2309,6 +2371,7 @@ fn test_new_audio_data_creates_correct_variant() {
             mime_type,
             sample_rate,
             channels,
+            ..
         } => {
             assert_eq!(data, Some("base64audiodata".to_string()));
             assert!(uri.is_none());
@@ -2331,6 +2394,7 @@ fn test_new_audio_uri_creates_correct_variant() {
             mime_type,
             sample_rate,
             channels,
+            ..
         } => {
             assert!(data.is_none());
             assert_eq!(uri, Some("https://example.com/audio.mp3".to_string()));
@@ -2424,6 +2488,7 @@ fn test_new_document_data_creates_correct_variant() {
             data,
             uri,
             mime_type,
+            ..
         } => {
             assert_eq!(data, Some("base64pdfdata".to_string()));
             assert!(uri.is_none());
@@ -2441,6 +2506,7 @@ fn test_new_document_uri_creates_correct_variant() {
             data,
             uri,
             mime_type,
+            ..
         } => {
             assert!(data.is_none());
             assert_eq!(uri, Some("https://example.com/doc.pdf".to_string()));
@@ -2603,6 +2669,7 @@ fn test_with_resolution_preserves_other_fields() {
             uri,
             mime_type,
             resolution,
+            ..
         } => {
             assert_eq!(data, Some("base64data".to_string()));
             assert!(uri.is_none());
@@ -2835,6 +2902,7 @@ fn test_video_processing_segment_roundtrip() {
             start_offset: Some("10.5s".to_string()),
             end_offset: Some("30s".to_string()),
             fps: Some(1.0),
+            extra: Default::default(),
         }
     );
 
@@ -2856,6 +2924,7 @@ fn test_video_processing_bare_and_object_static_stay_distinct() {
             start_offset: None,
             end_offset: None,
             fps: None,
+            extra: Default::default(),
         }
     );
 
@@ -2949,6 +3018,7 @@ fn test_video_content_processing_roundtrip() {
                 start_offset: Some("5s".to_string()),
                 end_offset: None,
                 fps: Some(1.0),
+                extra: Default::default(),
             }
         ),
         other => panic!("expected video content, got {:?}", other),

@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             StreamChunk::StepStart { step, .. } => println!("\n[{}]", step.step_type()),
             StreamChunk::StepDelta { delta, .. } => {
                 let text = match &delta {
-                    StepDelta::ThoughtSummary { content } => {
+                    StepDelta::ThoughtSummary { content, .. } => {
                         content.as_ref().and_then(|c| c.as_text())
                     }
                     other => other.as_text(),

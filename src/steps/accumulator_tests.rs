@@ -14,12 +14,14 @@ fn test_accumulator_text_stream() {
         0,
         &StepDelta::Text {
             text: "Hello ".into(),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::Text {
             text: "world".into(),
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -28,39 +30,160 @@ fn test_accumulator_text_stream() {
     assert_eq!(steps[0].as_text(), Some("Hello world"));
 }
 
+/// The image data each delta carried, in block order.
+fn image_blocks(step: &Step) -> Vec<&str> {
+    step.content()
+        .expect("a content step")
+        .iter()
+        .map(|block| match block {
+            Content::Image { data, .. } => data.as_deref().unwrap_or_default(),
+            other => panic!("Expected Image, got {other:?}"),
+        })
+        .collect()
+}
+
+/// Each streamed image arrives whole in one delta that names its mime_type
+/// (live 2026-11-04, `gemini-3.1-flash-image`), so two of them in one step
+/// are two blocks. Live, each image came in its own step; this same-step
+/// shape is defensive. Merging by kind would make one corrupt base64 string
+/// whenever `interaction.completed` omits `steps` (#491).
 #[test]
-fn test_accumulator_image_deltas_accumulate_into_one_block() {
+fn test_accumulator_streamed_images_stay_separate_blocks() {
+    let mut acc = StepAccumulator::new();
+    acc.start(0, Step::model_output(vec![]));
+    for data in ["/9j/AAAA", "/9j/BBBB"] {
+        acc.apply_delta(
+            0,
+            &serde_json::from_value(
+                json!({"type": "image", "mime_type": "image/jpeg", "data": data}),
+            )
+            .unwrap(),
+        );
+    }
+    acc.stop(0);
+    let steps = acc.finish();
+    assert_eq!(image_blocks(&steps[0]), ["/9j/AAAA", "/9j/BBBB"]);
+}
+
+/// A delta carrying only `data` (no mime_type, no uri) has never been seen,
+/// but would be a continuation of the image before it.
+#[test]
+fn test_accumulator_bare_image_fragment_continues_the_last_image() {
     let mut acc = StepAccumulator::new();
     acc.start(0, Step::model_output(vec![]));
     acc.apply_delta(
         0,
-        &StepDelta::Image {
-            data: Some("AAAA".into()),
-            uri: None,
-            mime_type: Some("image/png".into()),
-            resolution: None,
-        },
+        &serde_json::from_value(json!({"type": "image", "mime_type": "image/png", "data": "AAAA"}))
+            .unwrap(),
     );
     acc.apply_delta(
         0,
-        &StepDelta::Image {
-            data: Some("BBBB".into()),
-            uri: None,
-            mime_type: Some("image/png".into()),
-            resolution: None,
-        },
+        &serde_json::from_value(json!({"type": "image", "data": "BBBB"})).unwrap(),
     );
-    acc.stop(0);
     let steps = acc.finish();
-    match &steps[0] {
-        Step::ModelOutput { content, .. } => {
-            assert_eq!(content.len(), 1);
-            match &content[0] {
-                Content::Image { data, .. } => assert_eq!(data.as_deref(), Some("AAAABBBB")),
-                other => panic!("Expected Image, got {other:?}"),
-            }
-        }
-        other => panic!("Expected ModelOutput, got {other:?}"),
+    assert_eq!(image_blocks(&steps[0]), ["AAAABBBB"]);
+}
+
+/// A delta's unmodeled fields land on what it builds: the content block for
+/// text and media, the step for a tool delta. The accumulated steps then
+/// round-trip them like the steps of a non-streamed response (#491).
+#[test]
+fn test_accumulator_keeps_unmodeled_delta_fields() {
+    let mut acc = StepAccumulator::new();
+    acc.start(0, Step::model_output(vec![]));
+    for delta in [
+        json!({"type": "text", "text": "a", "lang": "en"}),
+        json!({"type": "text", "text": "b"}),
+        json!({"type": "image", "mime_type": "image/png", "data": "AA", "seed": 7}),
+    ] {
+        acc.apply_delta(0, &serde_json::from_value(delta).unwrap());
+    }
+    acc.start(
+        1,
+        serde_json::from_value(json!({
+            "type": "url_context_call", "id": "c1",
+            "arguments": {"urls": []}, "start_only": true
+        }))
+        .unwrap(),
+    );
+    acc.apply_delta(
+        1,
+        &serde_json::from_value(json!({
+            "type": "url_context_call",
+            "arguments": {"urls": ["https://example.com"], "max_pages": 3},
+            "trace": "t1"
+        }))
+        .unwrap(),
+    );
+    let steps = acc.finish();
+    assert_eq!(
+        serde_json::to_value(&steps).unwrap(),
+        json!([
+            {"type": "model_output", "content": [
+                {"type": "text", "text": "ab", "lang": "en"},
+                {"type": "image", "mime_type": "image/png", "data": "AA", "seed": 7}
+            ]},
+            {"type": "url_context_call", "id": "c1",
+             "arguments": {"urls": ["https://example.com"], "max_pages": 3},
+             "start_only": true, "trace": "t1"}
+        ])
+    );
+}
+
+/// A streamed code execution call whose language the crate does not know
+/// keeps its code, as the same call read as a step does. By default the
+/// language reads as `CodeExecutionLanguage::Unknown`. Under
+/// `strict-unknown` the delta fails to parse, naming the field, like the
+/// step; it used to become a `StepDelta::Unknown`, which the accumulator
+/// left out of the step, so the code was lost without an error.
+#[test]
+fn test_accumulator_code_execution_delta_with_an_unknown_language() {
+    let delta = json!({
+        "type": "code_execution_call",
+        "arguments": {"language": "cobol", "code": "DISPLAY 1"}
+    });
+
+    #[cfg(feature = "strict-unknown")]
+    {
+        let err = serde_json::from_value::<StepDelta>(delta).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "StepDelta 'code_execution_call' has a field this crate cannot read: \
+             field `arguments.language`: Unknown CodeExecutionLanguage 'cobol'. \
+             Strict mode is enabled via the 'strict-unknown' feature flag. \
+             Either update the library or disable strict mode."
+        );
+        let step = json!({
+            "type": "code_execution_call", "id": "c1",
+            "arguments": {"language": "cobol", "code": "DISPLAY 1"}
+        });
+        let step_err = serde_json::from_value::<Step>(step).unwrap_err();
+        assert_eq!(
+            step_err.to_string().replacen("Step ", "StepDelta ", 1),
+            err.to_string(),
+            "the step and the delta fail alike"
+        );
+    }
+
+    #[cfg(not(feature = "strict-unknown"))]
+    {
+        let mut acc = StepAccumulator::new();
+        acc.start(
+            0,
+            serde_json::from_value(json!({
+                "type": "code_execution_call", "id": "c1", "arguments": {}
+            }))
+            .unwrap(),
+        );
+        acc.apply_delta(0, &serde_json::from_value(delta).unwrap());
+        let steps = acc.finish();
+        assert_eq!(
+            serde_json::to_value(&steps).unwrap(),
+            json!([{
+                "type": "code_execution_call", "id": "c1",
+                "arguments": {"language": "cobol", "code": "DISPLAY 1"}
+            }])
+        );
     }
 }
 
@@ -75,6 +198,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             uri: None,
             mime_type: Some("video/mp4".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -84,6 +208,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             uri: None,
             mime_type: Some("video/mp4".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -92,6 +217,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             data: Some("DD".into()),
             uri: None,
             mime_type: Some("application/pdf".into()),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -100,6 +226,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             data: Some("EE".into()),
             uri: None,
             mime_type: Some("application/pdf".into()),
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -133,6 +260,7 @@ fn test_accumulator_image_uri_delta_pushes_new_block() {
             uri: None,
             mime_type: Some("image/png".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -142,6 +270,7 @@ fn test_accumulator_image_uri_delta_pushes_new_block() {
             uri: Some("https://example.com/img.png".into()),
             mime_type: Some("image/png".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -162,18 +291,21 @@ fn test_accumulator_function_call_arguments_delta() {
             name: "get_weather".into(),
             arguments: serde_json::Value::Null,
             signature: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ArgumentsDelta {
             arguments: "{\"city\": ".into(),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ArgumentsDelta {
             arguments: "\"Tokyo\"}".into(),
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -192,34 +324,65 @@ fn test_accumulator_thought_summary_and_signature() {
         Step::Thought {
             signature: None,
             summary: vec![],
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSummary {
             content: Some(Content::text("Consider ")),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSummary {
             content: Some(Content::text("the problem")),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSignature {
             signature: Some("sig-xyz".into()),
+            extra: Default::default(),
         },
     );
     let steps = acc.finish();
     match &steps[0] {
-        Step::Thought { signature, summary } => {
+        Step::Thought {
+            signature, summary, ..
+        } => {
             assert_eq!(signature.as_deref(), Some("sig-xyz"));
             assert_eq!(summary[0].as_text(), Some("Consider the problem"));
         }
         other => panic!("Expected Thought, got {other:?}"),
     }
+}
+
+/// Merging consecutive summary text chunks keeps every chunk's unmodeled
+/// content fields on the merged block, as the text and media merges do, so
+/// the thought replays like a non-streamed one (#491).
+#[test]
+fn test_accumulator_thought_summary_merge_keeps_each_chunks_extra() {
+    let mut acc = StepAccumulator::new();
+    acc.start(
+        0,
+        serde_json::from_value(json!({"type": "thought", "signature": "sig"})).unwrap(),
+    );
+    for delta in [
+        json!({"type": "thought_summary", "content": {"type": "text", "text": "Consider ", "first": 1}}),
+        json!({"type": "thought_summary", "content": {"type": "text", "text": "this", "later": 2}}),
+    ] {
+        acc.apply_delta(0, &serde_json::from_value(delta).unwrap());
+    }
+    let steps = acc.finish();
+    assert_eq!(
+        serde_json::to_value(&steps[0]).unwrap(),
+        json!({"type": "thought", "signature": "sig", "summary": [
+            {"type": "text", "text": "Consider this", "first": 1, "later": 2}
+        ]})
+    );
 }
 
 #[test]
@@ -229,6 +392,7 @@ fn test_accumulator_delta_without_start_creates_model_output() {
         0,
         &StepDelta::Text {
             text: "orphan".into(),
+            extra: Default::default(),
         },
     );
     let steps = acc.finish();
@@ -381,6 +545,8 @@ fn test_accumulator_empty_delta_signature_keeps_the_real_one() {
         &StepDelta::GoogleSearchCall {
             queries: vec!["rust".into()],
             signature: Some(String::new()),
+            arguments_extra: Default::default(),
+            extra: Default::default(),
         },
     );
     acc.stop(0);

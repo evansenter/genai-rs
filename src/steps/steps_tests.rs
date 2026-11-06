@@ -14,7 +14,7 @@ fn tool_call_step_deserializes_the_observed_mcp_shape() {
     let step: Step = serde_json::from_value(wire.clone()).unwrap();
 
     match &step {
-        Step::ToolCall { id, signature } => {
+        Step::ToolCall { id, signature, .. } => {
             assert_eq!(id, "call_abc123");
             assert_eq!(signature.as_deref(), Some("opaque"));
         }
@@ -60,7 +60,7 @@ fn tool_call_step_allows_a_missing_signature() {
 fn test_step_user_input_roundtrip() {
     let json_str = r#"{"type":"user_input","content":[{"type":"text","text":"Hello"}]}"#;
     let step: Step = serde_json::from_str(json_str).unwrap();
-    assert!(matches!(&step, Step::UserInput { content } if content.len() == 1));
+    assert!(matches!(&step, Step::UserInput { content, ..  } if content.len() == 1));
     assert_eq!(step.as_text(), Some("Hello"));
 
     let out = serde_json::to_value(&step).unwrap();
@@ -77,7 +77,7 @@ fn test_step_model_output_with_error() {
         }"#;
     let step: Step = serde_json::from_str(json_str).unwrap();
     match &step {
-        Step::ModelOutput { content, error } => {
+        Step::ModelOutput { content, error, .. } => {
             assert_eq!(content.len(), 1);
             let error = error.as_ref().unwrap();
             assert_eq!(error.code, Some(8));
@@ -96,7 +96,9 @@ fn test_step_thought_roundtrip() {
         }"#;
     let step: Step = serde_json::from_str(json_str).unwrap();
     match &step {
-        Step::Thought { signature, summary } => {
+        Step::Thought {
+            signature, summary, ..
+        } => {
             assert_eq!(signature.as_deref(), Some("sig-abc"));
             assert_eq!(summary.len(), 1);
         }
@@ -124,6 +126,7 @@ fn test_step_function_call_roundtrip() {
             name,
             arguments,
             signature,
+            ..
         } => {
             assert_eq!(id, "call_1");
             assert_eq!(name, "get_weather");
@@ -252,6 +255,7 @@ fn test_step_code_execution_nested_arguments_roundtrip() {
             language,
             code,
             signature,
+            ..
         } => {
             assert_eq!(id, "exec_1");
             assert_eq!(*language, CodeExecutionLanguage::Python);

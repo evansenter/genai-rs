@@ -457,6 +457,7 @@ mod tests {
             index: 0,
             delta: StepDelta::Text {
                 text: "Hello, world!".to_string(),
+                extra: Default::default(),
             },
         };
 
@@ -574,6 +575,7 @@ mod tests {
                 index: 0,
                 delta: StepDelta::Text {
                     text: String::new(),
+                    extra: Default::default(),
                 },
             },
             StreamChunk::StepStop {
@@ -801,6 +803,7 @@ mod tests {
             index: 0,
             delta: StepDelta::Text {
                 text: "test".to_string(),
+                extra: Default::default(),
             },
         };
         assert_eq!(delta_chunk.interaction_id(), None);
@@ -831,6 +834,7 @@ mod tests {
                 index: 0,
                 delta: StepDelta::Text {
                     text: "Hello".to_string(),
+                    extra: Default::default(),
                 },
             },
             Some("evt_abc123".to_string()),

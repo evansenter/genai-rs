@@ -476,6 +476,104 @@ mod strict_mode {
         );
     }
 
+    /// A known step whose modeled field cannot be read is an error in
+    /// strict mode. The error names the field and why, not an unknown type,
+    /// and gives the strict-mode guidance once.
+    #[test]
+    fn malformed_known_step_error_names_the_field() {
+        let err = serde_json::from_value::<Step>(json!({
+            "type": "code_execution_call",
+            "id": "c",
+            "arguments": {"language": "javascript", "code": "x"}
+        }))
+        .expect_err("an unknown language fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            "Step 'code_execution_call' has a field this crate cannot read: \
+             field `arguments.language`: Unknown CodeExecutionLanguage 'javascript'. \
+             Strict mode is enabled via the 'strict-unknown' feature flag. \
+             Either update the library or disable strict mode."
+        );
+
+        // Kept whole as `Step::Unknown` without strict mode.
+        let err = serde_json::from_value::<Step>(json!({
+            "type": "url_context_call",
+            "id": "c",
+            "arguments": "https://a.example"
+        }))
+        .expect_err("a non-object `arguments` fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            "Step 'url_context_call' has a field this crate cannot read: \
+             field `arguments`: expected an object, got \"https://a.example\". \
+             Strict mode is enabled via the 'strict-unknown' feature flag, which \
+             rejects what would otherwise be kept whole as Step::Unknown. \
+             Either update the library or disable strict mode."
+        );
+    }
+
+    /// `StepDelta` is not strict as a union: an unknown delta type, or a
+    /// known one with a malformed field, is still kept whole. But a value
+    /// strict mode rejects inside a known delta fails, naming the field, as
+    /// it does in a step: here an unknown content type in a thought summary.
+    /// (`src/steps/accumulator_tests.rs` covers an unknown `language`.)
+    #[test]
+    fn delta_fails_only_on_a_value_strict_mode_rejects() {
+        use genai_rs::StepDelta;
+
+        let err = serde_json::from_value::<StepDelta>(json!({
+            "type": "thought_summary",
+            "content": {"type": "hologram", "data": "x"}
+        }))
+        .expect_err("an unknown content type in a delta fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            "StepDelta 'thought_summary' has a field this crate cannot read: \
+             field `content`: Unknown Content type 'hologram'. Strict mode is \
+             enabled via the 'strict-unknown' feature flag. Either update the \
+             library or disable strict mode."
+        );
+
+        for (wire, delta_type) in [
+            (json!({"type": "future_delta", "x": 1}), "future_delta"),
+            (
+                json!({"type": "url_context_call", "arguments": "https://a.example"}),
+                "url_context_call",
+            ),
+        ] {
+            let delta: StepDelta = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(delta.unknown_delta_type(), Some(delta_type));
+            assert_eq!(delta.unknown_data(), Some(&wire));
+        }
+    }
+
+    /// The same for content, and for content nested in a step: the cause
+    /// chain reaches the field that failed.
+    #[test]
+    fn malformed_known_content_error_names_the_field() {
+        let content_error = "Content 'text' has a field this crate cannot read: \
+             field `text`: invalid type: integer `7`, expected a string. \
+             Strict mode is enabled via the 'strict-unknown' feature flag, which \
+             rejects what would otherwise be kept whole as Content::Unknown. \
+             Either update the library or disable strict mode.";
+        let err = serde_json::from_value::<Content>(json!({"type": "text", "text": 7}))
+            .expect_err("a non-string `text` fails in strict mode");
+        assert_eq!(err.to_string(), content_error);
+
+        let err = serde_json::from_value::<Step>(json!({
+            "type": "model_output",
+            "content": [{"type": "text", "text": 7}]
+        }))
+        .expect_err("nested malformed content fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Step 'model_output' has a field this crate cannot read: \
+                 field `content`: {content_error}"
+            )
+        );
+    }
+
     #[test]
     fn model_output_with_unknown_content_fails() {
         // Unknown Content nested inside a known Step also fails in strict mode.
@@ -711,6 +809,7 @@ mod common {
         let text = Content::Text {
             text: Some("hello".to_string()),
             annotations: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&text).unwrap();
         assert_eq!(json["type"], "text");
@@ -721,6 +820,7 @@ mod common {
             uri: None,
             mime_type: Some("image/png".to_string()),
             resolution: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&image).unwrap();
         assert_eq!(json["type"], "image");
@@ -733,6 +833,7 @@ mod common {
             mime_type: Some("audio/wav".to_string()),
             sample_rate: Some(24000),
             channels: Some(1),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&audio).unwrap();
         assert_eq!(json["type"], "audio");
@@ -745,6 +846,7 @@ mod common {
         let thought = Step::Thought {
             signature: Some("Eq0JCqoJ...signature".to_string()),
             summary: vec![],
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&thought).unwrap();
         assert_eq!(json["type"], "thought");

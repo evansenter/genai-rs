@@ -580,6 +580,7 @@ mod interaction_content {
         let content = Content::Text {
             text: Some("hello".to_string()),
             annotations: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "text");
@@ -592,6 +593,7 @@ mod interaction_content {
             uri: Some("gs://bucket/image.png".to_string()),
             mime_type: Some("image/png".to_string()),
             resolution: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "image");
@@ -605,6 +607,7 @@ mod interaction_content {
             mime_type: Some("audio/mpeg".to_string()),
             sample_rate: Some(24000),
             channels: Some(1),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "audio");
@@ -621,6 +624,7 @@ mod interaction_content {
             resolution: None,
             processing: None,
             name: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "video");
@@ -661,6 +665,7 @@ mod interaction_content {
             data: None,
             uri: Some("gs://bucket/doc.pdf".to_string()),
             mime_type: Some("application/pdf".to_string()),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "document");
@@ -698,6 +703,7 @@ mod step {
         let step = Step::Thought {
             signature: Some("sig123".to_string()),
             summary: vec![],
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&step).unwrap();
         assert_eq!(json["type"], "thought");
@@ -731,6 +737,8 @@ mod step {
             language: CodeExecutionLanguage::Python,
             code: "print(1)".to_string(),
             signature: None,
+            arguments_extra: Default::default(),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&step).unwrap();
         assert_eq!(json["type"], "code_execution_call");
@@ -745,6 +753,8 @@ mod step {
             id: "ctx_1".to_string(),
             urls: vec!["https://example.com".to_string()],
             signature: None,
+            arguments_extra: Default::default(),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&step).unwrap();
         assert_eq!(json["type"], "url_context_call");
@@ -758,6 +768,8 @@ mod step {
             queries: vec!["rust serde".to_string()],
             search_type: Some(SearchType::WebSearch),
             signature: None,
+            arguments_extra: Default::default(),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&step).unwrap();
         assert_eq!(json["type"], "google_search_call");
@@ -771,6 +783,8 @@ mod step {
             id: "maps_1".to_string(),
             queries: vec!["coffee".to_string()],
             signature: Some("sig".to_string()),
+            arguments_extra: Default::default(),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&step).unwrap();
         assert_eq!(json["type"], "google_maps_call");
@@ -786,6 +800,7 @@ mod step {
             Step::Thought {
                 signature: Some("sig".to_string()),
                 summary: vec![],
+                extra: Default::default(),
             },
             Step::function_call("call_1", "fn", json!({"a": 1})),
             Step::function_result("fn", "call_1", json!({"b": 2})),
@@ -794,23 +809,30 @@ mod step {
                 language: CodeExecutionLanguage::Python,
                 code: "print(1)".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::CodeExecutionResult {
                 call_id: "exec_1".to_string(),
                 result: "1".to_string(),
                 is_error: false,
                 signature: None,
+                extra: Default::default(),
             },
             Step::UrlContextCall {
                 id: "ctx_1".to_string(),
                 urls: vec!["https://example.com".to_string()],
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::GoogleSearchCall {
                 id: "search_1".to_string(),
                 queries: vec!["q".to_string()],
                 search_type: Some(SearchType::WebSearch),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
         ];
 

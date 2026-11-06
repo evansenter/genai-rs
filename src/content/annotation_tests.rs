@@ -29,6 +29,7 @@ fn test_annotation_serializes_type_first_then_fields_in_order() {
             media_id: Some("m1".to_string()),
             start_index: 0,
             end_index: 12,
+            extra: Default::default(),
         }),
         r#"{"type":"file_citation","document_uri":"files/abc","file_name":"report.pdf","source":"stores/s","custom_metadata":{"k":"v"},"page_number":3,"media_id":"m1","start_index":0,"end_index":12}"#
     );
@@ -41,9 +42,11 @@ fn test_annotation_serializes_type_first_then_fields_in_order() {
                 title: Some("Great!".to_string()),
                 url: None,
                 review_id: Some("r1".to_string()),
+                extra: Default::default(),
             }],
             start_index: 4,
             end_index: 16,
+            extra: Default::default(),
         }),
         r#"{"type":"place_citation","place_id":"p1","name":"Eiffel Tower","url":"https://maps.example/e","review_snippets":[{"title":"Great!","review_id":"r1"}],"start_index":4,"end_index":16}"#
     );
@@ -53,6 +56,7 @@ fn test_annotation_serializes_type_first_then_fields_in_order() {
             style: Some("whisper".to_string()),
             start_index: Some(11),
             end_index: Some(37),
+            extra: Default::default(),
         }),
         r#"{"type":"speech_metadata","speaker":"Bob","style":"whisper","start_index":11,"end_index":37}"#
     );
@@ -64,6 +68,7 @@ fn test_annotation_serializes_type_first_then_fields_in_order() {
             end_offset: Some("0.4s".to_string()),
             start_index: Some(0),
             end_index: Some(5),
+            extra: Default::default(),
         }),
         r#"{"type":"word_info","text":"Hello","speaker":"1","start_offset":"0.1s","end_offset":"0.4s","start_index":0,"end_index":5}"#
     );
@@ -78,6 +83,7 @@ fn test_annotation_omits_none_fields_and_empty_review_snippets() {
             title: None,
             start_index: 0,
             end_index: 0,
+            extra: Default::default(),
         }),
         r#"{"type":"url_citation","start_index":0,"end_index":0}"#
     );
@@ -91,6 +97,7 @@ fn test_annotation_omits_none_fields_and_empty_review_snippets() {
             media_id: None,
             start_index: 0,
             end_index: 0,
+            extra: Default::default(),
         }),
         r#"{"type":"file_citation","start_index":0,"end_index":0}"#
     );
@@ -103,6 +110,7 @@ fn test_annotation_omits_none_fields_and_empty_review_snippets() {
             review_snippets: vec![],
             start_index: 0,
             end_index: 0,
+            extra: Default::default(),
         }),
         r#"{"type":"place_citation","start_index":0,"end_index":0}"#
     );
@@ -117,6 +125,7 @@ fn test_annotation_omits_none_fields_and_empty_review_snippets() {
             style: None,
             start_index: Some(0),
             end_index: None,
+            extra: Default::default(),
         }),
         r#"{"type":"speech_metadata","start_index":0}"#
     );
@@ -128,6 +137,7 @@ fn test_annotation_omits_none_fields_and_empty_review_snippets() {
             end_offset: None,
             start_index: None,
             end_index: None,
+            extra: Default::default(),
         }),
         r#"{"type":"word_info"}"#
     );
@@ -139,6 +149,7 @@ fn test_annotation_omits_none_fields_and_empty_review_snippets() {
             end_offset: Some("0.4s".to_string()),
             start_index: None,
             end_index: Some(0),
+            extra: Default::default(),
         }),
         r#"{"type":"word_info","end_offset":"0.4s","end_index":0}"#
     );
@@ -157,6 +168,7 @@ fn test_annotation_file_citation_writes_explicit_null_metadata() {
             media_id: None,
             start_index: 1,
             end_index: 2,
+            extra: Default::default(),
         }),
         r#"{"type":"file_citation","custom_metadata":null,"start_index":1,"end_index":2}"#
     );

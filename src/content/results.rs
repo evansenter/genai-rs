@@ -1,5 +1,7 @@
 use super::ReviewSnippet;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
+
+use crate::wire_fields::ModeledMap;
 
 // =============================================================================
 // Google Search Result Item
@@ -21,7 +23,7 @@ use serde::{Deserialize, Serialize};
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct GoogleSearchResultItem {
@@ -30,19 +32,19 @@ pub struct GoogleSearchResultItem {
     /// Empty when the wire item omits it — the live API returns items that
     /// carry only `search_suggestions` (verified 2026-07). Empty values are
     /// skipped on serialize so replayed history matches the wire.
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub title: String,
     /// URL of the source (typically a grounding redirect URL).
     ///
     /// Empty when the wire item omits it; skipped on serialize when empty.
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub url: String,
     /// The rendered content from the source (if available)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub rendered_content: Option<String>,
     /// Search suggestions rendering payload (if provided by the API)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub search_suggestions: Option<String>,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491). An
+    /// entry named after a modeled field is not written.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl GoogleSearchResultItem {
@@ -54,6 +56,7 @@ impl GoogleSearchResultItem {
             url: url.into(),
             rendered_content: None,
             search_suggestions: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -73,47 +76,36 @@ impl GoogleSearchResultItem {
 /// Contains location details like name, address, coordinates, and other
 /// place metadata. Unknown fields from future API additions are preserved
 /// via the `extra` field for Evergreen forward compatibility.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct Place {
     /// Name of the place
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Formatted address of the place
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub formatted_address: Option<String>,
     /// Unique identifier for this place
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub place_id: Option<String>,
     /// URL of the place
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Latitude coordinate
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub lat: Option<f64>,
     /// Longitude coordinate
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub lng: Option<f64>,
     /// Place type categories
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub types: Option<Vec<String>>,
     /// Average user rating
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub rating: Option<f64>,
     /// Total number of user ratings
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_ratings_total: Option<u32>,
     /// Website URL
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub website: Option<String>,
     /// Phone number
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub phone_number: Option<String>,
     /// Review snippets supporting this place
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub review_snippets: Option<Vec<ReviewSnippet>>,
-    /// Additional fields not yet modeled (Evergreen forward compatibility)
+    /// Additional fields not yet modeled (Evergreen forward compatibility).
+    /// An entry named after a modeled field is not written.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -122,16 +114,18 @@ pub struct Place {
 ///
 /// Contains place data and an optional widget context token for rendering
 /// interactive map widgets.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct GoogleMapsResultItem {
     /// Place data returned by the Maps tool
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub places: Option<Vec<Place>>,
     /// Widget context token for rendering interactive map widgets
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub widget_context_token: Option<String>,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491). An
+    /// entry named after a modeled field is not written.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // =============================================================================
@@ -154,7 +148,7 @@ pub struct GoogleMapsResultItem {
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct UrlContextResultItem {
@@ -162,6 +156,10 @@ pub struct UrlContextResultItem {
     pub url: String,
     /// Status of the fetch operation (e.g., "success", "error", "paywall", "unsafe")
     pub status: String,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491). An
+    /// entry named after a modeled field is not written.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl UrlContextResultItem {
@@ -171,6 +169,7 @@ impl UrlContextResultItem {
         Self {
             url: url.into(),
             status: status.into(),
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -234,7 +233,7 @@ impl UrlContextResultItem {
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct FileSearchResultItem {
@@ -245,6 +244,10 @@ pub struct FileSearchResultItem {
     /// Name of the file search store containing this result
     #[serde(rename = "file_search_store")]
     pub store: String,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491). An
+    /// entry named after a modeled field is not written.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl FileSearchResultItem {
@@ -259,6 +262,7 @@ impl FileSearchResultItem {
             title: title.into(),
             text: text.into(),
             store: store.into(),
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -266,5 +270,107 @@ impl FileSearchResultItem {
     #[must_use]
     pub fn has_text(&self) -> bool {
         !self.text.is_empty()
+    }
+}
+
+// =============================================================================
+// Serialization
+// =============================================================================
+//
+// Each item derives `Deserialize`, whose flattened `extra` collects the keys
+// it does not model. Serializing writes the modeled fields, then the extras
+// that do not name one, so a hand-built `extra` cannot shadow a field or
+// write its key twice (#491). Each impl destructures the whole struct, so a
+// new field fails to compile until it is written here.
+
+impl Serialize for GoogleSearchResultItem {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            title,
+            url,
+            rendered_content,
+            search_suggestions,
+            extra,
+        } = self;
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.field_unless(title.is_empty(), "title", title)?;
+        map.field_unless(url.is_empty(), "url", url)?;
+        map.opt("rendered_content", rendered_content.as_ref())?;
+        map.opt("search_suggestions", search_suggestions.as_ref())?;
+        map.end(extra)
+    }
+}
+
+impl Serialize for Place {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            name,
+            formatted_address,
+            place_id,
+            url,
+            lat,
+            lng,
+            types,
+            rating,
+            user_ratings_total,
+            website,
+            phone_number,
+            review_snippets,
+            extra,
+        } = self;
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.opt("name", name.as_ref())?;
+        map.opt("formatted_address", formatted_address.as_ref())?;
+        map.opt("place_id", place_id.as_ref())?;
+        map.opt("url", url.as_ref())?;
+        map.opt("lat", lat.as_ref())?;
+        map.opt("lng", lng.as_ref())?;
+        map.opt("types", types.as_ref())?;
+        map.opt("rating", rating.as_ref())?;
+        map.opt("user_ratings_total", user_ratings_total.as_ref())?;
+        map.opt("website", website.as_ref())?;
+        map.opt("phone_number", phone_number.as_ref())?;
+        map.opt("review_snippets", review_snippets.as_ref())?;
+        map.end(extra)
+    }
+}
+
+impl Serialize for GoogleMapsResultItem {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            places,
+            widget_context_token,
+            extra,
+        } = self;
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.opt("places", places.as_ref())?;
+        map.opt("widget_context_token", widget_context_token.as_ref())?;
+        map.end(extra)
+    }
+}
+
+impl Serialize for UrlContextResultItem {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self { url, status, extra } = self;
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.field("url", url)?;
+        map.field("status", status)?;
+        map.end(extra)
+    }
+}
+
+impl Serialize for FileSearchResultItem {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            title,
+            text,
+            store,
+            extra,
+        } = self;
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.field("title", title)?;
+        map.field("text", text)?;
+        map.field("file_search_store", store)?;
+        map.end(extra)
     }
 }

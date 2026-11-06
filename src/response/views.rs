@@ -250,11 +250,14 @@ impl FunctionCallInfo<'_> {
 
 /// A generic server-side tool call, borrowed from the response.
 ///
-/// This is what an MCP invocation looks like — the API does not identify the
-/// server or the tool, so `id` and `signature` are all there is. See
-/// [`InteractionResponse::tool_calls`].
+/// This is what an MCP invocation looked like on 2026-08-16: the step did
+/// not identify the server or the tool, so `id` and `signature` are all
+/// there is. Since 2026-10-01 MCP calls are `<server>:<tool>` function calls,
+/// which [`InteractionResponse::mcp_calls`] reads with the server and tool
+/// named. See [`InteractionResponse::tool_calls`].
 ///
 /// [`InteractionResponse::tool_calls`]: crate::InteractionResponse::tool_calls
+/// [`InteractionResponse::mcp_calls`]: crate::InteractionResponse::mcp_calls
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct ToolCallInfo<'a> {

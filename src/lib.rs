@@ -71,6 +71,7 @@ pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
 pub(crate) mod wire_enum;
+pub(crate) mod wire_fields;
 
 // =============================================================================
 // Model defaults
@@ -218,8 +219,8 @@ pub mod response;
 pub use response::{
     AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, FunctionCallInfo,
     FunctionResultInfo, GoogleMapsResultInfo, GroundingToolCount, ImageInfo, InteractionError,
-    InteractionResponse, InteractionStatus, ModalityTokens, OwnedFunctionCallInfo, StepSummary,
-    ToolCallInfo, UrlContextResultInfo, UsageMetadata,
+    InteractionResponse, InteractionStatus, McpCallInfo, ModalityTokens, OwnedFunctionCallInfo,
+    StepSummary, ToolCallInfo, UrlContextResultInfo, UsageMetadata,
 };
 
 // Tool types (function declarations, built-in tools)

@@ -55,7 +55,7 @@ fn test_step_delta_thought_summary_and_signature() {
         serde_json::from_str(r#"{"type":"thought_signature","signature":"abc123"}"#).unwrap();
     assert!(matches!(
         sig,
-        StepDelta::ThoughtSignature { signature: Some(s) } if s == "abc123"
+        StepDelta::ThoughtSignature { signature: Some(s), ..  } if s == "abc123"
     ));
 }
 
@@ -68,7 +68,7 @@ fn test_step_delta_text_annotation() {
         )
         .unwrap();
     match &delta {
-        StepDelta::TextAnnotation { annotations } => {
+        StepDelta::TextAnnotation { annotations, .. } => {
             assert_eq!(annotations.len(), 1);
             assert!(matches!(annotations[0], Annotation::UrlCitation { .. }));
         }

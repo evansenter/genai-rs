@@ -21,9 +21,11 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
-use super::api_surface::{Finding, Surface};
+use super::api_surface::{Finding, Surface, debug_extra_keys};
 use super::{Allowed, assert_clean};
+use crate::content::Content;
 use crate::proptest_tests as strategies;
+use crate::steps::Step;
 use bodies::{
     agent_configs, agent_requests, agents, credential_requests, credential_updates,
     environment_requests, environment_specs, file_search_store_requests, generation_configs,
@@ -456,6 +458,85 @@ fn a_populated_extra_is_sent_flat_and_not_vouched_for() {
         surface.sites(&ty, &body).values().any(|sent| sent == site),
         "an extra key naming a binding field reads as sent"
     );
+}
+
+/// The same holds one level down, for the wire fields a response carried
+/// that the crate does not model (#491): the `extra` of every known `Step`,
+/// `Content` and `Annotation` variant, the `arguments_extra` of the five
+/// call steps, and the `extra` of the result items, places, review
+/// snippets, step errors and static video segments inside them. They are
+/// echoed when history is replayed, not emitted by the crate, so the
+/// literals in `content.rs` leave every one empty, and the checks vouch
+/// only for modeled fields. A populated one is sent flat, in its own object
+/// (a call's `arguments` for `arguments_extra`), so its keys read as that
+/// class's own: one the bindings lack is reported at the class it sits on,
+/// like a key the crate sent by mistake.
+#[test]
+fn a_populated_variant_extra_is_sent_flat_and_not_vouched_for() {
+    for debug in steps()
+        .iter()
+        .map(|step| format!("{step:?}"))
+        .chain(contents().iter().map(|content| format!("{content:?}")))
+    {
+        assert!(debug_extra_keys(&debug).is_empty(), "{debug}");
+    }
+
+    let surface = Surface::bindings();
+    let ty = surface.ty("interactions.Step");
+    let sites = |steps: &[Step]| -> BTreeSet<String> {
+        steps
+            .iter()
+            .flat_map(|step| surface.check(&ty, &to_value(step)))
+            .map(|f| f.site)
+            .collect()
+    };
+    let new = || serde_json::Map::from_iter([("brand_new_field".to_string(), json!(1))]);
+    let mut populated = steps();
+    for step in &mut populated {
+        match step {
+            Step::FunctionCall { extra, .. } => *extra = new(),
+            Step::CodeExecutionCall {
+                arguments_extra, ..
+            } => *arguments_extra = new(),
+            Step::ModelOutput { content, error, .. } => {
+                error.as_mut().expect("an error").extra = new();
+                let Content::Text {
+                    extra, annotations, ..
+                } = &mut content[0]
+                else {
+                    panic!("text first");
+                };
+                *extra = new();
+                let citation = &mut annotations.as_mut().expect("annotations")[0];
+                *citation.extra_mut().expect("a known annotation") = new();
+            }
+            Step::GoogleMapsResult { result, .. } => {
+                result[0].places.as_mut().expect("places")[0].extra = new();
+            }
+            _ => {}
+        }
+    }
+    let wire = |step_type: &str| {
+        let step = populated.iter().find(|s| s.step_type() == step_type);
+        to_value(step.expect("the step is in the history"))
+    };
+    let call = wire("function_call");
+    assert_eq!(call["brand_new_field"], 1, "sent flat: {call}");
+    let code = wire("code_execution_call");
+    assert_eq!(code["arguments"]["brand_new_field"], 1, "{code}");
+
+    let before = sites(&steps());
+    let added: BTreeSet<String> = sites(&populated).difference(&before).cloned().collect();
+    let expected = [
+        "interactions.FunctionCallStep",
+        "interactions.CodeExecutionCallArguments",
+        "interactions.Status",
+        "interactions.TextContent",
+        "interactions.URLCitation",
+        "interactions.GoogleMapsResultPlaces",
+    ]
+    .map(|class| format!("{class}.brand_new_field"));
+    assert_eq!(added, BTreeSet::from(expected));
 }
 
 /// The other direction: every field of every class a request reaches is

@@ -237,7 +237,7 @@ impl InteractionResponse {
         self.steps
             .iter()
             .filter_map(|step| match step {
-                Step::ToolCall { id, signature } => Some(ToolCallInfo {
+                Step::ToolCall { id, signature, .. } => Some(ToolCallInfo {
                     id: id.as_str(),
                     signature: signature.as_deref(),
                 }),

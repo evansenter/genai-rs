@@ -62,10 +62,11 @@ pub struct StepSummary {
     pub tool_call_count: usize,
     /// Number of `mcp_server_tool_call` steps.
     ///
-    /// **Expect 0.** The API has never emitted it: MCP calls arrived as
-    /// generic `tool_call` steps, and since 2026-10-01 as answered
-    /// `function_call` steps. Retained because the step type is
-    /// spec-defined and may start arriving.
+    /// **Expect 0.** The API has never emitted it (last checked 2026-11-04):
+    /// MCP calls arrived as generic `tool_call` steps, and since 2026-10-01
+    /// as answered `function_call` steps. Retained because the step type is
+    /// spec-defined and may start arriving. Count MCP calls in either shape
+    /// with [`InteractionResponse::mcp_calls`].
     ///
     /// [`InteractionResponse::tool_use_tokens`] is the other signal that
     /// MCP ran, with the caveat that it is a single aggregate across all

@@ -10,7 +10,7 @@ fn test_deserialize_streaming_text_delta() {
     let delta: StepDelta = serde_json::from_str(delta_json).expect("Deserialization failed");
 
     match &delta {
-        StepDelta::Text { text } => {
+        StepDelta::Text { text, .. } => {
             assert_eq!(text, "Hello world");
         }
         other => panic!("Expected Text delta, got {:?}", other),
@@ -27,7 +27,7 @@ fn test_deserialize_streaming_thought_signature_delta() {
     let delta: StepDelta = serde_json::from_str(delta_json).expect("Deserialization failed");
 
     match &delta {
-        StepDelta::ThoughtSignature { signature } => {
+        StepDelta::ThoughtSignature { signature, .. } => {
             assert_eq!(signature.as_deref(), Some("EosFCogFAXLI2..."));
         }
         other => panic!("Expected ThoughtSignature delta, got {:?}", other),
@@ -44,7 +44,7 @@ fn test_deserialize_streaming_arguments_delta() {
     let delta: StepDelta = serde_json::from_str(delta_json).expect("Deserialization failed");
 
     match &delta {
-        StepDelta::ArgumentsDelta { arguments } => {
+        StepDelta::ArgumentsDelta { arguments, .. } => {
             assert_eq!(arguments, "{\"city\": \"Par");
         }
         other => panic!("Expected ArgumentsDelta delta, got {:?}", other),

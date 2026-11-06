@@ -209,7 +209,7 @@ impl Normalize for FunctionResultPayload {
 impl Normalize for Step {
     fn normalize(&mut self) {
         match self {
-            Self::UserInput { content }
+            Self::UserInput { content, .. }
             | Self::ModelOutput { content, .. }
             | Self::Thought {
                 summary: content, ..
@@ -228,11 +228,12 @@ impl Normalize for StepDelta {
         match self {
             Self::ThoughtSummary {
                 content: Some(content),
+                ..
             } => content.normalize(),
             Self::FunctionResult { result, .. } | Self::McpServerToolResult { result, .. } => {
                 result.normalize();
             }
-            Self::TextAnnotation { annotations } => {
+            Self::TextAnnotation { annotations, .. } => {
                 annotations.iter_mut().for_each(Normalize::normalize);
             }
             Self::Unknown { delta_type, data } => unknown_read_back(delta_type, data),

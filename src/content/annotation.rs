@@ -1,23 +1,44 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 
 // =============================================================================
 // Annotations (typed citations)
 // =============================================================================
 
 /// A review snippet attached to a place citation.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct ReviewSnippet {
     /// Title of the review.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// URL of the review.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Identifier of the review.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub review_id: Option<String>,
+    /// Fields not yet modeled, kept for round trip (Evergreen). An entry
+    /// named after a modeled field is not written.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The modeled fields, then the extras that do not name one (#491).
+impl Serialize for ReviewSnippet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            title,
+            url,
+            review_id,
+            extra,
+        } = self;
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.opt("title", title.as_ref())?;
+        map.opt("url", url.as_ref())?;
+        map.opt("review_id", review_id.as_ref())?;
+        map.end(extra)
+    }
 }
 
 /// A citation annotation attached to text content.
@@ -53,66 +74,59 @@ pub struct ReviewSnippet {
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Annotation {
     /// A citation of a web source (`type: "url_citation"`).
     UrlCitation {
         /// The cited URL.
-        #[serde(skip_serializing_if = "Option::is_none")]
         url: Option<String>,
         /// Title of the cited page.
-        #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         /// Start of the cited span (UTF-8 byte offset, inclusive).
         start_index: usize,
         /// End of the cited span (UTF-8 byte offset, exclusive).
         end_index: usize,
+        /// Unmodeled wire fields, kept for round trip ([`Annotation::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// A citation of an uploaded/retrieved document (`type: "file_citation"`).
     FileCitation {
         /// URI of the cited document.
-        #[serde(skip_serializing_if = "Option::is_none")]
         document_uri: Option<String>,
         /// Name of the cited file.
-        #[serde(skip_serializing_if = "Option::is_none")]
         file_name: Option<String>,
         /// Source store or origin of the file.
-        #[serde(skip_serializing_if = "Option::is_none")]
         source: Option<String>,
         /// Custom metadata attached to the document.
-        #[serde(skip_serializing_if = "Option::is_none")]
         custom_metadata: Option<serde_json::Value>,
         /// Page number of the citation, if applicable.
-        #[serde(skip_serializing_if = "Option::is_none")]
         page_number: Option<u32>,
         /// Media identifier within the document.
-        #[serde(skip_serializing_if = "Option::is_none")]
         media_id: Option<String>,
         /// Start of the cited span (UTF-8 byte offset, inclusive).
         start_index: usize,
         /// End of the cited span (UTF-8 byte offset, exclusive).
         end_index: usize,
+        /// Unmodeled wire fields, kept for round trip ([`Annotation::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// A citation of a Google Maps place (`type: "place_citation"`).
     PlaceCitation {
         /// Google Maps place identifier.
-        #[serde(skip_serializing_if = "Option::is_none")]
         place_id: Option<String>,
         /// Name of the place.
-        #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         /// URL of the place.
-        #[serde(skip_serializing_if = "Option::is_none")]
         url: Option<String>,
         /// Review snippets supporting the citation.
-        #[serde(skip_serializing_if = "Vec::is_empty")]
         review_snippets: Vec<ReviewSnippet>,
         /// Start of the cited span (UTF-8 byte offset, inclusive).
         start_index: usize,
         /// End of the cited span (UTF-8 byte offset, exclusive).
         end_index: usize,
+        /// Unmodeled wire fields, kept for round trip ([`Annotation::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Speaker and style for a span of TTS input text
     /// (`type: "speech_metadata"`).
@@ -125,47 +139,37 @@ pub enum Annotation {
     /// tile the text without gaps. See [`Content::speaker_text`](crate::Content::speaker_text).
     SpeechMetadata {
         /// Speaker name, matching a `speaker` in `speech_config`.
-        #[serde(skip_serializing_if = "Option::is_none")]
         speaker: Option<String>,
         /// Delivery instruction, e.g. `"whisper"`.
-        #[serde(skip_serializing_if = "Option::is_none")]
         style: Option<String>,
         /// Start of the span (UTF-8 byte offset, inclusive).
-        #[serde(skip_serializing_if = "Option::is_none")]
         start_index: Option<usize>,
         /// End of the span (UTF-8 byte offset, exclusive).
-        #[serde(skip_serializing_if = "Option::is_none")]
         end_index: Option<usize>,
+        /// Unmodeled wire fields, kept for round trip ([`Annotation::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Per-word transcription detail (`type: "word_info"`).
     WordInfo {
         /// The word.
-        #[serde(skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         /// Diarized speaker label.
-        #[serde(skip_serializing_if = "Option::is_none")]
         speaker: Option<String>,
         /// Start time within the audio, as a duration string (e.g. `"1.2s"`).
-        #[serde(skip_serializing_if = "Option::is_none")]
         start_offset: Option<String>,
         /// End time within the audio, as a duration string.
-        #[serde(skip_serializing_if = "Option::is_none")]
         end_offset: Option<String>,
         /// Start of the span (UTF-8 byte offset, inclusive).
-        #[serde(skip_serializing_if = "Option::is_none")]
         start_index: Option<usize>,
         /// End of the span (UTF-8 byte offset, exclusive).
-        #[serde(skip_serializing_if = "Option::is_none")]
         end_index: Option<usize>,
+        /// Unmodeled wire fields, kept for round trip ([`Annotation::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Unknown annotation type for forward compatibility.
     // Serializes as `"type": annotation_type` merged with the other entries
-    // of `data` (see `serialize_unknown_merged`), so a hand-built unknown
-    // annotation still goes out with its type.
-    #[serde(
-        untagged,
-        serialize_with = "crate::serde_util::serialize_unknown_merged"
-    )]
+    // of `data`, so a hand-built unknown annotation still goes out with its
+    // type.
     Unknown {
         /// The unrecognized type name from the API.
         annotation_type: String,
@@ -188,6 +192,7 @@ impl Annotation {
             title,
             start_index,
             end_index,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -202,12 +207,40 @@ impl Annotation {
     /// assert_eq!(whisper.start_index(), None);
     /// ```
     #[must_use]
-    pub const fn speech_metadata(speaker: Option<String>, style: Option<String>) -> Self {
+    pub fn speech_metadata(speaker: Option<String>, style: Option<String>) -> Self {
         Self::SpeechMetadata {
             speaker,
             style,
             start_index: None,
             end_index: None,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// The fields of this annotation that the crate does not model, kept so
+    /// they round-trip (#491); see [`Content::extra`](crate::Content::extra).
+    /// `None` for [`Annotation::Unknown`].
+    #[must_use]
+    pub fn extra(&self) -> Option<&Map<String, Value>> {
+        match self {
+            Self::UrlCitation { extra, .. }
+            | Self::FileCitation { extra, .. }
+            | Self::PlaceCitation { extra, .. }
+            | Self::SpeechMetadata { extra, .. }
+            | Self::WordInfo { extra, .. } => Some(extra),
+            Self::Unknown { .. } => None,
+        }
+    }
+
+    /// Mutable access to [`extra`](Self::extra).
+    pub fn extra_mut(&mut self) -> Option<&mut Map<String, Value>> {
+        match self {
+            Self::UrlCitation { extra, .. }
+            | Self::FileCitation { extra, .. }
+            | Self::PlaceCitation { extra, .. }
+            | Self::SpeechMetadata { extra, .. }
+            | Self::WordInfo { extra, .. } => Some(extra),
+            Self::Unknown { .. } => None,
         }
     }
 
@@ -316,160 +349,175 @@ impl Annotation {
     }
 }
 
+impl Serialize for Annotation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::UrlCitation {
+                url,
+                title,
+                start_index,
+                end_index,
+                extra,
+            } => {
+                let mut map = ModeledMap::tagged(serializer, "url_citation")?;
+                map.opt("url", url.as_ref())?;
+                map.opt("title", title.as_ref())?;
+                map.field("start_index", start_index)?;
+                map.field("end_index", end_index)?;
+                map.end(extra)
+            }
+            Self::FileCitation {
+                document_uri,
+                file_name,
+                source,
+                custom_metadata,
+                page_number,
+                media_id,
+                start_index,
+                end_index,
+                extra,
+            } => {
+                let mut map = ModeledMap::tagged(serializer, "file_citation")?;
+                map.opt("document_uri", document_uri.as_ref())?;
+                map.opt("file_name", file_name.as_ref())?;
+                map.opt("source", source.as_ref())?;
+                map.opt("custom_metadata", custom_metadata.as_ref())?;
+                map.opt("page_number", page_number.as_ref())?;
+                map.opt("media_id", media_id.as_ref())?;
+                map.field("start_index", start_index)?;
+                map.field("end_index", end_index)?;
+                map.end(extra)
+            }
+            Self::PlaceCitation {
+                place_id,
+                name,
+                url,
+                review_snippets,
+                start_index,
+                end_index,
+                extra,
+            } => {
+                let mut map = ModeledMap::tagged(serializer, "place_citation")?;
+                map.opt("place_id", place_id.as_ref())?;
+                map.opt("name", name.as_ref())?;
+                map.opt("url", url.as_ref())?;
+                map.field_unless(
+                    review_snippets.is_empty(),
+                    "review_snippets",
+                    review_snippets,
+                )?;
+                map.field("start_index", start_index)?;
+                map.field("end_index", end_index)?;
+                map.end(extra)
+            }
+            Self::SpeechMetadata {
+                speaker,
+                style,
+                start_index,
+                end_index,
+                extra,
+            } => {
+                let mut map = ModeledMap::tagged(serializer, "speech_metadata")?;
+                map.opt("speaker", speaker.as_ref())?;
+                map.opt("style", style.as_ref())?;
+                map.opt("start_index", start_index.as_ref())?;
+                map.opt("end_index", end_index.as_ref())?;
+                map.end(extra)
+            }
+            Self::WordInfo {
+                text,
+                speaker,
+                start_offset,
+                end_offset,
+                start_index,
+                end_index,
+                extra,
+            } => {
+                let mut map = ModeledMap::tagged(serializer, "word_info")?;
+                map.opt("text", text.as_ref())?;
+                map.opt("speaker", speaker.as_ref())?;
+                map.opt("start_offset", start_offset.as_ref())?;
+                map.opt("end_offset", end_offset.as_ref())?;
+                map.opt("start_index", start_index.as_ref())?;
+                map.opt("end_index", end_index.as_ref())?;
+                map.end(extra)
+            }
+            Self::Unknown {
+                annotation_type,
+                data,
+            } => crate::serde_util::serialize_unknown_merged(annotation_type, data, serializer),
+        }
+    }
+}
+
+/// Reads a known annotation; an error keeps it as [`Annotation::Unknown`].
+fn read_known(object: &Map<String, Value>) -> Result<Annotation, Fallback> {
+    let mut f = WireFields::tagged(object);
+    let Some(annotation_type) = f.tag() else {
+        return Err(Fallback::UnknownType);
+    };
+    let annotation = match annotation_type {
+        "url_citation" => Annotation::UrlCitation {
+            url: f.optional("url")?,
+            title: f.optional("title")?,
+            start_index: f.or_default("start_index")?,
+            end_index: f.or_default("end_index")?,
+            extra: f.extra(),
+        },
+        "file_citation" => Annotation::FileCitation {
+            document_uri: f.optional("document_uri")?,
+            file_name: f.optional("file_name")?,
+            source: f.optional("source")?,
+            custom_metadata: f.optional("custom_metadata")?,
+            page_number: f.optional("page_number")?,
+            media_id: f.optional("media_id")?,
+            start_index: f.or_default("start_index")?,
+            end_index: f.or_default("end_index")?,
+            extra: f.extra(),
+        },
+        "place_citation" => Annotation::PlaceCitation {
+            place_id: f.optional("place_id")?,
+            name: f.optional("name")?,
+            url: f.optional("url")?,
+            review_snippets: f.or_default("review_snippets")?,
+            start_index: f.or_default("start_index")?,
+            end_index: f.or_default("end_index")?,
+            extra: f.extra(),
+        },
+        "speech_metadata" => Annotation::SpeechMetadata {
+            speaker: f.optional("speaker")?,
+            style: f.optional("style")?,
+            start_index: f.optional("start_index")?,
+            end_index: f.optional("end_index")?,
+            extra: f.extra(),
+        },
+        "word_info" => Annotation::WordInfo {
+            text: f.optional("text")?,
+            speaker: f.optional("speaker")?,
+            start_offset: f.optional("start_offset")?,
+            end_offset: f.optional("end_offset")?,
+            start_index: f.optional("start_index")?,
+            end_index: f.optional("end_index")?,
+            extra: f.extra(),
+        },
+        _ => return Err(Fallback::UnknownType),
+    };
+    Ok(annotation)
+}
+
 impl<'de> Deserialize<'de> for Annotation {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let value = serde_json::Value::deserialize(deserializer)?;
+        let value = Value::deserialize(deserializer)?;
 
-        #[derive(Deserialize)]
-        #[serde(tag = "type", rename_all = "snake_case")]
-        #[allow(clippy::enum_variant_names)]
-        enum KnownAnnotation {
-            UrlCitation {
-                #[serde(default)]
-                url: Option<String>,
-                #[serde(default)]
-                title: Option<String>,
-                #[serde(default)]
-                start_index: usize,
-                #[serde(default)]
-                end_index: usize,
-            },
-            FileCitation {
-                #[serde(default)]
-                document_uri: Option<String>,
-                #[serde(default)]
-                file_name: Option<String>,
-                #[serde(default)]
-                source: Option<String>,
-                #[serde(default)]
-                custom_metadata: Option<serde_json::Value>,
-                #[serde(default)]
-                page_number: Option<u32>,
-                #[serde(default)]
-                media_id: Option<String>,
-                #[serde(default)]
-                start_index: usize,
-                #[serde(default)]
-                end_index: usize,
-            },
-            PlaceCitation {
-                #[serde(default)]
-                place_id: Option<String>,
-                #[serde(default)]
-                name: Option<String>,
-                #[serde(default)]
-                url: Option<String>,
-                #[serde(default)]
-                review_snippets: Vec<ReviewSnippet>,
-                #[serde(default)]
-                start_index: usize,
-                #[serde(default)]
-                end_index: usize,
-            },
-            SpeechMetadata {
-                #[serde(default)]
-                speaker: Option<String>,
-                #[serde(default)]
-                style: Option<String>,
-                #[serde(default)]
-                start_index: Option<usize>,
-                #[serde(default)]
-                end_index: Option<usize>,
-            },
-            WordInfo {
-                #[serde(default)]
-                text: Option<String>,
-                #[serde(default)]
-                speaker: Option<String>,
-                #[serde(default)]
-                start_offset: Option<String>,
-                #[serde(default)]
-                end_offset: Option<String>,
-                #[serde(default)]
-                start_index: Option<usize>,
-                #[serde(default)]
-                end_index: Option<usize>,
-            },
-        }
-
-        match KnownAnnotation::deserialize(&value) {
-            Ok(known) => Ok(match known {
-                KnownAnnotation::UrlCitation {
-                    url,
-                    title,
-                    start_index,
-                    end_index,
-                } => Annotation::UrlCitation {
-                    url,
-                    title,
-                    start_index,
-                    end_index,
-                },
-                KnownAnnotation::FileCitation {
-                    document_uri,
-                    file_name,
-                    source,
-                    custom_metadata,
-                    page_number,
-                    media_id,
-                    start_index,
-                    end_index,
-                } => Annotation::FileCitation {
-                    document_uri,
-                    file_name,
-                    source,
-                    custom_metadata,
-                    page_number,
-                    media_id,
-                    start_index,
-                    end_index,
-                },
-                KnownAnnotation::PlaceCitation {
-                    place_id,
-                    name,
-                    url,
-                    review_snippets,
-                    start_index,
-                    end_index,
-                } => Annotation::PlaceCitation {
-                    place_id,
-                    name,
-                    url,
-                    review_snippets,
-                    start_index,
-                    end_index,
-                },
-                KnownAnnotation::SpeechMetadata {
-                    speaker,
-                    style,
-                    start_index,
-                    end_index,
-                } => Annotation::SpeechMetadata {
-                    speaker,
-                    style,
-                    start_index,
-                    end_index,
-                },
-                KnownAnnotation::WordInfo {
-                    text,
-                    speaker,
-                    start_offset,
-                    end_offset,
-                    start_index,
-                    end_index,
-                } => Annotation::WordInfo {
-                    text,
-                    speaker,
-                    start_offset,
-                    end_offset,
-                    start_index,
-                    end_index,
-                },
-            }),
-            Err(parse_error) => {
+        match Fallback::read(&value, read_known) {
+            Ok(annotation) => Ok(annotation),
+            Err(fallback) => {
                 let annotation_type = value
                     .get("type")
                     .and_then(|v| v.as_str())
@@ -477,10 +525,8 @@ impl<'de> Deserialize<'de> for Annotation {
                     .to_string();
 
                 tracing::warn!(
-                    "Encountered unknown Annotation type '{}'. Parse error: {}. \
-                     The annotation will be preserved in the Unknown variant.",
-                    annotation_type,
-                    parse_error
+                    "Keeping an annotation whole in Annotation::Unknown: {}.",
+                    fallback.describe("Annotation", &annotation_type)
                 );
 
                 Ok(Annotation::Unknown {

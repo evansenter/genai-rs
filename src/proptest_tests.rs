@@ -202,6 +202,7 @@ fn arb_video_processing() -> impl Strategy<Value = VideoProcessing> {
                     start_offset,
                     end_offset,
                     fps,
+                    extra: Default::default(),
                 }
             ),
         // Unknown variant with arbitrary mode string
@@ -237,6 +238,7 @@ fn arb_review_snippet() -> impl Strategy<Value = ReviewSnippet> {
             title,
             url,
             review_id,
+            extra: Default::default(),
         })
 }
 
@@ -257,6 +259,7 @@ fn arb_annotation() -> impl Strategy<Value = Annotation> {
                 title,
                 start_index: start,
                 end_index: start.saturating_add(len),
+                extra: Default::default(),
             }),
         // FileCitation
         (
@@ -287,6 +290,7 @@ fn arb_annotation() -> impl Strategy<Value = Annotation> {
                         media_id,
                         start_index: start,
                         end_index: start.saturating_add(len),
+                        extra: Default::default(),
                     }
                 }
             ),
@@ -306,8 +310,47 @@ fn arb_annotation() -> impl Strategy<Value = Annotation> {
                     review_snippets,
                     start_index: start,
                     end_index: start.saturating_add(len),
+                    extra: Default::default(),
                 }
             }),
+        // SpeechMetadata (indices optional)
+        (
+            proptest::option::of(arb_identifier()),
+            proptest::option::of(arb_text()),
+            proptest::option::of(0usize..1000),
+            proptest::option::of(0usize..1000),
+        )
+            .prop_map(|(speaker, style, start_index, end_index)| {
+                Annotation::SpeechMetadata {
+                    speaker,
+                    style,
+                    start_index,
+                    end_index,
+                    extra: Default::default(),
+                }
+            }),
+        // WordInfo (indices optional)
+        (
+            proptest::option::of(arb_text()),
+            proptest::option::of(arb_identifier()),
+            proptest::option::of(arb_offset()),
+            proptest::option::of(arb_offset()),
+            proptest::option::of(0usize..1000),
+            proptest::option::of(0usize..1000),
+        )
+            .prop_map(
+                |(text, speaker, start_offset, end_offset, start_index, end_index)| {
+                    Annotation::WordInfo {
+                        text,
+                        speaker,
+                        start_offset,
+                        end_offset,
+                        start_index,
+                        end_index,
+                        extra: Default::default(),
+                    }
+                }
+            ),
         // Unknown annotation type (forward compatibility)
         (arb_unknown_type(), arb_unknown_object()).prop_map(|(annotation_type, data)| {
             Annotation::Unknown {
@@ -336,6 +379,7 @@ fn arb_google_search_result_item() -> impl Strategy<Value = GoogleSearchResultIt
                 url,
                 rendered_content,
                 search_suggestions,
+                extra: Default::default(),
             }
         })
 }
@@ -378,6 +422,7 @@ fn arb_google_maps_result_item() -> impl Strategy<Value = GoogleMapsResultItem> 
         .prop_map(|(places, widget_context_token)| GoogleMapsResultItem {
             places,
             widget_context_token,
+            extra: Default::default(),
         })
 }
 
@@ -387,6 +432,7 @@ fn arb_file_search_result_item() -> impl Strategy<Value = FileSearchResultItem> 
         title,
         text,
         store,
+        extra: Default::default(),
     })
 }
 
@@ -609,7 +655,11 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
             proptest::option::of(arb_text()),
             proptest::option::of(proptest::collection::vec(arb_annotation(), 0..3))
         )
-            .prop_map(|(text, annotations)| Content::Text { text, annotations }),
+            .prop_map(|(text, annotations)| Content::Text {
+                text,
+                annotations,
+                extra: Default::default()
+            }),
         // Image content
         (
             proptest::option::of(arb_text()),
@@ -621,7 +671,8 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
                 data,
                 uri,
                 mime_type,
-                resolution
+                resolution,
+                extra: Default::default()
             }),
         // Audio content (with sample_rate/channels)
         (
@@ -638,6 +689,7 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
                     mime_type,
                     sample_rate,
                     channels,
+                    extra: Default::default(),
                 }
             ),
         // Video content
@@ -656,6 +708,7 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
                     resolution,
                     processing,
                     name: None,
+                    extra: Default::default(),
                 }
             ),
         // Document content
@@ -667,7 +720,8 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
             .prop_map(|(data, uri, mime_type)| Content::Document {
                 data,
                 uri,
-                mime_type
+                mime_type,
+                extra: Default::default()
             }),
     ]
 }
@@ -711,7 +765,7 @@ fn arb_function_result_payload() -> impl Strategy<Value = FunctionResultPayload>
 }
 
 // =============================================================================
-// Step Strategies (all 17 variants + Unknown)
+// Step Strategies (every known variant + Unknown)
 // =============================================================================
 
 fn arb_step_error() -> impl Strategy<Value = StepError> {
@@ -724,6 +778,7 @@ fn arb_step_error() -> impl Strategy<Value = StepError> {
             code,
             message,
             details,
+            extra: Default::default(),
         })
 }
 
@@ -731,19 +786,30 @@ fn arb_step_error() -> impl Strategy<Value = StepError> {
 fn arb_known_step() -> impl Strategy<Value = Step> {
     prop_oneof![
         // user_input
-        prop::collection::vec(arb_content(), 0..3).prop_map(|content| Step::UserInput { content }),
+        prop::collection::vec(arb_content(), 0..3).prop_map(|content| Step::UserInput {
+            content,
+            extra: Default::default()
+        }),
         // model_output
         (
             prop::collection::vec(arb_content(), 0..3),
             proptest::option::of(arb_step_error()),
         )
-            .prop_map(|(content, error)| Step::ModelOutput { content, error }),
+            .prop_map(|(content, error)| Step::ModelOutput {
+                content,
+                error,
+                extra: Default::default()
+            }),
         // thought
         (
             proptest::option::of(arb_text()),
             prop::collection::vec(arb_content(), 0..2),
         )
-            .prop_map(|(signature, summary)| Step::Thought { signature, summary }),
+            .prop_map(|(signature, summary)| Step::Thought {
+                signature,
+                summary,
+                extra: Default::default()
+            }),
         // function_call
         (
             arb_identifier(),
@@ -756,6 +822,7 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                 name,
                 arguments,
                 signature,
+                extra: Default::default(),
             }),
         // function_result
         (
@@ -772,6 +839,7 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                     result,
                     is_error,
                     signature,
+                    extra: Default::default(),
                 }
             }),
         // code_execution_call (wire: nested arguments {language, code})
@@ -786,6 +854,8 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                 language,
                 code,
                 signature,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             }),
         // code_execution_result
         (
@@ -800,6 +870,7 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                     result,
                     is_error,
                     signature,
+                    extra: Default::default(),
                 }
             ),
         // url_context_call (wire: nested arguments {urls})
@@ -811,7 +882,9 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
             .prop_map(|(id, urls, signature)| Step::UrlContextCall {
                 id,
                 urls,
-                signature
+                signature,
+                arguments_extra: Default::default(),
+                extra: Default::default()
             }),
         // url_context_result
         (
@@ -826,6 +899,7 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                     result,
                     is_error,
                     signature,
+                    extra: Default::default(),
                 }
             ),
         // google_search_call (wire: nested arguments {queries})
@@ -841,6 +915,8 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                     queries,
                     search_type,
                     signature,
+                    arguments_extra: Default::default(),
+                    extra: Default::default(),
                 }
             ),
         // google_search_result
@@ -856,6 +932,7 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                     result,
                     is_error,
                     signature,
+                    extra: Default::default(),
                 }
             ),
         // mcp_server_tool_call
@@ -871,6 +948,7 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                     name,
                     server_name,
                     arguments,
+                    extra: Default::default(),
                 }
             ),
         // mcp_server_tool_result
@@ -886,16 +964,27 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                     name,
                     server_name,
                     result,
+                    extra: Default::default(),
                 }
             ),
         // file_search_call
-        (arb_identifier(), proptest::option::of(arb_text()))
-            .prop_map(|(id, signature)| { Step::FileSearchCall { id, signature } }),
+        (arb_identifier(), proptest::option::of(arb_text())).prop_map(|(id, signature)| {
+            Step::FileSearchCall {
+                id,
+                signature,
+                extra: Default::default(),
+            }
+        }),
         // tool_call — the generic server-side call the API emits for MCP.
         // `prop_oneof!` is not exhaustiveness-checked, so a new variant is
         // silently absent from the roundtrip proptest unless added here.
-        (arb_identifier(), proptest::option::of(arb_text()))
-            .prop_map(|(id, signature)| { Step::ToolCall { id, signature } }),
+        (arb_identifier(), proptest::option::of(arb_text())).prop_map(|(id, signature)| {
+            Step::ToolCall {
+                id,
+                signature,
+                extra: Default::default(),
+            }
+        }),
         // file_search_result (empty result skips the field; default is empty)
         (
             arb_identifier(),
@@ -906,6 +995,7 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                 call_id,
                 result,
                 signature,
+                extra: Default::default(),
             }),
         // google_maps_call (wire: nested arguments {queries})
         (
@@ -916,7 +1006,9 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
             .prop_map(|(id, queries, signature)| Step::GoogleMapsCall {
                 id,
                 queries,
-                signature
+                signature,
+                arguments_extra: Default::default(),
+                extra: Default::default()
             }),
         // google_maps_result
         (
@@ -928,6 +1020,50 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
                 call_id,
                 result,
                 signature,
+                extra: Default::default(),
+            }),
+        // processing_call / processing_result
+        (arb_identifier(), proptest::option::of(arb_text())).prop_map(|(id, signature)| {
+            Step::ProcessingCall {
+                id,
+                signature,
+                extra: Default::default(),
+            }
+        }),
+        (arb_identifier(), proptest::option::of(arb_text())).prop_map(|(call_id, signature)| {
+            Step::ProcessingResult {
+                call_id,
+                signature,
+                extra: Default::default(),
+            }
+        }),
+        // retrieval_call (wire: nested arguments {queries}) / retrieval_result
+        (
+            arb_identifier(),
+            prop::collection::vec(arb_text(), 0..3),
+            proptest::option::of(arb_retrieval_type()),
+            proptest::option::of(arb_text()),
+        )
+            .prop_map(
+                |(id, queries, retrieval_type, signature)| Step::RetrievalCall {
+                    id,
+                    queries,
+                    retrieval_type,
+                    signature,
+                    arguments_extra: Default::default(),
+                    extra: Default::default(),
+                }
+            ),
+        (
+            arb_identifier(),
+            proptest::option::of(proptest::bool::ANY),
+            proptest::option::of(arb_text()),
+        )
+            .prop_map(|(call_id, is_error, signature)| Step::RetrievalResult {
+                call_id,
+                is_error,
+                signature,
+                extra: Default::default(),
             }),
     ]
 }
@@ -957,7 +1093,10 @@ fn arb_step() -> impl Strategy<Value = Step> {
 fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
     prop_oneof![
         // text
-        arb_text().prop_map(|text| StepDelta::Text { text }),
+        arb_text().prop_map(|text| StepDelta::Text {
+            text,
+            extra: Default::default()
+        }),
         // image
         (
             proptest::option::of(arb_text()),
@@ -970,6 +1109,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                 uri,
                 mime_type,
                 resolution,
+                extra: Default::default(),
             }),
         // audio
         (
@@ -988,6 +1128,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                     rate,
                     sample_rate,
                     channels,
+                    extra: Default::default(),
                 }
             }),
         // video
@@ -1002,6 +1143,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                 uri,
                 mime_type,
                 resolution,
+                extra: Default::default(),
             }),
         // document
         (
@@ -1012,19 +1154,31 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
             .prop_map(|(data, uri, mime_type)| StepDelta::Document {
                 data,
                 uri,
-                mime_type
+                mime_type,
+                extra: Default::default()
             }),
         // thought_summary
-        proptest::option::of(arb_content())
-            .prop_map(|content| StepDelta::ThoughtSummary { content }),
+        proptest::option::of(arb_content()).prop_map(|content| StepDelta::ThoughtSummary {
+            content,
+            extra: Default::default()
+        }),
         // thought_signature
-        proptest::option::of(arb_text())
-            .prop_map(|signature| StepDelta::ThoughtSignature { signature }),
+        proptest::option::of(arb_text()).prop_map(|signature| StepDelta::ThoughtSignature {
+            signature,
+            extra: Default::default()
+        }),
         // text_annotation_delta
-        prop::collection::vec(arb_annotation(), 0..3)
-            .prop_map(|annotations| StepDelta::TextAnnotation { annotations }),
+        prop::collection::vec(arb_annotation(), 0..3).prop_map(|annotations| {
+            StepDelta::TextAnnotation {
+                annotations,
+                extra: Default::default(),
+            }
+        }),
         // arguments_delta (streaming function-call args)
-        arb_text().prop_map(|arguments| StepDelta::ArgumentsDelta { arguments }),
+        arb_text().prop_map(|arguments| StepDelta::ArgumentsDelta {
+            arguments,
+            extra: Default::default()
+        }),
         // function_result
         (
             arb_identifier(),
@@ -1038,6 +1192,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                     name,
                     result,
                     is_error,
+                    extra: Default::default(),
                 }
             ),
         // code_execution_call
@@ -1054,6 +1209,8 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                 language: Some(language),
                 code,
                 signature,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             }),
         // code_execution_result
         (
@@ -1066,6 +1223,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                     result,
                     is_error,
                     signature,
+                    extra: Default::default(),
                 }
             ),
         // url_context_call
@@ -1073,7 +1231,12 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
             prop::collection::vec(arb_text(), 0..3),
             proptest::option::of(arb_text()),
         )
-            .prop_map(|(urls, signature)| StepDelta::UrlContextCall { urls, signature }),
+            .prop_map(|(urls, signature)| StepDelta::UrlContextCall {
+                urls,
+                signature,
+                arguments_extra: Default::default(),
+                extra: Default::default()
+            }),
         // url_context_result
         (
             prop::collection::vec(arb_url_context_result_item(), 0..3),
@@ -1085,6 +1248,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                     result,
                     is_error,
                     signature,
+                    extra: Default::default(),
                 }
             ),
         // google_search_call
@@ -1092,7 +1256,12 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
             prop::collection::vec(arb_text(), 0..3),
             proptest::option::of(arb_text()),
         )
-            .prop_map(|(queries, signature)| StepDelta::GoogleSearchCall { queries, signature }),
+            .prop_map(|(queries, signature)| StepDelta::GoogleSearchCall {
+                queries,
+                signature,
+                arguments_extra: Default::default(),
+                extra: Default::default()
+            }),
         // google_search_result
         (
             prop::collection::vec(arb_google_search_result_item(), 0..3),
@@ -1104,6 +1273,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                     result,
                     is_error,
                     signature,
+                    extra: Default::default(),
                 }
             ),
         // mcp_server_tool_call
@@ -1112,6 +1282,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                 name,
                 server_name,
                 arguments,
+                extra: Default::default(),
             }
         ),
         // mcp_server_tool_result
@@ -1125,29 +1296,78 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
                     name,
                     server_name,
                     result,
+                    extra: Default::default(),
                 }
             ),
         // file_search_call
-        proptest::option::of(arb_text())
-            .prop_map(|signature| StepDelta::FileSearchCall { signature }),
+        proptest::option::of(arb_text()).prop_map(|signature| StepDelta::FileSearchCall {
+            signature,
+            extra: Default::default()
+        }),
         // file_search_result
         (
             prop::collection::vec(arb_file_search_result_item(), 0..3),
             proptest::option::of(arb_text()),
         )
-            .prop_map(|(result, signature)| StepDelta::FileSearchResult { result, signature }),
+            .prop_map(|(result, signature)| StepDelta::FileSearchResult {
+                result,
+                signature,
+                extra: Default::default()
+            }),
         // google_maps_call
         (
             prop::collection::vec(arb_text(), 0..3),
             proptest::option::of(arb_text()),
         )
-            .prop_map(|(queries, signature)| StepDelta::GoogleMapsCall { queries, signature }),
+            .prop_map(|(queries, signature)| StepDelta::GoogleMapsCall {
+                queries,
+                signature,
+                arguments_extra: Default::default(),
+                extra: Default::default()
+            }),
         // google_maps_result
         (
             prop::collection::vec(arb_google_maps_result_item(), 0..2),
             proptest::option::of(arb_text()),
         )
-            .prop_map(|(result, signature)| StepDelta::GoogleMapsResult { result, signature }),
+            .prop_map(|(result, signature)| StepDelta::GoogleMapsResult {
+                result,
+                signature,
+                extra: Default::default()
+            }),
+        // processing_call / processing_result
+        proptest::option::of(arb_text()).prop_map(|signature| StepDelta::ProcessingCall {
+            signature,
+            extra: Default::default()
+        }),
+        proptest::option::of(arb_text()).prop_map(|signature| StepDelta::ProcessingResult {
+            signature,
+            extra: Default::default()
+        }),
+        // retrieval_call / retrieval_result
+        (
+            prop::collection::vec(arb_text(), 0..3),
+            proptest::option::of(arb_retrieval_type()),
+            proptest::option::of(arb_text()),
+        )
+            .prop_map(
+                |(queries, retrieval_type, signature)| StepDelta::RetrievalCall {
+                    queries,
+                    retrieval_type,
+                    signature,
+                    arguments_extra: Default::default(),
+                    extra: Default::default()
+                }
+            ),
+        (
+            proptest::option::of(proptest::bool::ANY),
+            proptest::option::of(arb_text()),
+        )
+            .prop_map(|(is_error, signature)| StepDelta::RetrievalResult {
+                is_error,
+                signature,
+                extra: Default::default()
+            }),
         // Unknown delta (not gated: StepDelta preserves unknowns even in strict mode)
         (arb_unknown_type(), arb_unknown_object())
             .prop_map(|(delta_type, data)| StepDelta::Unknown { delta_type, data }),
@@ -2626,28 +2846,28 @@ proptest! {
     /// Test empty strings are handled correctly.
     #[test]
     fn empty_text_content_roundtrip(_unused in Just(())) {
-        let content = Content::Text { text: Some(String::new()), annotations: None };
+        let content = Content::Text { text: Some(String::new()), annotations: None, extra: Default::default() };
         assert_value_roundtrip(&content)?;
     }
 
     /// Test None text content is handled correctly.
     #[test]
     fn none_text_content_roundtrip(_unused in Just(())) {
-        let content = Content::Text { text: None, annotations: None };
+        let content = Content::Text { text: None, annotations: None, extra: Default::default() };
         assert_value_roundtrip(&content)?;
     }
 
     /// Test special characters in strings are handled correctly.
     #[test]
     fn special_chars_in_text(text in ".*[\n\r\t\"\\\\].*") {
-        let content = Content::Text { text: Some(text), annotations: None };
+        let content = Content::Text { text: Some(text), annotations: None, extra: Default::default() };
         assert_value_roundtrip(&content)?;
     }
 
     /// Test Unicode in strings is handled correctly.
     #[test]
     fn unicode_in_text(text in ".*[\\u{1F600}-\\u{1F64F}].*") {
-        let content = Content::Text { text: Some(text), annotations: None };
+        let content = Content::Text { text: Some(text), annotations: None, extra: Default::default() };
         assert_value_roundtrip(&content)?;
     }
 
@@ -2744,7 +2964,7 @@ proptest! {
             id: "call_123".to_string(),
             name: "deep_function".to_string(),
             arguments: nested_args,
-            signature: None,
+            signature: None, extra: Default::default(),
         };
 
         assert_value_roundtrip(&step)?;
@@ -2780,7 +3000,7 @@ proptest! {
             name: Some("deep_function".to_string()),
             result: FunctionResultPayload::Json(nested_result),
             is_error: None,
-            signature: None,
+            signature: None, extra: Default::default(),
         };
 
         assert_value_roundtrip(&step)?;
@@ -2890,3 +3110,6 @@ proptest! {
         prop_assert!(!restored.reached_max_loops);
     }
 }
+
+#[path = "proptest_unknown_fields.rs"]
+mod unknown_fields;

@@ -1,10 +1,12 @@
 //! Fully populated values for the request side: every `Content` variant
 //! and annotation, every history `Step` a caller sends back, and every
-//! `Tool`.
+//! `Tool`. Every `extra` and `arguments_extra` stays empty: they hold the
+//! unmodeled fields a response carried, which history replays but the crate
+//! does not emit (`a_populated_variant_extra_is_sent_flat_and_not_vouched_for`).
 
 use std::collections::HashMap;
 
-use serde_json::json;
+use serde_json::{Map, json};
 
 use crate::content::{Annotation, CodeExecutionLanguage, Content, Resolution, VideoProcessing};
 use crate::steps::{FunctionResultPayload, Step};
@@ -21,6 +23,7 @@ fn annotations() -> Vec<Annotation> {
             title: Some("t".into()),
             start_index: 0,
             end_index: 1,
+            extra: Map::new(),
         },
         Annotation::FileCitation {
             document_uri: Some("https://example.com/doc".into()),
@@ -31,6 +34,7 @@ fn annotations() -> Vec<Annotation> {
             media_id: Some("m".into()),
             start_index: 0,
             end_index: 1,
+            extra: Map::new(),
         },
         Annotation::PlaceCitation {
             place_id: Some("p".into()),
@@ -40,15 +44,18 @@ fn annotations() -> Vec<Annotation> {
                 title: Some("t".into()),
                 url: Some("https://example.com".into()),
                 review_id: Some("r".into()),
+                extra: Map::new(),
             }],
             start_index: 0,
             end_index: 1,
+            extra: Map::new(),
         },
         Annotation::SpeechMetadata {
             speaker: Some("Joe".into()),
             style: Some("calm".into()),
             start_index: Some(0),
             end_index: Some(1),
+            extra: Map::new(),
         },
         Annotation::WordInfo {
             text: Some("w".into()),
@@ -57,6 +64,7 @@ fn annotations() -> Vec<Annotation> {
             end_offset: Some("1s".into()),
             start_index: Some(0),
             end_index: Some(1),
+            extra: Map::new(),
         },
     ]
 }
@@ -68,12 +76,14 @@ pub(super) fn contents() -> Vec<Content> {
         Content::Text {
             text: Some("hello".into()),
             annotations: Some(annotations()),
+            extra: Map::new(),
         },
         Content::Image {
             data: Some("AAAA".into()),
             uri: Some("https://example.com/i.png".into()),
             mime_type: Some("image/png".into()),
             resolution: Some(Resolution::High),
+            extra: Map::new(),
         },
         Content::Audio {
             data: Some("AAAA".into()),
@@ -81,6 +91,7 @@ pub(super) fn contents() -> Vec<Content> {
             mime_type: Some("audio/wav".into()),
             sample_rate: Some(24_000),
             channels: Some(1),
+            extra: Map::new(),
         },
         Content::Video {
             data: Some("AAAA".into()),
@@ -95,11 +106,13 @@ pub(super) fn contents() -> Vec<Content> {
                     .build(),
             ),
             name: Some("clip.mp4".into()),
+            extra: Map::new(),
         },
         Content::Document {
             data: Some("AAAA".into()),
             uri: Some("https://example.com/d.pdf".into()),
             mime_type: Some("application/pdf".into()),
+            extra: Map::new(),
         },
     ];
     for content in &all {
@@ -121,6 +134,7 @@ pub(super) fn contents() -> Vec<Content> {
             resolution: None,
             processing: Some(processing),
             name: None,
+            extra: Map::new(),
         });
     }
     out
@@ -137,6 +151,7 @@ pub(super) fn steps() -> Vec<Step> {
     let mut all = vec![
         Step::UserInput {
             content: contents(),
+            extra: Map::new(),
         },
         Step::ModelOutput {
             content: contents(),
@@ -146,49 +161,62 @@ pub(super) fn steps() -> Vec<Step> {
                 details: Some(vec![
                     json!({"@type": "type.googleapis.com/google.rpc.ErrorInfo"}),
                 ]),
+                extra: Map::new(),
             }),
+            extra: Map::new(),
         },
         Step::Thought {
             signature: Some("c2ln".into()),
             summary: vec![Content::text("thinking")],
+            extra: Map::new(),
         },
         Step::FunctionCall {
             id: "c1".into(),
             name: "f".into(),
             arguments: json!({"a": 1}),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::CodeExecutionCall {
             id: "c2".into(),
             language: CodeExecutionLanguage::Python,
             code: "print(1)".into(),
             signature: Some("c2ln".into()),
+            arguments_extra: Map::new(),
+            extra: Map::new(),
         },
         Step::CodeExecutionResult {
             call_id: "c2".into(),
             result: "1".into(),
             is_error: true,
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::UrlContextCall {
             id: "c3".into(),
             urls: vec!["https://example.com".into()],
             signature: Some("c2ln".into()),
+            arguments_extra: Map::new(),
+            extra: Map::new(),
         },
         Step::UrlContextResult {
             call_id: "c3".into(),
             result: vec![crate::content::UrlContextResultItem {
                 url: "https://example.com".into(),
                 status: "success".into(),
+                extra: Map::new(),
             }],
             is_error: Some(false),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::GoogleSearchCall {
             id: "c4".into(),
             queries: vec!["q".into()],
             search_type: Some(SearchType::WebSearch),
             signature: Some("c2ln".into()),
+            arguments_extra: Map::new(),
+            extra: Map::new(),
         },
         Step::GoogleSearchResult {
             call_id: "c4".into(),
@@ -197,19 +225,23 @@ pub(super) fn steps() -> Vec<Step> {
                 url: "https://example.com".into(),
                 rendered_content: Some("<div/>".into()),
                 search_suggestions: Some("<div/>".into()),
+                extra: Map::new(),
             }],
             is_error: Some(false),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::McpServerToolCall {
             id: "c5".into(),
             name: "tool".into(),
             server_name: "server".into(),
             arguments: json!({"a": 1}),
+            extra: Map::new(),
         },
         Step::FileSearchCall {
             id: "c6".into(),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::FileSearchResult {
             call_id: "c6".into(),
@@ -217,13 +249,17 @@ pub(super) fn steps() -> Vec<Step> {
                 title: "t".into(),
                 text: "x".into(),
                 store: "fileSearchStores/s".into(),
+                extra: Map::new(),
             }],
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::GoogleMapsCall {
             id: "c7".into(),
             queries: vec!["q".into()],
             signature: Some("c2ln".into()),
+            arguments_extra: Map::new(),
+            extra: Map::new(),
         },
         Step::GoogleMapsResult {
             call_id: "c7".into(),
@@ -244,31 +280,39 @@ pub(super) fn steps() -> Vec<Step> {
                         title: Some("t".into()),
                         url: Some("https://example.com".into()),
                         review_id: Some("r".into()),
+                        extra: Map::new(),
                     }]),
-                    extra: serde_json::Map::new(),
+                    extra: Map::new(),
                 }]),
                 widget_context_token: Some("w".into()),
+                extra: Map::new(),
             }],
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::ProcessingCall {
             id: "c8".into(),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::ProcessingResult {
             call_id: "c8".into(),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
         Step::RetrievalCall {
             id: "c9".into(),
             queries: vec!["q".into()],
             retrieval_type: Some(RetrievalType::RagStore),
             signature: Some("c2ln".into()),
+            arguments_extra: Map::new(),
+            extra: Map::new(),
         },
         Step::RetrievalResult {
             call_id: "c9".into(),
             is_error: Some(false),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         },
     ];
     for result in payloads {
@@ -278,12 +322,14 @@ pub(super) fn steps() -> Vec<Step> {
             result: result.clone(),
             is_error: Some(false),
             signature: Some("c2ln".into()),
+            extra: Map::new(),
         });
         all.push(Step::McpServerToolResult {
             call_id: "c5".into(),
             name: Some("tool".into()),
             server_name: Some("server".into()),
             result,
+            extra: Map::new(),
         });
     }
     for step in &all {

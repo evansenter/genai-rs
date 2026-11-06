@@ -28,6 +28,8 @@ pub enum StepDelta {
     Text {
         /// The text fragment.
         text: String,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Image data (`type: "image"`).
     Image {
@@ -39,6 +41,8 @@ pub enum StepDelta {
         mime_type: Option<String>,
         /// Media resolution.
         resolution: Option<Resolution>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Audio data (`type: "audio"`).
     Audio {
@@ -54,6 +58,8 @@ pub enum StepDelta {
         sample_rate: Option<u32>,
         /// Number of audio channels.
         channels: Option<u32>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Video data (`type: "video"`).
     Video {
@@ -65,6 +71,8 @@ pub enum StepDelta {
         mime_type: Option<String>,
         /// Media resolution.
         resolution: Option<Resolution>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Document data (`type: "document"`).
     Document {
@@ -74,21 +82,29 @@ pub enum StepDelta {
         uri: Option<String>,
         /// MIME type.
         mime_type: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Thought summary content (`type: "thought_summary"`).
     ThoughtSummary {
         /// The summary content block (text or image).
         content: Option<Content>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Thought signature fragment (`type: "thought_signature"`).
     ThoughtSignature {
         /// The signature fragment.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Text annotations (`type: "text_annotation_delta"`).
     TextAnnotation {
         /// Citation annotations for previously streamed text.
         annotations: Vec<Annotation>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Function-call arguments fragment (`type: "arguments_delta"`).
     ///
@@ -97,6 +113,8 @@ pub enum StepDelta {
     ArgumentsDelta {
         /// The raw JSON fragment.
         arguments: String,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Function result (`type: "function_result"`).
     FunctionResult {
@@ -110,6 +128,8 @@ pub enum StepDelta {
         result: FunctionResultPayload,
         /// Whether execution errored.
         is_error: Option<bool>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Code execution call delta (`type: "code_execution_call"`).
     CodeExecutionCall {
@@ -119,6 +139,10 @@ pub enum StepDelta {
         code: Option<String>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled `arguments` keys ([`StepDelta::arguments_extra`]).
+        arguments_extra: serde_json::Map<String, serde_json::Value>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Code execution result delta (`type: "code_execution_result"`).
     CodeExecutionResult {
@@ -128,6 +152,8 @@ pub enum StepDelta {
         is_error: Option<bool>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// URL context call delta (`type: "url_context_call"`).
     UrlContextCall {
@@ -135,6 +161,10 @@ pub enum StepDelta {
         urls: Vec<String>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled `arguments` keys ([`StepDelta::arguments_extra`]).
+        arguments_extra: serde_json::Map<String, serde_json::Value>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// URL context result delta (`type: "url_context_result"`).
     UrlContextResult {
@@ -144,6 +174,8 @@ pub enum StepDelta {
         is_error: Option<bool>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Google Search call delta (`type: "google_search_call"`).
     GoogleSearchCall {
@@ -151,6 +183,10 @@ pub enum StepDelta {
         queries: Vec<String>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled `arguments` keys ([`StepDelta::arguments_extra`]).
+        arguments_extra: serde_json::Map<String, serde_json::Value>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Google Search result delta (`type: "google_search_result"`).
     GoogleSearchResult {
@@ -160,10 +196,13 @@ pub enum StepDelta {
         is_error: Option<bool>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// MCP server tool call delta (`type: "mcp_server_tool_call"`).
     ///
-    /// Not currently emitted by the API — see
+    /// Never observed: a streamed MCP call arrives as `function_call` and
+    /// `function_result` steps and deltas (verified live 2026-11-04). See
     /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall) for the verified wire behaviour
     /// and #459.
     McpServerToolCall {
@@ -173,10 +212,13 @@ pub enum StepDelta {
         server_name: String,
         /// Tool arguments.
         arguments: serde_json::Value,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// MCP server tool result delta (`type: "mcp_server_tool_result"`).
     ///
-    /// Not currently emitted by the API — see
+    /// Never observed: a streamed MCP call arrives as `function_call` and
+    /// `function_result` steps and deltas (verified live 2026-11-04). See
     /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall) for the verified wire behaviour
     /// and #459.
     McpServerToolResult {
@@ -186,11 +228,15 @@ pub enum StepDelta {
         server_name: Option<String>,
         /// The result payload.
         result: FunctionResultPayload,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// File search call delta (`type: "file_search_call"`).
     FileSearchCall {
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// File search result delta (`type: "file_search_result"`).
     FileSearchResult {
@@ -198,6 +244,8 @@ pub enum StepDelta {
         result: Vec<FileSearchResultItem>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Google Maps call delta (`type: "google_maps_call"`).
     GoogleMapsCall {
@@ -205,6 +253,10 @@ pub enum StepDelta {
         queries: Vec<String>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled `arguments` keys ([`StepDelta::arguments_extra`]).
+        arguments_extra: serde_json::Map<String, serde_json::Value>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Google Maps result delta (`type: "google_maps_result"`).
     GoogleMapsResult {
@@ -212,17 +264,23 @@ pub enum StepDelta {
         result: Vec<GoogleMapsResultItem>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Processing call delta (`type: "processing_call"`). Carries the
     /// signature that `step.start` announces as `""`.
     ProcessingCall {
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Processing result delta (`type: "processing_result"`).
     ProcessingResult {
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Retrieval call delta (`type: "retrieval_call"`); Vertex-only.
     RetrievalCall {
@@ -232,6 +290,10 @@ pub enum StepDelta {
         retrieval_type: Option<crate::tools::RetrievalType>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled `arguments` keys ([`StepDelta::arguments_extra`]).
+        arguments_extra: serde_json::Map<String, serde_json::Value>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Retrieval result delta (`type: "retrieval_result"`); Vertex-only.
     RetrievalResult {
@@ -239,6 +301,8 @@ pub enum StepDelta {
         is_error: Option<bool>,
         /// Opaque signature.
         signature: Option<String>,
+        /// Unmodeled wire fields ([`StepDelta::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Unknown delta type for forward compatibility.
     Unknown {
@@ -278,7 +342,7 @@ impl StepDelta {
     #[must_use]
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Self::Text { text } => Some(text),
+            Self::Text { text, .. } => Some(text),
             _ => None,
         }
     }
@@ -287,7 +351,7 @@ impl StepDelta {
     #[must_use]
     pub fn as_arguments_delta(&self) -> Option<&str> {
         match self {
-            Self::ArgumentsDelta { arguments } => Some(arguments),
+            Self::ArgumentsDelta { arguments, .. } => Some(arguments),
             _ => None,
         }
     }

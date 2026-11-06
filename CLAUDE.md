@@ -110,7 +110,9 @@ Unknown {
 with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 (reference: `Content` in `src/content/`). Response and resource structs are
 `#[non_exhaustive]` (D-002, guarded by `tests/non_exhaustive_responses.rs`)
-and keep unmodeled fields in a `#[serde(flatten)] extra` map. Polling
+and keep unmodeled fields in a `#[serde(flatten)] extra` map; the known
+variants of `Step`, `StepDelta`, `Content` and `Annotation` do the same with
+an `extra` field, through `src/wire_fields.rs` (#491). Polling
 continues on unknown statuses, bounded by timeouts. The `strict-unknown`
 feature makes `Content`, `Step` and every string enum fail on unknown values
 instead. New string enums use the crate-private `wire_enum!` macro

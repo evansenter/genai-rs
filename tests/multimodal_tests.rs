@@ -298,6 +298,7 @@ mod video {
             // content sits directly in the input array.
             let input = InteractionInput::Steps(vec![Step::UserInput {
                 content: vec![Content::text("Describe this video briefly."), video],
+                extra: Default::default(),
             }]);
 
             // Deliberately not swallowing the error: if the API rejects our

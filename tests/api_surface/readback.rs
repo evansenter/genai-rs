@@ -1,8 +1,9 @@
 //! Reading what a deserialized value kept, from its `Debug` output, and the
 //! JSON-path helpers that trace a finding to the key behind it.
 //!
-//! Every response struct keeps unmodeled keys in a flattened `extra` map, and
-//! every growable enum has an `Unknown` variant. Both show in `{:?}`, which is
+//! Every response struct keeps unmodeled keys in a flattened `extra` map (as
+//! does every known variant of the step and content unions, #491), and every
+//! growable enum has an `Unknown` variant. Both show in `{:?}`, which is
 //! the one view of a value that tells modeled from unmodeled: serializing it
 //! again puts `extra` keys back beside the modeled ones.
 
@@ -11,7 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The keys of every non-empty `extra` map in a `{:?}` rendering.
 ///
-/// Matches `extra: {"key": ..}` (a derived `Debug` of a JSON map) and
+/// Matches any field whose name ends in `extra`, so `arguments_extra` (the
+/// unmodeled `arguments` keys of a call step or delta) counts too. Matches
+/// `extra: {"key": ..}` (a derived `Debug` of a JSON map) and
 /// `extra: ["key", ..]` (the redacting impls, which list keys only).
 pub fn debug_extra_keys(debug: &str) -> Vec<String> {
     let mut keys = Vec::new();

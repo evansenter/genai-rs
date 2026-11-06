@@ -19,6 +19,7 @@ fn test_content_serializes_type_first_then_fields_in_order() {
                 0,
                 5
             )]),
+            extra: Default::default(),
         }),
         r#"{"type":"text","text":"Hello","annotations":[{"type":"url_citation","url":"https://example.com","title":"Example","start_index":0,"end_index":5}]}"#
     );
@@ -28,6 +29,7 @@ fn test_content_serializes_type_first_then_fields_in_order() {
             uri: Some("files/img".to_string()),
             mime_type: Some("image/png".to_string()),
             resolution: Some(Resolution::High),
+            extra: Default::default(),
         }),
         r#"{"type":"image","data":"AAAA","uri":"files/img","mime_type":"image/png","resolution":"high"}"#
     );
@@ -38,6 +40,7 @@ fn test_content_serializes_type_first_then_fields_in_order() {
             mime_type: Some("audio/wav".to_string()),
             sample_rate: Some(24000),
             channels: Some(1),
+            extra: Default::default(),
         }),
         r#"{"type":"audio","data":"UklG","uri":"files/aud","mime_type":"audio/wav","sample_rate":24000,"channels":1}"#
     );
@@ -51,8 +54,10 @@ fn test_content_serializes_type_first_then_fields_in_order() {
                 start_offset: Some("5s".to_string()),
                 end_offset: Some("10s".to_string()),
                 fps: Some(1.0),
+                extra: Default::default(),
             }),
             name: Some("clip".to_string()),
+            extra: Default::default(),
         }),
         r#"{"type":"video","data":"AAAB","uri":"files/vid","mime_type":"video/mp4","resolution":"low","processing":{"type":"static","start_offset":"5s","end_offset":"10s","fps":1.0},"name":"clip"}"#
     );
@@ -61,6 +66,7 @@ fn test_content_serializes_type_first_then_fields_in_order() {
             data: Some("JVBE".to_string()),
             uri: Some("files/doc".to_string()),
             mime_type: Some("application/pdf".to_string()),
+            extra: Default::default(),
         }),
         r#"{"type":"document","data":"JVBE","uri":"files/doc","mime_type":"application/pdf"}"#
     );
@@ -72,6 +78,7 @@ fn test_content_omits_none_fields() {
         to_json(&Content::Text {
             text: None,
             annotations: None,
+            extra: Default::default(),
         }),
         r#"{"type":"text"}"#
     );
@@ -81,6 +88,7 @@ fn test_content_omits_none_fields() {
             uri: None,
             mime_type: None,
             resolution: None,
+            extra: Default::default(),
         }),
         r#"{"type":"image"}"#
     );
@@ -91,6 +99,7 @@ fn test_content_omits_none_fields() {
             mime_type: None,
             sample_rate: None,
             channels: None,
+            extra: Default::default(),
         }),
         r#"{"type":"audio"}"#
     );
@@ -102,6 +111,7 @@ fn test_content_omits_none_fields() {
             resolution: None,
             processing: None,
             name: None,
+            extra: Default::default(),
         }),
         r#"{"type":"video"}"#
     );
@@ -110,6 +120,7 @@ fn test_content_omits_none_fields() {
             data: None,
             uri: None,
             mime_type: None,
+            extra: Default::default(),
         }),
         r#"{"type":"document"}"#
     );
@@ -122,6 +133,7 @@ fn test_content_omits_none_fields() {
             resolution: None,
             processing: Some(VideoProcessing::Agentic),
             name: None,
+            extra: Default::default(),
         }),
         r#"{"type":"video","uri":"files/v","processing":"agentic"}"#
     );
@@ -134,6 +146,7 @@ fn test_content_keeps_empty_and_zero_values() {
         to_json(&Content::Text {
             text: Some(String::new()),
             annotations: None,
+            extra: Default::default(),
         }),
         r#"{"type":"text","text":""}"#
     );
@@ -144,6 +157,7 @@ fn test_content_keeps_empty_and_zero_values() {
             mime_type: None,
             sample_rate: Some(0),
             channels: Some(0),
+            extra: Default::default(),
         }),
         r#"{"type":"audio","sample_rate":0,"channels":0}"#
     );
@@ -157,8 +171,10 @@ fn test_content_keeps_empty_and_zero_values() {
                 start_offset: None,
                 end_offset: None,
                 fps: None,
+                extra: Default::default(),
             }),
             name: Some(String::new()),
+            extra: Default::default(),
         }),
         r#"{"type":"video","processing":{"type":"static"},"name":""}"#
     );
@@ -171,6 +187,7 @@ fn test_text_omits_empty_annotations() {
         to_json(&Content::Text {
             text: Some("hi".to_string()),
             annotations: Some(vec![]),
+            extra: Default::default(),
         }),
         r#"{"type":"text","text":"hi"}"#
     );
@@ -178,6 +195,7 @@ fn test_text_omits_empty_annotations() {
         to_json(&Content::Text {
             text: None,
             annotations: Some(vec![]),
+            extra: Default::default(),
         }),
         r#"{"type":"text"}"#
     );

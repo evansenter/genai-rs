@@ -1,54 +1,109 @@
+//! Wire (de)serialization for [`Step`].
+//!
+//! Every known variant writes its modeled fields and then its `extra` map,
+//! and reads with [`WireFields`], which leaves exactly the unread keys for
+//! `extra` (#491). The five call steps that flatten a nested `arguments`
+//! object treat its unread keys the same way, in `arguments_extra`.
+
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
-use crate::content::{
-    CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, UrlContextResultItem,
-};
+use crate::content::CodeExecutionLanguage;
+use crate::wire_fields::{Fallback, ModeledMap, WireFields, merged_arguments};
 
-use super::{FunctionResultPayload, Step, StepError};
+use super::{FunctionResultPayload, Step};
+
+/// `{"queries": [...]}` plus the extras, for the three query-shaped calls.
+pub(super) fn queries_arguments(queries: &[String], extra: &Map<String, Value>) -> Value {
+    Value::Object(merged_arguments(
+        [("queries", Some(Value::from(queries)))],
+        extra,
+    ))
+}
+
+/// `{"urls": [...]}` plus the extras.
+pub(super) fn urls_arguments(urls: &[String], extra: &Map<String, Value>) -> Value {
+    Value::Object(merged_arguments([("urls", Some(Value::from(urls)))], extra))
+}
+
+/// `{"language": ..., "code": ...}` plus the extras. A `None` modeled value
+/// (only a delta has one) is left out.
+pub(super) fn code_arguments(
+    language: Option<&CodeExecutionLanguage>,
+    code: Option<&str>,
+    extra: &Map<String, Value>,
+) -> Value {
+    Value::Object(merged_arguments(
+        [
+            ("language", language.map(|l| Value::from(l.to_string()))),
+            ("code", code.map(Value::from)),
+        ],
+        extra,
+    ))
+}
+
+/// Reads a `result` payload; absent or `null` is `Json(null)`.
+pub(super) fn payload(f: &mut WireFields<'_>) -> Result<FunctionResultPayload, serde_json::Error> {
+    Ok(f.optional("result")?
+        .unwrap_or(FunctionResultPayload::Json(Value::Null)))
+}
+
+/// Reads a call step's nested `arguments` as `(modeled, arguments_extra)`.
+/// Absent or `null` arguments read as the defaults.
+pub(super) fn read_arguments<'a, T>(
+    fields: &mut WireFields<'a>,
+    read: impl FnOnce(&mut WireFields<'a>) -> Result<T, serde_json::Error>,
+) -> Result<(T, Map<String, Value>), serde_json::Error>
+where
+    T: Default,
+{
+    match fields.object("arguments")? {
+        Some(mut arguments) => Ok((read(&mut arguments)?, arguments.extra())),
+        None => Ok((T::default(), Map::new())),
+    }
+}
 
 impl Serialize for Step {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeMap;
-
-        let mut map = serializer.serialize_map(None)?;
-        match self {
-            Self::UserInput { content } => {
-                map.serialize_entry("type", "user_input")?;
-                map.serialize_entry("content", content)?;
+        let mut map = ModeledMap::tagged(serializer, self.step_type())?;
+        let extra = match self {
+            Self::UserInput { content, extra } => {
+                map.field("content", content)?;
+                extra
             }
-            Self::ModelOutput { content, error } => {
-                map.serialize_entry("type", "model_output")?;
-                map.serialize_entry("content", content)?;
-                if let Some(e) = error {
-                    map.serialize_entry("error", e)?;
-                }
+            Self::ModelOutput {
+                content,
+                error,
+                extra,
+            } => {
+                map.field("content", content)?;
+                map.opt("error", error.as_ref())?;
+                extra
             }
-            Self::Thought { signature, summary } => {
-                map.serialize_entry("type", "thought")?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
-                if !summary.is_empty() {
-                    map.serialize_entry("summary", summary)?;
-                }
+            Self::Thought {
+                signature,
+                summary,
+                extra,
+            } => {
+                map.opt("signature", signature.as_ref())?;
+                map.field_unless(summary.is_empty(), "summary", summary)?;
+                extra
             }
             Self::FunctionCall {
                 id,
                 name,
                 arguments,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "function_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry("name", name)?;
-                map.serialize_entry("arguments", arguments)?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("id", id)?;
+                map.field("name", name)?;
+                map.field("arguments", arguments)?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::FunctionResult {
                 call_id,
@@ -56,270 +111,402 @@ impl Serialize for Step {
                 result,
                 is_error,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "function_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                if let Some(n) = name {
-                    map.serialize_entry("name", n)?;
-                }
-                map.serialize_entry("result", result)?;
-                if let Some(e) = is_error {
-                    map.serialize_entry("is_error", e)?;
-                }
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.opt("name", name.as_ref())?;
+                map.field("result", result)?;
+                map.opt("is_error", is_error.as_ref())?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::CodeExecutionCall {
                 id,
                 language,
                 code,
                 signature,
+                arguments_extra,
+                extra,
             } => {
-                map.serialize_entry("type", "code_execution_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry(
+                map.field("id", id)?;
+                map.field(
                     "arguments",
-                    &serde_json::json!({ "language": language, "code": code }),
+                    &code_arguments(Some(language), Some(code), arguments_extra),
                 )?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::CodeExecutionResult {
                 call_id,
                 result,
                 is_error,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "code_execution_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                map.serialize_entry("is_error", is_error)?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.field("result", result)?;
+                map.field("is_error", is_error)?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::UrlContextCall {
                 id,
                 urls,
                 signature,
+                arguments_extra,
+                extra,
             } => {
-                map.serialize_entry("type", "url_context_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry("arguments", &serde_json::json!({ "urls": urls }))?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("id", id)?;
+                map.field("arguments", &urls_arguments(urls, arguments_extra))?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::UrlContextResult {
                 call_id,
                 result,
                 is_error,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "url_context_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                if let Some(e) = is_error {
-                    map.serialize_entry("is_error", e)?;
-                }
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.field("result", result)?;
+                map.opt("is_error", is_error.as_ref())?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::GoogleSearchCall {
                 id,
                 queries,
                 search_type,
                 signature,
+                arguments_extra,
+                extra,
             } => {
-                map.serialize_entry("type", "google_search_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry("arguments", &serde_json::json!({ "queries": queries }))?;
-                if let Some(st) = search_type {
-                    map.serialize_entry("search_type", st)?;
-                }
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("id", id)?;
+                map.field("arguments", &queries_arguments(queries, arguments_extra))?;
+                map.opt("search_type", search_type.as_ref())?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::GoogleSearchResult {
                 call_id,
                 result,
                 is_error,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "google_search_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                if let Some(e) = is_error {
-                    map.serialize_entry("is_error", e)?;
-                }
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.field("result", result)?;
+                map.opt("is_error", is_error.as_ref())?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
-            Self::ToolCall { id, signature } => {
-                map.serialize_entry("type", "tool_call")?;
-                map.serialize_entry("id", id)?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+            Self::ToolCall {
+                id,
+                signature,
+                extra,
+            }
+            | Self::FileSearchCall {
+                id,
+                signature,
+                extra,
+            }
+            | Self::ProcessingCall {
+                id,
+                signature,
+                extra,
+            } => {
+                map.field("id", id)?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::McpServerToolCall {
                 id,
                 name,
                 server_name,
                 arguments,
+                extra,
             } => {
-                map.serialize_entry("type", "mcp_server_tool_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry("name", name)?;
-                map.serialize_entry("server_name", server_name)?;
-                map.serialize_entry("arguments", arguments)?;
+                map.field("id", id)?;
+                map.field("name", name)?;
+                map.field("server_name", server_name)?;
+                map.field("arguments", arguments)?;
+                extra
             }
             Self::McpServerToolResult {
                 call_id,
                 name,
                 server_name,
                 result,
+                extra,
             } => {
-                map.serialize_entry("type", "mcp_server_tool_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                if let Some(n) = name {
-                    map.serialize_entry("name", n)?;
-                }
-                if let Some(sn) = server_name {
-                    map.serialize_entry("server_name", sn)?;
-                }
-                map.serialize_entry("result", result)?;
-            }
-            Self::FileSearchCall { id, signature } => {
-                map.serialize_entry("type", "file_search_call")?;
-                map.serialize_entry("id", id)?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.opt("name", name.as_ref())?;
+                map.opt("server_name", server_name.as_ref())?;
+                map.field("result", result)?;
+                extra
             }
             Self::FileSearchResult {
                 call_id,
                 result,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "file_search_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                if !result.is_empty() {
-                    map.serialize_entry("result", result)?;
-                }
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.field_unless(result.is_empty(), "result", result)?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::GoogleMapsCall {
                 id,
                 queries,
                 signature,
+                arguments_extra,
+                extra,
             } => {
-                map.serialize_entry("type", "google_maps_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry("arguments", &serde_json::json!({ "queries": queries }))?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("id", id)?;
+                map.field("arguments", &queries_arguments(queries, arguments_extra))?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::GoogleMapsResult {
                 call_id,
                 result,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "google_maps_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.field("result", result)?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
-            Self::ProcessingCall { id, signature } => {
-                map.serialize_entry("type", "processing_call")?;
-                map.serialize_entry("id", id)?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
-            }
-            Self::ProcessingResult { call_id, signature } => {
-                map.serialize_entry("type", "processing_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+            Self::ProcessingResult {
+                call_id,
+                signature,
+                extra,
+            } => {
+                map.field("call_id", call_id)?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::RetrievalCall {
                 id,
                 queries,
                 retrieval_type,
                 signature,
+                arguments_extra,
+                extra,
             } => {
-                map.serialize_entry("type", "retrieval_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry("arguments", &serde_json::json!({ "queries": queries }))?;
-                if let Some(t) = retrieval_type {
-                    map.serialize_entry("retrieval_type", t)?;
-                }
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("id", id)?;
+                map.field("arguments", &queries_arguments(queries, arguments_extra))?;
+                map.opt("retrieval_type", retrieval_type.as_ref())?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
             Self::RetrievalResult {
                 call_id,
                 is_error,
                 signature,
+                extra,
             } => {
-                map.serialize_entry("type", "retrieval_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                if let Some(e) = is_error {
-                    map.serialize_entry("is_error", e)?;
-                }
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
+                map.field("call_id", call_id)?;
+                map.opt("is_error", is_error.as_ref())?;
+                map.opt("signature", signature.as_ref())?;
+                extra
             }
-            Self::Unknown { step_type, data } => {
-                map.serialize_entry("type", step_type)?;
-                match data {
-                    serde_json::Value::Object(obj) => {
-                        for (key, value) in obj {
-                            if key != "type" {
-                                map.serialize_entry(key, value)?;
-                            }
-                        }
-                    }
-                    other if !other.is_null() => {
-                        map.serialize_entry("data", other)?;
-                    }
-                    _ => {}
-                }
+            Self::Unknown { data, .. } => {
+                return map.end(&unknown_fields(data));
             }
-        }
-        map.end()
+        };
+        map.end(extra)
     }
 }
 
-/// Extracts a `Vec<String>` from `arguments.<key>` (used by call steps whose
-/// arguments nest a string array).
-pub(super) fn string_vec_from_arguments(
-    arguments: Option<&serde_json::Value>,
-    key: &str,
-) -> Vec<String> {
-    arguments
-        .and_then(|args| args.get(key))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default()
+/// An `Unknown` step's `data` as the entries to write after its `type`: an
+/// object's own entries, or a non-object value under `"data"` (nothing for
+/// `null`).
+pub(super) fn unknown_fields(data: &Value) -> Map<String, Value> {
+    match data {
+        Value::Object(object) => object.clone(),
+        Value::Null => Map::new(),
+        other => Map::from_iter([("data".to_string(), other.clone())]),
+    }
+}
+
+/// Reads a known step from its wire object. An error means the type is
+/// unrecognized or a modeled field is malformed; the caller keeps the object
+/// as [`Step::Unknown`].
+fn read_known(object: &Map<String, Value>) -> Result<Step, Fallback> {
+    let mut f = WireFields::tagged(object);
+    let Some(step_type) = f.tag() else {
+        return Err(Fallback::UnknownType);
+    };
+    let step = match step_type {
+        "user_input" => Step::UserInput {
+            content: f.or_default("content")?,
+            extra: f.extra(),
+        },
+        "model_output" => Step::ModelOutput {
+            content: f.or_default("content")?,
+            error: f.optional("error")?,
+            extra: f.extra(),
+        },
+        "thought" => Step::Thought {
+            signature: f.optional("signature")?,
+            summary: f.or_default("summary")?,
+            extra: f.extra(),
+        },
+        "function_call" => Step::FunctionCall {
+            id: f.required("id")?,
+            name: f.required("name")?,
+            arguments: f.or_default("arguments")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "function_result" => Step::FunctionResult {
+            call_id: f.required("call_id")?,
+            name: f.optional("name")?,
+            result: payload(&mut f)?,
+            is_error: f.optional("is_error")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "code_execution_call" => {
+            let id = f.required("id")?;
+            let ((language, code), arguments_extra) = read_arguments(&mut f, |a| {
+                Ok((a.or_default("language")?, a.or_default("code")?))
+            })?;
+            Step::CodeExecutionCall {
+                id,
+                language,
+                code,
+                signature: f.optional("signature")?,
+                arguments_extra,
+                extra: f.extra(),
+            }
+        }
+        "code_execution_result" => Step::CodeExecutionResult {
+            call_id: f.required("call_id")?,
+            result: f.or_default("result")?,
+            is_error: f.or_default("is_error")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "url_context_call" => {
+            let id = f.required("id")?;
+            let (urls, arguments_extra) = read_arguments(&mut f, |a| a.or_default("urls"))?;
+            Step::UrlContextCall {
+                id,
+                urls,
+                signature: f.optional("signature")?,
+                arguments_extra,
+                extra: f.extra(),
+            }
+        }
+        "url_context_result" => Step::UrlContextResult {
+            call_id: f.required("call_id")?,
+            result: f.or_default("result")?,
+            is_error: f.optional("is_error")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "google_search_call" => {
+            let id = f.required("id")?;
+            let (queries, arguments_extra) = read_arguments(&mut f, |a| a.or_default("queries"))?;
+            Step::GoogleSearchCall {
+                id,
+                queries,
+                search_type: f.optional("search_type")?,
+                signature: f.optional("signature")?,
+                arguments_extra,
+                extra: f.extra(),
+            }
+        }
+        "google_search_result" => Step::GoogleSearchResult {
+            call_id: f.required("call_id")?,
+            result: f.or_default("result")?,
+            is_error: f.optional("is_error")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "tool_call" => Step::ToolCall {
+            id: f.required("id")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "mcp_server_tool_call" => Step::McpServerToolCall {
+            id: f.required("id")?,
+            name: f.required("name")?,
+            server_name: f.required("server_name")?,
+            arguments: f.or_default("arguments")?,
+            extra: f.extra(),
+        },
+        "mcp_server_tool_result" => Step::McpServerToolResult {
+            call_id: f.required("call_id")?,
+            name: f.optional("name")?,
+            server_name: f.optional("server_name")?,
+            result: payload(&mut f)?,
+            extra: f.extra(),
+        },
+        "file_search_call" => Step::FileSearchCall {
+            id: f.required("id")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "file_search_result" => Step::FileSearchResult {
+            call_id: f.required("call_id")?,
+            result: f.or_default("result")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "google_maps_call" => {
+            let id = f.required("id")?;
+            let (queries, arguments_extra) = read_arguments(&mut f, |a| a.or_default("queries"))?;
+            Step::GoogleMapsCall {
+                id,
+                queries,
+                signature: f.optional("signature")?,
+                arguments_extra,
+                extra: f.extra(),
+            }
+        }
+        "google_maps_result" => Step::GoogleMapsResult {
+            call_id: f.required("call_id")?,
+            result: f.or_default("result")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "processing_call" => Step::ProcessingCall {
+            id: f.required("id")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "processing_result" => Step::ProcessingResult {
+            call_id: f.required("call_id")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        "retrieval_call" => {
+            let id = f.required("id")?;
+            let (queries, arguments_extra) = read_arguments(&mut f, |a| a.or_default("queries"))?;
+            Step::RetrievalCall {
+                id,
+                queries,
+                retrieval_type: f.optional("retrieval_type")?,
+                signature: f.optional("signature")?,
+                arguments_extra,
+                extra: f.extra(),
+            }
+        }
+        "retrieval_result" => Step::RetrievalResult {
+            call_id: f.required("call_id")?,
+            is_error: f.optional("is_error")?,
+            signature: f.optional("signature")?,
+            extra: f.extra(),
+        },
+        _ => return Err(Fallback::UnknownType),
+    };
+    Ok(step)
 }
 
 impl<'de> Deserialize<'de> for Step {
@@ -330,385 +517,34 @@ impl<'de> Deserialize<'de> for Step {
         #[cfg(feature = "strict-unknown")]
         use serde::de::Error as _;
 
-        let value = serde_json::Value::deserialize(deserializer)?;
+        let value = Value::deserialize(deserializer)?;
 
-        #[derive(Deserialize)]
-        #[serde(tag = "type", rename_all = "snake_case")]
-        enum KnownStep {
-            UserInput {
-                #[serde(default)]
-                content: Vec<Content>,
-            },
-            ModelOutput {
-                #[serde(default)]
-                content: Vec<Content>,
-                #[serde(default)]
-                error: Option<StepError>,
-            },
-            Thought {
-                #[serde(default)]
-                signature: Option<String>,
-                #[serde(default)]
-                summary: Vec<Content>,
-            },
-            FunctionCall {
-                id: String,
-                name: String,
-                #[serde(default)]
-                arguments: serde_json::Value,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            FunctionResult {
-                call_id: String,
-                #[serde(default)]
-                name: Option<String>,
-                #[serde(default)]
-                result: Option<FunctionResultPayload>,
-                #[serde(default)]
-                is_error: Option<bool>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            CodeExecutionCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            CodeExecutionResult {
-                call_id: String,
-                #[serde(default)]
-                result: String,
-                #[serde(default)]
-                is_error: Option<bool>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            UrlContextCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            UrlContextResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<UrlContextResultItem>,
-                #[serde(default)]
-                is_error: Option<bool>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            GoogleSearchCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-                #[serde(default)]
-                search_type: Option<crate::tools::SearchType>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            GoogleSearchResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<GoogleSearchResultItem>,
-                #[serde(default)]
-                is_error: Option<bool>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            ToolCall {
-                id: String,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            McpServerToolCall {
-                id: String,
-                name: String,
-                server_name: String,
-                #[serde(default)]
-                arguments: serde_json::Value,
-            },
-            McpServerToolResult {
-                call_id: String,
-                #[serde(default)]
-                name: Option<String>,
-                #[serde(default)]
-                server_name: Option<String>,
-                #[serde(default)]
-                result: Option<FunctionResultPayload>,
-            },
-            FileSearchCall {
-                id: String,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            FileSearchResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<FileSearchResultItem>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            GoogleMapsCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            GoogleMapsResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<GoogleMapsResultItem>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            ProcessingCall {
-                id: String,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            ProcessingResult {
-                call_id: String,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            RetrievalCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-                #[serde(default)]
-                retrieval_type: Option<crate::tools::RetrievalType>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            RetrievalResult {
-                call_id: String,
-                #[serde(default)]
-                is_error: Option<bool>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-        }
-
-        match KnownStep::deserialize(&value) {
-            Ok(known) => Ok(match known {
-                KnownStep::UserInput { content } => Step::UserInput { content },
-                KnownStep::ModelOutput { content, error } => Step::ModelOutput { content, error },
-                KnownStep::Thought { signature, summary } => Step::Thought { signature, summary },
-                KnownStep::FunctionCall {
-                    id,
-                    name,
-                    arguments,
-                    signature,
-                } => Step::FunctionCall {
-                    id,
-                    name,
-                    arguments,
-                    signature,
-                },
-                KnownStep::FunctionResult {
-                    call_id,
-                    name,
-                    result,
-                    is_error,
-                    signature,
-                } => Step::FunctionResult {
-                    call_id,
-                    name,
-                    result: result.unwrap_or(FunctionResultPayload::Json(serde_json::Value::Null)),
-                    is_error,
-                    signature,
-                },
-                KnownStep::CodeExecutionCall {
-                    id,
-                    arguments,
-                    signature,
-                } => {
-                    let language = arguments
-                        .as_ref()
-                        .and_then(|a| a.get("language"))
-                        .and_then(|l| {
-                            serde_json::from_value::<CodeExecutionLanguage>(l.clone()).ok()
-                        })
-                        .unwrap_or_default();
-                    let code = arguments
-                        .as_ref()
-                        .and_then(|a| a.get("code"))
-                        .and_then(|c| c.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    Step::CodeExecutionCall {
-                        id,
-                        language,
-                        code,
-                        signature,
-                    }
-                }
-                KnownStep::CodeExecutionResult {
-                    call_id,
-                    result,
-                    is_error,
-                    signature,
-                } => Step::CodeExecutionResult {
-                    call_id,
-                    result,
-                    is_error: is_error.unwrap_or(false),
-                    signature,
-                },
-                KnownStep::UrlContextCall {
-                    id,
-                    arguments,
-                    signature,
-                } => Step::UrlContextCall {
-                    id,
-                    urls: string_vec_from_arguments(arguments.as_ref(), "urls"),
-                    signature,
-                },
-                KnownStep::UrlContextResult {
-                    call_id,
-                    result,
-                    is_error,
-                    signature,
-                } => Step::UrlContextResult {
-                    call_id,
-                    result,
-                    is_error,
-                    signature,
-                },
-                KnownStep::GoogleSearchCall {
-                    id,
-                    arguments,
-                    search_type,
-                    signature,
-                } => Step::GoogleSearchCall {
-                    id,
-                    queries: string_vec_from_arguments(arguments.as_ref(), "queries"),
-                    search_type,
-                    signature,
-                },
-                KnownStep::GoogleSearchResult {
-                    call_id,
-                    result,
-                    is_error,
-                    signature,
-                } => Step::GoogleSearchResult {
-                    call_id,
-                    result,
-                    is_error,
-                    signature,
-                },
-                KnownStep::ToolCall { id, signature } => Step::ToolCall { id, signature },
-                KnownStep::McpServerToolCall {
-                    id,
-                    name,
-                    server_name,
-                    arguments,
-                } => Step::McpServerToolCall {
-                    id,
-                    name,
-                    server_name,
-                    arguments,
-                },
-                KnownStep::McpServerToolResult {
-                    call_id,
-                    name,
-                    server_name,
-                    result,
-                } => Step::McpServerToolResult {
-                    call_id,
-                    name,
-                    server_name,
-                    result: result.unwrap_or(FunctionResultPayload::Json(serde_json::Value::Null)),
-                },
-                KnownStep::FileSearchCall { id, signature } => {
-                    Step::FileSearchCall { id, signature }
-                }
-                KnownStep::FileSearchResult {
-                    call_id,
-                    result,
-                    signature,
-                } => Step::FileSearchResult {
-                    call_id,
-                    result,
-                    signature,
-                },
-                KnownStep::GoogleMapsCall {
-                    id,
-                    arguments,
-                    signature,
-                } => Step::GoogleMapsCall {
-                    id,
-                    queries: string_vec_from_arguments(arguments.as_ref(), "queries"),
-                    signature,
-                },
-                KnownStep::GoogleMapsResult {
-                    call_id,
-                    result,
-                    signature,
-                } => Step::GoogleMapsResult {
-                    call_id,
-                    result,
-                    signature,
-                },
-                KnownStep::ProcessingCall { id, signature } => {
-                    Step::ProcessingCall { id, signature }
-                }
-                KnownStep::ProcessingResult { call_id, signature } => {
-                    Step::ProcessingResult { call_id, signature }
-                }
-                KnownStep::RetrievalCall {
-                    id,
-                    arguments,
-                    retrieval_type,
-                    signature,
-                } => Step::RetrievalCall {
-                    id,
-                    queries: string_vec_from_arguments(arguments.as_ref(), "queries"),
-                    retrieval_type,
-                    signature,
-                },
-                KnownStep::RetrievalResult {
-                    call_id,
-                    is_error,
-                    signature,
-                } => Step::RetrievalResult {
-                    call_id,
-                    is_error,
-                    signature,
-                },
-            }),
-            Err(parse_error) => {
+        match Fallback::read(&value, read_known) {
+            Ok(step) => Ok(step),
+            Err(fallback) => {
                 let step_type = value
                     .get("type")
                     .and_then(|v| v.as_str())
                     .unwrap_or("<missing type>")
                     .to_string();
 
-                tracing::warn!(
-                    "Encountered unknown Step type '{}'. Parse error: {}. \
-                     This may indicate a new API feature or a malformed response. \
-                     The step will be preserved in the Unknown variant.",
-                    step_type,
-                    parse_error
-                );
-
+                // An unknown type and a known type with a field the crate
+                // cannot read both keep the whole object; the cause says
+                // which.
                 #[cfg(feature = "strict-unknown")]
                 {
-                    Err(D::Error::custom(format!(
-                        "Unknown Step type '{}'. \
-                         Strict mode is enabled via the 'strict-unknown' feature flag. \
-                         Either update the library or disable strict mode.",
-                        step_type
-                    )))
+                    Err(D::Error::custom(
+                        fallback.strict_message("Step", &step_type),
+                    ))
                 }
 
                 #[cfg(not(feature = "strict-unknown"))]
                 {
+                    tracing::warn!(
+                        "Keeping a step whole in Step::Unknown: {}. \
+                         This may indicate a new API feature or a malformed response.",
+                        fallback.describe("Step", &step_type)
+                    );
                     Ok(Step::Unknown {
                         step_type,
                         data: value,
