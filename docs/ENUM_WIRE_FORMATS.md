@@ -5,6 +5,11 @@ Evergreen `Unknown` variant each one carries. The official docs are sometimes
 wrong, so this catalog records what the live API actually sent or accepted,
 and when.
 
+This file and `docs/INTERACTIONS_API_GAP.md` are the only places a dated
+live fact is recorded (D-032): this one for what a value or shape looks like
+on the wire, that one for what the API accepts, rejects and does. The guides
+and the rustdoc state the current behavior and link here.
+
 **Revision.** Everything here is Interactions API revision **2026-05-20**.
 Every request sends `Api-Revision: 2026-05-20`, except the second request
 of a resumable upload, which goes to the session URL the first one returned
@@ -82,6 +87,7 @@ The Antigravity harness enums are listed in their
 
 ### The Unknown variant pattern
 
+<!-- ignore: a pattern, not code: `<context>_type` stands for each enum's field name -->
 ```rust,ignore
 Unknown {
     <context>_type: String,   // the unrecognized wire value
@@ -227,6 +233,11 @@ The wrap applies only to `InteractionRequest::input`.
 `InteractionResponse::input` re-serializes in the shape the server sent. A
 request's `Content` input therefore deserializes back as
 `Steps(vec![Step::user_input(..)])`, since the two are identical on the wire.
+
+Content after history, `[...history, {"type": "user_input", "content":
+[...]}]`, is accepted, and the model answers from both (live 2026-11-06,
+`test_image_content_after_history`: a text history, then an image turn).
+That is what `with_history()` plus `with_content()` sends (D-031).
 
 ### Step
 
@@ -510,8 +521,9 @@ there. On 2026-08-10, verified live, the reverse:
 
 `"minimal"`, `"low"`, `"medium"`, `"high"` in
 `generation_config.thinking_level`. Live 2026-09-24: `gemini-3.8-flash`
-rejects `"minimal"` (`Allowed values are: high, low, medium`), and omitting the
-field does not disable thinking (see [Thinking Mode](THINKING_MODE.md)).
+rejects `"minimal"` (`Allowed values are: high, low, medium`), again with a
+400 on 2026-10-01, and omitting the field does not disable thinking (see
+Models in `docs/INTERACTIONS_API_GAP.md`).
 
 ### InteractionStatus
 
@@ -593,7 +605,7 @@ Verified live 2026-09-27 (list paging, three text files at `pageSize=1`):
   too; the crate sends `pageSize`.
 - Files carry `updateTime` and `source` (`UPLOADED`), both modeled since
   0.14.0 (live 2026-11-05). `sizeBytes` is a JSON string (`"17"`);
-  `FileMetadata::size_bytes` is an `i64` that reads a string or a number.
+  `FileMetadata::size_bytes` is an `Option<i64>` that reads a string or a number.
 - A file that fails processing (an undecodable video) carries
   `{"error": {"code": 3, "message": "The file failed to be processed."}}`
   with no `details` (live 2026-11-05). `FileError` models `details` and
@@ -781,7 +793,13 @@ one entry for a single voice, one per `speaker` for multi-speaker TTS.
 - On `gemini-3.8-flash-tts` each text turn names its speaker with a
   `speech_metadata` annotation. The 2.5-pro and 3.1-flash TTS models take the
   `Alice: ...` transcript form instead, and reject the annotation (live
-  2026-09-24).
+  2026-09-24). The 400s that day: transcript text without annotations on a
+  3.8 TTS model, `Multi-speaker interactions must specify a speaker for each
+  text turn`; annotations on the 2.5-pro or 3.1-flash TTS models, `Speech
+  annotations are not supported for model ...`; a speaker missing from
+  `speech_config`, `... must specify a speaker matching a speaker defined in
+  speech_config`; spanned annotations with a gap, `... must cover the entire
+  text string without gaps`.
 - The nested `voiceConfig.prebuiltVoiceConfig.voiceName` form from Google's
   docs returns 400 (`no such field: 'voiceConfig'`, 2026-01-10).
 - A stored interaction read back serves `generation_config`, with
@@ -1071,8 +1089,11 @@ Verified live 2026-10-01 on `antigravity-preview-09-2026`, which requires an
 `environment`. The validation error lists the `agent_config.type` values
 `dynamic`, `deep-research`, `code-mender` and `antigravity`. `model` is
 validated per agent: `gemini-3.6-flash` and `gemini-3.5-flash-lite` were
-accepted, an unknown value returns 404. (On `antigravity-preview-05-2026`,
-`gemini-3.6-flash` returned 404.)
+accepted, an unknown value returns 404 `not_found`. (On
+`antigravity-preview-05-2026`, `gemini-3.6-flash` returned 404.) The agent
+defaults to `gemini-3.8-flash`, and Google's Antigravity Agent guide lists
+the 3.8, 3.7, 3.6 and 3.5 Flash models and `gemini-3.5-flash-lite`; only the
+two above were probed.
 
 ### Deep Research agent_config
 

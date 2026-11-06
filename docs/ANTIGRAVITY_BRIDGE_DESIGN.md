@@ -3,10 +3,18 @@
 Status: **Implemented (phase 1)** — `src/antigravity/`, feature `antigravity`,
 user guide `docs/ANTIGRAVITY.md`.
 
-> The module layout and API sketch below are the original design. The
-> current API is in `docs/ANTIGRAVITY.md` and the rustdoc; the upgrade
-> table, the [Python SDK parity table](#python-sdk-parity-google-antigravity-0123)
-> and the lessons near the end are kept current.
+> **Pre-implementation design.** This document was written before the
+> bridge was built. Its [module layout](#module-layout), [public API
+> sketch](#public-api-sketch), wire-debugging plan and example list are
+> that plan, not a description of what shipped: names in the sketch differ
+> from the real API. What shipped is the code in `src/antigravity/` and its
+> rustdoc, and the user guide `docs/ANTIGRAVITY.md`; trust those over this
+> file. What *is* kept current here is the record: the harness upgrade
+> table and its findings, the [Python SDK parity
+> table](#python-sdk-parity-google-antigravity-0123), the
+> [#494 decision](#interactions-mode-transport-494-decision), and the
+> lessons near the end. Dated harness findings live here, keyed by harness
+> version (D-032); the guide and the rustdoc name the version only.
 
 Deviations from this design in phase 1:
 
@@ -192,9 +200,12 @@ genai-rs therefore offers the Antigravity harness at two altitudes:
 
 ## Module layout
 
+> Pre-implementation plan, later updated by hand. `src/antigravity/` is the
+> authority; check the file list there before relying on this one.
+
 Feature-gated top-level module. The original sketch had one file per
 concern; the Python SDK parity work (#493) split the builder and the
-protocol into directories (D-021). Current layout:
+protocol into directories (D-021). The layout as of 0.1.23 parity:
 
 ```text
 src/antigravity/
@@ -245,6 +256,11 @@ binary messages are hand-encoded; everything else is serde JSON.
 
 ## Public API sketch
 
+> Pre-implementation: the shipped API differs (for example the pre-tool
+> hook returns `PreToolDecision`, and there is no `with_model_target`). See
+> `docs/ANTIGRAVITY.md` for code that compiles.
+
+<!-- ignore: a pre-implementation sketch; its names are not the shipped API, and this file is not a doctest -->
 ```rust,ignore
 use genai_rs::antigravity::{AntigravityAgent, policy};
 
@@ -300,12 +316,14 @@ transports feed one canonical debugging surface:
 - `WireEvent` enum: `Request`, `ResponseStatus`, `ResponseBody`, `ErrorBody`,
   `SseFrame`, `UploadStart/Complete` (Interactions) plus `HarnessSpawn`,
   `WsSend`, `WsReceive`, `HarnessStderr` (Antigravity).
-- `ClientBuilder::with_wire_inspector(Arc<dyn WireInspector>)` /
-  `AgentBuilder::with_wire_inspector(...)` for programmatic, per-client
+- `ClientBuilder::add_wire_inspector(Arc<dyn WireInspector>)` /
+  `AgentBuilder::add_wire_inspector(...)` for programmatic, per-client
   capture (snapshot tests, bug reports).
 - Built-in sinks: the existing colored stderr printer (`LOUD_WIRE=1` env
   sugar — zero behavior change for current users) and a `tracing` forwarder
-  emitting to target `genai_rs::wire` (`RUST_LOG=genai_rs::wire=trace`).
+  emitting at `DEBUG` to target `genai_rs::wire` (selected with
+  `RUST_LOG=genai_rs::wire=debug` in a program that installs a `tracing`
+  subscriber).
 - Fixes folded in: error response bodies logged, UTF-8-safe truncation,
   no request serialization when disabled.
 
@@ -452,6 +470,20 @@ Process lifecycle findings (0.1.23, 2026-11-04, same technique):
   non-blank `with_api_key`, and while a base URL is set the bridge starts
   the harness without `GEMINI_API_KEY` and `GOOGLE_API_KEY` in its
   environment. Commands the harness runs inherit its environment.
+
+Policy, subagent and sandbox findings (0.1.23, 2026-11-05, against a scripted
+model; the sandbox one on CI's runners):
+
+- The harness's policy evaluator orders rules named tool over
+  `mcp_<server>_*` over `"*"`, then deny over ask over allow, and with any
+  rule present fails closed on a call no rule matches (D-022).
+- A subagent's own tool calls reach neither the pre-tool callback nor the
+  harness's policy evaluator, and workspace containment does not confine
+  them: a read-only subagent read a file outside the workspace with
+  deny-all rules, a denying hook and containment all set.
+- `run_command` with the OS sandbox requested fails where the harness
+  reports no sandbox available, as on GitHub's Ubuntu 24.04 runners,
+  rather than running unsandboxed.
 
 ## Python SDK parity (google-antigravity 0.1.23)
 
