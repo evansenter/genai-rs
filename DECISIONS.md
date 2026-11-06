@@ -471,6 +471,20 @@ implementation module `src/steps/mod.rs` 774; the largest test files
 `src/content/content_tests.rs` 1,336, `src/response/response_tests.rs`
 1,260 and `tests/http_mock_resources/file_search_stores.rs` 1,052.
 
+**Enforced since 2026-11-06 (#504).** The bars are now a CI property, not
+an audit finding: `tests/module_size.rs` fails on any file over its bar and
+names the file, its count and the limit. It measures as this entry does:
+an implementation module in `src/` or `genai-rs-macros/src/` by its lines
+before its own `#[cfg(test)]` test module (`mod tests` or
+`mod <name>_tests`), at most 800; a unit-test file in `src/` (`*_tests.rs`,
+`tests.rs`, `proptest_*.rs`) at most 1,500; the shared test modules
+`tests/common/` and `tests/live_verbs/` at most 800; and every other file
+under `tests/` at most 2,000. "Roughly" is gone: the bar is the number.
+Every file was under its bar when the test landed (the largest
+implementation module `src/steps/mod.rs` at 774, the largest test file
+`tests/antigravity_harness.rs` at 1,808), so it has no allowlist; a file
+that must stay over would need an entry there with its reason.
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)
