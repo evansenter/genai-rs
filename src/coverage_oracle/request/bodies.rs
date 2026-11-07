@@ -111,7 +111,7 @@ pub(super) fn safety_settings() -> Vec<SafetySetting> {
 /// struct literal with every field set, which a new field fails to compile
 /// (the fields are private, so the literals live beside the types, in
 /// `src/request/agent_config.rs`). Paired with the `{:?}` of each, so
-/// `agent_configs_set_every_field` can see a field left unset.
+/// `agent_configs_set_every_field` can see a field that sends no key.
 pub(super) fn agent_config_types() -> Vec<(String, AgentConfig)> {
     let deep_research = DeepResearchConfig::fully_populated();
     let antigravity = AntigravityConfig::fully_populated();

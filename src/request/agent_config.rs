@@ -580,9 +580,10 @@ impl From<CodeMenderConfig> for AgentConfig {
 // (`src/coverage_oracle/request/bodies.rs`) cannot build these types as struct
 // literals. Each type builds itself here, as a literal with every field set
 // and no `..Default::default()`: a field added to one fails to compile until
-// it is set below, and once set, the oracle checks the key `From` emits
-// against the bindings. `agent_configs_set_every_field` fails on a field set
-// to `None` or an empty list.
+// it is set below, and the oracle checks the key `From` emits against the
+// bindings. `agent_configs_set_every_field` fails on a field whose name is
+// not a key of the emitted JSON, so set each to a value `From` sends (not
+// `None`, an empty list or a `false` that `From` leaves out).
 #[cfg(test)]
 impl DeepResearchConfig {
     pub(crate) fn fully_populated() -> Self {
