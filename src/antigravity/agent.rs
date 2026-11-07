@@ -690,6 +690,7 @@ impl AntigravityAgent {
     /// Returns whether the stream went silent: `false` when the budget ran
     /// out or the transport failed first.
     async fn halt_and_drain(&mut self, why: &str) -> bool {
+        // tests/antigravity_scripted/cancel.rs counts halts by this line.
         tracing::debug!("Halting and draining the harness turn ({why}).");
         if let Err(e) = self.session.send(&InputEvent::HaltRequest(true)).await {
             tracing::warn!("Failed to send halt request while {why}: {e}");

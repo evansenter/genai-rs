@@ -10,8 +10,67 @@
 //! their own replies, each within seconds. A turn abandoned while it waits
 //! on the model, which recovered before the fix too, is held to the same
 //! bar.
+//!
+//! The halt is not free (half a second of draining at least), so these
+//! tests also count halts: only the turn after an unfinished one sends
+//! one. The turn after one that finished, or after a turn timeout whose
+//! own halt drained the harness, sends none.
 
 use super::*;
+
+/// The start of the debug line each halt-and-drain logs.
+const HALT_LINE: &str = "Halting and draining the harness turn";
+
+/// Records the halts the agent sends, by the debug line each halt-and-drain
+/// logs, so a test can tell a turn that halted the one before it from one
+/// that did not.
+#[derive(Clone, Default)]
+struct Halts(Arc<Mutex<Vec<String>>>);
+
+impl Halts {
+    /// Records until the guard drops. `#[tokio::test]` drives the agent on
+    /// the test's thread, so a thread-scoped subscriber sees every halt.
+    fn install(&self) -> tracing::subscriber::DefaultGuard {
+        let guard = tracing::subscriber::set_default(self.clone());
+        // A callsite first hit with no subscriber can cache "never" for the
+        // process; rebuild so this subscriber is asked.
+        tracing::callsite::rebuild_interest_cache();
+        guard
+    }
+
+    /// The halts logged since the last call, each as its log line.
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+impl tracing::Subscriber for Halts {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata.target().starts_with("genai_rs::antigravity")
+    }
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Message(String);
+        impl tracing::field::Visit for Message {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = format!("{value:?}");
+                }
+            }
+        }
+        let mut message = Message(String::new());
+        event.record(&mut message);
+        if message.0.starts_with(HALT_LINE) {
+            self.0.lock().unwrap().push(message.0);
+        }
+    }
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
 
 const FIRST: &str = "first-prompt-6101";
 const SECOND: &str = "second-prompt-6102";
@@ -91,8 +150,10 @@ where
 
 /// Starts the first turn, abandons it `abandon`'s way once it is blocked on
 /// `blocker`, then checks that the next two chats each get their own reply
-/// within [`NEXT_TURN_LIMIT`].
+/// within [`NEXT_TURN_LIMIT`], and that only the first of them halts.
 async fn assert_next_turns_survive(blocker: Blocker, abandon: Abandon) {
+    let halts = Halts::default();
+    let _recording = halts.install();
     let started = Started::default();
     let workspace = scratch_dir("agy-scripted-cancel");
     let path = write_file(&workspace, "f.txt", "x");
@@ -163,8 +224,15 @@ async fn assert_next_turns_survive(blocker: Blocker, abandon: Abandon) {
             drop(stream);
         }
     }
+    assert_eq!(
+        halts.take(),
+        Vec::<String>::new(),
+        "{blocker:?}/{abandon:?}: the first turn has nothing to halt"
+    );
 
-    for (prompt, reply) in [(SECOND, SECOND_REPLY), (THIRD, THIRD_REPLY)] {
+    // The turn after the abandoned one halts it; the one after that
+    // follows a finished turn and sends no halt.
+    for (prompt, reply, expected_halts) in [(SECOND, SECOND_REPLY, 1), (THIRD, THIRD_REPLY, 0)] {
         let turn_start = Instant::now();
         let response = tokio::time::timeout(NEXT_TURN_LIMIT, agent.chat(prompt))
             .await
@@ -185,9 +253,54 @@ async fn assert_next_turns_survive(blocker: Blocker, abandon: Abandon) {
             "{blocker:?}/{abandon:?}: chat({prompt:?}) got another turn's reply (after {:?})",
             turn_start.elapsed()
         );
+        let sent = halts.take();
+        assert_eq!(
+            sent.len(),
+            expected_halts,
+            "{blocker:?}/{abandon:?}: chat({prompt:?}) sent the wrong number of halts: {sent:?}"
+        );
     }
 
     drop(release);
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// A turn timeout halts and drains its own turn. Once that drain goes
+/// quiet the turn is over, and the next chat sends no second halt.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_drained_turn_timeout_is_not_halted_again() {
+    let halts = Halts::default();
+    let _recording = halts.install();
+    let started = Started::default();
+    let hanging_call = ModelTurn::call("hanging_tool", json!({}));
+    let fake = FakeGemini::routed(move |request, _| reply_to(&request.json(), &hanging_call)).await;
+    // Room for one model round trip on a slow runner, so the turn after
+    // the timeout completes under the same budget.
+    let mut agent = scripted_agent(&fake)
+        .with_tool_service(Arc::new(HangingService(started)))
+        .with_turn_timeout(Duration::from_secs(5))
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let err = agent.chat(FIRST).await.unwrap_err();
+    assert!(matches!(err, AntigravityError::Timeout { .. }), "{err:?}");
+    let sent = halts.take();
+    assert!(
+        sent.len() == 1 && sent[0].contains("turn timeout"),
+        "the timeout halts its own turn once: {sent:?}"
+    );
+    let response = agent
+        .chat(SECOND)
+        .await
+        .expect("the turn after the timeout");
+    assert_eq!(response.text(), SECOND_REPLY);
+    assert_eq!(
+        halts.take(),
+        Vec::<String>::new(),
+        "a turn the timeout drained needs no second halt"
+    );
     agent.shutdown().await.expect("shutdown");
 }
 
