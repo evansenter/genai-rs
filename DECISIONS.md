@@ -769,7 +769,7 @@ log under the new module path (`genai_rs::antigravity::policies`), which an
 
 ## D-022 — Antigravity policies are evaluated client-side; the auto policy runs in the harness (2026-11-05)
 
-**Status: proposed, awaiting the owner's review.** #493 item 6 asked for
+**Status: accepted (2026-11-07).** #493 item 6 asked for
 harness-side `PolicyConfig` rules; this departs from it and was decided
 during the work, not discussed first. The alternative, the Python SDK's
 split, is below under Consequences.
@@ -1195,3 +1195,50 @@ now also send a field of these configs the crate does not model yet, as
 variants, which keep no `extra` (enums are outside the guard, as `Step`'s
 were before #491).
 
+---
+
+## D-NEXT-WP22 — `spawn()` refuses subagents beside a gate they bypass (2026-11-07)
+
+**Context.** #520. On harness 0.1.23 a subagent's own tool calls reach
+neither the pre-tool callback (so neither this client's policies nor the
+`on_pre_tool` hook) nor the harness's policy evaluator, and workspace
+containment does not confine them (probed 2026-11-05: with deny-all rules,
+a denying hook and containment set, a read-only subagent read a file
+outside the workspace). `invoke_subagent` also offers the harness's
+built-in `research` subagent, so enabling it exposes an ungated agent even
+with no subagent added. Until now `spawn()` only warned. The issue listed
+three options: refuse at `spawn()` without an explicit opt-in, give
+subagents no builtins by default, or report upstream. The owner chose the
+first and the third on 2026-11-07.
+
+**Decision.** `spawn()` fails with `AntigravityError::Config` when the
+agent offers subagents (`BuiltinTool::InvokeSubagent`, or
+`with_define_subagent_tool(true)`) while any gate is set, unless the caller
+calls `with_ungated_subagents(true)`. The error names each gate set and the
+opt-in. The gates are a pre-tool hook, a client policy that can refuse or
+ask (deny, confirm, `ask_user`), the auto policy (the harness-side
+`PolicyConfig` this client sends), workspace containment, and the
+`run_command` sandbox (the agent's own; a subagent's commands follow its
+capabilities). The setter takes a `bool` like this builder's other subagent
+and containment switches (`with_define_subagent_tool`,
+`with_workspace_containment`). The bypass is reported upstream; the
+scripted test that pins it, now with the opt-in, fails when a harness
+release closes the gap.
+
+Three calls made in the work:
+- A policy set that only allows (`allow_all()`, `allow(..)`) is not a gate:
+  it refuses nothing, so a subagent bypasses nothing. Counting it would make
+  the opt-in boilerplate on every subagent agent, since `invoke_subagent`
+  is write-capable and the safety gate already demands a policy or hook.
+- `define_subagent` counts on its own, though the harness offers it only
+  beside `invoke_subagent` (0.1.23, scripted probe), in case a later
+  release separates them.
+- The sandbox counts whenever it is asked for, even with `run_command`
+  off on the agent, since a subagent may run commands of its own.
+
+**Consequences.** Breaking (D-007): an agent with subagents and any gate,
+containment by default with a workspace included, no longer starts until it
+opts in. The opt-in is a deliberate acknowledgment, not a fix: the
+subagent's capabilities remain its only bound. Revisit when the harness
+gates subagent calls (the pinned test fails then), at which point the
+refusal can go and the setter be removed.
