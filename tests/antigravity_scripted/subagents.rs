@@ -267,7 +267,7 @@ async fn test_scripted_subagent_skills_choose_the_skills_a_subagent_sees() {
 /// deny rule: it denied the root agent's call and not the subagent's. So
 /// `spawn()` refuses this agent unless it opts in with
 /// `with_ungated_subagents(true)`. When this test fails, a harness release
-/// started gating subagent calls: revisit the refusal (D-NEXT-WP22) and
+/// started gating subagent calls: revisit the refusal (D-042) and
 /// `docs/ANTIGRAVITY.md` (Subagents).
 #[tokio::test]
 #[ignore = "Requires localharness binary"]

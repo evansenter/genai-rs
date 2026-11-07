@@ -361,7 +361,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `define_subagent`**, with which it writes subagents of its own at runtime
   (D-023). Call `with_define_subagent_tool(true)` to keep it.
 - **Breaking: Antigravity's `spawn()` refuses subagents beside a gate they
-  bypass** (#520, D-NEXT-WP22). Harness 0.1.23 applies neither policies,
+  bypass** (#520, D-042). Harness 0.1.23 applies neither policies,
   the pre-tool hook nor workspace containment to a subagent's own tool
   calls, so a read-only subagent can read any file the process can
   (verified 2026-11-05, with deny-all rules, a denying hook and containment

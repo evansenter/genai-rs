@@ -510,7 +510,7 @@ fn test_overlapping_mcp_server_names_are_found() {
 }
 
 // =============================================================================
-// Subagents beside the gates they bypass (#520, D-NEXT-WP22)
+// Subagents beside the gates they bypass (#520, D-042)
 // =============================================================================
 
 /// An agent offering subagents, past the write-tool safety gate with a

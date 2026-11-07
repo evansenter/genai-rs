@@ -1247,7 +1247,7 @@ read the stored config back rather than the transcript.
 
 ---
 
-## D-NEXT-WP12 — The next turn halts an abandoned Antigravity turn; dropping it sends nothing (2026-11-07)
+## D-041 — The next turn halts an abandoned Antigravity turn; dropping it sends nothing (2026-11-07)
 
 **Context.** Dropping a `chat` future or a `send_streaming` stream mid-turn
 abandons the turn on this side only. The harness stays inside it, waiting
@@ -1281,7 +1281,7 @@ halt after a turn that ended in any of those three ways fails them.
 
 ---
 
-## D-NEXT-WP22 — `spawn()` refuses subagents beside a gate they bypass (2026-11-07)
+## D-042 — `spawn()` refuses subagents beside a gate they bypass (2026-11-07)
 
 **Context.** #520. On harness 0.1.23 a subagent's own tool calls reach
 neither the pre-tool callback (so neither this client's policies nor the
@@ -1331,7 +1331,7 @@ refusal can go and the setter be removed.
 
 ---
 
-## D-NEXT-WP17 — Antigravity's `run_workflow` stays unmodeled (2026-11-07)
+## D-043 — Antigravity's `run_workflow` stays unmodeled (2026-11-07)
 
 **Context.** #493 item 9. Harness 0.1.23 has a beta `run_workflow` builtin,
 and the Python SDK a beta `Agent.run_workflow`: it turns the builtin on
@@ -1354,7 +1354,7 @@ feature leaves beta and users ask for Python workflows driven from Rust.
 
 ---
 
-## D-NEXT-WP17-a — The Antigravity stderr drain moves to `harness_stderr.rs` (2026-11-07)
+## D-044 — The Antigravity stderr drain moves to `harness_stderr.rs` (2026-11-07)
 
 **Context.** Bounding harness discovery and capping stderr lines (#504,
 WP17) took `src/antigravity/process.rs` to 821 lines, over D-014's 800.

@@ -201,7 +201,7 @@ impl AgentBuilder {
 
     /// Refuses an agent that offers subagents while a gate is set, unless
     /// the caller opted in with `with_ungated_subagents(true)` (#520,
-    /// D-NEXT-WP22): a subagent's own tool calls bypass every gate (harness
+    /// D-042): a subagent's own tool calls bypass every gate (harness
     /// 0.1.23, pinned by
     /// `test_scripted_harness_does_not_gate_a_subagents_tool_calls`).
     ///
