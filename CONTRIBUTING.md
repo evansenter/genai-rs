@@ -31,8 +31,11 @@ Integration tests take 2-5 minutes and some flake on LLM variability. Doctests
 run in CI only, not in `make test` (see D-009). They include the guides in
 `docs/` and the README (`src/lib.rs`, `doc_tests`), so after changing a code
 block run `cargo test --workspace --doc --all-features`. A block that cannot
-compile is `rust,ignore` with an `<!-- ignore: reason -->` line above its
-fence; prefer `no_run` with hidden (`# `) setup lines.
+compile is `rust,ignore` with an `<!-- ignore: reason -->` line directly
+above its fence, in a guide or in rustdoc; prefer `no_run` with hidden
+(`# `) setup lines. `make test-scripts` fails on an `ignore` fence without
+one, and on a dated live fact outside its home (D-032), through
+`.github/scripts/check_dated_facts.sh`.
 
 `make test-scripts` exercises `setup-dev.sh` against the checkout's real
 `.cargo/config.toml` and restores it on exit. If you kill the run outright, the

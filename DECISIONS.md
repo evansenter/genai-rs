@@ -1128,9 +1128,26 @@ recorded facts disagreed, the more recent one won.
 
 **Consequences.** A behavior change is one edit in a home and one in the
 sentence that states it, not a search. A guide's reader sees what is true
-now, with the evidence one link away. Nothing enforces the rule yet: #495's
-triage proposes a script that fails on a date outside the two homes, which
-would need an allowlist for every exception above.
+now, with the evidence one link away.
+
+**Enforcement (amended 2026-11-07, #504's WP21).**
+`.github/scripts/check_dated_facts.sh` fails on a date (a day or a month)
+in any Markdown file but the three homes, this file and `CHANGELOG.md`; in
+a doc comment of non-test code in `src/` and `genai-rs-macros/src/`,
+crate-private items included, since a private item's dated evidence
+belongs in a `//` comment; and in any comment in `examples/`, whose bodies
+`examples/CLAUDE.md` holds to the header rule. The exceptions above are
+read from the tree's structure rather than an allowlist: a file under a
+`tests/` directory, a test-only source file (`*_tests.rs`, `proptest_*.rs`,
+`src/coverage_oracle/`) or `#[cfg(test)]` item, a `//` comment in `src/`,
+a link's target (a home's dated heading), a timestamp in example data, and
+the revision `2026-05-20`. It also fails on a code block fenced `ignore`,
+in Markdown or in that rustdoc, without an `<!-- ignore: reason -->` line
+directly above the fence (CONTRIBUTING.md). `make test-scripts` runs it and
+its harness, so the Shell Scripts CI job does too. It cannot tell a dated
+fact from any other date in the files it reads, so a date that is not a
+fact (a release date in a guide) has to be phrased without one or added to
+the script's `NAMES`.
 
 ## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
 

@@ -34,7 +34,20 @@ wire, `docs/INTERACTIONS_API_GAP.md` for what the API accepts, rejects and
 does. Guides, the README, example headers and rustdoc state the current
 behavior without a date and link there; Antigravity harness facts name the
 harness version, with the dated record in
-`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
+`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`. In Rust, a doc comment carries no
+date (private items included); dated evidence for the code beside it goes
+in a `//` comment, and tests keep theirs. `make test-scripts` runs
+`.github/scripts/check_dated_facts.sh`, which fails on a date anywhere
+else, and on a code fence marked `ignore` without an
+`<!-- ignore: reason -->` line directly above it.
+
+An issue number in a doc or a comment is one of two things. A provenance
+tag, `(#491)`, names the issue a rule or behavior came from, and stays
+when the issue closes, as a decision number does. A pointer ("see #N",
+"tracked in #N", "until #N lands", "#493 item 7") sends the reader to the
+issue for what is still open, so it names an open issue only: when the
+issue closes, state the outcome in place and drop the pointer. Nothing
+checks this, since an issue's state needs the network.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the
@@ -66,7 +79,7 @@ make check        # pre-push gate: fmt + clippy + test + test-scripts
 make test         # unit/offline tests (no doctests)
 make test-strict  # the same in strict mode (--cfg genai_strict_unknown, D-030)
 make test-all     # + live integration tests (needs GEMINI_API_KEY)
-make test-scripts # shell-script harnesses (needs bash, jq, python3; PyYAML for one)
+make test-scripts # shell-script harnesses and check_dated_facts.sh (needs bash, jq, python3; PyYAML for one)
 make docs         # rustdoc -D warnings, all-features and docs.rs feature set
 
 cargo nextest run -E 'test(/name/)'            # one test
