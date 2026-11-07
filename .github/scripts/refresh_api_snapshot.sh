@@ -28,8 +28,10 @@
 # --check          Write nothing; exit 1 when the committed bindings.json is
 #                  wrong. First, offline: it must be JSON whose `sdk_version`
 #                  is exactly the baseline in `.github/last-swept-sdk-version`
-#                  (a bump made without this script fails here), with classes
-#                  and endpoints in it. Then it dumps the baseline release and
+#                  (a bump made without this script fails here), with classes,
+#                  endpoints and the bindings' Api-Revision in it (the
+#                  revision `tests/ci_coverage.rs` holds the crate's
+#                  `API_REVISION` to). Then it dumps the baseline release and
 #                  fails when the committed file differs (a hand edit, or a
 #                  dump-script change made without a refresh). PR CI runs it
 #                  when the dump script, this script, the baseline or the
@@ -143,7 +145,7 @@ if found != baseline:
         "Bump with .github/scripts/refresh_api_snapshot.sh --version X.Y.Z, "
         "which writes both."
     )
-empty = [key for key in ("classes", "endpoints") if not snapshot.get(key)]
+empty = [key for key in ("classes", "endpoints", "api_revision") if not snapshot.get(key)]
 if empty:
     sys.exit(
         f"tests/fixtures/api_surface/bindings.json has no {' or '.join(empty)}. {fix}"
