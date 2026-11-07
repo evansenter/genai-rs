@@ -1195,3 +1195,32 @@ now also send a field of these configs the crate does not model yet, as
 variants, which keep no `extra` (enums are outside the guard, as `Step`'s
 were before #491).
 
+---
+
+## D-NEXT-WP12 — The next turn halts an abandoned Antigravity turn; dropping it sends nothing (2026-11-07)
+
+**Context.** Dropping a `chat` future or a `send_streaming` stream mid-turn
+abandons the turn on this side only. The harness stays inside it, waiting
+for a custom tool's result or a hook's verdict that will never come, so the
+next `chat` hung until its turn timeout and the one after got the abandoned
+turn's reply (G1, #504). Something has to halt the harness's turn before the
+next turn sends its input. `Drop` cannot await, so halting when the turn is
+dropped means spawning a task to send the halt.
+
+**Decision.** The agent records whether the turn it last drove reached its
+end: a `Finished`, or a turn timeout whose halt-and-drain went quiet.
+`begin_turn` halts and drains a turn that did not, before it sends the new
+input, the way it already discarded a trigger turn. A turn that ended in an
+error counts as unfinished too: the harness may or may not have ended it,
+and a halt sent to an idle harness does nothing but cost the drain's
+half-second silence window. Nothing is sent when the turn is dropped.
+
+**Consequences.** The halt and the next turn's input go out in order from
+the same task, so a halt can never arrive after the next input and cancel
+the new turn, as one sent from a spawned task could. The cost: until the
+next `chat` or `send_streaming`, the harness keeps working on an abandoned
+turn (a slow model call, or builtins the turn goes on to run), and the call
+after a failed turn takes half a second longer. `cancel_handle()` remains
+the way to stop a turn at once and keep its partial output.
+`next_trigger_turn` does not halt an abandoned turn first: it consumes what
+is left of it.

@@ -644,8 +644,9 @@ until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn,
 then the tool hooks and tool errors as calls happen, then stop (again after
 each continue), then post-turn.
 
-A turn nobody consumes (one that hit its `with_turn_timeout`, or a trigger
-turn the next `chat` halts) is drained, and its per-turn hooks (pre-turn,
+A turn nobody consumes (one that hit its `with_turn_timeout`, one you
+abandoned by dropping `chat` or its stream, or a trigger turn the next
+`chat` halts) is drained, and its per-turn hooks (pre-turn,
 post-turn, tool error, compaction, stop) don't run for it: the drain answers
 the harness as if they were not set, so a stop hook can't keep a halted
 turn going. Session hooks still run.
@@ -865,6 +866,24 @@ outcome when the harness cancels a turn of its own accord.) On the pinned
 harness the key-free `test_scripted_cancel_halts_a_turn_waiting_on_the_model`,
 which the required CI check runs, fails if a halted turn does anything but
 resolve normally.
+
+**Dropping a turn instead**: dropping the `chat` future (an outer
+`tokio::time::timeout`, a losing `select!` branch) or the stream before
+`Finished` abandons the turn on this side only. A custom tool it was
+running is aborted, as at the turn timeout below, and a hook it was waiting
+on runs to completion with its answer discarded. The harness is still inside
+the turn, waiting for a tool result or hook verdict that will not come, or
+still calling the model. The agent records that the turn never ended, and
+the next `chat`/`send_streaming` halts it and discards its events before
+sending your input (half a second when nothing is left running, five
+seconds at most), so each later turn gets its own reply. A turn that failed
+is halted the same way. Until that next call the harness may keep working
+on the abandoned turn, so use `cancel()` to stop a turn at once and keep
+its partial output. `next_trigger_turn` does not halt anything first:
+called after an abandoned turn, it consumes what is left of that turn. The
+key-free tests in `tests/antigravity_scripted/cancel.rs` abandon a turn
+each way, with a tool hanging, a pre-tool hook pending or the model slow,
+and check that the next two chats get their own replies.
 
 `with_turn_timeout(Duration)` bounds each turn's wall-clock time. When the
 budget is exceeded, the crate halts the harness's still-running turn and
