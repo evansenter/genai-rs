@@ -186,8 +186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continuation, which the v1 spec leaves out), the Files API (uploads
   included, under `/upload/v1`) and the File Search Store API, and answers
   404 for agents, environments, webhooks, credentials, voices and triggers.
-  An interaction created on one version reads on the other. `v1beta` stays the default, since only it has every
-  resource.
+  An interaction created on one version reads on the other. `v1beta` stays the
+  default, since only it has every resource.
 - `CodeMenderConfig`, with `CodeMenderFindRequest`, `CodeMenderFixRequest`,
   `CodeMenderFile` and `CodeMenderMode`, builds the CodeMender agent config
   of the google-genai 2.34.0 bindings (`agent_config.type: "code-mender"`:
@@ -277,12 +277,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractionResponse::successful_code_output()` now give a
   `&CodeExecutionOutput`. The Gemini API still sends the string, and it
   accepts the list form in replayed history without showing its content to
-  the model, so replay the string form (verified live 2026-11-07). Migration: `result.text()` reads either form as text (a
-  `Cow<str>`), `as_text()` returns the string form, and `Display` prints the
-  text, so `println!("{}", r.result)` is unchanged; build one with
-  `"...".into()` or `vec![Content::text("...")].into()`.
-  `StepDelta::CodeExecutionResult`'s `result` stays a `String`, as in the
-  bindings.
+  the model, so replay the string form (verified live 2026-11-07). Migration:
+  `result.text()` reads either form as text (a `Cow<str>`), `as_text()`
+  returns the string form, and `Display` prints the text, so
+  `println!("{}", r.result)` is unchanged; build one with `"...".into()` or
+  `vec![Content::text("...")].into()`. `StepDelta::CodeExecutionResult`'s
+  `result` stays a `String`, as in the bindings.
 - **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
   `Annotation` has a new `extra` field.** It is a
   `serde_json::Map<String, serde_json::Value>`. The call variants
@@ -573,8 +573,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `..Default::default()`, or build them with `RemoteEnvironment::new()` and
   `CreateVoiceRequest`'s constructors and `with_*` setters.
 - **Breaking: `FileSearchDocument` and `FileSearchDocumentListResponse` no
-  longer implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration: `==`
-  still works (`PartialEq`); drop `Eq` bounds that required it.
+  longer implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration:
+  `==` still works (`PartialEq`); drop `Eq` bounds that required it.
 - **Breaking: `FileSearchStores::upload` takes `impl Into<DocumentUpload>`
   and uses the resumable upload protocol.** A `FileUpload` converts, so
   existing calls compile unchanged. The upload is now a start request
@@ -644,11 +644,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   misspelled `inputs`) input, since a trigger never fires a continuation,
   and a malformed `input` value is still a parse error. A stored trigger's
   interaction without an input, or with one that does not parse, reads as
-  `None` where it read as empty text. `build()` still requires input, except for
-  a continuation. Migration: write `input: Some(InteractionInput::Text(..))`
-  in a struct literal, match `Some(InteractionInput::Steps(..))` where you
-  read it, and replace `InteractionInput::default()` with the input you
-  mean (or `None`).
+  `None` where it read as empty text. `build()` still requires input, except
+  for a continuation. Migration: write
+  `input: Some(InteractionInput::Text(..))` in a struct literal, match
+  `Some(InteractionInput::Steps(..))` where you read it, and replace
+  `InteractionInput::default()` with the input you mean (or `None`).
 - **Breaking: genai-rs no longer forces reqwest's default features on.**
   It depends on reqwest with `default-features = false`, and reqwest's
   `http2`, `system-proxy` and `charset` come through genai-rs's own default
@@ -840,9 +840,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be readable yet.
 - One SSE event may hold up to 64 MiB. Past that, the stream fails with
   `GenaiError::MalformedResponse`; before, a body that never sent a newline
-  was buffered without bound. The largest real events, measured live 2026-11-04 on
-  `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
-  and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
+  was buffered without bound. The largest real events, measured live
+  2026-11-04 on `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB
+  `image` delta and a 15.7 MB `thought_signature` delta; TTS audio deltas are
+  under 8 KB.
 - The published crate holds the library, its examples and the guides its
   doctests include, and no longer the integration tests, their fixtures, CI
   files, scripts or the library's unit-test sources: 184 files and about
@@ -877,6 +878,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_max_delay`: `adjust` replaces backon's delay after the cap, so a
   429 asking for an hour slept for an hour. Both cap it at the backoff's
   maximum now; copy the change into a loop built from either.
+- Docs that said more than holds: `with_labels` said labels are echoed on
+  the response, but only a stored interaction read back with
+  `interactions().get` carries them; the retry predicate in
+  `docs/ERROR_HANDLING.md` left out the 400s that say "please retry the
+  request"; and `with_seed` was said to make sampling repeatable, which
+  the API does not guarantee. `AntigravityError::Turn` now says that a
+  fatal model error (an HTTP 400 from the model endpoint) also ends the
+  harness session on 0.1.23, so the next call fails with `WebSocket` and
+  the agent must be spawned again.
 - `#[tool]` documents everything it generates: the `<Name>Callable`
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that
@@ -944,10 +954,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `document_from_file()` sends `.txt` and `.md` files as text content
   (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
   `text/markdown` document content, which the API rejects with a 400 since
-  2026-11-04. A file that isn't valid UTF-8 returns `GenaiError::InvalidInput`.
-  If you match on the returned `Content`, expect `Content::Text` for these
-  extensions. `document_from_file_with_mime()` is unchanged and still sends
-  any MIME type as a document (#514).
+  2026-11-04. A file that isn't valid UTF-8 returns
+  `GenaiError::InvalidInput`. If you match on the returned `Content`, expect
+  `Content::Text` for these extensions. `document_from_file_with_mime()` is
+  unchanged and still sends any MIME type as a document (#514).
 - `Webhooks::create` sent a `Webhook`'s output-only fields (`id`, `state`,
   `signing_secrets`, `new_signing_secret`, `create_time`, `update_time`)
   whenever they were set, as on a webhook read back from the API. The
