@@ -243,22 +243,26 @@ from here rather than repeated.
   `gemini-3.5-flash` (served as `gemini-3.6-flash`) answered that no output
   was visible, while on `gemini-3.8-flash` the same value in the string form
   was read back exactly (2026-11-07).
-
-- **`tool_choice`** (2026-11-07, `gemini-3.8-flash`): the four modes and
-  the `allowed_tools` object are accepted and honored: `"none"` answers in
-  text with a function declared, and `allowed_tools` limits the call to
-  the functions it names. A stored read keeps the value as sent. The
-  pre-revision uppercase modes are a `400 Invalid enum value`. The shapes
-  are under ToolChoice and FunctionCallingMode in
-  `docs/ENUM_WIRE_FORMATS.md`.
+- **`tool_choice`** (2026-11-07, `gemini-3.8-flash`, with a weather
+  function declared): the four modes and the `allowed_tools` object are
+  accepted and honored. `"auto"`, `"any"` and `"validated"` each produced a
+  `function_call`, `"none"` a text answer with no call, and `allowed_tools`
+  naming `get_time` a call to `get_time` only. The pre-revision uppercase
+  modes are a `400 Invalid enum value 'AUTO' at
+  'generation_config.tool_choice'`. The shapes are under ToolChoice and
+  FunctionCallingMode in `docs/ENUM_WIRE_FORMATS.md`.
 - **Google Search `search_types`** (2026-11-07): `enterprise_web_search`
-  is Vertex-only (`400 ... it is allowed on the Gemini Enterprise Agent
-  Platform`), kept in `SearchType` (D-005). `image_search` is accepted on
-  `gemini-3.1-flash-image` and refused on `gemini-3.8-flash` (`400 Image
-  search as tool is not enabled for models/gemini-3.8-flash`).
-- **Google Maps `latitude` / `longitude`** are accepted, stored with the
-  tool, and used: asked for "a coffee shop near me" with Times Square's
-  coordinates, the model answered with one on West 47th Street (2026-11-07).
+  is Vertex-only (`400 The value 'enterprise_web_search' is not supported
+  for 'tools[0].search_types[0]' on the Gemini API, it is allowed on the
+  Gemini Enterprise Agent Platform. Supported values: 'web_search',
+  'image_search'.`), kept in `SearchType` (D-005). `image_search` is
+  accepted on `gemini-3.1-flash-image` and refused on `gemini-3.8-flash`
+  (`400 Image search as tool is not enabled for
+  models/gemini-3.8-flash`). What the call steps carry is under SearchType
+  in `docs/ENUM_WIRE_FORMATS.md`.
+- **Google Maps `latitude` / `longitude`** are accepted and used: asked
+  for "a coffee shop near me" with Times Square's coordinates, the model
+  answered with one on West 47th Street (2026-11-07).
 
 ### Agents and environments
 
@@ -281,10 +285,12 @@ from here rather than repeated.
   use.
 - **Environment file download** of a path with nothing at it, the root
   (`""`) included, is a `404 Directory not found or is empty` (2026-11-05).
-- **`agent_config.max_total_tokens` is enforced** (2026-11-07): an
-  Antigravity run with a budget of 1,000 stopped after one code execution
-  step, at 4,976 total tokens, and ended `incomplete`; the spec's
-  `budget_exceeded`, deprecated in v1beta, did not appear.
+- **`agent_config.max_total_tokens`** (2026-11-07): an Antigravity run
+  with a budget of 1,000 stopped after one code execution step, at 4,976
+  total tokens, and ended `incomplete`, not with the spec's
+  `budget_exceeded` (deprecated in v1beta). That is one run with no
+  unbudgeted run beside it, so it does not show that the budget stopped
+  it.
 - **`cancel` on `DEFAULT_ANTIGRAVITY_AGENT`** fails; see
   [Server-side changes](#server-side-changes-live-2026-10-01).
 - **The retired agent:** `antigravity-preview-09-2026` replaced
@@ -402,10 +408,11 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
   upload) are modeled, and `sizeBytes` reads a string or a number. A file
   that fails processing serves `error: {code: 3, message}` with no
   `details`; `FileError` models `details` and keeps other keys in `extra`.
-  No uploaded or failed file carries `downloadUri`; only a generated file
-  (a video generation) would. It is modeled since 2026-11-07
-  (`FileMetadata::download_uri`), and an uploaded file still had none that
-  day.
+  No uploaded or failed file carries `downloadUri`, nor did an upload on
+  2026-11-07. The bindings set it only on a downloadable (generated) file,
+  such as a video generation's, which no probe has made: it is modeled from
+  the bindings since 2026-11-07 (`FileMetadata::download_uri`) and not yet
+  seen live.
 - **File Search Stores:** `activeDocumentsCount`, `pendingDocumentsCount`
   (served only while a document indexes) and `sizeBytes` are string int64s,
   all modeled; `failedDocumentsCount`, never seen because an unindexable
