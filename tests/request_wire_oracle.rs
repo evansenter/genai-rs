@@ -619,13 +619,14 @@ fn verbs_with_a_body_are_found_through_methods() {
 const ALT: &str = "`alt` is a Google API system parameter, which every method takes and no \
      request class lists: `alt=sse` asks for server-sent events (the live stream, resume and \
      create-stream tests read them) and `alt=media` for a file's bytes \
-     (`EnvironmentFiles::download`, live in environments_tests).";
+     (`EnvironmentFiles::download`, live in environment_files_tests).";
 
 /// The store and document listings take the snake_case paging pair.
 const SNAKE_PAGING: &str = "The store and document listings take `page_size` and `page_token` \
      as well as the bindings' `pageSize` and `pageToken` (live 2026-09-27, \
-     docs/ENUM_WIRE_FORMATS.md \"File Search\"), and the crate sends the snake_case pair through the shared \
-     `with_paging`; the live paging tests in file_search_stores_tests read the pages back.";
+     docs/ENUM_WIRE_FORMATS.md \"File Search\"), and the crate sends the snake_case pair \
+     through the shared `with_paging`; the live paging tests in file_search_stores_tests read \
+     the pages back.";
 
 /// Query keys the crate sends that its endpoint's binding request does not
 /// list, each with its reason, by site (`METHOD /path?key`).
@@ -848,7 +849,15 @@ async fn query_stub() -> Stub {
             .split_once('?')
             .unwrap_or((&request.target, ""));
         let session = |name: &str| {
-            Reply::json(200, json!({})).header("x-goog-upload-url", &format!("{{base}}/upload-session/{name}"))
+            let url = format!("{{base}}/upload-session/{name}");
+            Reply::json(200, json!({})).header("x-goog-upload-url", &url)
+        };
+        let operation = |done: bool| {
+            let mut body = json!({"name": "fileSearchStores/s/operations/o", "done": done});
+            if done {
+                body["response"] = json!({"documentName": "fileSearchStores/s/documents/d"});
+            }
+            Reply::json(200, body)
         };
         if path == "/upload/v1beta/files" {
             session("file")
@@ -860,18 +869,23 @@ async fn query_stub() -> Stub {
             Reply::json(200, json!({"file": active_file()}))
         } else if path == "/upload-session/env" {
             Reply::json(200, json!({"files": []}))
-        } else if path == "/upload-session/doc" || path == "/v1beta/fileSearchStores/s/operations/o" {
-            Reply::json(
-                200,
-                json!({"name": "fileSearchStores/s/operations/o", "done": true,
-                       "response": {"documentName": "fileSearchStores/s/documents/d"}}),
-            )
+        } else if path == "/upload-session/doc" || path.ends_with("/operations/o") {
+            operation(true)
         } else if path.ends_with(":importFile") {
-            Reply::json(200, json!({"name": "fileSearchStores/s/operations/o", "done": false}))
+            // Unfinished, so the import polls the operation.
+            operation(false)
         } else if query.contains("alt=sse") {
             Reply::sse(&[
-                "data: {\"event_type\":\"interaction.created\",\"interaction\":{\"id\":\"i\",\"status\":\"in_progress\"},\"event_id\":\"e1\"}\n\n",
-                "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i\",\"status\":\"completed\"},\"event_id\":\"e2\"}\n\n",
+                concat!(
+                    r#"data: {"event_type":"interaction.created","event_id":"e1","#,
+                    r#""interaction":{"id":"i","status":"in_progress"}}"#,
+                    "\n\n"
+                ),
+                concat!(
+                    r#"data: {"event_type":"interaction.completed","event_id":"e2","#,
+                    r#""interaction":{"id":"i","status":"completed"}}"#,
+                    "\n\n"
+                ),
             ])
         } else if query.contains("alt=media") {
             Reply::text(200, "x")
@@ -1271,6 +1285,12 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         .filter(|r| !r.target.starts_with("/upload-session/"))
         .map(|r| (r.method, r.target))
         .collect();
+    assert!(
+        requests
+            .iter()
+            .any(|(_, target)| target == "/v1beta/fileSearchStores/s/operations/o"),
+        "the import did not poll its operation"
+    );
     let endpoints = binding_endpoints();
     let problems = query_findings(&endpoints, &requests, QUERY_ALLOWED, NOT_SENT);
     assert!(
