@@ -1132,8 +1132,9 @@ now, with the evidence one link away.
 
 **Enforcement (amended 2026-11-07, #504's WP21).**
 `.github/scripts/check_dated_facts.sh` fails on a date (a day or a month)
-in any Markdown file but the three homes, this file and `CHANGELOG.md`; in
-a doc comment of non-test code in `src/` and `genai-rs-macros/src/`,
+in any Markdown file but the two homes above, the harness probe record in
+`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, this file and `CHANGELOG.md`; in a
+doc comment of non-test code in `src/` and `genai-rs-macros/src/`,
 crate-private items included, since a private item's dated evidence
 belongs in a `//` comment; and in any comment in `examples/`, whose bodies
 `examples/CLAUDE.md` holds to the header rule. The exceptions above are
@@ -1780,9 +1781,10 @@ site-packages directory.
 ## D-NEXT-WP21 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
 
 **Context.** WP15 removed every "See #N" and "Tracked in #N" that sent a
-reader to a closed issue for current behavior. About fifteen `(#491)` tags
-and `src/response/mcp.rs`'s `(#459)` remained, on rules and code those
-issues introduced. Both issues are closed, and #504 asked whether such
+reader to a closed issue for current behavior. Thirty-four `(#491)` tags
+in 22 files and seven `(#459)` tags, `src/response/mcp.rs`'s module doc
+among them, remained (outside this file and `CHANGELOG.md`), on rules and
+code those issues introduced. Both issues are closed, and #504 asked whether such
 tags stay.
 
 **Decision.** They stay. A provenance tag, `(#N)` beside a rule or a
