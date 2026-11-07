@@ -140,6 +140,13 @@ mod google_search {
                 .create()
                 .await
         });
+        // Both turns are stored, and neither is needed past here.
+        let id2 = result2.as_ref().ok().and_then(|r| r.id.clone());
+        for id in std::iter::once(prev_id).chain(id2) {
+            if let Err(e) = client.interactions().delete(&id).await {
+                println!("interactions().delete({id}) failed (tolerated): {e}");
+            }
+        }
         let Some(response2) = tool_response(result2, "Google Search turn 2") else {
             return;
         };
