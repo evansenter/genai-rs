@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] - 2026-11-07
+
+Tracks the Interactions API as of `google-genai` 3.0.0 (swept 2026-11-07,
+every item probed live), `gemini-3.8-flash`, the
+`antigravity-preview-09-2026` and `deep-research-preview-04-2026` agents,
+and Antigravity harness 0.1.23.
+
+There is no 0.13.0: `v0.13.0` was tagged but never published, so this
+release follows 0.12.0 directly and includes everything written for 0.13.0.
 
 ### Added
 
@@ -81,7 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     sees), `on_compaction` and `on_stop` (`StopDecision::Continue` keeps
     the turn going). A pre-tool hook can return `PreToolDecision::modify`
     to run the call on other arguments; on a tool confirmation, which
-    cannot carry arguments, a modify denies the call.
+    cannot carry arguments, a modify denies the call. A turn being halted
+    and drained, because it hit its turn timeout or no one consumes it,
+    runs none of the per-turn hooks (`on_pre_turn`, `on_post_turn`,
+    `on_tool_error`, `on_compaction`, `on_stop`): the drain answers the
+    harness as if they were not set, so a stop hook's `Continue` can't keep
+    a halted turn running.
   - Policies: `Policy::when` conditions, `with_reason`, `with_name`,
     `policy::ask_user` handlers, `mcp_<server>_*` and `mcp_*` targets, and
     `policy::auto()`, the harness's model-judged assessment of risky calls,
@@ -94,6 +107,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Triggers: `add_custom_trigger` with a `TriggerContext`,
     `triggers::on_file_change`, and `AntigravityAgent::next_trigger_turn`,
     which drives a turn a trigger started and returns its response.
+    `on_file_change` skips a poll whose snapshot failed (the snapshot task
+    panicked, the runtime was shutting down, or the watched path exists but
+    could not be read, such as a transient I/O error on a network mount)
+    and logs a warning, rather than reporting every watched file deleted.
+    If the path cannot be read when the watch is created, the first
+    snapshot that reads it becomes the baseline; a watched path that no
+    longer exists reads as empty.
   - Prompts with media and slash commands: `chat` and `send_streaming`
     take a `Prompt` of text, `Media` (images, documents, audio, video, from
     bytes or `Media::from_file`) and `SlashCommand::Plan`, as the Python
@@ -143,6 +163,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Trigger::interaction` now keeps the interaction fields the crate doesn't
   model, such as `object: "interaction"`, which the API accepts back on
   create (verified live 2026-11-04).
+- `ClientBuilder::with_read_timeout`: the longest wait for the response
+  headers or the next chunk, reset by each one. Unlike `with_timeout`, it bounds a stalled
+  stream (a dropped NAT mapping, a half-open proxy) without capping a healthy
+  long one, and it reaches `interactions().stream()` / `resume_stream()`,
+  which no request-level timeout does.
 - `DEFAULT_CONNECT_TIMEOUT` (30 s), the connect timeout every client now
   gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
   with no timer at all, for tests on a paused tokio clock. A `Client`'s
@@ -155,6 +180,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updates all list it (#501). It used to read as `Unknown`. Not observed
   live: on 2026-11-05 background agent and model interactions reported
   `in_progress` from their create response on.
+- `InteractionResponse::errors` (`InteractionError`, with a string `code`
+  such as `"CANCELLED"`), `UsageMetadata::initial_input_tokens`,
+  `PromptedVoice::base_voice` and `CreateVoiceRequest::with_base_voice`,
+  `CodeExecutionLanguage::Bash` (spec only) and `ServiceTier::Deferred`
+  (Vertex-only).
 - `InteractionResponse` models the request fields a stored interaction
   serves, which used to land in `extra`: `generation_config`,
   `response_format`, `response_modalities` and `safety_settings` (a stored
@@ -169,6 +199,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GenerationConfig::extra` keeps the generation-config fields the crate
   does not model, from a stored read or a deserialized config, and sends
   them flat beside the modeled ones.
+- Decoding continuation. A response cut off by `max_output_tokens` carries
+  `InteractionResponse::continuation_token`; resend the same input with
+  `InteractionBuilder::with_continuation_token(token)` and a larger
+  `max_output_tokens` (it counts across continuations) to continue it. Only
+  `CONTINUATION_MODEL` (`gemini-4-argon`) supports it; other models answer
+  `400 Decoding continuation is not enabled for this model` (verified live
+  2026-11-01). `InteractionStatus::RequiresContinuation` is modeled from the
+  spec but never observed: continuable responses report `Incomplete`.
 - `InteractionBuilder::continue_decode(&response)` continues a decode that
   stopped early without resending the input: it sets the response's model,
   its id as the previous interaction and its `continuation_token`, replacing
@@ -335,9 +373,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: the Antigravity types read from the harness that dropped
   unmodeled fields have a new `extra` field**, as their siblings do:
   `ModalityTokenCount`, `TrajectoryUsageEntry`, `ListDirectoryEntry`,
-  `DiffBlock`, `DiffLine`, `PreTurnArgs`, `PostTurnArgs`,
-  `OnToolErrorArgs`, `OnCompactionArgs`, `StopArgs`, and the input types
-  the harness echoes back (`UserInput`, `UserInputPart`, `Media`,
+  `DiffBlock`, `DiffLine`, `PreTurnArgs`, `PostTurnArgs`, and the input
+  types the harness echoes back (`UserInput`, `UserInputPart`, `Media`,
   `SlashCommand`, `ToolResponse`). `OutputEvent::extra` keeps an envelope
   key a newer harness adds beside a recognized payload, which used to be
   dropped. Migration: add `..Default::default()` to a struct literal.
@@ -373,6 +410,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still kept as `StepDelta::Unknown`. Well-formed API responses are
   unaffected. Migration: none, unless you
   relied on the lenient reading.
+- **Breaking: the Antigravity bridge drives harness 0.1.23**
+  (`google-antigravity==0.1.23`, `SUPPORTED_HARNESS_VERSION`). It writes
+  0.1.23's new `runWorkflow` toggle (disabled), which 0.1.18 rejects at init,
+  and models the new non-terminal `TrajectoryState::WaitingForSubagents`,
+  which otherwise read as version drift. The full harness suite passes on
+  0.1.23.
+- **Breaking: Antigravity agents are confined to their workspaces by default.** The
+  harness contains its file tools only when the client sends a policy
+  config, which this crate never did: an agent could read any file the
+  process could, and the content reached the model (verified on harness
+  0.1.18 and 0.1.23). With a workspace configured, `spawn()` now sends one;
+  a read outside the workspaces fails with `Access to path "…" is denied`.
+  The harness still allows the system temp directory and
+  `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
+  restores the old behavior, and an explicit `true` with no workspace fails
+  `spawn()` instead of running unconfined.
 - **Breaking: a string passed to Antigravity's `with_system_instructions`
   is added to the harness's own prompt instead of replacing it**, as in the
   Python SDK, so the harness's tool guidance, safety rules, workspace list,
@@ -437,7 +490,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape); `InputEvent::CallHookResponse` and
   `OutputPayload::CallHookRequest` hold a `Box`; `HookVerdict`,
   `GeminiModelOptions`, `McpServerConfig`, `CustomAgent`,
-  `SystemInstructionPart`, `PolicyConfig` and `HarnessConfig` gained fields
+  `SystemInstructionPart` and `HarnessConfig` gained fields
   (build them with `..Default::default()`).
 - **Breaking: Antigravity hooks run on a dedicated thread, not on the
   thread driving the turn.** A hook that blocks (`on_pre_tool`,
@@ -485,21 +538,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: a cut-off stream ends with the new
   `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
   the connection can end a stream body before `interaction.completed` or an
-  error event. A close between events was `MalformedResponse` in 0.13.0. A
-  close in the middle of an event was a non-retryable `Parse` or `Utf8`. A
-  transport failure mid-body (a reset, the client's read or total timeout
-  between chunks, a decode error) was `Http`; that `reqwest::Error` is now
-  its `source`. One event used to be classified two ways depending on how
-  the peer closed; `is_retryable()` explains the choice. A failure before
-  the response headers is still `Http`, and a stream stopped by the
+  error event. A close between events used to end the stream cleanly, so a
+  cut-off connection passed for a finished stream (an auto-function round
+  failed with `MalformedResponse("Stream ended without Complete event")`).
+  A close in the middle of an event was a non-retryable `Parse` or `Utf8`.
+  A transport failure mid-body (a reset, a client-level timeout between
+  chunks, a decode error) was `Http`; that `reqwest::Error` is now its
+  `source`. So one cut-off ended without an error, with a permanent one or
+  with a retryable one, depending on how the peer closed; `is_retryable()`
+  explains the choice. A stream whose last event is unrecognized still ends
+  cleanly, since that may be a new terminal event. A failure before the
+  response headers is still `Http`, and a stream stopped by the
   request-level `InteractionBuilder::with_timeout` is still `Timeout`.
-  Migration: match `GenaiError::StreamInterrupted { .. }` where you matched
-  `MalformedResponse` for a cut-off stream. Match
+  Migration: match `GenaiError::StreamInterrupted { .. }` for a cut-off
+  stream. It is now the last item of a stream that used to end without
+  one, and it replaces `Parse` or `Utf8` for a stream cut off mid-event and
+  the auto-function round's `MalformedResponse`. Match
   `StreamInterrupted { source: Some(e), .. } if e.is_timeout()` where you
   matched `Http(e) if e.is_timeout()` for a stream stalled by
-  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`. A
-  retry loop built on `is_retryable()` now also retries a clean early close.
-  Discard the partial output first, because a foreground retry is a new
+  `ClientBuilder::with_timeout` (or the new `with_read_timeout`). A retry
+  loop built on `is_retryable()` now retries every cut-off stream. Discard
+  the partial output first, because a foreground retry is a new
   generation.
 - **Breaking: an auto-function stream round that ends on an event this crate
   doesn't recognize fails with the retryable `StreamInterrupted`, not
@@ -529,31 +588,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Migration: a struct literal needs `extra: Default::default()`, or
   `..Default::default()`; `client.interaction()...build()` is unaffected.
 - **Breaking: a deserialized `InteractionRequest` keeps the keys it doesn't
-  model, in `extra`, and sends them.** 0.13.0 dropped them silently. This
+  model, in `extra`, and sends them.** 0.12.0 dropped them silently. This
   covers a request loaded from JSON or a config file, and the nested
   `interaction` of a deserialized `CreateTriggerRequest`. A stale, misplaced
   or misspelled key, such as a top-level `temperature` that belongs in
   `generation_config`, now reaches the server, which rejects a name it
   doesn't know with `400 Unknown parameter '<name>'`. Migration: remove the
   key from the JSON, or call `request.extra.clear()` before sending to send
-  what 0.13.0 sent.
+  what 0.12.0 sent.
 - **Breaking: a `wait_until_active` timeout shorter than one status
-  request's round trip now always fails.** Each status request used to get
-  at least a second, so a zero timeout read the state once. Now the first
-  request is cut off at the deadline like any other, and the error says the
-  wait's deadline cut it off rather than that it failed. Migration: to read
-  the state once, call `files().get(name)` or
+  request's round trip now always fails.** A status request had no bound,
+  so a zero timeout read the state once. Now every status request is cut
+  off at the wait's deadline, the first included, and the error says the
+  deadline cut it off rather than that it failed. The first request is
+  still always made, so an invalid name is reported even with a zero
+  timeout. Migration: to read the state once, call `files().get(name)` or
   `file_search_stores().documents().get(name)` instead.
 - **Breaking: a successful streaming response whose `Content-Type` is not
   `text/event-stream` fails at once with `MalformedResponse`** and a preview
-  of the body. In 0.13.0 a captive portal's page or a plain JSON interaction
-  was parsed as SSE and failed only at its end, as a cut-off stream. The API
-  answers `text/event-stream` (verified live 2026-11-04). The check ignores
+  of the body. In 0.12.0 a captive portal's page or a plain JSON interaction
+  was parsed as SSE and yielded no events, ending as if the stream had
+  finished. The API answers `text/event-stream` (verified live
+  2026-11-04). The check ignores
   letter case and parameters (`text/event-stream; charset=utf-8` passes),
   and a response with no `Content-Type` is still read as a stream. A proxy
   or gateway (`ClientBuilder::with_base_url`) that rewrites the type of a
   working stream, for example to `text/plain` or `application/octet-stream`,
-  now fails where 0.13.0 streamed. The check covers every streaming call:
+  now fails where 0.12.0 streamed. The check covers every streaming call:
   `create_stream()`, `create_stream_with_auto_functions()`, and
   `interactions().stream()` / `resume_stream()`. Migration: have the proxy
   pass the API's `Content-Type` through, or send none. Behind a proxy you
@@ -616,6 +677,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so read it there (`item.extra.get("title")`). For file search, read the
   `file_citation` annotations on the answer (`all_annotations()`);
   `has_file_search_results()` still says whether a search ran.
+- **Breaking: removed `GenerationConfig::presence_penalty` and
+  `frequency_penalty`, with `with_presence_penalty()` and
+  `with_frequency_penalty()`.** The API rejects both (`400 Unknown parameter
+  'presence_penalty' at 'generation_config'`, 2026-11-01), and google-genai
+  2.34.0 does not list them, so any request that set one failed.
 - **Breaking: `GenerationConfig` has a new public field, `extra`.**
   Migration: a struct literal needs `extra: Default::default()`, or
   `..Default::default()`.
@@ -626,6 +692,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `response.extra["safety_settings"]`). The environment echo's `env`, a
   list of single-key maps on the wire, serializes back as the map a request
   sends.
+- **Breaking: `StreamChunk::StatusUpdate` gains `usage` (boxed, like the
+  other usage fields) and `continuation_token`, and `interaction_id`
+  becomes `Option<String>`.** A `store: false` stream's status updates
+  carry no interaction ID (verified live 2026-11-01), and the crate dropped
+  them with a `warn!`; they now reach the caller. Background streams send
+  `usage` mid-run.
 - **Breaking: `StreamChunk::StepDelta` has a new field, `total_usage`.**
   It carries the `step.delta` event's `metadata.total_usage`, which the
   google-genai 2.34.0 bindings and the spec define and the crate dropped.
@@ -649,6 +721,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `input: Some(InteractionInput::Text(..))` in a struct literal, match
   `Some(InteractionInput::Steps(..))` where you read it, and replace
   `InteractionInput::default()` with the input you mean (or `None`).
+- **Breaking: `genai-rs` no longer turns on tokio's full feature set.** It
+  asks for `fs` and `time` (plus `io-util`, `net`, `process`, `rt` and `sync`
+  with the `antigravity` feature). A crate that wrote `#[tokio::main]` while
+  relying on genai-rs to enable `rt-multi-thread` and `macros` must now
+  enable them itself.
 - **Breaking: genai-rs no longer forces reqwest's default features on.**
   It depends on reqwest with `default-features = false`, and reqwest's
   `http2`, `system-proxy` and `charset` come through genai-rs's own default
@@ -674,8 +751,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CallableFunctionFactory` are no longer public API** (#490). They were
   `#[tool]`'s `inventory` registration, and live in the doc-hidden
   `genai_rs::__private` now, with no semver guarantee. A `genai-rs-macros`
-  must match its `genai-rs` release: a 0.13 `genai-rs-macros` does not
-  compile against this release, nor a new one against 0.13. Migration:
+  must match its `genai-rs` release: a 0.12 `genai-rs-macros` does not
+  compile against this release, nor a new one against 0.12. Migration:
   register functions with `#[tool]`, or return them from a `ToolService`;
   bump `genai-rs` and `genai-rs-macros` together.
 - **Breaking: `GenaiError::Json` and `GenaiError::Parse` are removed**
@@ -722,15 +799,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#490). `StreamChunk::Created { interaction }`, `StreamChunk::Completed`,
   and `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
   `Complete` and `MaxLoopsReached` hold a `Box<InteractionResponse>`;
-  `StreamChunk`'s `usage`, `total_usage` and `step_usage` fields are
-  `Option<Box<UsageMetadata>>`; and `StepDelta::ThoughtSummary`'s `content`
-  is an `Option<Box<Content>>`. An enum is as large as its largest variant,
-  so every `StreamEvent`, a one-word text delta included, was 1.9 KB; it is
-  216 bytes now. Migration: method calls and field reads go through the box
-  unchanged (`response.as_text()`, `usage.total_tokens`); where you need the
-  value itself, write `*response`
-  (`StreamChunk::Completed(response) => Some(*response)`); build a chunk
-  with `Box::new(..)`.
+  `StreamChunk::StepStop`'s `usage` and `step_usage` are
+  `Option<Box<UsageMetadata>>`, as are the new `StatusUpdate::usage` and
+  `StepDelta::total_usage`; and `StepDelta::ThoughtSummary`'s `content` is
+  an `Option<Box<Content>>`. An enum is as large as its largest variant, so
+  every `StreamEvent`, a one-word text delta included, was as large as an
+  `InteractionResponse`: 744 bytes in 0.12.0, and over 2 KB with the fields
+  this release adds to it. It is 216 bytes now. Migration: method calls
+  and field reads go through the box unchanged (`response.as_text()`,
+  `usage.total_tokens`); where you need the value itself, write
+  `*response` (`StreamChunk::Completed(response) => Some(*response)`);
+  build a chunk with `Box::new(..)`.
 - **Breaking: strict mode is the `--cfg genai_strict_unknown` flag; the
   `strict-unknown` Cargo feature is gone** (#490, D-030). Cargo unifies
   features across a build, so any crate that turned the feature on made
@@ -746,12 +825,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#[cfg(genai_strict_unknown)]`.
 - **Breaking: `GenaiError::Utf8` and its `From<std::str::Utf8Error>` impl
   are removed** (#504). The SSE parser was its only producer. A streamed
-  line that is not valid UTF-8 is `MalformedResponse` now, not retryable
-  as `Utf8` was: the server sent those bytes, and a retry gets them again.
-  A line cut off at the end of the body inside a multi-byte character is
-  still the retryable `StreamInterrupted`. Migration: match
-  `MalformedResponse` where you matched `Utf8`; where `?` converted a
-  `Utf8Error` into a `GenaiError`, map it into your own error.
+  line that is not valid UTF-8 is `MalformedResponse` now, which like
+  `Utf8` is not retryable: the server sent those bytes, and a retry gets
+  them again. A line cut off at the end of the body inside a multi-byte
+  character is a cut-off stream, the retryable `StreamInterrupted`.
+  Migration: match `MalformedResponse` where you matched `Utf8`; where `?`
+  converted a `Utf8Error` into a `GenaiError`, map it into your own error.
 - **Breaking: `FunctionDeclaration::new` and `FunctionParameters::new` are
   no longer public** (#504). They were `#[doc(hidden)]` plumbing for
   `#[tool]`, which now builds its declaration through the doc-hidden
@@ -776,6 +855,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer infers the target type, and `Client::builder` is no longer a
   `const fn`. Migration: pass the `&str` or `String` itself, without
   `.into()`.
+- `GenaiError::is_retryable()` is false for an HTTP error from a request
+  that can't be built (a scheme-less `with_base_url`, a rejected header) or a
+  redirect loop. They fail identically every time, and a retry loop spent its
+  whole budget on them.
 - `PollOptions` polls no faster than `PollOptions::MIN_POLL_INTERVAL`
   (10 ms): a shorter `with_poll_interval`, `Duration::ZERO` included, is
   raised to it. A zero interval re-polled the moment each status request
@@ -793,10 +876,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once when the harness asked and again on dispatch.
 - Harness discovery no longer starts `python3` when the explicit path or
   `ANTIGRAVITY_HARNESS_PATH` names the binary.
-- A Files API or file search store upload's start request now sends
-  `Api-Revision`, as every other API request does; the request that sends
-  the file goes to the session URL and still carries neither it nor the
-  key.
+- A Files API upload's start request now sends `Api-Revision`, as every
+  other API request does, and so does the start request of the file search
+  store's resumable upload; the request that sends the file goes to the
+  session URL and carries neither it nor the key.
 - The Antigravity harness runs in its own process group on Unix. A
   terminal's Ctrl-C now reaches only your process; when it exits, the
   harness sees stdin close and shuts down gracefully. To stop the harness on
@@ -811,17 +894,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
   and `response_format`, `response_modalities` and `safety_settings` too
   (verified live 2026-11-04); see Added for the fields that model them.
-- `wait_until_active` (files and file-search documents):
-  - It honors the `Retry-After` of a 429 it polls through, and gives up at
-    once when that falls past the deadline.
-  - It never runs past its deadline: a status request is cut off at the
-    deadline, and a poll that would start past it is not made.
+- `wait_until_active` (files and file-search documents), whose two waits
+  now share one implementation:
+  - It never runs past its deadline: each status request is bounded by the
+    time left, so a stalled connection can no longer hold the wait past it
+    (the default client has no read timeout), and a poll that would start
+    past the deadline is not made.
+  - It polls through a retryable error, such as a 503, instead of ending a
+    long wait on it. It honors the `Retry-After` of a 429 it polls through,
+    and gives up at once when that falls past the deadline.
   - It runs on tokio time instead of `std::time`. Against a real server on a
     paused test clock, its deadline is a timer that auto-advance fires while
     a status request is in flight, so hold the clock for each request (see
     "Tests on a paused clock" in `docs/RELIABILITY.md`).
-  - The first status request is always made, so an invalid name is reported
-    even with a zero timeout.
 - A stream yields its first terminal event (`Completed` or `Error`) as soon
   as it arrives, and the next poll reads the rest of the body to its end,
   discarding every frame and swallowing every error, before the stream
@@ -847,9 +932,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `image` delta and a 15.7 MB `thought_signature` delta; TTS audio deltas are
   under 8 KB.
 - The published crate holds the library, its examples and the guides its
-  doctests include, and no longer the integration tests, their fixtures, CI
-  files, scripts or the library's unit-test sources: 184 files and about
-  2.6 MiB unpacked, down from 383 files and 5.5 MiB.
+  doctests include, and no longer the integration tests, their fixtures,
+  scripts or the library's unit-test sources: 208 files and 3.0 MiB
+  unpacked, down from 259 files and 3.8 MiB in 0.12.0.
 - A `file_search` tool with no store names no longer writes
   `"file_search_store_names": []`; the key is left out, as for the other
   optional lists.
@@ -868,9 +953,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   history (verified live 2026-11-06).
 - `detect_mime_type` is `#[must_use]`, so a call that discards the result
   warns.
+- `temperature`, `top_p` and `TranscriptionConfig::adaptation_phrases` are
+  documented as deprecated upstream (google-genai 2.34.0); the API still
+  accepts them.
+- `Trigger` re-serializes `max_consecutive_failures`,
+  `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
+  numbers, the trigger API's own wire form (verified live 2026-11-01). It
+  used the protobuf-JSON string form (`"5"`). Deserializing still accepts
+  both.
 
 ### Fixed
 
+- `LOUD_WIRE` and the `wire` tracing target printed header secrets in full:
+  an MCP server's `headers` (`Authorization: Bearer ...`) and an environment
+  allowlist entry's `transform`. Every value under those keys is now
+  redacted; the header names stay visible.
+- `EnvironmentFileListResponse` (`EnvironmentFileList` in 0.12.0),
+  `FileMetadata` and `FileUploadResponse` keep fields the crate doesn't
+  model (`extra`), like every other resource type.
+- The streaming step accumulator no longer lets an empty `signature`
+  fragment overwrite the real one an earlier event carried, which made
+  replaying the step fail with `400 ... missing signature`.
+- A harness output key without a decoding arm is preserved as
+  `OutputPayload::Unknown` instead of panicking.
+- `docs/ANTIGRAVITY.md`: on 0.1.23, `create_file`'s new `Append` argument
+  lets `{Overwrite: false, Append: true}` modify an existing file, so a
+  "new files only" gate must check `Append` too; a trigger before the first
+  turn no longer crashes the harness; and the harness's own prompt does list
+  the workspaces, which only `SystemInstructions::custom` hides.
+- A mid-stream error ended a stream silently. The API sends it as a bare
+  JSON line with no `data:` prefix, then closes the connection (a recitation
+  block, live 2026-11-01), and the SSE parser dropped the line. It now
+  arrives as `StreamChunk::Error`, with `code: Some("recitation")`.
+- The streaming docs said a stored foreground stream could be resumed. It
+  can't: a foreground stream carries no `event_id`, and when its connection
+  drops the server cancels the interaction. Only background interactions
+  resume (`docs/STREAMING_API.md`).
+- The triggers resource is verified live end to end (2026-11-01), now that
+  custom agents can be created: create, get, list, update, run, list
+  executions and delete. The docs no longer call its shapes unverified, and
+  record what the probe found. `Triggers::run` returns an empty
+  `TriggerExecution`, because the API answers `{}`; find the firing with
+  `list_executions`. Only `display_name` and `status` are updatable, and the
+  PATCH applies exactly the fields sent. A stored trigger's `interaction`
+  echoes `store: true`, which create rejects, so clear it before reuse.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed
@@ -949,15 +1075,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   8 KiB, marked when cut (the rest of the line is dropped), and 64 KiB in
   all for error messages. Output with no newlines used to grow one buffer
   without limit.
-- `triggers::on_file_change` skips a poll whose snapshot failed (the
-  snapshot task panicked, the runtime was shutting down, or the watched
-  path exists but could not be read, such as a transient I/O error on a
-  network mount) and logs a warning. It used to take the failure for an
-  empty tree, reporting every watched file deleted, then added back on the
-  next poll. If the path cannot be read when the watch is created, the
-  first snapshot that reads it becomes the baseline instead of reporting
-  every file in it added. A watched path that no longer exists still reads
-  as empty.
 - `document_from_file()` sends `.txt` and `.md` files as text content
   (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
   `text/markdown` document content, which the API rejects with a 400 since
@@ -973,7 +1090,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An unknown `StreamChunk` whose type was spelled like a known `chunk_type`
   (`created`, `step_delta`, ...) read back as that known chunk after
   serializing. It now carries `"unknown": true` and stays unknown; chunks
-  serialized by 0.13.0 read back as before (`docs/ENUM_WIRE_FORMATS.md`).
+  serialized by 0.12.0 read back as before (`docs/ENUM_WIRE_FORMATS.md`).
   Found by the new fuzz targets.
 - The `CreateTriggerRequest::extra` docs said a colliding key wins because
   the request path uses `serde_json::to_value`. In fact the body carries
@@ -1041,13 +1158,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GenaiError::InvalidInput` naming `with_content()`, as a missing input
   does, instead of costing a round trip for the API's
   `400 Request has empty input.` (#452).
-- Antigravity: a turn being halted and drained, because it hit its turn
-  timeout or no one consumes it, no longer runs the per-turn lifecycle hooks
-  (`on_pre_turn`, `on_post_turn`, `on_tool_error`, `on_compaction`,
-  `on_stop`). The drain answers the harness as if they were not set. Before,
-  a timed-out turn reported `stop` and an empty `post_turn` during the
-  drain (scripted against harness 0.1.23, 2026-11-06), and a stop hook's
-  `Continue` could keep the halted turn running.
 - Antigravity: abandoning a turn no longer desyncs the agent. Dropping a
   `chat` future (an outer `tokio::time::timeout`, a losing `select!`
   branch) or a `send_streaming` stream while a custom tool or the pre-tool
@@ -1068,122 +1178,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_thinking_level(ThinkingLevel::Low)` it looped in 3 of 61 single
   requests, against 69 of 129 at the default level
   (`docs/INTERACTIONS_API_GAP.md`, #504).
-
-## [0.13.0] - 2026-11-03
-
-Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
-every item probed live; #463).
-
-### Added
-
-- `ClientBuilder::with_read_timeout`: the longest wait for the response
-  headers or the next chunk, reset by each one. Unlike `with_timeout`, it bounds a stalled
-  stream (a dropped NAT mapping, a half-open proxy) without capping a healthy
-  long one, and it reaches `interactions().stream()` / `resume_stream()`,
-  which no request-level timeout does.
-- Decoding continuation. A response cut off by `max_output_tokens` carries
-  `InteractionResponse::continuation_token`; resend the same input with
-  `InteractionBuilder::with_continuation_token(token)` and a larger
-  `max_output_tokens` (it counts across continuations) to continue it. Only
-  `CONTINUATION_MODEL` (`gemini-4-argon`) supports it; other models answer
-  `400 Decoding continuation is not enabled for this model` (verified live
-  2026-11-01). `InteractionStatus::RequiresContinuation` is modeled from the
-  spec but never observed: continuable responses report `Incomplete`.
-- `InteractionResponse::errors` (`InteractionError`, with a string `code`
-  such as `"CANCELLED"`), `UsageMetadata::initial_input_tokens`,
-  `PromptedVoice::base_voice` and `CreateVoiceRequest::with_base_voice`,
-  `CodeExecutionLanguage::Bash` (spec only) and `ServiceTier::Deferred`
-  (Vertex-only).
-
-### Changed
-
-- **Breaking: `genai-rs` no longer turns on tokio's full feature set.** It
-  asks for `fs` and `time` (plus `io-util`, `net`, `process`, `rt` and `sync`
-  with the `antigravity` feature). A crate that wrote `#[tokio::main]` while
-  relying on genai-rs to enable `rt-multi-thread` and `macros` must now
-  enable them itself.
-- `GenaiError::is_retryable()` is false for an HTTP error from a request
-  that can't be built (a scheme-less `with_base_url`, a rejected header) or a
-  redirect loop. They fail identically every time, and a retry loop spent its
-  whole budget on them.
-- **Breaking: the Antigravity bridge drives harness 0.1.23**
-  (`google-antigravity==0.1.23`, `SUPPORTED_HARNESS_VERSION`). It writes
-  0.1.23's new `runWorkflow` toggle (disabled), which 0.1.18 rejects at init,
-  and models the new non-terminal `TrajectoryState::WaitingForSubagents`,
-  which otherwise read as version drift. The full harness suite passes on
-  0.1.23.
-- **Breaking: Antigravity agents are confined to their workspaces by default.** The
-  harness contains its file tools only when the client sends a policy
-  config, which this crate never did: an agent could read any file the
-  process could, and the content reached the model (verified on harness
-  0.1.18 and 0.1.23). With a workspace configured, `spawn()` now sends one;
-  a read outside the workspaces fails with `Access to path "…" is denied`.
-  The harness still allows the system temp directory and
-  `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
-  restores the old behavior, and an explicit `true` with no workspace fails
-  `spawn()` instead of running unconfined.
-- **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
-  `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
-  `store: false` stream's status updates carry no interaction ID (verified
-  live 2026-11-01), and the crate dropped them with a `warn!`; they now reach
-  the caller. Background streams send `usage` mid-run.
-- **Breaking: removed `GenerationConfig::presence_penalty` and
-  `frequency_penalty`, with `with_presence_penalty()` and
-  `with_frequency_penalty()`.** The API rejects both (`400 Unknown parameter
-  'presence_penalty' at 'generation_config'`, 2026-11-01), and google-genai
-  2.34.0 does not list them, so any request that set one failed.
-- A stream whose body ends before `interaction.completed` or an error event
-  now ends with `Err(GenaiError::MalformedResponse)`, so a cut-off connection
-  can't pass for a finished stream. A stream whose last event is
-  unrecognized still ends cleanly, since that may be a new terminal event.
-- `temperature`, `top_p` and `TranscriptionConfig::adaptation_phrases` are
-  documented as deprecated upstream (google-genai 2.34.0); the API still
-  accepts them.
-- `Trigger` re-serializes `max_consecutive_failures`,
-  `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
-  numbers, the trigger API's own wire form (verified live 2026-11-01). It
-  used the protobuf-JSON string form (`"5"`). Deserializing still accepts
-  both.
-
-### Fixed
-
-- `LOUD_WIRE` and the `wire` tracing target printed header secrets in full:
-  an MCP server's `headers` (`Authorization: Bearer ...`) and an environment
-  allowlist entry's `transform`. Every value under those keys is now
-  redacted; the header names stay visible.
-- `wait_until_active` (files and file-search documents) bounds each status
-  request by the time left, so a stalled connection can no longer hold the
-  wait past its deadline (the default client has no HTTP timeout), and it
-  polls through a retryable error such as a 503 instead of ending a long
-  wait on it. Both waits now share one implementation.
-- `EnvironmentFileList`, `FileMetadata` and `FileUploadResponse` keep fields
-  the crate doesn't model (`extra`), like every other resource type.
-- The streaming step accumulator no longer lets an empty `signature`
-  fragment overwrite the real one an earlier event carried, which made
-  replaying the step fail with `400 ... missing signature`.
-- A harness output key without a decoding arm is preserved as
-  `OutputPayload::Unknown` instead of panicking.
-- `docs/ANTIGRAVITY.md`: on 0.1.23, `create_file`'s new `Append` argument
-  lets `{Overwrite: false, Append: true}` modify an existing file, so a
-  "new files only" gate must check `Append` too; a trigger before the first
-  turn no longer crashes the harness; and the harness's own prompt does list
-  the workspaces, which only `with_system_instructions` hides.
-- A mid-stream error ended a stream silently. The API sends it as a bare
-  JSON line with no `data:` prefix, then closes the connection (a recitation
-  block, live 2026-11-01), and the SSE parser dropped the line. It now
-  arrives as `StreamChunk::Error`, with `code: Some("recitation")`.
-- The streaming docs said a stored foreground stream could be resumed. It
-  can't: a foreground stream carries no `event_id`, and when its connection
-  drops the server cancels the interaction. Only background interactions
-  resume (`docs/STREAMING_API.md`).
-- The triggers resource is verified live end to end (2026-11-01), now that
-  custom agents can be created: create, get, list, update, run, list
-  executions and delete. The docs no longer call its shapes unverified, and
-  record what the probe found. `Triggers::run` returns an empty
-  `TriggerExecution`, because the API answers `{}`; find the firing with
-  `list_executions`. Only `display_name` and `status` are updatable, and the
-  PATCH applies exactly the fields sent. A stored trigger's `interaction`
-  echoes `store: true`, which create rejects, so clear it before reuse.
 
 ## [0.12.0] - 2026-10-31
 
