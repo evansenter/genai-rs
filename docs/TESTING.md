@@ -424,8 +424,7 @@ A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
 the model chose not to call the tool or the tool is broken. A skip whose
 guard names the specific cause stays unmarked, so it doesn't annotate every
-run. Examples are no API key, or a key that isn't allowlisted for computer
-use: that guard needs both the tool name and an unavailability phrase.
+run, such as a run with no API key.
 
 ## Serialization tests
 

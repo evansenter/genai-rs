@@ -973,30 +973,10 @@ mod computer_use {
             .create()
             .await;
 
-        let response = match result {
-            Ok(response) => response,
-            Err(e) => {
-                let msg = format!("{e:?}").to_lowercase();
-                let unavailable = [
-                    "permission",
-                    "not allowed",
-                    "not supported",
-                    "not available",
-                    "not enabled",
-                ]
-                .iter()
-                .any(|phrase| msg.contains(phrase));
-                let about_computer_use =
-                    msg.contains("computer_use") || msg.contains("computer use");
-                if about_computer_use && unavailable {
-                    // Unmarked: a key that is not allowlisted is a stable
-                    // account property, like having no key at all.
-                    println!("Skipping: computer use not enabled for this key: {e:?}");
-                    return;
-                }
-                panic!("Computer use request failed: {e:?}");
-            }
-        };
+        // No skip on an "unavailable" error: computer use runs on a standard
+        // key (Computer Use in docs/ENUM_WIRE_FORMATS.md), so losing it is a
+        // regression to fail on, not an account property.
+        let response = result.unwrap_or_else(|e| panic!("Computer use request failed: {e:?}"));
 
         let step_types: Vec<&str> = response
             .steps
