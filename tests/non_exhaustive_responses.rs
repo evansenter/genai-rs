@@ -388,7 +388,7 @@ const STREAM_CHUNK: &str = "a parsed SSE event, serialized only in the crate's o
      `{chunk_type, data}` log form; nothing sends one back to the API, and the \
      payloads inside (`InteractionResponse`, `Step`, `StepDelta`, \
      `UsageMetadata`) keep their own `extra`. A key the API adds to the event \
-     envelope itself is not kept (D-034)";
+     envelope itself is not kept (D-034; tracked in #538)";
 
 /// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
 const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \

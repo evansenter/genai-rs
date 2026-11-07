@@ -707,7 +707,7 @@ turn's outcome.
 
 | Python SDK option | genai-rs | Notes |
 |---|---|---|
-| `AgentConfig.triggers`, `triggers.every` | `add_trigger(TriggerConfig::new(message, interval))` | A trigger's turn is driven by `next_trigger_turn`, on request; Python consumes it in the background. A background consumer needs turn processing moved off `&mut self` into a task of its own, deferred (#493 item 7). |
+| `AgentConfig.triggers`, `triggers.every` | `add_trigger(TriggerConfig::new(message, interval))` | A trigger's turn is driven by `next_trigger_turn`, on request; Python consumes it in the background. A background consumer needs turn processing moved off `&mut self` into a task of its own, tracked in #535. |
 | `triggers.trigger`, `TriggerContext.send` | `add_custom_trigger(\|ctx\| async move { ctx.send(..).await })` | Sends wait while a turn runs. |
 | `triggers.on_file_change` | `triggers::on_file_change(path, poll_interval, callback)` | Polls size and modification time (no OS watcher dependency); skips the directories `watchfiles` skips. Changes made during a turn reach the callback as one batch once the agent is idle. |
 | `FileChange.kind`, `FileChange.path`, `FileChangeKind.ADDED`, `FileChangeKind.MODIFIED`, `FileChangeKind.DELETED` | `triggers::FileChange`, `FileChangeKind` | What the callback is handed. |

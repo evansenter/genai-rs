@@ -44,8 +44,8 @@ else, and on a code fence marked `ignore` without an
 An issue number in a doc or a comment is one of two things
 (D-051). A provenance tag, `(#491)`, names the issue a rule or
 behavior came from, and stays when the issue closes, as a decision number
-does. A pointer ("see #N", "tracked in #N", "until #N lands", "#493 item
-7") sends the reader to the issue for what is still open, so it names an
+does. A pointer ("see #N", "tracked in #N", "until #N lands", "#N item
+M") sends the reader to the issue for what is still open, so it names an
 open issue only: when the issue closes, state the outcome in place and
 drop the pointer. Nothing checks this, since an issue's state needs the
 network.

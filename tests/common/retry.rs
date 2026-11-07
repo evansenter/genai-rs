@@ -57,8 +57,9 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
                 // loud on the first attempt.
                 || (*status_code == 400
                     && lower.contains("there was a problem processing your request"))
-                // The model looped or produced a broken tool call, and the
-                // API says so: "...Please retry the request."
+                // The model produced a broken tool call, and the API says
+                // so: "...Please retry the request." (A loop says it too,
+                // and is turned away above.)
                 || (*status_code == 400 && lower.contains("please retry the request"))
         }
         _ => false,

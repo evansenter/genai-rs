@@ -1249,11 +1249,11 @@ its reason in the guard:
 - The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
   stream events that nothing sends back, serialized only in the crate's own
   `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
-  a key the API adds to an SSE event's envelope itself is dropped.
+  a key the API adds to an SSE event's envelope itself is dropped (tracked
+  in #538).
 - The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
   crate only sends to the harness. A payload struct keeps its own `extra`;
   a bool or string payload has no fields.
-- `DecodeError`, which is exhaustive but crate-internal.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1387,7 +1387,7 @@ today.
 choose the name; a retry after a lost upload response can leave a duplicate
 file, which expires after 48 hours. `legacy.UploadFileConfig` is in the
 coverage oracle's `UNMAPPED` list with this reason, so modeling the name
-means removing that entry.
+means removing that entry (tracked in #539).
 
 ## D-040 — The bindings snapshot carries query parameters, the legacy endpoints and the Api-Revision (2026-11-07)
 

@@ -1384,11 +1384,10 @@ The ones a user is likeliest to look for:
 - **Trigger turns are surfaced on request**: `next_trigger_turn` drives
   them; nothing reads them in the background, so call it between user
   turns, and a trigger turn nobody consumes is halted by the next `chat`.
-  A background consumer (#493 item 7) would read the harness while the
-  agent is idle, which means moving turn processing (hooks, policies,
-  custom tools) out of `&mut self` into a task of its own: a redesign of
-  `AntigravityAgent`, left for its own change. The `schedule` builtin
-  waits on it.
+  A background consumer (#535) would read the harness while the agent is
+  idle, which means moving turn processing (hooks, policies, custom tools)
+  out of `&mut self` into a task of its own: a redesign of
+  `AntigravityAgent`. The `schedule` builtin waits on it.
 - **No `schedule` builtin**: a turn the agent schedules for itself could
   start while a `chat` turn does, and its events would land in that turn.
 - **On Windows a forced kill ends the harness only**: the `run_command`

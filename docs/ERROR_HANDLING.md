@@ -71,7 +71,7 @@ status (`tests/common/retry.rs`, `is_transient_error`):
 | `Api` whose message contains both `spanner` and `utf-8` | Google backend issue seen on stateful conversations (#60) |
 | `Api` 400 containing `invalid json syntax` | The model occasionally emits invalid JSON (structured output, or a malformed function call) |
 | `Api` 400 containing `there was a problem processing your request` | Server-side bursts that pass on re-run |
-| `Api` 400 containing `please retry the request` | The API says so itself: the model looped (`too_many_tool_calls`) or produced a broken tool call (`malformed_tool_call`) |
+| `Api` 400 containing `please retry the request`, unless it names `too_many_tool_calls` | The API says so itself after a broken tool call (`malformed_tool_call`). A tool-call loop (`too_many_tool_calls`) is not retried whatever its message says: the same request loops again (see the [gap tracker](INTERACTIONS_API_GAP.md)), and each attempt runs to the 60-call limit |
 
 If you want the same behavior, compose the two predicates:
 
@@ -85,6 +85,9 @@ fn should_retry(err: &GenaiError) -> bool {
     match err {
         GenaiError::Api { status_code, message, .. } => {
             let m = message.to_lowercase();
+            if m.contains("too_many_tool_calls") {
+                return false;
+            }
             (m.contains("spanner") && m.contains("utf-8"))
                 || (*status_code == 400 && m.contains("invalid json syntax"))
                 || (*status_code == 400
