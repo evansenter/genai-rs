@@ -108,42 +108,183 @@ async fn test_handshake_frame_truncated_payload_is_io_error() {
     assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
 }
 
-#[tokio::test]
-async fn test_stderr_drain_survives_invalid_utf8() {
-    // The drain sits at the wrong-binary trust boundary: a non-UTF-8
-    // line must be replaced lossily, not end the drain (a stopped
-    // drain lets the pipe fill and deadlocks the child).
-    let data: &[u8] = b"first line\n\xff\xfe broken\nafter\r\nlast without newline";
-    let ring = Arc::new(Mutex::new(VecDeque::new()));
-    drain_stderr(data, Arc::clone(&ring), WireContext::new(Vec::new())).await;
-
-    let lines: Vec<String> = ring.lock().unwrap().iter().cloned().collect();
-    assert_eq!(lines.len(), 4, "got: {lines:?}");
-    assert_eq!(lines[0], "first line");
-    assert!(
-        lines[1].contains('\u{FFFD}') && lines[1].ends_with(" broken"),
-        "invalid bytes must be replaced lossily, got: {:?}",
-        lines[1]
-    );
-    assert_eq!(lines[2], "after", "CRLF must be stripped");
-    assert_eq!(lines[3], "last without newline");
+/// A stand-in `python3`: a shell script running `body`.
+#[cfg(unix)]
+fn stub_interpreter(dir: &Path, body: &str) -> PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join("python3");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
 }
 
-#[tokio::test]
-async fn test_stderr_drain_ring_is_bounded() {
-    let mut data = Vec::new();
-    for i in 0..(STDERR_RING_CAPACITY + 10) {
-        data.extend_from_slice(format!("line {i}\n").as_bytes());
-    }
-    let ring = Arc::new(Mutex::new(VecDeque::new()));
-    drain_stderr(&data[..], Arc::clone(&ring), WireContext::new(Vec::new())).await;
-
-    let ring = ring.lock().unwrap();
-    assert_eq!(ring.len(), STDERR_RING_CAPACITY);
+#[cfg(unix)]
+#[test]
+fn test_python_site_dirs_reads_the_interpreters_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let python = stub_interpreter(dir.path(), "echo /a/site-packages; echo; echo '  /b  '");
     assert_eq!(
-        ring.back().unwrap(),
-        &format!("line {}", STDERR_RING_CAPACITY + 9)
+        python_site_dirs(python.as_os_str(), Duration::from_secs(10)),
+        [PathBuf::from("/a/site-packages"), PathBuf::from("/b")]
     );
+    // A failing or missing interpreter gives nothing, and discovery moves on.
+    let failing = stub_interpreter(&dir.path().join("fail"), "echo /a; exit 1");
+    assert!(python_site_dirs(failing.as_os_str(), Duration::from_secs(10)).is_empty());
+    let missing = dir.path().join("no-such-python");
+    assert!(python_site_dirs(missing.as_os_str(), Duration::from_secs(10)).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_python_site_dirs_gives_up_on_a_hung_interpreter() {
+    let dir = tempfile::tempdir().unwrap();
+    let python = stub_interpreter(dir.path(), "exec sleep 60");
+    let started = std::time::Instant::now();
+    assert!(python_site_dirs(python.as_os_str(), Duration::from_millis(200)).is_empty());
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "a hung interpreter held discovery for {:?}",
+        started.elapsed()
+    );
+}
+
+/// Counts 10 ms ticks on the current runtime until dropped: a call that
+/// blocks a current-thread runtime's only thread stops the count.
+#[cfg(unix)]
+fn ticker() -> (
+    Arc<std::sync::atomic::AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = Arc::clone(&ticks);
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    (ticks, task)
+}
+
+#[cfg(unix)]
+#[tokio::test] // current-thread: blocking here would stop the ticker
+async fn test_discovery_runs_off_the_runtime_and_bounds_the_interpreter() {
+    let dir = tempfile::tempdir().unwrap();
+    let python = stub_interpreter(dir.path(), "exec sleep 60");
+    let path_dir = dir.path().join("bin");
+    touch_executable(&path_dir.join("localharness"));
+
+    let (ticks, ticking) = ticker();
+    let started = std::time::Instant::now();
+    let found = discover(
+        None,
+        None,
+        Some(path_dir.clone().into_os_string()),
+        python.into_os_string(),
+        Duration::from_millis(500),
+    )
+    .await
+    .unwrap();
+    let elapsed = started.elapsed();
+    ticking.abort();
+
+    assert_eq!(
+        found,
+        path_dir.join("localharness"),
+        "PATH after the hung python3"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "discovery took {elapsed:?}"
+    );
+    let ticks = ticks.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        ticks >= 5,
+        "the runtime's only thread was blocked during discovery: {ticks} ticks in {elapsed:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test] // current-thread: blocking here would stop the ticker
+async fn test_version_read_runs_off_the_runtime_under_a_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let (binary, fifo) = stalled_wheel_install(dir.path());
+
+    let (ticks, ticking) = ticker();
+    let started = std::time::Instant::now();
+    let version = harness_version_bounded(&binary, Duration::from_millis(300)).await;
+    let elapsed = started.elapsed();
+    ticking.abort();
+
+    assert_eq!(
+        version, None,
+        "a read that times out leaves the version unknown"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "the read took {elapsed:?}"
+    );
+    let ticks = ticks.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        ticks >= 5,
+        "the runtime's only thread was blocked by the version read: {ticks} ticks in {elapsed:?}"
+    );
+    release(&fifo);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_an_abandoned_version_read_does_not_hold_runtime_shutdown() {
+    // Dropping a runtime waits for the tasks still running on its blocking
+    // pool, so a read abandoned there would move the hang from `spawn()` to
+    // the end of `#[tokio::main]`.
+    let dir = tempfile::tempdir().unwrap();
+    let (binary, fifo) = stalled_wheel_install(dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let version = runtime.block_on(harness_version_bounded(&binary, Duration::from_millis(300)));
+    assert_eq!(version, None);
+
+    let (dropped, has_dropped) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(runtime);
+        let _ = dropped.send(());
+    });
+    let shut_down = has_dropped.recv_timeout(Duration::from_secs(5));
+    // Release the read whatever happened, so a failure here does not hang.
+    release(&fifo);
+    assert!(
+        shut_down.is_ok(),
+        "dropping the runtime waited on the abandoned version read"
+    );
+}
+
+/// A wheel install whose METADATA is a FIFO with no writer: reading the
+/// version blocks, as a stalled network mount would. Returns the binary
+/// and the FIFO.
+#[cfg(unix)]
+fn stalled_wheel_install(dir: &Path) -> (PathBuf, PathBuf) {
+    let site = dir.join("site-packages");
+    let binary = wheel_install(&site, &[]);
+    let dist_info = site.join("google_antigravity-0.1.23.dist-info");
+    std::fs::create_dir_all(&dist_info).unwrap();
+    let fifo = dist_info.join("METADATA");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success(), "mkfifo failed");
+    (binary, fifo)
+}
+
+/// Lets a read blocked on [`stalled_wheel_install`]'s FIFO finish (it
+/// reads end of file), so the thread doing it ends.
+#[cfg(unix)]
+fn release(fifo: &Path) {
+    drop(std::fs::OpenOptions::new().write(true).open(fifo).unwrap());
 }
 
 /// Lays out a wheel install: the binary under `google/antigravity/bin`
@@ -314,7 +455,7 @@ fn fake_harness(script: &str) -> HarnessProcess {
         .expect("spawn sh");
     let stdin = child.stdin.take();
     let stderr = child.stderr.take().expect("stderr was piped");
-    let stderr_lines = Arc::new(Mutex::new(VecDeque::new()));
+    let stderr_lines = Arc::new(Mutex::new(StderrRing::default()));
     tokio::spawn(drain_stderr(
         stderr,
         Arc::clone(&stderr_lines),

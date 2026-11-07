@@ -1328,3 +1328,45 @@ opts in. The opt-in is a deliberate acknowledgment, not a fix: the
 subagent's capabilities remain its only bound. Revisit when the harness
 gates subagent calls (the pinned test fails then), at which point the
 refusal can go and the setter be removed.
+
+---
+
+## D-NEXT-WP17 — Antigravity's `run_workflow` stays unmodeled (2026-11-07)
+
+**Context.** #493 item 9. Harness 0.1.23 has a beta `run_workflow` builtin,
+and the Python SDK a beta `Agent.run_workflow`: it turns the builtin on
+(it needs subagents too), asks the model in a chat turn to run a workflow
+script at a given path, and reads the result off the `run_workflow` step.
+The script is Python written against the SDK's `workflows` module
+(`phase`, `agent`, `call_tool`, `parallel`, `pipeline`, `define`), and the
+harness runs it with Python. This crate writes the toggle disabled.
+
+**Decision.** Not modeled. A Rust caller could flip the toggle and send
+the prompt, but every workflow it ran would be a Python script needing the
+Python SDK installed beside the harness, the dependency this crate exists
+to remove, and the feature is beta on both sides. The parity table lists
+the builtin, `Agent.run_workflow` and each `workflows` function with this
+reason, so a wheel that changes them shows in its diff.
+
+**Consequences.** `BuiltinTool` has no `RunWorkflow`, and the toggle stays
+off. Revisit if the harness runs workflows written some other way, or the
+feature leaves beta and users ask for Python workflows driven from Rust.
+
+---
+
+## D-NEXT-WP17-a — The Antigravity stderr drain moves to `harness_stderr.rs` (2026-11-07)
+
+**Context.** Bounding harness discovery and capping stderr lines (#504,
+WP17) took `src/antigravity/process.rs` to 821 lines, over D-014's 800.
+
+**Decision.** Moved, per D-011, with no behavior change beyond that work:
+
+| From | To |
+|------|----|
+| `StderrRing`, `drain_stderr` and their limits in `src/antigravity/process.rs` | `src/antigravity/harness_stderr.rs` |
+| The stderr tests in `src/antigravity/process_tests.rs` | `src/antigravity/harness_stderr_tests.rs` |
+
+`process.rs` keeps discovery, the version read, spawn and shutdown.
+
+**Consequences.** Links to `src/antigravity/process.rs:<line>` for the
+stderr drain, written before 2026-11-07, point at the old layout.

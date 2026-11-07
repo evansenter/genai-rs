@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Exercises antigravity_release_watch.sh and dump_harness_descriptor.py
-# against a stubbed `gh` and two synthetic wheels.
+# against a stubbed `gh` and two synthetic wheels (their Python SDK sources
+# from fake_sdk_wheel.py; test_dump_sdk_options.sh covers that dump itself).
 #
 # The watch only runs on a schedule, so a broken branch would surface days
 # later, or never: a lookup that matched nothing would file a duplicate every
 # morning, and a dump that found no descriptors would diff as "unchanged"
-# forever. Both are asserted here.
+# forever. Both are asserted here, and so is the Python option diff, the
+# only place a new Python-side option shows before the pin moves.
 
 set -euo pipefail
 
@@ -61,11 +63,23 @@ with open(sys.argv[1], "w") as out:
 PY
 }
 
+# The Python SDK sources beside the descriptors; extra `Class.field`s in $2..
+make_sdk() {
+  local dir="$1"
+  shift
+  python3 -I "$HERE/fake_sdk_wheel.py" "$SCRIPTS/dump_sdk_options.py" "$dir" "$@"
+}
+
 make_wheel "$WORK/pinned"
+make_sdk "$WORK/pinned"
 make_wheel "$WORK/latest" run_workflow
-mkdir -p "$WORK/latest/google/antigravity/connections"
-echo "      self, *, use_interactions_api: bool = False" \
-  > "$WORK/latest/google/antigravity/connections/local_connection.py"
+make_sdk "$WORK/latest" CapabilitiesConfig.new_toggle
+printf '\ndef connect(*, use_interactions_api: bool = False):\n    pass\n' \
+  >> "$WORK/latest/google/antigravity/connections/local/local_connection.py"
+# A class the dump does not place yet: listed in the issue, not fatal.
+printf '\nclass NewThing:\n    knob: int = 0\n' >> "$WORK/latest/google/antigravity/types.py"
+# Descriptors only: no SDK sources for the option dump to read.
+make_wheel "$WORK/protos-only"
 
 # A `gh` stub: `issue list` answers from $1 through the caller's --jq,
 # `issue view` from $2, and every other call is logged as `GH-CALL: ...`
@@ -182,6 +196,10 @@ check "new release: labels it for the lookup" "--label antigravity-release" "$ou
 check "new release: carries the descriptor diff" \
   "> localharness.proto: message antigravity.localharness.HarnessSideTools: 20 run_workflow" "$out"
 check "new release: names both versions" "**0.1.24** is on PyPI; this crate pins **0.1.23**" "$out"
+check "new release: carries the Python option diff" "> CapabilitiesConfig.new_toggle" "$out"
+check "new release: lists the names the option dump does not place" \
+  "class in neither SPEC nor CLASS_SKIP: NewThing (types.py)" "$out"
+check "new release: asks for parity rows" "test_python_sdk_options_are_all_in_the_parity_table" "$out"
 check "new release: shows the Python transport default" "use_interactions_api: bool = False" "$out"
 check "new release: records the release it describes" "<!-- watch-latest: 0.1.24 -->" "$out"
 
@@ -202,6 +220,23 @@ run_watch env PINNED_VERSION=0.1.23 LATEST_VERSION=0.1.25
 check "newer release: reopens a closed issue" "GH-CALL: issue reopen 43" "$out"
 check "newer release: comments once" "GH-CALL: issue comment 43" "$out"
 check "newer release: looks at closed issues too" "GH-LIST: state=all" "$out"
+
+# --- A release with the same Python options says so.
+make_gh_stub '[]'
+run_watch env PINNED_VERSION=0.1.23 LATEST_VERSION=0.1.24 LATEST_WHEEL_DIR="$WORK/pinned"
+check "same options: says there is no option diff" "None: both wheels expose the same option keys." "$out"
+check_absent "same options: no placement list" "does not place yet" "$out"
+
+# --- The pin's option dump must be clean: one that is not fails the run.
+make_gh_stub '[]'
+run_watch env PINNED_VERSION=0.1.23 LATEST_VERSION=0.1.24 PINNED_WHEEL_DIR="$WORK/protos-only"
+if [ "$rc" -eq 0 ]; then
+  echo "FAIL - pinned options unreadable: the run must fail"
+  failures=$((failures + 1))
+else
+  echo "ok   - pinned options unreadable: the run fails"
+fi
+check_absent "pinned options unreadable: files nothing" "issue create" "$out"
 
 # --- An unreadable wheel fails the run (and so escalates), not a green no-op.
 make_gh_stub '[]'

@@ -1,16 +1,18 @@
 //! Harness process management: binary discovery, spawn + stdio handshake,
-//! stderr draining, and ordered shutdown.
+//! and ordered shutdown. The stderr drain is in `harness_stderr`.
 
-use std::collections::VecDeque;
+use std::ffi::{OsStr, OsString};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
 
 use super::handshake::{InputConfig, OutputConfig};
+use super::harness_stderr::{StderrRing, drain_stderr};
 use super::session::WireContext;
 use super::{AntigravityError, SUPPORTED_HARNESS_VERSION};
 use crate::wire::WireEvent;
@@ -23,8 +25,16 @@ pub(crate) const HARNESS_PATH_ENV: &str = "ANTIGRAVITY_HARNESS_PATH";
 /// directory (from the `google-antigravity` wheel).
 const SITE_PACKAGES_SUFFIX: &str = "google/antigravity/bin/localharness";
 
-/// Maximum stderr lines retained for diagnostics.
-const STDERR_RING_CAPACITY: usize = 200;
+/// The interpreter discovery asks for its site-packages directories.
+const PYTHON: &str = "python3";
+
+/// How long discovery waits for [`PYTHON`] to list its site-packages, and
+/// `spawn()` for the wheel's version metadata, before going on without
+/// them: a hung interpreter or a stalled read of the metadata must not hold
+/// `spawn()` forever. Discovery's own file checks and the exec of the
+/// binary are not bounded: on a mount that stalls them, the harness could
+/// not start anyway.
+const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long to wait for the handshake reply on stdout.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -56,15 +66,54 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 ///
 /// `python3` is asked for its site-packages only when the first two steps
 /// find nothing, so an explicit path costs no interpreter start-up.
-pub(crate) fn discover_harness(explicit: Option<&Path>) -> Result<PathBuf, AntigravityError> {
-    let env_path = std::env::var_os(HARNESS_PATH_ENV).map(PathBuf::from);
-    let path_var = std::env::var_os("PATH");
-    discover_in(
-        explicit,
-        env_path.as_deref(),
-        python_site_dirs,
-        path_var.as_deref(),
+///
+/// The search runs on tokio's blocking pool, not on the caller's runtime
+/// thread: it checks files and may start `python3`, which gets
+/// [`DISCOVERY_TIMEOUT`] to answer before the search moves on to `PATH`.
+pub(crate) async fn discover_harness(explicit: Option<&Path>) -> Result<PathBuf, AntigravityError> {
+    discover(
+        explicit.map(Path::to_path_buf),
+        std::env::var_os(HARNESS_PATH_ENV).map(PathBuf::from),
+        std::env::var_os("PATH"),
+        OsString::from(PYTHON),
+        DISCOVERY_TIMEOUT,
     )
+    .await
+}
+
+/// [`discover_harness`] with its inputs and the interpreter's bound
+/// given, for tests.
+async fn discover(
+    explicit: Option<PathBuf>,
+    env_path: Option<PathBuf>,
+    path_var: Option<OsString>,
+    interpreter: OsString,
+    interpreter_timeout: Duration,
+) -> Result<PathBuf, AntigravityError> {
+    off_runtime(move || {
+        discover_in(
+            explicit.as_deref(),
+            env_path.as_deref(),
+            || python_site_dirs(&interpreter, interpreter_timeout),
+            path_var.as_deref(),
+        )
+    })
+    .await?
+}
+
+/// Runs blocking work (a filesystem walk, an interpreter's start-up) on
+/// tokio's blocking pool, so it never stalls the runtime's worker threads.
+/// A panic in `work` is resumed here. A cancellation, which only a runtime
+/// shutting down first can cause, is an I/O error.
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| match e.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            Err(cancelled) => std::io::Error::other(cancelled),
+        })
 }
 
 /// Pure discovery core, separated for unit testing. `site_dirs` is called
@@ -121,10 +170,18 @@ fn discover_in(
     Err(AntigravityError::HarnessNotFound { searched })
 }
 
-/// Asks `python3` for its site-packages directories. Returns an empty list
-/// when `python3` is unavailable — discovery then falls through to `PATH`.
-fn python_site_dirs() -> Vec<PathBuf> {
-    let output = std::process::Command::new("python3")
+/// Asks `interpreter` for its site-packages directories, giving it
+/// `timeout` to answer. Returns an empty list when it is unavailable,
+/// fails, or does not answer in time (it is then killed): discovery falls
+/// through to `PATH`.
+///
+/// Blocking: call it off the runtime ([`discover`] does). Its stdout is
+/// read on a thread of its own, so the bound holds even if something the
+/// interpreter started keeps the pipe open; that thread ends when the pipe
+/// closes.
+fn python_site_dirs(interpreter: &OsStr, timeout: Duration) -> Vec<PathBuf> {
+    let deadline = Instant::now() + timeout;
+    let Ok(mut child) = std::process::Command::new(interpreter)
         .arg("-c")
         .arg(
             "import site, sys\n\
@@ -133,14 +190,52 @@ fn python_site_dirs() -> Vec<PathBuf> {
              if usersite: paths.append(usersite)\n\
              print('\\n'.join(paths))",
         )
-        .output();
-    match output {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if let Some(mut stdout) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut output = Vec::new();
+            let read = stdout.read_to_end(&mut output);
+            let _ = sender.send(read.map(|_| output));
+        });
+    }
+    let output = receiver.recv_timeout(timeout);
+    // Reap it, or kill it once the deadline passes: it must not outlive
+    // discovery either way.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    match (output, status) {
+        (Ok(Ok(output)), Some(status)) if status.success() => String::from_utf8_lossy(&output)
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(PathBuf::from)
             .collect(),
+        (_, None) => {
+            tracing::warn!(
+                "{} did not list its site-packages within {timeout:?}; looking for \
+                 localharness on PATH instead",
+                interpreter.to_string_lossy()
+            );
+            Vec::new()
+        }
         _ => Vec::new(),
     }
 }
@@ -159,7 +254,7 @@ pub(crate) struct HarnessProcess {
     child: Option<Child>,
     /// Held open; dropped first during shutdown to signal EOF.
     stdin: Option<ChildStdin>,
-    stderr_lines: Arc<Mutex<VecDeque<String>>>,
+    stderr_lines: Arc<Mutex<StderrRing>>,
     /// The `google-antigravity` wheel version the binary came from, when
     /// its install layout says (see [`harness_version`]).
     version: Option<String>,
@@ -196,54 +291,6 @@ where
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload).await?;
     Ok(payload)
-}
-
-/// Drains a stderr stream line by line into the diagnostic ring (bounded
-/// to [`STDERR_RING_CAPACITY`]), forwarding each line to `tracing` and the
-/// wire-inspection layer.
-///
-/// Reads bytes rather than UTF-8 lines: this sits at the wrong-binary
-/// trust boundary, and a single non-UTF-8 line must not stop the drain —
-/// a stopped drain lets the OS pipe buffer fill and deadlocks the child.
-/// Invalid UTF-8 is replaced lossily; only EOF or a genuine I/O error ends
-/// the loop.
-async fn drain_stderr<R>(stderr: R, ring: Arc<Mutex<VecDeque<String>>>, wire: WireContext)
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut reader = BufReader::new(stderr);
-    let mut buf = Vec::new();
-    loop {
-        buf.clear();
-        match reader.read_until(b'\n', &mut buf).await {
-            Ok(0) => return, // EOF: the child closed its stderr.
-            Ok(_) => {
-                // Strip the `\n` (and a preceding `\r`), matching what
-                // `AsyncBufReadExt::lines` used to do here.
-                if buf.last() == Some(&b'\n') {
-                    buf.pop();
-                    if buf.last() == Some(&b'\r') {
-                        buf.pop();
-                    }
-                }
-                let line = String::from_utf8_lossy(&buf).into_owned();
-                tracing::debug!("harness stderr: {line}");
-                wire.emit(|| WireEvent::HarnessStderr {
-                    id: wire.id(),
-                    line: line.clone(),
-                });
-                let mut ring = ring.lock().expect("stderr ring lock");
-                if ring.len() == STDERR_RING_CAPACITY {
-                    ring.pop_front();
-                }
-                ring.push_back(line);
-            }
-            Err(e) => {
-                tracing::debug!("harness stderr drain ended on read error: {e}");
-                return;
-            }
-        }
-    }
 }
 
 /// The environment variables the harness reads a Gemini API key from when
@@ -283,6 +330,9 @@ fn harness_command(
     // unix: `Drop` kills the whole tree instead.
     #[cfg(unix)]
     command.process_group(0);
+    // Elsewhere (Windows) there are no process groups to signal: a forced
+    // kill ends the harness process only, and the commands it ran keep
+    // running. A Job Object would reach them; none is set up here.
     #[cfg(not(unix))]
     command.kill_on_drop(true);
     command
@@ -298,6 +348,9 @@ impl HarnessProcess {
         scrub_key_env: bool,
         wire: &WireContext,
     ) -> Result<(Self, OutputConfig), AntigravityError> {
+        let version = harness_version_bounded(binary, DISCOVERY_TIMEOUT).await;
+        check_version(binary, version.as_deref());
+
         let mut child = harness_command(binary, &input_config.env, scrub_key_env)
             .spawn()
             .map_err(|e| AntigravityError::HandshakeFailed {
@@ -319,15 +372,13 @@ impl HarnessProcess {
         // buffer (typically 64 KiB) would otherwise fill and deadlock the
         // harness. Lines are retained in a bounded ring for diagnostics and
         // surfaced through the wire-inspection layer.
-        let stderr_lines = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_RING_CAPACITY)));
+        let stderr_lines = Arc::new(Mutex::new(StderrRing::default()));
         tokio::spawn(drain_stderr(
             stderr,
             Arc::clone(&stderr_lines),
             wire.clone(),
         ));
 
-        let version = harness_version(binary);
-        check_version(binary, version.as_deref());
         let mut process = Self {
             child: Some(child),
             stdin: None,
@@ -385,8 +436,7 @@ impl HarnessProcess {
     /// harness wrote just before failing.
     pub(crate) async fn stderr_tail(&self) -> String {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let ring = self.stderr_lines.lock().expect("stderr ring lock");
-        ring.iter().cloned().collect::<Vec<_>>().join("\n")
+        self.stderr_lines.lock().expect("stderr ring lock").tail()
     }
 
     /// The `google-antigravity` version the binary was installed from, when
@@ -395,8 +445,8 @@ impl HarnessProcess {
         self.version.as_deref()
     }
 
-    /// Kills the harness and every process it started, then reaps it
-    /// (init-failure path).
+    /// Kills the harness and, on Unix, every process it started, then reaps
+    /// it (init-failure path). See [`Self::signal`] for the reach.
     pub(crate) async fn kill(&mut self) {
         self.signal(Signal::Kill);
         self.wait_for_exit(KILL_GRACE).await;
@@ -412,6 +462,10 @@ impl HarnessProcess {
     ///    SIGTERM's default action (0.1.23), so this step no longer gives it
     ///    a chance to clean up; it is for the processes it started.
     /// 3. After [`KILL_GRACE`], escalate to SIGKILL.
+    ///
+    /// Steps 2 and 3 are Unix's. Elsewhere both terminate the harness
+    /// process alone (see [`Self::signal`]), so only step 1 stops the
+    /// commands it started.
     ///
     /// A harness that exits on its own with a failure status (step 1) is
     /// reported as [`AntigravityError::HarnessExited`] with its stderr
@@ -463,6 +517,12 @@ impl HarnessProcess {
 
     /// Signals the harness's process tree. Nothing is sent once the child
     /// has been reaped: its group id may no longer be ours.
+    ///
+    /// On Unix that is the harness's process group and the group of each
+    /// of its children (`process_tree`). Elsewhere (Windows) there are no
+    /// groups and no SIGTERM: either signal terminates the harness process
+    /// alone, and the `run_command` commands it started keep running.
+    /// (Stdio MCP servers exit either way, at the end of their stdin.)
     fn signal(&mut self, signal: Signal) {
         let Some(child) = self.child.as_mut() else {
             return;
@@ -484,10 +544,12 @@ impl HarnessProcess {
     }
 }
 
-/// Dropping a harness that was never shut down kills it and every process
-/// it started (stdio MCP servers, `run_command` commands), without the
-/// graceful exit's trajectory persistence. Signal only: `Drop` cannot wait,
-/// so the reap is left to tokio's orphan reaper.
+/// Dropping a harness that was never shut down kills it, and on Unix every
+/// process it started (stdio MCP servers, `run_command` commands), without
+/// the graceful exit's trajectory persistence. Elsewhere (Windows) only the
+/// harness process is ended, and its commands keep running (see
+/// [`HarnessProcess::signal`]). Signal only: `Drop` cannot wait, so the
+/// reap is left to tokio's orphan reaper.
 impl Drop for HarnessProcess {
     fn drop(&mut self) {
         self.signal(Signal::Kill);
@@ -541,6 +603,48 @@ pub(crate) fn harness_version(binary: &Path) -> Option<String> {
     match versions.as_slice() {
         [version] => Some(version.clone()),
         _ => None,
+    }
+}
+
+/// [`harness_version`] on a thread of its own, given `timeout`: the read
+/// resolves symlinks and reads files beside the binary, which a stalled
+/// network mount could hold forever. A read that times out is left to
+/// finish on its own and the version counts as unknown.
+///
+/// The thread is detached rather than taken from tokio's blocking pool
+/// because dropping a runtime waits for the blocking tasks still running
+/// on it: an abandoned read stuck there would hang the end of
+/// `#[tokio::main]` instead of `spawn()`. A panic in the read is resumed
+/// here.
+async fn harness_version_bounded(binary: &Path, timeout: Duration) -> Option<String> {
+    let path = binary.to_path_buf();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let started = std::thread::Builder::new()
+        .name("antigravity-version-read".to_string())
+        .spawn(move || {
+            let outcome = std::panic::catch_unwind(|| harness_version(&path));
+            // Fails only when `spawn()` stopped waiting (the timeout fired).
+            let _ = sender.send(outcome);
+        });
+    if let Err(e) = started {
+        tracing::debug!("could not start a thread to read the harness version: {e}");
+        return None;
+    }
+    match tokio::time::timeout(timeout, receiver).await {
+        Ok(Ok(Ok(version))) => version,
+        Ok(Ok(Err(panic))) => std::panic::resume_unwind(panic),
+        Ok(Err(_)) => {
+            tracing::debug!("the harness version read ended without a result");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                "reading the google-antigravity version beside {} took over {timeout:?}; \
+                 going on without it",
+                binary.display()
+            );
+            None
+        }
     }
 }
 

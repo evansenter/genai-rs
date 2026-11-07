@@ -100,7 +100,8 @@ if agent.harness_version() != Some(SUPPORTED_HARNESS_VERSION) {
 New releases are watched for you: the `antigravity-release-watch.yml`
 workflow compares PyPI's latest `google-antigravity` with the pin daily
 and, when they differ, opens an `antigravity-release` issue with a diff of
-the two wheels' protobuf descriptors.
+the two wheels' protobuf descriptors and of the Python SDK options they
+expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 
 ### Binary discovery
 
@@ -113,7 +114,10 @@ the two wheels' protobuf descriptors.
 4. `localharness` on `PATH`.
 
 A miss returns `AntigravityError::HarnessNotFound` listing every location
-searched.
+searched. The search runs on tokio's blocking pool, not on your runtime's
+threads, and `python3` gets 10 seconds to list its site-packages before
+the search moves on to `PATH`; so does the read of the installed wheel's
+version beside the binary.
 
 ## Quick start
 
@@ -147,16 +151,23 @@ SIGTERM/SIGKILL only if it lingers. Dropping the agent without `shutdown()`
 kills the harness immediately — no zombie, but no trajectory persistence
 either.
 
-Every kill reaches the processes the harness started, not just the harness:
-on Unix it runs in its own process group, and the forced paths (drop, an
-init failure, the shutdown escalation) signal that group *and* the process
-group of each of its children. The second part matters because the harness
-gives every `run_command` command a process group of its own (0.1.23), so a
-kill of the harness or its group alone left those commands running. A
-command that detaches itself (`setsid`, a double-forked daemon) is still
-out of reach. Because the harness is in its own group, a terminal's Ctrl-C
-reaches only your process; when it exits, the harness sees stdin close and
-shuts down gracefully.
+On Unix every kill reaches the processes the harness started, not just
+the harness: it runs in its own process group, and the forced paths (drop,
+an init failure, the shutdown escalation) signal that group *and* the
+process group of each of its children. The second part matters because the
+harness gives every `run_command` command a process group of its own
+(0.1.23), so a kill of the harness or its group alone left those commands
+running. A command that detaches itself (`setsid`, a double-forked daemon)
+is still out of reach. Because the harness is in its own group, a
+terminal's Ctrl-C reaches only your process; when it exits, the harness
+sees stdin close and shuts down gracefully.
+
+On Windows the forced paths end the harness process only: there are no
+process groups to signal, so the `run_command` commands it started keep
+running after a dropped agent, a failed `spawn()` or an escalated
+shutdown. Only the graceful exit stops them there, so call `shutdown()`
+and let it finish. Stdio MCP servers are not affected: they exit at the
+end of their stdin, which closes when the harness dies, on any platform.
 
 ### Images, documents and slash commands
 
@@ -1360,6 +1371,9 @@ The ones a user is likeliest to look for:
   waits on it.
 - **No `schedule` builtin**: a turn the agent schedules for itself could
   start while a `chat` turn does, and its events would land in that turn.
+- **On Windows a forced kill ends the harness only**: the `run_command`
+  commands it started outlive a dropped agent there; call `shutdown()`
+  (see [Quick start](#quick-start)).
 - **Not modeled (product decisions)**: Vertex AI endpoints (wire types
   exist; the supported path is a Gemini API key), the OpenAI-compatible and
   LiteRT model backends, and the beta `run_workflow` builtin (written
