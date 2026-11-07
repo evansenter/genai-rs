@@ -58,7 +58,7 @@ does **not** carry over the request configuration:
 So set `with_system_instruction()` and the tools on **every** turn that should
 have them. `model` (or `agent`) is required on every request anyway.
 
-Two caveats:
+Three caveats:
 
 - The model can still *appear* to follow an earlier system instruction,
   because the replayed turns (including its thoughts) may restate it. Don't
