@@ -317,7 +317,7 @@ let mut agent = AntigravityAgent::builder()
     .with_model(genai_rs::DEFAULT_MODEL)
     .add_workspace("/path/to/repo")
     .add_policy(policy::deny_all())          // policies evaluated in Rust,
-    .add_policy(policy::allow("view_file"))  // before every tool dispatch
+    .add_policy(policy::allow("view_file"))  // before the agent's tool calls
     .spawn()
     .await?;
 
@@ -328,6 +328,11 @@ agent.shutdown().await?;
 # Ok(())
 # }
 ```
+
+Policies, hooks and workspace containment gate the agent's own tool calls.
+A subagent's calls bypass them on harness 0.1.23, so `spawn()` refuses
+subagents beside any of these gates unless you opt in with
+`with_ungated_subagents(true)`.
 
 The same `#[tool]` functions work in both modes, and `LOUD_WIRE=1` covers
 harness sessions too. Setup (`pip install google-antigravity==0.1.23`),

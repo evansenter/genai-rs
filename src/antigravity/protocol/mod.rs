@@ -61,7 +61,7 @@ pub use options::{
 };
 pub use output::{
     InitializeConversationResponse, ModalityTokenCount, OutputEvent, OutputPayload, SandboxStatus,
-    ToolCall, TrajectoryStateUpdate, TrajectoryUsageEntry, UsageMetadata,
+    ToolCall, TrajectoryStateUpdate, TrajectoryUsageEntry, UsageMetadata, UsageUpdate,
 };
 pub use step_update::{
     ActionCompaction, ActionCreateFile, ActionCustomTool, ActionEditFile, ActionError,

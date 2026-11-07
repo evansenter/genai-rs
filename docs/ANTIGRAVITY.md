@@ -100,7 +100,8 @@ if agent.harness_version() != Some(SUPPORTED_HARNESS_VERSION) {
 New releases are watched for you: the `antigravity-release-watch.yml`
 workflow compares PyPI's latest `google-antigravity` with the pin daily
 and, when they differ, opens an `antigravity-release` issue with a diff of
-the two wheels' protobuf descriptors.
+the two wheels' protobuf descriptors and of the Python SDK options they
+expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 
 ### Binary discovery
 
@@ -113,7 +114,10 @@ the two wheels' protobuf descriptors.
 4. `localharness` on `PATH`.
 
 A miss returns `AntigravityError::HarnessNotFound` listing every location
-searched.
+searched. The search runs on tokio's blocking pool, not on your runtime's
+threads, and `python3` gets 10 seconds to list its site-packages before
+the search moves on to `PATH`; so does the read of the installed wheel's
+version beside the binary.
 
 ## Quick start
 
@@ -147,16 +151,23 @@ SIGTERM/SIGKILL only if it lingers. Dropping the agent without `shutdown()`
 kills the harness immediately — no zombie, but no trajectory persistence
 either.
 
-Every kill reaches the processes the harness started, not just the harness:
-on Unix it runs in its own process group, and the forced paths (drop, an
-init failure, the shutdown escalation) signal that group *and* the process
-group of each of its children. The second part matters because the harness
-gives every `run_command` command a process group of its own (0.1.23), so a
-kill of the harness or its group alone left those commands running. A
-command that detaches itself (`setsid`, a double-forked daemon) is still
-out of reach. Because the harness is in its own group, a terminal's Ctrl-C
-reaches only your process; when it exits, the harness sees stdin close and
-shuts down gracefully.
+On Unix every kill reaches the processes the harness started, not just
+the harness: it runs in its own process group, and the forced paths (drop,
+an init failure, the shutdown escalation) signal that group *and* the
+process group of each of its children. The second part matters because the
+harness gives every `run_command` command a process group of its own
+(0.1.23), so a kill of the harness or its group alone left those commands
+running. A command that detaches itself (`setsid`, a double-forked daemon)
+is still out of reach. Because the harness is in its own group, a
+terminal's Ctrl-C reaches only your process; when it exits, the harness
+sees stdin close and shuts down gracefully.
+
+On Windows the forced paths end the harness process only: there are no
+process groups to signal, so the `run_command` commands it started keep
+running after a dropped agent, a failed `spawn()` or an escalated
+shutdown. Only the graceful exit stops them there, so call `shutdown()`
+and let it finish. Stdio MCP servers are not affected: they exit at the
+end of their stdin, which closes when the harness dies, on any platform.
 
 ### Images, documents and slash commands
 
@@ -644,8 +655,9 @@ until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn,
 then the tool hooks and tool errors as calls happen, then stop (again after
 each continue), then post-turn.
 
-A turn nobody consumes (one that hit its `with_turn_timeout`, or a trigger
-turn the next `chat` halts) is drained, and its per-turn hooks (pre-turn,
+A turn nobody consumes (one that hit its `with_turn_timeout`, one you
+abandoned by dropping `chat` or its stream, or a trigger turn the next
+`chat` halts) is drained, and its per-turn hooks (pre-turn,
 post-turn, tool error, compaction, stop) don't run for it: the drain answers
 the harness as if they were not set, so a stop hook can't keep a halted
 turn going. Session hooks still run.
@@ -744,11 +756,36 @@ Rules (matching the reference SDK):
   sees them) nor the harness's own policy evaluator, and workspace
   containment does not confine them: a read-only subagent can read any
   file the process can (pinned by a scripted test; the probe is recorded in
-  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
-  Only the subagent's capabilities limit it, so give a subagent only the
-  builtins it may use ungated. Enabling `invoke_subagent` also offers the
-  harness's built-in `research` subagent. `spawn()` warns whenever
-  `invoke_subagent` is on.
+  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`). The agent's `run_command` sandbox
+  is its own; a subagent's commands are sent with the subagent's
+  capabilities. Only the subagent's capabilities limit it, so give a
+  subagent only the builtins it may use unchecked. Enabling `invoke_subagent` also offers the
+  harness's built-in `research` subagent, even with no subagent added.
+- **`spawn()` refuses subagents beside a gate they bypass** (#520), unless
+  you opt in with `with_ungated_subagents(true)`. The gates are a pre-tool
+  hook, a deny, confirm or `ask_user` policy, `policy::auto()`, workspace
+  containment (on by default with a workspace) and the `run_command`
+  sandbox while `run_command` is enabled; the refusal is an
+  `AntigravityError::Config` naming the ones set. It applies when
+  `invoke_subagent` or `with_define_subagent_tool(true)` is on. Policies
+  that only allow, like `allow_all()` above, refuse nothing and are not a
+  gate:
+
+  ```rust,no_run
+  use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};
+
+  let builder = AntigravityAgent::builder()
+      .add_workspace("/repo")                             // containment: a gate
+      .add_policy(policy::deny_all())                     // a gate
+      .add_policy(policy::allow("view_file"))
+      .add_policy(policy::allow("invoke_subagent"))
+      .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
+      .add_subagent(Subagent::new("reader").with_description("Reads files."))
+      .with_ungated_subagents(true) // the subagents may read outside /repo
+      // ...
+      ;
+  # let _ = builder;
+  ```
 - **Custom tools are referenced by name** and must also be registered on the
   parent agent (`add_tool` / `with_tool_service`) — subagent custom-tool
   calls dispatch through the parent's registry. `spawn()` validates the
@@ -865,6 +902,26 @@ outcome when the harness cancels a turn of its own accord.) On the pinned
 harness the key-free `test_scripted_cancel_halts_a_turn_waiting_on_the_model`,
 which the required CI check runs, fails if a halted turn does anything but
 resolve normally.
+
+**Dropping a turn instead**: dropping the `chat` future (an outer
+`tokio::time::timeout`, a losing `select!` branch) or the stream before
+`Finished` abandons the turn on this side only. A custom tool it was
+running is aborted, as at the turn timeout below, and a hook it was waiting
+on runs to completion with its answer discarded. The harness is still inside
+the turn, waiting for a tool result or hook verdict that will not come, or
+still calling the model. The agent records that the turn never ended, and
+the next `chat`/`send_streaming` halts it and discards its events before
+sending your input (half a second when nothing is left running, five
+seconds at most), so each later turn gets its own reply. A turn that failed
+before the harness ended it (a fatal model error, a lost connection) is
+halted the same way; one the harness failed itself (a pre-turn denial) is
+not. Until that next call the harness may keep working on the abandoned
+turn, so use `cancel()` to stop a turn at once and keep its partial output.
+`next_trigger_turn` does not halt anything first: called after an abandoned
+turn, it consumes what is left of that turn. The key-free tests in
+`tests/antigravity_scripted/cancel.rs` abandon a turn each way, with a tool
+hanging, a pre-tool hook pending or the model slow, and check that the next
+two chats get their own replies and that only the first of them halts.
 
 `with_turn_timeout(Duration)` bounds each turn's wall-clock time. When the
 budget is exceeded, the crate halts the harness's still-running turn and
@@ -1296,8 +1353,9 @@ The ones a user is likeliest to look for:
   tool only on a multi-thread runtime with two or more workers (see the turn
   deadline under [Streaming](#streaming)).
 - **Subagents are not gated**: on 0.1.23 a subagent's own tool calls skip
-  policies, the pre-tool hook and workspace containment (see
-  [Subagents](#subagents)).
+  policies, the pre-tool hook and workspace containment, so `spawn()`
+  refuses subagents beside those gates without `with_ungated_subagents(true)`
+  (see [Subagents](#subagents)).
 - **Only the bespoke `localharness` protocol**: the harness's
   Interactions-mode transport (`use_interactions_api`) is not used. On
   0.1.23 it rejects every `interaction.create` that carries an agent config,
@@ -1313,6 +1371,9 @@ The ones a user is likeliest to look for:
   waits on it.
 - **No `schedule` builtin**: a turn the agent schedules for itself could
   start while a `chat` turn does, and its events would land in that turn.
+- **On Windows a forced kill ends the harness only**: the `run_command`
+  commands it started outlive a dropped agent there; call `shutdown()`
+  (see [Quick start](#quick-start)).
 - **Not modeled (product decisions)**: Vertex AI endpoints (wire types
   exist; the supported path is a Gemini API key), the OpenAI-compatible and
   LiteRT model backends, and the beta `run_workflow` builtin (written

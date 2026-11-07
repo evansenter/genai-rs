@@ -204,6 +204,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
         .add_tool(ClassifySeverityCallable.declaration())
         .add_subagent(file_auditor)
+        // The gates below don't reach the subagent's own calls, so spawn()
+        // refuses without this; its read-only capabilities bound it instead.
+        .with_ungated_subagents(true)
         // Deny by default; allow exactly the tools this audit needs.
         // Exact-name rules beat the deny_all() wildcard, so order is free.
         .add_policy(policy::deny_all())

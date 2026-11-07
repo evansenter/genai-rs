@@ -347,8 +347,20 @@ pub fn on_file_change(
     poll_interval: Duration,
     on_change: impl Fn(&[FileChange]) -> Option<String> + Send + Sync + 'static,
 ) -> impl FnOnce(TriggerContext) -> BoxFuture<Result<(), AntigravityError>> + Send + 'static {
-    let path = path.into();
-    let baseline = snapshot(&path);
+    watch_files(path.into(), poll_interval, on_change, snapshot)
+}
+
+/// Takes the snapshots of a watch: [`snapshot`], or a stand-in in tests.
+type Snapshotter = fn(&Path) -> BTreeMap<PathBuf, Stamp>;
+
+/// [`on_file_change`] with the snapshot function given.
+fn watch_files(
+    path: PathBuf,
+    poll_interval: Duration,
+    on_change: impl Fn(&[FileChange]) -> Option<String> + Send + Sync + 'static,
+    take_snapshot: Snapshotter,
+) -> impl FnOnce(TriggerContext) -> BoxFuture<Result<(), AntigravityError>> + Send + 'static {
+    let baseline = take_snapshot(&path);
     move |context: TriggerContext| {
         Box::pin(async move {
             // The state the last batch was reported against.
@@ -360,7 +372,12 @@ pub fn on_file_change(
                 if !context.is_idle() {
                     continue;
                 }
-                let now = snapshot_of(&path).await;
+                // A snapshot that failed says nothing about the files:
+                // skip the tick rather than diff against an empty one,
+                // which would report every file deleted, then added back.
+                let Some(now) = snapshot_of(&path, take_snapshot).await else {
+                    continue;
+                };
                 let changes = diff_snapshots(&reported, &now);
                 reported = now;
                 if changes.is_empty() {
@@ -382,12 +399,21 @@ pub fn on_file_change(
 /// A file's modification time and size.
 type Stamp = (Option<SystemTime>, u64);
 
-/// Takes a snapshot of `path` off the runtime's worker threads.
-async fn snapshot_of(path: &Path) -> BTreeMap<PathBuf, Stamp> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || snapshot(&path))
-        .await
-        .unwrap_or_default()
+/// Takes a snapshot of `path` off the runtime's worker threads. `None`,
+/// with a warning, when the snapshot task fails (it panicked, or the
+/// runtime is shutting down): the caller skips that tick.
+async fn snapshot_of(path: &Path, take_snapshot: Snapshotter) -> Option<BTreeMap<PathBuf, Stamp>> {
+    let owned = path.to_path_buf();
+    match tokio::task::spawn_blocking(move || take_snapshot(&owned)).await {
+        Ok(snapshot) => Some(snapshot),
+        Err(e) => {
+            tracing::warn!(
+                "The file watch on {} could not take a snapshot ({e}); skipping this poll",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 /// Every file under `path` (or `path` itself, when it is a file) with its
