@@ -32,16 +32,20 @@ jobs:
 
           DAYS_BACK=7
           WORKFLOW_NAME="Rust"
-          # The jobs that run nextest with retries (NEXTEST_RETRIES in the
-          # step's env), whose green runs can hide a flake: the live
-          # integration groups and the antigravity job's harness step.
-          # count_retried_flakes.sh counts only the steps that retry, so the
-          # antigravity job's offline suite, in the same log, stays out of
-          # the rate.
-          RETRY_JOBS='^(Integration Tests \(.*\)|Test Suite \(antigravity\))$'
+          # The jobs whose green runs can hide a flake: the live integration
+          # groups and the antigravity job's harness step, which run nextest
+          # with retries (NEXTEST_RETRIES in the step's env), and the two
+          # example smoke loops, which retry by hand and print
+          # EXAMPLE_RETRIED. count_retried_flakes.sh counts only the steps
+          # that retry, so the antigravity job's offline suite, in the same
+          # log, stays out of the rate. tests/ci_workflows/ ties this to
+          # rust.yml's job names.
+          RETRY_JOBS='^(Integration Tests \(.*\)|Test Suite \(antigravity\)|Example Smoke Run)$'
 
-          END_DATE=$(date -u +"%Y-%m-%d")
-          START_DATE=$(date -u -d "$DAYS_BACK days ago" +"%Y-%m-%d")
+          # jq, not `date -d`, so the harness runs this on BSD date too.
+          END_DATE=$(jq -nr 'now | strftime("%Y-%m-%d")')
+          START_DATE=$(jq -nr --argjson d "$DAYS_BACK" 'now - $d * 86400 | strftime("%Y-%m-%d")')
+          WEEK_AGO=$(jq -n --argjson d "$DAYS_BACK" 'now - $d * 86400 | floor')
 
           echo "Analyzing CI runs from $START_DATE to $END_DATE"
           {
@@ -51,6 +55,14 @@ jobs:
 
           TOTAL_RUNS=0
           FAILED_RUNS=0
+          # Runs of main (push, schedule, dispatch on main) apart from the
+          # rest, pull requests and branches: a red PR run is usually the
+          # change under review, not a flake, so only main's failed runs
+          # are categorized.
+          MAIN_RUNS=0
+          FAILED_MAIN=0
+          BRANCH_RUNS=0
+          FAILED_BRANCH=0
           # `=()`: under `set -u` a never-assigned array is unset, and `${#...}`
           # would abort on a week with no failures.
           declare -A TEST_FAILURES=()
@@ -61,6 +73,7 @@ jobs:
           RATE_LIMIT=0
           ASSERTION_FAILURES=0
           PANIC=0
+          DETERMINISTIC=0
           UNKNOWN=0
 
           LOG_DIR=$(mktemp -d)
@@ -74,22 +87,29 @@ jobs:
             --json databaseId,conclusion,createdAt,headBranch,event \
             2>/dev/null || echo "[]")
 
-          WEEK_AGO=$(date -u -d "$DAYS_BACK days ago" +%s)
-
           while IFS= read -r run; do
             RUN_ID=$(echo "$run" | jq -r '.databaseId')
             CONCLUSION=$(echo "$run" | jq -r '.conclusion')
-            CREATED_AT=$(echo "$run" | jq -r '.createdAt')
-
-            RUN_TS=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo "0")
+            RUN_TS=$(echo "$run" | jq -r '(.createdAt | fromdateiso8601?) // 0')
             if [ "$RUN_TS" -lt "$WEEK_AGO" ]; then
               continue
             fi
+            ON_MAIN=$(echo "$run" | jq -r '.event != "pull_request" and .headBranch == "main"')
 
             TOTAL_RUNS=$((TOTAL_RUNS + 1))
+            if [ "$ON_MAIN" = "true" ]; then
+              MAIN_RUNS=$((MAIN_RUNS + 1))
+            else
+              BRANCH_RUNS=$((BRANCH_RUNS + 1))
+            fi
 
             if [ "$CONCLUSION" = "failure" ]; then
               FAILED_RUNS=$((FAILED_RUNS + 1))
+            fi
+            if [ "$CONCLUSION" = "failure" ] && [ "$ON_MAIN" != "true" ]; then
+              FAILED_BRANCH=$((FAILED_BRANCH + 1))
+            elif [ "$CONCLUSION" = "failure" ]; then
+              FAILED_MAIN=$((FAILED_MAIN + 1))
 
               echo "Analyzing failed run $RUN_ID..."
 
@@ -99,16 +119,20 @@ jobs:
               RATE_LIMIT=$((RATE_LIMIT + $(echo "$CATEGORIZED" | jq -r '.totals.rate_limit // 0')))
               ASSERTION_FAILURES=$((ASSERTION_FAILURES + $(echo "$CATEGORIZED" | jq -r '.totals.assertion_failures // 0')))
               PANIC=$((PANIC + $(echo "$CATEGORIZED" | jq -r '.totals.panic // 0')))
+              DETERMINISTIC=$((DETERMINISTIC + $(echo "$CATEGORIZED" | jq -r '.totals.deterministic // 0')))
               UNKNOWN=$((UNKNOWN + $(echo "$CATEGORIZED" | jq -r '.totals.unknown // 0')))
 
-              for category in api_errors rate_limit assertion_failures panic unknown; do
+              for category in api_errors rate_limit assertion_failures panic deterministic unknown; do
                 while IFS= read -r test_name; do
                   if [ -n "$test_name" ] && [ "$test_name" != "null" ]; then
-                    if [ -n "${TEST_FAILURES[$test_name]:-}" ]; then
-                      TEST_FAILURES[$test_name]=$((${TEST_FAILURES[$test_name]} + 1))
-                    else
-                      TEST_FAILURES[$test_name]=1
-                      TEST_CATEGORIES[$test_name]="$category"
+                    label="$category"
+                    if [ "$category" = "deterministic" ]; then
+                      label="deterministic on $(echo "$CATEGORIZED" | jq -r --arg t "$test_name" '.os[$t] // "one OS"')"
+                    fi
+                    TEST_FAILURES[$test_name]=$((${TEST_FAILURES[$test_name]:-0} + 1))
+                    # A deterministic break is the label that sticks.
+                    if [ -z "${TEST_CATEGORIES[$test_name]:-}" ] || [ "$category" = "deterministic" ]; then
+                      TEST_CATEGORIES[$test_name]="$label"
                     fi
                   fi
                 done < <(echo "$CATEGORIZED" | jq -r ".categories.${category}[]?" 2>/dev/null || true)
@@ -125,11 +149,11 @@ jobs:
                     | select((.name | test($re)) and (.conclusion == "success" or .conclusion == "failure"))
                     | .databaseId' || true)
               for JOB_ID in $JOB_IDS; do
-                if gh run view --job "$JOB_ID" --log > "$LOG_DIR/$RUN_ID-$JOB_ID.log" 2>/dev/null; then
+                if gh run view --job "$JOB_ID" --log > "${LOG_DIR:?}/$RUN_ID-$JOB_ID.log" 2>/dev/null; then
                   LOGS_READ=$((LOGS_READ + 1))
                 else
                   LOGS_MISSED=$((LOGS_MISSED + 1))
-                  rm -f "$LOG_DIR/$RUN_ID-$JOB_ID.log"
+                  rm -f "${LOG_DIR:?}/${RUN_ID:?}-${JOB_ID:?}.log"
                 fi
               done
             fi
@@ -140,30 +164,37 @@ jobs:
             echo "::warning::$LOGS_MISSED job log(s) could not be fetched, so their retried flakes are not counted"
           fi
           if [ "$LOGS_READ" -gt 0 ]; then
-            .github/scripts/count_retried_flakes.sh "$LOG_DIR"/*.log > retried.json
+            .github/scripts/count_retried_flakes.sh "${LOG_DIR:?}"/*.log > retried.json
           else
-            echo '{"tests_run": 0, "flaky": 0, "tests": []}' > retried.json
+            echo '{"tests_run": 0, "flaky": 0, "tests": [], "examples_run": 0, "examples_retried": 0, "examples": []}' > retried.json
           fi
-          rm -rf "$LOG_DIR"
+          rm -rf "${LOG_DIR:?}"
           RETRIED_FLAKES=$(jq -r '.flaky' retried.json)
           LIVE_TEST_RUNS=$(jq -r '.tests_run' retried.json)
+          EXAMPLES_RUN=$(jq -r '.examples_run // 0' retried.json)
+          EXAMPLES_RETRIED=$(jq -r '.examples_retried // 0' retried.json)
 
           # Flakes are named by test; nextest names the binary too, which
-          # locates the file without a grep.
+          # locates the file without a grep. An example is named for its
+          # `cargo run --example`. A flake's runs are the runs it ran in,
+          # for its own share (the report flags one over 5%).
           declare -A TEST_RETRIED=()
-          while IFS=$'\t' read -r test_name binary count; do
+          declare -A TEST_RUNS=()
+          while IFS=$'\t' read -r test_name file count runs; do
             [ -n "$test_name" ] || continue
             TEST_RETRIED[$test_name]=$((${TEST_RETRIED[$test_name]:-0} + count))
-            if [ "$binary" = "lib" ]; then
-              TEST_FILES[$test_name]="src/"
-            else
-              TEST_FILES[$test_name]="tests/$binary.rs"
-            fi
+            TEST_RUNS[$test_name]=$((${TEST_RUNS[$test_name]:-0} + runs))
+            TEST_FILES[$test_name]="$file"
             if [ -z "${TEST_FAILURES[$test_name]:-}" ]; then
               TEST_FAILURES[$test_name]=0
               TEST_CATEGORIES[$test_name]="passed on retry"
             fi
-          done < <(jq -r '.tests[] | [.name, .binary, (.flaky | tostring)] | @tsv' retried.json)
+          done < <(jq -r '
+            (.tests[] | [.name, (if .binary == "lib" then "src/" else "tests/\(.binary).rs" end),
+                         (.flaky | tostring), (.runs // 0 | tostring)]),
+            ((.examples // [])[] | ["example \(.name)", "cargo run --example \(.name)",
+                                    (.flaky | tostring), (.runs // 0 | tostring)])
+            | @tsv' retried.json)
 
           UNIQUE_FLAKY=${#TEST_FAILURES[@]}
 
@@ -182,7 +213,7 @@ jobs:
           echo "Locating test files..."
           for test_name in "${!TEST_FAILURES[@]}"; do
             [ -n "${TEST_FILES[$test_name]:-}" ] && continue
-            FILE=$(grep -rlE "fn $test_name|fn ${test_name#*::}" tests/ src/ 2>/dev/null | head -1 || echo "unknown")
+            FILE=$(grep -rlE "fn $test_name|fn ${test_name##*::}" tests/ src/ 2>/dev/null | head -1 || echo "unknown")
             if [ -n "$FILE" ] && [ "$FILE" != "unknown" ]; then
               TEST_FILES[$test_name]=$(basename "$FILE")
             else
@@ -193,25 +224,39 @@ jobs:
           jq -n \
             --argjson total_runs "$TOTAL_RUNS" \
             --argjson failed_runs "$FAILED_RUNS" \
+            --argjson main_runs "$MAIN_RUNS" \
+            --argjson failed_runs_main "$FAILED_MAIN" \
+            --argjson branch_runs "$BRANCH_RUNS" \
+            --argjson failed_runs_branch "$FAILED_BRANCH" \
             --argjson unique_flaky "$UNIQUE_FLAKY" \
             --argjson retried_flakes "$RETRIED_FLAKES" \
             --argjson live_test_runs "$LIVE_TEST_RUNS" \
+            --argjson examples_run "$EXAMPLES_RUN" \
+            --argjson examples_retried "$EXAMPLES_RETRIED" \
             --argjson api_errors "$API_ERRORS" \
             --argjson rate_limit "$RATE_LIMIT" \
             --argjson assertion_failures "$ASSERTION_FAILURES" \
             --argjson panic "$PANIC" \
+            --argjson deterministic "$DETERMINISTIC" \
             --argjson unknown "$UNKNOWN" \
             --arg date "$END_DATE" \
             '{
               total_runs: $total_runs,
               failed_runs: $failed_runs,
+              main_runs: $main_runs,
+              failed_runs_main: $failed_runs_main,
+              branch_runs: $branch_runs,
+              failed_runs_branch: $failed_runs_branch,
               unique_flaky: $unique_flaky,
               retried_flakes: $retried_flakes,
               live_test_runs: $live_test_runs,
+              examples_run: $examples_run,
+              examples_retried: $examples_retried,
               api_errors: $api_errors,
               rate_limit: $rate_limit,
               assertion_failures: $assertion_failures,
               panic: $panic,
+              deterministic: $deterministic,
               unknown: $unknown,
               date: $date
             }' > summary.json
@@ -222,9 +267,10 @@ jobs:
               --arg name "$test_name" \
               --argjson failures "${TEST_FAILURES[$test_name]}" \
               --argjson retried "${TEST_RETRIED[$test_name]:-0}" \
+              --argjson runs "${TEST_RUNS[$test_name]:-0}" \
               --arg category "${TEST_CATEGORIES[$test_name]:-unknown}" \
               --arg file "${TEST_FILES[$test_name]:-unknown}" \
-              '{name: $name, failures: $failures, retried: $retried, category: $category, file: $file}') || continue
+              '{name: $name, failures: $failures, retried: $retried, runs: $runs, category: $category, file: $file}') || continue
             jq --argjson new "$ITEM_JSON" '. + [$new]' tests.json > tests.json.tmp \
               && mv tests.json.tmp tests.json
           done
@@ -242,13 +288,28 @@ jobs:
           # pipefail: a swallowed jq failure below would write an empty
           # baseline, which the next run reads as "report everything".
           set -euo pipefail
+          # Exit 3 is a complete report that breaches a target (a weekly
+          # flake rate of 1% or more, no live test runs read, or a chronic
+          # flake). The run goes on to publish it, and fails after the
+          # issue is updated; any other non-zero exit is an error here.
+          rc=0
           .github/scripts/generate_flakiness_report.sh \
             --trends trends.json \
+            --summary summary.json \
             --tests tests.json \
             --start-date "${{ steps.collect.outputs.start_date }}" \
             --end-date "${{ steps.collect.outputs.end_date }}" \
             --repo-url "${{ github.server_url }}/${{ github.repository }}" \
-            > flakiness_report.md
+            > flakiness_report.md || rc=$?
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+            echo "::error::generate_flakiness_report.sh exited $rc"
+            exit "$rc"
+          fi
+          if [ "$rc" -eq 3 ]; then
+            echo "breach=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "breach=false" >> "$GITHUB_OUTPUT"
+          fi
 
           # The table is capped at 10, so the full set goes in a hidden marker
           # for the next run's diff. Emitted even when empty.
@@ -348,6 +409,14 @@ jobs:
             echo "Created issue: $NEW_ISSUE"
           fi
 
+      # After the issue update, so a breached target is published before
+      # the run fails on it, and before the escalation, which it triggers.
+      - name: Fail on a breached flake target
+        if: steps.report.outputs.breach == 'true'
+        run: |
+          echo "::error::The flakiness report breaches a target: a weekly flake rate of 1% or more, no live test runs read, or a test that passed only on a retry in more than 5% of its runs. The rolling ci-health issue has the report."
+          exit 1
+
       # Scheduled failures otherwise only email the last committer of this file
       # (#431). Does not fire for a cancelled or timed-out job.
       - name: Escalate a failing scheduled run
@@ -358,7 +427,14 @@ jobs:
           # From context, not a literal: it is the join key with the resolver.
           # `SELF_` to keep it apart from the collect step's WORKFLOW_NAME.
           SELF_WORKFLOW_NAME: ${{ github.workflow }}
-        run: .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL"
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "The report fails on purpose when the week breaches a flake target:
+          a flake rate of 1% or more, no live test runs read, or a chronic
+          flake (a test that passed only on a retry in more than 5% of its
+          runs). The rolling \`ci-health\` report issue names which, and the
+          issue closes on the first run that meets every target. A failure
+          before the report step is the workflow itself breaking."
 
       # Also on dispatch, unlike audit.yml: this job doesn't branch on the
       # event, so a manual run exercises the scheduled path.

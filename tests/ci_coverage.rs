@@ -5,7 +5,10 @@
 //! listed in its matrix groups, and `release.yml` is the only other place
 //! live tests run — after the tag exists. A live test binary left out of the
 //! matrix therefore goes unexercised on every PR, which is how
-//! `streaming_resume_tests` and `tool_service_tests` sat unrun.
+//! `streaming_resume_tests` and `tool_service_tests` sat unrun. Likewise
+//! `fuzz.yml`'s matrix runs every cargo-fuzz target in `fuzz/Cargo.toml`,
+//! and its `Fuzz Gate` job reports on every pull request, so branch
+//! protection can require it.
 //!
 //! The second half ties the committed API-surface snapshot
 //! (`tests/fixtures/api_surface/`) to the crate: every endpoint maps to the
@@ -15,8 +18,10 @@
 //!
 //! The workflows themselves are guarded in `tests/ci_workflows/`: no nextest
 //! run fails fast, retries are set in `NEXTEST_RETRIES` where the flakiness
-//! report sees them, trybuild's `ui_tests` stay off beta, and every
-//! scheduled workflow escalates its failures.
+//! report sees them, trybuild's `ui_tests` stay off beta, every scheduled
+//! workflow and every push to main escalates its failures, a PR runs the
+//! Windows leg, the flakiness report reads every retry it claims to count,
+//! and Code Coverage writes its summary on every run.
 
 mod ci_workflows;
 mod live_verbs;
@@ -209,6 +214,124 @@ fn scheduled_run_status_needs_every_other_job() {
     assert_eq!(
         needs, expected,
         "scheduled-run-status must need every other rust.yml job"
+    );
+}
+
+// =============================================================================
+// The fuzz workflow
+// =============================================================================
+
+/// `fuzz.yml`, line endings normalized as for [`rust_yml`].
+fn fuzz_yml() -> String {
+    std::fs::read_to_string(root().join(".github/workflows/fuzz.yml"))
+        .expect("read fuzz.yml")
+        .replace("\r\n", "\n")
+}
+
+/// The `name = "..."` of every `[[bin]]` in `fuzz/Cargo.toml`: the targets
+/// `cargo fuzz` can run.
+fn fuzz_bins() -> BTreeSet<String> {
+    let manifest = std::fs::read_to_string(root().join("fuzz/Cargo.toml"))
+        .expect("read fuzz/Cargo.toml")
+        .replace("\r\n", "\n");
+    let mut bins = BTreeSet::new();
+    let mut in_bin = false;
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_bin = line == "[[bin]]";
+        } else if in_bin && let Some(name) = line.strip_prefix("name = \"") {
+            bins.insert(name.trim_end_matches('"').to_string());
+        }
+    }
+    assert!(!bins.is_empty(), "no [[bin]] found in fuzz/Cargo.toml");
+    bins
+}
+
+/// A fuzz target missing from `fuzz.yml`'s matrix never runs in CI, and a
+/// matrix entry with no `[[bin]]` fails every run. Each target also needs
+/// committed seeds, which the required Test Suite replays
+/// (`committed_seeds_replay_through_their_targets` in
+/// `src/fuzzing_tests.rs`).
+#[test]
+fn fuzz_matrix_runs_every_fuzz_target() {
+    let workflow = fuzz_yml();
+    let matrix: Vec<String> = workflow
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("target: ["))
+        .expect("fuzz.yml has no one-line `target: [...]` matrix")
+        .trim_end_matches(']')
+        .split(',')
+        .map(|target| target.trim().to_string())
+        .collect();
+    let unique: BTreeSet<String> = matrix.iter().cloned().collect();
+    assert_eq!(
+        unique.len(),
+        matrix.len(),
+        "a target is listed twice: {matrix:?}"
+    );
+    let bins = fuzz_bins();
+    assert_eq!(
+        unique, bins,
+        "fuzz.yml's target matrix must list every [[bin]] in fuzz/Cargo.toml, and nothing else"
+    );
+    for bin in &bins {
+        let seeds = root().join("fuzz/seeds").join(bin);
+        assert!(
+            seeds.is_dir(),
+            "the {bin} target has no fuzz/seeds/{bin}/ directory"
+        );
+    }
+}
+
+/// The matrix's checks exist only on runs that fuzz, so branch protection
+/// can require only a job that reports on every pull request: `Fuzz Gate`.
+/// A `paths:` filter on the trigger would stop the whole workflow, leaving
+/// that required check pending forever, so the path check is a job.
+#[test]
+fn fuzz_gate_reports_on_every_pull_request() {
+    let workflow = fuzz_yml();
+    let (on, jobs) = workflow
+        .split_once("\njobs:\n")
+        .expect("fuzz.yml has no jobs: section");
+    assert!(
+        on.lines().any(|line| line.trim() == "pull_request:"),
+        "fuzz.yml no longer runs on pull requests"
+    );
+    let filtered: Vec<&str> = on
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("paths:") || line.starts_with("paths-ignore:"))
+        .collect();
+    assert!(
+        filtered.is_empty(),
+        "fuzz.yml's triggers are path-filtered ({filtered:?}): a pull request that \
+         skips the workflow never reports the Fuzz Gate check"
+    );
+
+    let gate = jobs
+        .split("\n  fuzz-gate:\n")
+        .nth(1)
+        .expect("fuzz.yml has no fuzz-gate job")
+        .split("\n  scheduled-run-status:\n")
+        .next()
+        .unwrap();
+    let field = |key: &str| {
+        gate.lines()
+            .find_map(|line| line.strip_prefix("    ")?.strip_prefix(key))
+            .map(str::trim)
+            .unwrap_or_else(|| panic!("the fuzz-gate job has no `{key}` line"))
+    };
+    assert_eq!(field("name:"), "Fuzz Gate", "branch protection names it");
+    assert_eq!(field("if:"), "always()", "it must report when fuzz fails");
+    let needs: BTreeSet<&str> = field("needs:")
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(str::trim)
+        .collect();
+    assert!(
+        needs.contains("fuzz") && needs.contains("changes"),
+        "the gate must need the path check and the fuzz matrix: {needs:?}"
     );
 }
 

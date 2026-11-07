@@ -674,6 +674,10 @@ mod generation_config {
     /// model only: a response cut off by `max_output_tokens` is
     /// `incomplete` with a token, and resending the same input with the
     /// token and a larger (cumulative) budget continues it.
+    ///
+    /// Checked on status, token and steps, not on text: thinking can spend
+    /// a budget before any text is written, so either response may have
+    /// none, and a text check flaked on exactly that (#504).
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_decoding_continuation_resumes_a_cut_off_answer() {
@@ -695,32 +699,41 @@ mod generation_config {
         };
         with_timeout(extended_test_timeout(), async {
             let first = ask(30).create().await.expect("first request");
-            assert_eq!(first.status, InteractionStatus::Incomplete);
+            assert_eq!(first.status, InteractionStatus::Incomplete, "{first:?}");
             let token = first
                 .continuation_token
                 .clone()
                 .expect("a cut-off answer carries a continuation token");
-            let first_text = first.all_text();
 
-            let rest = ask(600)
+            // A budget the poem fits in with room for thinking, so the
+            // continuation usually finishes.
+            let rest = ask(2048)
                 .with_continuation_token(&token)
                 .create()
                 .await
                 .expect("the continuation was rejected");
-            let rest_text = rest.all_text();
             println!(
-                "first: {first_text:?}\nrest: {rest_text:?} ({:?})",
-                rest.status
+                "first: {:?}\nrest: {:?} ({:?}, {} steps)",
+                first.all_text(),
+                rest.all_text(),
+                rest.status,
+                rest.steps.len()
             );
-            assert!(
-                !rest_text.trim().is_empty(),
-                "the continuation produced no text"
-            );
-            if !first_text.trim().is_empty() {
-                assert!(
-                    !rest_text.starts_with(first_text.trim()),
-                    "the continuation restarted the answer instead of continuing it"
-                );
+            // The decode ran on: it finished with the answer's output, or
+            // the cumulative budget cut it off again, with a token of its own
+            // to go on from.
+            match &rest.status {
+                InteractionStatus::Completed => assert!(
+                    rest.steps
+                        .iter()
+                        .any(|step| matches!(step, Step::ModelOutput { .. })),
+                    "a finished continuation has a model_output step: {rest:?}"
+                ),
+                InteractionStatus::Incomplete => assert!(
+                    rest.continuation_token.is_some(),
+                    "a continuation cut off again carries a token: {rest:?}"
+                ),
+                other => panic!("the continuation ended {other:?}: {rest:?}"),
             }
         })
         .await;

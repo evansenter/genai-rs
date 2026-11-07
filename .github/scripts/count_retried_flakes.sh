@@ -26,13 +26,24 @@
 # step header (plain nextest output) counts whole: the caller chose what
 # to pass.
 #
+# Example smoke runs are counted too, in any step (their loops in
+# rust.yml retry by hand, with no NEXTEST_RETRIES): each example opens a
+# `::group::cargo run --example <name>` group, one run of it, and prints
+# `EXAMPLE_RETRIED <name> <failed tries>` when it passed only on a retry.
+#
 # Output (JSON on stdout):
 #   {"tests_run": N, "flaky": F,
 #    "tests": [{"binary": "temp_file_tests", "name": "test_x",
-#               "flaky": 1, "failed_tries": 1}, ...]}
+#               "flaky": 1, "failed_tries": 1, "runs": 40}, ...],
+#    "examples_run": E, "examples_retried": R,
+#    "examples": [{"name": "streaming", "flaky": 1, "failed_tries": 1,
+#                  "runs": 30}, ...]}
 # `tests_run` sums the counted runs' `Summary` lines; `flaky` is the
 # number of (run, test) pairs that passed on a retry. `binary` is the test
 # binary without the crate prefix (`lib` for the library's unit tests).
+# A flaky test's `runs` is the number of counted runs it ran in, which the
+# report needs for a test's own flake share. Only flaky tests and retried
+# examples are listed.
 
 set -euo pipefail
 
@@ -85,12 +96,26 @@ command -v jq >/dev/null 2>&1 || {
           || cmd ~ /NEXTEST_RETRIES: *[1-9]/) retried_step = 1
       next
     }
+    # The group an example opens and its retry line, in whichever step
+    # runs it. Inside a step header these are the script itself, skipped
+    # above.
+    if (index(line, "##[group]cargo run --example ") > 0) {
+      words = split(substr(line, index(line, "--example ") + 10), w, " ")
+      if (words > 0) example_runs[w[1]]++
+      next
+    }
+    words = split(line, w, " ")
+    if (w[1] == "EXAMPLE_RETRIED" && words >= 3 && w[3] ~ /^[0-9]+$/) {
+      example_flaky[w[2]]++
+      example_tries[w[2]] += w[3]
+      next
+    }
+
     if (header_seen && !retried_step) next
 
     # One nextest run starts each section; flakes are counted per run.
     if (line ~ /^ *Starting [0-9]+ tests? across /) { run++ }
 
-    words = split(line, w, " ")
     if (words < 4) next
 
     if (w[1] == "Summary") {
@@ -99,6 +124,18 @@ command -v jq >/dev/null 2>&1 || {
       }
       next
     }
+
+    # A status line, `STATUS [ 0.011s] (2/4) crate::binary test`: its
+    # timing word is the second to fourth (`FLAKY 2/3 [`, `TRY 2 PASS [`).
+    # Any status at all means the test ran in this run.
+    timed = 0
+    for (i = 2; i <= 4; i++) if (w[i] ~ /^\[/) timed = 1
+    if (!timed || w[1] !~ /^[A-Z]+$/) next
+    binary = w[words - 1]
+    test = w[words]
+    if (index(binary, "::") > 0) sub(/^[^:]*::/, "", binary)
+    else binary = "lib"
+    ran[run SUBSEP binary SUBSEP test] = 1
 
     # `FLAKY 2/3 [ 0.011s] (2/4) crate::binary test` and
     # `TRY 2 PASS [ 0.011s] (2/4) crate::binary test`.
@@ -111,10 +148,6 @@ command -v jq >/dev/null 2>&1 || {
     } else {
       next
     }
-    binary = w[words - 1]
-    test = w[words]
-    if (index(binary, "::") > 0) sub(/^[^:]*::/, "", binary)
-    else binary = "lib"
     key = run SUBSEP binary SUBSEP test
     if (!(key in failed) || tries > failed[key]) failed[key] = tries
   }
@@ -123,10 +156,28 @@ command -v jq >/dev/null 2>&1 || {
     for (key in failed) {
       split(key, k, SUBSEP)
       printf "flaky\t%s\t%s\t%d\n", k[2], k[3], failed[key]
+      flaky_test[k[2] SUBSEP k[3]] = 1
+    }
+    # The runs each flaky test ran in, for its own share.
+    for (key in ran) {
+      split(key, k, SUBSEP)
+      if ((k[2] SUBSEP k[3]) in flaky_test) runs_of[k[2] SUBSEP k[3]]++
+    }
+    for (key in runs_of) {
+      split(key, k, SUBSEP)
+      printf "ran\t%s\t%s\t%d\n", k[1], k[2], runs_of[key]
+    }
+    for (name in example_runs) printf "example_run\t%s\t%d\n", name, example_runs[name]
+    for (name in example_flaky) {
+      printf "example_flaky\t%s\t%d\t%d\n", name, example_flaky[name], example_tries[name]
     }
   }
 ' "$@" | jq -R -s '
   split("\n") | map(select(length > 0) | split("\t")) as $rows
+  | (reduce ($rows[] | select(.[0] == "ran")) as $r
+      ({}; .[$r[1] + "\t" + $r[2]] = ($r[3] | tonumber))) as $runs
+  | (reduce ($rows[] | select(.[0] == "example_run")) as $r
+      ({}; .[$r[1]] = ($r[2] | tonumber))) as $example_runs
   | {
       tests_run: ([$rows[] | select(.[0] == "run") | .[1] | tonumber] | add // 0),
       flaky: ([$rows[] | select(.[0] == "flaky")] | length),
@@ -137,7 +188,20 @@ command -v jq >/dev/null 2>&1 || {
             binary: .[0][1],
             name: .[0][2],
             flaky: length,
-            failed_tries: (map(.[3] | tonumber) | add)
+            failed_tries: (map(.[3] | tonumber) | add),
+            runs: ([$runs[.[0][1] + "\t" + .[0][2]] // 0, length] | max)
+          })
+        | sort_by(-.flaky, .name)
+      ),
+      examples_run: ([$example_runs[]] | add // 0),
+      examples_retried: ([$rows[] | select(.[0] == "example_flaky") | .[2] | tonumber] | add // 0),
+      examples: (
+        [$rows[] | select(.[0] == "example_flaky")]
+        | map({
+            name: .[1],
+            flaky: (.[2] | tonumber),
+            failed_tries: (.[3] | tonumber),
+            runs: ([$example_runs[.[1]] // 0, (.[2] | tonumber)] | max)
           })
         | sort_by(-.flaky, .name)
       )

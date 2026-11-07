@@ -21,9 +21,42 @@ fn poll_options_fall_back_to_the_given_defaults() {
     assert_eq!(only_interval.timeout_or(timeout), timeout);
 }
 
+#[test]
+fn poll_interval_is_raised_to_the_minimum() {
+    let min = PollOptions::MIN_POLL_INTERVAL;
+    assert_eq!(min, Duration::from_millis(10));
+    let interval = |set: Duration| {
+        PollOptions::new()
+            .with_poll_interval(set)
+            .poll_interval_or(Duration::from_secs(2))
+    };
+    assert_eq!(interval(Duration::ZERO), min);
+    assert_eq!(interval(Duration::from_millis(1)), min);
+    assert_eq!(interval(min), min);
+    assert_eq!(
+        interval(Duration::from_millis(11)),
+        Duration::from_millis(11)
+    );
+    // A default under the minimum is raised too.
+    assert_eq!(PollOptions::new().poll_interval_or(Duration::ZERO), min);
+}
+
 // =============================================================================
 // PollOptions::wait on the paused clock
 // =============================================================================
+
+/// A zero interval used to poll again the moment a status read answered:
+/// back to back until the deadline on a real server, and on this paused
+/// clock, with reads that answer at once, without time ever passing.
+#[tokio::test(start_paused = true)]
+async fn wait_with_a_zero_interval_polls_at_the_minimum() {
+    let poll = PollOptions::new().with_poll_interval(Duration::ZERO);
+    let (result, reads) =
+        scripted_wait(poll, vec![Read::Pending, Read::Pending, Read::Ready]).await;
+    assert_eq!(result.unwrap(), "ready");
+    let min = PollOptions::MIN_POLL_INTERVAL;
+    assert_eq!(reads, [Duration::ZERO, min, min * 2]);
+}
 
 /// One scripted status read: a pending state, ready, or an error.
 enum Read {
