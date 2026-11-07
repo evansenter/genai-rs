@@ -1062,7 +1062,7 @@ mod structured_output {
     use genai_rs::StreamChunk;
 
     fn parse_json(response: &InteractionResponse) -> serde_json::Value {
-        assert_eq!(response.status, InteractionStatus::Completed);
+        assert_completed(response, "the structured output request");
         let text = response.as_text().expect("Should have text response");
         serde_json::from_str(text).unwrap_or_else(|e| panic!("not valid JSON ({e}): {text}"))
     }
@@ -1183,9 +1183,11 @@ mod structured_output {
     /// `high`, but in 9 of 219 at `low`, and in 3 of 61 single requests at
     /// `low` spread over the day (docs/INTERACTIONS_API_GAP.md, "url_context
     /// loops under a response schema"). So the request sets `low` and is
-    /// sent once. A loop fails the test with the API's own error, which
-    /// names the URL context calls, and the retry nextest gives it is
-    /// counted by the flakiness report.
+    /// sent once: `retry_request!` retries transport errors, but never
+    /// `too_many_tool_calls`, whatever its message says. A loop fails the
+    /// test with the API's own error, which names the URL context calls (as
+    /// a 400, or in `errors` should it arrive as `status: failed`), and the
+    /// retry nextest gives it is counted by the flakiness report.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_with_url_context() {
