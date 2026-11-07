@@ -267,7 +267,8 @@ impl TranscriptionMode {
         }
     }
 
-    /// Mutable access to [`extra`](Self::extra).
+    /// Mutable access to [`extra`](Self::extra). An entry named after a
+    /// modeled field, or `type`, is never written.
     pub fn extra_mut(&mut self) -> Option<&mut serde_json::Map<String, serde_json::Value>> {
         match self {
             Self::Smart { extra, .. } | Self::Verbatim { extra, .. } => Some(extra),

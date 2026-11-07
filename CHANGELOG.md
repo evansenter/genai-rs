@@ -905,9 +905,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all for error messages. Output with no newlines used to grow one buffer
   without limit.
 - `triggers::on_file_change` skips a poll whose snapshot failed (the
-  snapshot task panicked, or the runtime was shutting down) and logs a
-  warning. It used to take the failure for an empty tree, reporting every
-  watched file deleted, then added back on the next poll.
+  snapshot task panicked, the runtime was shutting down, or the watched
+  path exists but could not be read, such as a transient I/O error on a
+  network mount) and logs a warning. It used to take the failure for an
+  empty tree, reporting every watched file deleted, then added back on the
+  next poll. A watched path that no longer exists still reads as empty.
 - `document_from_file()` sends `.txt` and `.md` files as text content
   (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
   `text/markdown` document content, which the API rejects with a 400 since
