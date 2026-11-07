@@ -22,6 +22,12 @@
 //! (2026-11-06). A file that must stay over would need an entry here with
 //! the reason.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 use std::path::{Path, PathBuf};
 
 /// Which bar a file is held to.

@@ -7,6 +7,12 @@
 //!
 //! Run with: `cargo run --example files_api`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use futures_util::TryStreamExt;
 use genai_rs::{Client, Content, FileMetadata, FileUpload, PollOptions};
 use std::env;

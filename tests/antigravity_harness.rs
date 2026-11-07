@@ -17,6 +17,11 @@
 //! ```
 
 #![cfg(feature = "antigravity")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
 
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;

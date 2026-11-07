@@ -33,6 +33,12 @@
 //! RUSTFLAGS='--cfg genai_strict_unknown' cargo test --test strict_unknown_tests
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 use genai_rs::{Content, Step};
 use serde_json::json;
 

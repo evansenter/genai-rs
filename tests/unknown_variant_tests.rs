@@ -13,6 +13,11 @@
 //! - Strict (should skip): `RUSTFLAGS='--cfg genai_strict_unknown' cargo test --test unknown_variant_tests`
 
 #![cfg(not(genai_strict_unknown))]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
 
 use genai_rs::{
     Annotation, Content, EnvironmentStatus, FunctionCallingMode, HarmCategory, InteractionStatus,

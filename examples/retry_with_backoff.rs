@@ -8,6 +8,12 @@
 //!
 //! Run with: `cargo run --example retry_with_backoff`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use backon::{ExponentialBuilder, Retryable};
 use genai_rs::{Client, GenaiError, InteractionRequest};
 use std::env;

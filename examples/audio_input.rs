@@ -14,6 +14,12 @@
 //!
 //! Run with: `cargo run --example audio_input`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{Annotation, Client, Content, TranscriptionConfig, TranscriptionMode};
 use std::env;
 use std::error::Error;

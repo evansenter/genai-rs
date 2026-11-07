@@ -14,6 +14,12 @@
 //! Tests whose replies carry unknown enum values are compiled out under
 //! `genai_strict_unknown`, which rejects those values by design.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use std::future::Future;

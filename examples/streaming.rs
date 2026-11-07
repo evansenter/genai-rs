@@ -11,6 +11,12 @@
 //!
 //! Run with: `cargo run --example streaming`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use futures_util::StreamExt;
 use genai_rs::{Client, StreamChunk};
 use std::env;

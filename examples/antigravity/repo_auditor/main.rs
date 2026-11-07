@@ -95,6 +95,12 @@
 //! Usage: prompt=Some(125240) total=Some(134775)
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 mod report;
 
 use futures_util::StreamExt;

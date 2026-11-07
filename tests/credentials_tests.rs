@@ -5,6 +5,12 @@
 //! cargo test --test credentials_tests -- --include-ignored --nocapture
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{get_client, poll_until_done, test_resource_name};

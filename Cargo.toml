@@ -40,6 +40,15 @@ redundant_closure_for_method_calls = "warn"
 must_use_candidate = "warn"
 # A public function returning `Result` says when it fails, under `# Errors`.
 missing_errors_doc = "warn"
+# A panic in library code is a reviewed decision, as `unsafe` is: an
+# invariant `unwrap`/`expect` carries `#[expect(clippy::..., reason = "...")]`
+# naming why it cannot fail, and anything else returns an error. Tests may
+# unwrap freely (`clippy.toml`, and an allow at the top of each test and
+# example crate).
+unwrap_used = "warn"
+expect_used = "warn"
+# Every `unsafe` block says why it is sound, in a `// SAFETY:` comment.
+undocumented_unsafe_blocks = "warn"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

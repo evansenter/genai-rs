@@ -187,9 +187,10 @@ impl LoudWireGuard {
 #[allow(unsafe_code)] // restores LOUD_WIRE; see `LoudWireGuard::set`
 impl Drop for LoudWireGuard {
     fn drop(&mut self) {
-        // SAFETY: as above — still holding the lock at drop time.
         match &self.prior {
+            // SAFETY: as above — still holding the lock at drop time.
             Some(value) => unsafe { std::env::set_var("LOUD_WIRE", value) },
+            // SAFETY: as above — still holding the lock at drop time.
             None => unsafe { std::env::remove_var("LOUD_WIRE") },
         }
     }

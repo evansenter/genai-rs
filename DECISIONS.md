@@ -1654,3 +1654,51 @@ wait, and it is the shortest interval the crate's paused-clock tests use.
 floor is public, so a caller can read it. It stops a zero interval, not
 fast polling in general; an interval just over 10 ms still polls about
 once per round trip.
+
+---
+
+## D-NEXT-WP18 — Library code panics only where it says why; tests and examples are exempt per crate (2026-11-07)
+
+**Context.** #504 (C7, C9): nothing stopped a new `unwrap()` or `expect()`
+in library code, or an `unsafe` block without a SAFETY comment, and a
+poisoned Antigravity stderr-ring mutex panicked every later stderr line and
+error message. Two matches on enums the crate defines ended in an
+`#[allow(unreachable_patterns)]` wildcard, which hides a variant a change
+adds: inside the crate `#[non_exhaustive]` does not apply, so the wildcard
+was never needed.
+
+**Decision.**
+
+- `clippy::unwrap_used`, `clippy::expect_used` and
+  `clippy::undocumented_unsafe_blocks` are on at warn in
+  `[workspace.lints]`, so `make clippy` and CI deny them. A panic that
+  cannot happen carries `#[expect(clippy::expect_used, reason = "...")]`
+  naming the invariant, on the narrowest item that holds it; `expect` and
+  not `allow`, so the attribute fails once the call is gone. Where the
+  invariant can be put in the types instead, it is (a `match` on
+  `Value::Object` in place of `as_object_mut().expect(..)`).
+- A poisoned stderr ring is recovered with `PoisonError::into_inner`: its
+  lines stay whole when a panic interrupts a holder.
+- Tests are exempt. `clippy.toml`'s `allow-unwrap-in-tests` and
+  `allow-expect-in-tests` cover `#[test]` functions and `#[cfg(test)]`
+  modules; every integration-test crate root and every example crate root
+  also carries `#![allow(clippy::unwrap_used, clippy::expect_used, reason
+  = ...)]`, because clippy's test exemption does not reach an integration
+  test's helpers (`tests/common/`) or an example's `main`. An example may
+  stop on a missing key or a poisoned lock; the library may not. The
+  fuzz entry points (`src/fuzzing.rs`) report a failed check by panicking,
+  as a test does, and say so at the top of the module.
+- `unreachable_patterns` is `forbid`, not left at its default `warn`: a
+  wildcard arm after every variant of an in-crate enum is an error, and an
+  `#[allow(unreachable_patterns)]` to bring one back fails to compile
+  (`E0453`). A wildcard on another crate's `#[non_exhaustive]` enum is
+  reachable, so it is unaffected.
+
+Rejected: rewriting the examples' `expect`s into `?`. The one most of them
+have reads `GEMINI_API_KEY`, where a panic naming the variable is the
+clearest failure an example can give, and the Antigravity examples lock
+mutexes inside hook closures that cannot return an error.
+
+**Consequences.** A new test or example crate needs the crate-level allow
+if it unwraps outside a `#[test]` function. A new invariant panic in the
+library needs its reason written down.

@@ -6,6 +6,12 @@
 //! cargo nextest run --test temp_file_tests --run-ignored all
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use base64::Engine;

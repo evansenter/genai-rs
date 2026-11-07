@@ -4,6 +4,12 @@
 //! compiled into every integration test crate and would run this scan
 //! a dozen times per suite.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 // =============================================================================
 
 /// Fails if a Gemini model id is hardcoded outside the crate's model

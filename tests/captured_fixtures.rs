@@ -17,6 +17,12 @@
 //! were checked), so the "with steps" case stays hand-written
 //! (`http_mock_tests.rs`); the accumulator rebuilds the steps here.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use std::collections::BTreeSet;

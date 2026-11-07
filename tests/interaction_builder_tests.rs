@@ -10,6 +10,12 @@
 //! - **edge_cases**: Overwrites, ordering, and boundary conditions
 //! - **multimodal**: add_* methods for images, audio, video, documents
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 mod basic {
     use genai_rs::{

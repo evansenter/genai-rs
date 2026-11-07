@@ -209,11 +209,13 @@ impl From<DeepResearchConfig> for AgentConfig {
             map.insert("thinking_summaries".into(), ts.to_agent_config_value());
         }
         if let Some(visualization) = config.visualization {
-            map.insert(
-                "visualization".into(),
-                serde_json::to_value(&visualization)
-                    .expect("Visualization serialization is infallible"),
-            );
+            #[expect(
+                clippy::expect_used,
+                reason = "a string enum serializes to a JSON string, which cannot fail"
+            )]
+            let value = serde_json::to_value(&visualization)
+                .expect("Visualization serialization is infallible");
+            map.insert("visualization".into(), value);
         }
         if let Some(planning) = config.collaborative_planning {
             map.insert(
@@ -541,7 +543,11 @@ impl CodeMenderConfig {
 
 impl From<CodeMenderConfig> for AgentConfig {
     fn from(config: CodeMenderConfig) -> Self {
-        // The request types hold only strings, lists and string enums.
+        #[expect(
+            clippy::expect_used,
+            reason = "the request types hold only strings, lists and string enums, \
+                      which serialize without fail"
+        )]
         let to_value = |value: serde_json::Result<serde_json::Value>| {
             value.expect("CodeMender request serialization is infallible")
         };

@@ -7,6 +7,12 @@
 //! deltas. A field the API adds must come back out unchanged, as
 //! `signature` would have, had it been preserved before it was modeled.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 use genai_rs::{Content, Step};
 use serde_json::{Value, json};
 

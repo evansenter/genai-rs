@@ -9,6 +9,12 @@
 //! cargo test --test error_handling_tests -- --nocapture
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{is_transient_error, retry_on_transient};

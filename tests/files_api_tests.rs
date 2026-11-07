@@ -6,6 +6,12 @@
 //! cargo nextest run --test files_api_tests --run-ignored all
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 use futures_util::StreamExt;
 use genai_rs::wire::{WireEvent, WireInspector};

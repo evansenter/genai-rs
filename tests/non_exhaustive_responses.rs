@@ -41,6 +41,12 @@
 //! JSON-RPC types are sent as well as received and are built with
 //! `..Default::default()`, so the request/response split does not apply.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use syn::punctuated::Punctuated;

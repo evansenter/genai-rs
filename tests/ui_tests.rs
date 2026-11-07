@@ -1,6 +1,12 @@
 //! Compile-time tests (trybuild): what `#[tool]` and the response types
 //! must reject, and what they must accept without extra imports.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 #[test]
 fn ui() {
     let t = trybuild::TestCases::new();

@@ -4,6 +4,12 @@
 //! cargo test --test environment_files_tests -- --include-ignored --nocapture
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{get_client, test_source_content};

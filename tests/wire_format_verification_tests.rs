@@ -10,6 +10,12 @@
 //!
 //! When adding new enums or updating wire formats, add corresponding tests here.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 use genai_rs::{
     Annotation, CodeExecutionLanguage, Content, FunctionCallingMode, InteractionStatus, Resolution,
     SearchType, ServiceTier, Step, ThinkingLevel, ThinkingSummaries, ToolChoice, VideoProcessing,

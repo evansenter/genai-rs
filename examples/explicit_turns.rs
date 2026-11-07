@@ -14,6 +14,12 @@
 //!
 //! Run with: `cargo run --example explicit_turns`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{Client, Step, ThinkingLevel};
 use std::env;
 use std::error::Error;

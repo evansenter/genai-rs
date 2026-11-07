@@ -8,6 +8,12 @@
 //!
 //! Run with: `cargo run --example google_search`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::Client;
 use std::env;
 use std::error::Error;

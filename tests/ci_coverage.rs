@@ -23,6 +23,12 @@
 //! Windows leg, the flakiness report reads every retry it claims to count,
 //! and Code Coverage writes its summary on every run.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod ci_workflows;
 mod live_verbs;
 

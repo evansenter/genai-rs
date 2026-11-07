@@ -3,6 +3,11 @@
 
 #![allow(dead_code)] // Functions are used by the macro, not called directly
 #![allow(clippy::needless_pass_by_value)] // Macro needs owned types for schema generation
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
 
 use genai_rs::CallableFunction;
 use genai_rs_macros::tool;

@@ -58,6 +58,12 @@
 //! Hook order: session_start, pre_turn, stop, stop, post_turn, session_end
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::antigravity::{
     AntigravityAgent, BuiltinTool, Capabilities, StopDecision, TurnDecision, policy,
 };

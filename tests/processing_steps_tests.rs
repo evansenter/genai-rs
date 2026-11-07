@@ -9,6 +9,12 @@
 //! tests retried each request (#473). It answered every one of 16 requests on
 //! 2026-11-01, 10 of them concurrent, so the tests send each request once.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{TINY_MP4_BASE64, extended_test_timeout, get_client, with_timeout};

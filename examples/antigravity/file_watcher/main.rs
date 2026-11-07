@@ -45,6 +45,12 @@
 //! Agent: request-1042.txt asks for 3 widgets shipped to Leeds by Friday.
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::antigravity::triggers::{self, FileChangeKind};
 use genai_rs::antigravity::{AntigravityAgent, Capabilities};
 use std::sync::{Arc, Mutex};

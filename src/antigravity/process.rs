@@ -12,7 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
 
 use super::handshake::{InputConfig, OutputConfig};
-use super::harness_stderr::{StderrRing, drain_stderr};
+use super::harness_stderr::{StderrRing, drain_stderr, lock_ring};
 use super::session::WireContext;
 use super::{AntigravityError, SUPPORTED_HARNESS_VERSION};
 use crate::wire::WireEvent;
@@ -364,9 +364,15 @@ impl HarnessProcess {
             pid: child.id(),
         });
 
-        let mut stdin = child.stdin.take().expect("stdin was piped");
-        let mut stdout = child.stdout.take().expect("stdout was piped");
-        let stderr = child.stderr.take().expect("stderr was piped");
+        #[expect(
+            clippy::expect_used,
+            reason = "harness_command pipes all three, and nothing has taken them yet"
+        )]
+        let (mut stdin, mut stdout, stderr) = (
+            child.stdin.take().expect("stdin was piped"),
+            child.stdout.take().expect("stdout was piped"),
+            child.stderr.take().expect("stderr was piped"),
+        );
 
         // Drain stderr on a background task from the very start: the OS pipe
         // buffer (typically 64 KiB) would otherwise fill and deadlock the
@@ -436,7 +442,7 @@ impl HarnessProcess {
     /// harness wrote just before failing.
     pub(crate) async fn stderr_tail(&self) -> String {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        self.stderr_lines.lock().expect("stderr ring lock").tail()
+        lock_ring(&self.stderr_lines).tail()
     }
 
     /// The `google-antigravity` version the binary was installed from, when

@@ -130,3 +130,25 @@ fn test_stderr_ring_is_bounded_by_bytes() {
     ring.push("o".repeat(STDERR_RING_MAX_BYTES + 1));
     assert_eq!(ring.lines.len(), 1);
 }
+
+#[test]
+fn test_a_poisoned_ring_still_records_and_reads() {
+    let ring = Arc::new(Mutex::new(StderrRing::default()));
+    lock_ring(&ring).push("before".to_string());
+    let poisoner = Arc::clone(&ring);
+    let panicked = std::thread::spawn(move || {
+        let _guard = poisoner.lock().unwrap();
+        panic!("poison the ring");
+    })
+    .join();
+    assert!(panicked.is_err());
+    assert!(ring.is_poisoned());
+
+    record_stderr_line(
+        b"after",
+        LineEnd::Newline,
+        &ring,
+        &WireContext::new(Vec::new()),
+    );
+    assert_eq!(lock_ring(&ring).tail(), "before\nafter");
+}

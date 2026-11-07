@@ -63,6 +63,12 @@
 //! ✓ The turn resolved normally — cancellation is not an error.
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use futures_util::StreamExt;
 use genai_rs::antigravity::{AgentEvent, AntigravityAgent, Capabilities};
 use std::time::{Duration, Instant};

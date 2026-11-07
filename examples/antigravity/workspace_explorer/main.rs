@@ -65,6 +65,12 @@
 //! hook. Seeding `secrets.env` and gating on content means the refusal is
 //! there when it is needed rather than relied upon for the demo.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
 use genai_rs::antigravity::{
