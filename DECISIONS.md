@@ -1432,6 +1432,12 @@ itself, since a refresh feeds the response-side spec pass. A new
 legacy class appears in `bindings.json` as soon as a signature names it,
 so `every_binding_class_is_mapped` lists it until it is mapped.
 
+**Amended 2026-11-07 (#504's WP21).** #511 closed once both spec URLs
+served again and the snapshots were refreshed from them. The watch
+comments only on an open issue, so the sweep's step now probes the URLs
+and logs what each serves. Nothing yet compares a served spec with its
+committed snapshot; that watch is left to the owner.
+
 ---
 
 ## D-041 — The next turn halts an abandoned Antigravity turn; dropping it sends nothing (2026-11-07)

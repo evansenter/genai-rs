@@ -150,7 +150,7 @@ expect_rc "not an issue number" 2
 run 511 "$WORK/missing.json"
 expect_rc "missing snapshot" 2
 
-# The sweep runs it on both committed snapshots, for #511.
+# The sweep runs it on both committed snapshots.
 grep -q 'watch_spec_urls.sh "$SPEC_URL_ISSUE"' "$WORKFLOW" ||
     fail "api-surface-sweep.yml does not run watch_spec_urls.sh"
 for spec in openapi-v1beta.json openapi-v1.json; do
