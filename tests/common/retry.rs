@@ -23,9 +23,13 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 /// Known model-side flakes worth retrying: Spanner UTF-8 errors (#60), and
 /// 400s that pass on re-run: "invalid json syntax" from structured output,
 /// the bare "there was a problem processing your request" burst, and any 400
-/// that tells the caller to retry (`malformed_tool_call`). `too_many_tool_calls`
-/// said so on 2026-11-01; by 2026-11-07 it read "The request reached the
-/// tool-use step limit ...", which is not retried.
+/// that tells the caller to retry (`malformed_tool_call`).
+///
+/// `too_many_tool_calls` is never retried, whatever its message says: it is
+/// the url_context loop under a response schema, a known server bug, and a
+/// live test does not retry a known flake inside itself (D-NEXT-WP23). Its
+/// message asked to be retried on 2026-11-01 and did not on 2026-11-07, so
+/// the match is on the code the crate puts at the front of the message.
 /// Transport transience (network, timeouts, 429, 5xx) is
 /// [`GenaiError::is_retryable`]'s job.
 #[allow(dead_code)]
@@ -37,6 +41,11 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
             ..
         } => {
             let lower = message.to_lowercase();
+            // A tool-call loop is a known server bug, not a transient one;
+            // see the doc comment.
+            if lower.contains("too_many_tool_calls") {
+                return false;
+            }
             // Spanner UTF-8 errors are transient backend issues
             // See: https://github.com/evansenter/genai-rs/issues/60
             (lower.contains("spanner") && lower.contains("utf-8"))

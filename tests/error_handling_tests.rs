@@ -298,6 +298,40 @@ fn test_is_transient_error_message_pinned_400_arms() {
     );
 }
 
+#[test]
+fn test_is_transient_error_never_retries_a_tool_call_loop() {
+    // The API's own advice to retry a broken tool call is honored...
+    let malformed = GenaiError::Api {
+        status_code: 400,
+        message: "malformed_tool_call: Model generated invalid JSON syntax and the output \
+                  could not be parsed. Please retry the request."
+            .to_string(),
+        request_id: None,
+        retry_after: None,
+    };
+    assert!(is_transient_error(&malformed));
+
+    // ...but not on a tool-call loop, a known server bug (D-NEXT-WP23), in
+    // either wording the API has used for it.
+    for wording in [
+        "Model generated too many tool calls. Please retry the request. If the issue \
+         persists, include this error message in the report.",
+        "The request reached the tool-use step limit for a single request before the \
+         model finished its answer. The model made 60 URL context calls.",
+    ] {
+        let looped = GenaiError::Api {
+            status_code: 400,
+            message: format!("too_many_tool_calls: {wording}"),
+            request_id: None,
+            retry_after: None,
+        };
+        assert!(
+            !is_transient_error(&looped),
+            "a tool-call loop must fail, not retry: {looped:?}"
+        );
+    }
+}
+
 // =============================================================================
 // Retry Logic Tests
 // =============================================================================
