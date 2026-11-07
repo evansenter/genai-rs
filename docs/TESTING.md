@@ -447,8 +447,8 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 
 | File | What it is | Written by |
 |------|------------|------------|
-| `bindings.json` | google-genai's generated classes, every type reference resolved, plus the Files, File Search Store and Document classes from its `types.py` (camelCase on the wire), and its endpoints. The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date is in the file, and the published URL no longer serves them (see the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL and comments on #511 once it serves the spec again (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -481,6 +481,13 @@ checks on it:
   finds the verbs that send a body (their implementation reaches a POST,
   PATCH or PUT request; the parsing is in `tests/live_verbs/`) and fails
   when one is not called there or listed in `NO_JSON_BODY`.
+- **Query strings on the wire** (`tests/request_wire_oracle.rs`,
+  `every_query_key_a_verb_sends_is_a_binding_query_parameter`). Every verb
+  of every resource handle runs against the stub with every option set
+  (`every_verb_is_called_by_the_query_test` fails on one that is not), and
+  each request is matched to its endpoint in `bindings.json`. A key the
+  endpoint does not take fails (a misspelling, a key the API dropped), and
+  so does a binding query parameter no verb sends (one a release adds).
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each
@@ -516,8 +523,10 @@ checks on it:
   request case or response target, or listed in `UNMAPPED` with its reason.
   `tests/ci_coverage.rs` (`every_api_endpoint_maps_to_a_handle_verb`) maps
   every endpoint in the bindings and the specs to the handle verbs that call
-  it. A baseline bump that adds a resource, a body or an endpoint fails one
-  of them.
+  it, and `api_revision_copies_match_the_bindings` holds the crate's
+  `API_REVISION` and every copy of it to the revision the bindings pin. A
+  baseline bump that adds a resource, a body or an endpoint, or moves the
+  revision, fails one of them.
 - **Live coverage per handle** (`tests/ci_coverage.rs`,
   `every_resource_verb_is_called_live_per_handle`; the parsing is in
   `tests/live_verbs/`). Every public verb on every resource handle must be
@@ -543,6 +552,7 @@ reason to the list that fits:
 | `UNMAPPED` (`mod.rs`) | A binding class no table reaches: SDK plumbing, an empty body, a body checked at the wire, or a request not modeled yet |
 | `ENDPOINTS_WITHOUT_A_VERB`, `EXEMPT` (`tests/ci_coverage.rs`) | An endpoint no handle verb calls; a verb no live test can call |
 | `NO_JSON_BODY` (`tests/request_wire_oracle.rs`) | A verb whose POST, PATCH or PUT carries no JSON body (an upload's bytes) |
+| `QUERY_ALLOWED`, `NOT_SENT` (`tests/request_wire_oracle.rs`, by `METHOD /path?key`) | A query key the crate sends that its endpoint does not list (the `alt` system parameter); a binding query parameter no verb sends |
 
 Date every live fact in a reason (D-010). An entry that matches nothing
 fails the test, so the lists only shrink when the crate catches up. A
@@ -574,8 +584,8 @@ release, so a dump-script change needs a refresh too (run the script
 without `--version`), and the file is never edited by hand.
 `refresh_api_snapshot.sh --check` checks it without writing. Its offline
 half fails when the snapshot's `sdk_version` is not exactly the baseline
-(a bump made without the script) or the snapshot has no classes or
-endpoints; `--check --offline` stops there, and `make test-scripts` runs it
+(a bump made without the script) or the snapshot has no classes,
+endpoints or `api_revision`; `--check --offline` stops there, and `make test-scripts` runs it
 on every push. The full check then compares the file with a fresh dump,
 which catches a hand edit; it runs as the sweep's last step every day, and
 in the `shell-scripts` job on a PR that touches the dump script, the

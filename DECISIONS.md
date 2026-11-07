@@ -1244,3 +1244,43 @@ fixtures every example copy is checked against.
 **Consequences.** The example and the live test make one TTS request
 before transcribing. A silent clip still serves the acceptance tests, which
 read the stored config back rather than the transcript.
+
+## D-NEXT-WP16 — The bindings snapshot carries query parameters, the legacy endpoints and the Api-Revision (2026-11-07)
+
+**Context.** `bindings.json` recorded each `_gaos` endpoint's method and
+path only, so a query key the crate misspelled, or one a release added,
+was invisible to the sweep and the oracle. The Files, File Search Store,
+Document and Operation surface (google-genai's hand-written modules) had
+no endpoints in it, and its classes came from a hand-picked
+`LEGACY_ROOTS` that left out `Operation`, so a new verb there went
+unseen. The `Api-Revision` the crate sends was a hand-kept constant with
+two script copies. The published OpenAPI URLs stopped serving around
+2026-11-03, and nothing watched them (#511).
+
+**Decision.** `dump_bindings_schema.py` records `endpoints` as an object,
+each `METHOD /path` with its `query` parameters (the `_gaos/models/`
+request class's `QueryParamMetadata` fields, or the `_query` keys the
+legacy converters set), and `api_revision` (the bindings'
+`*API_REVISION` constant). The legacy modules' endpoints come from the
+methods that reach the Gemini Developer API; a full resource name in a
+path (`{name}`, `{parent}`) is spelled out from the class's `_list` path
+(`fileSearchStores/{}/documents/{}`), and one it cannot place keeps its
+name (`{operationName}`), since `{}` would collide. The legacy classes
+are the ones those methods' signatures name (return type, `config`,
+`*OrDict` arguments, a TypeVar's bound), with inherited fields, without
+the fields a converter routes into the URL or query string, and without
+a root that has no wire field left. `tests/request_wire_oracle.rs` calls
+every handle verb with every option and checks each query key against
+its endpoint, with `QUERY_ALLOWED` and `NOT_SENT` holding the reasoned
+exceptions; `tests/ci_coverage.rs` maps the legacy endpoints and holds
+every `API_REVISION` copy to the bindings'. The sweep probes the spec
+URLs daily and comments on #511 once per URL that serves again.
+
+**Consequences.** Conservative choices, left for the owner: the crate
+keeps sending `page_size`/`page_token` to the store and document
+listings, which take them as well as the bindings' camelCase pair (live
+2026-09-27), so both spellings are reasoned entries rather than a wire
+change; and the watch comments rather than refreshing the spec snapshot
+itself, since a refresh feeds the response-side spec pass. A new
+legacy class appears in `bindings.json` as soon as a signature names it,
+so `every_binding_class_is_mapped` lists it until it is mapped.

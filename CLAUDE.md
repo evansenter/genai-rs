@@ -39,8 +39,9 @@ harness version, with the dated record in
 `.github/last-swept-sdk-version`) and the spec as a snapshot, and the
 coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
 checks the crate against it offline: request keys against the binding
-classes, every response field for an empty `extra`, and every class
-reached or listed with a reason. `tests/ci_coverage.rs` maps every endpoint
+classes, query keys against each endpoint's parameters, every response
+field for an empty `extra`, and every class reached or listed with a
+reason. `tests/ci_coverage.rs` maps every endpoint
 to the handle verbs that call it and requires a live test of each verb on
 its handle. `tests/fixtures/api_surface/bindings.json` is the one
 committed dump of the bindings, and only
