@@ -2,11 +2,13 @@
 # Exercises `categorize_failures.sh` against `gh run view --log-failed`
 # output, with `gh` stubbed (#504).
 #
-# Two miscounts this pins: a test nextest retried to a pass inside a job
+# Three miscounts this pins: a test nextest retried to a pass inside a job
 # that failed for another reason was counted as a failure, because its
-# failed try printed `test ... FAILED` into the log; and the Windows CRLF
+# failed try printed `test ... FAILED` into the log; the Windows CRLF
 # break, which failed on every Windows run and nowhere else, was filed as a
-# "panic" flake. The Windows fixture is trimmed from a real run of both
+# "panic" flake; and a test that failed on one Windows leg while the other
+# passed it was then called deterministic, though only the failed jobs are
+# in the log. The Windows fixture is trimmed from a real run of both
 # Windows legs (2026-11-07); the retry fixture is the counter's own.
 #
 # Each case runs under every awk on the machine (mawk on CI, BSD awk on a
@@ -25,17 +27,31 @@ FIXTURES="$HERE/fixtures"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# `gh run view <id> --log-failed` prints the log the case names.
+# `gh run view <id> --log-failed` prints the log the case names, and
+# `gh run view <id> --json jobs` its jobs (it fails when the case names
+# none, as a run whose jobs cannot be listed would).
 cat > "$WORK/gh" <<'STUB'
 #!/usr/bin/env bash
-cat "$FAKE_LOG"
+case " $* " in
+  *" --log-failed "*) cat "$FAKE_LOG" ;;
+  *" --json "*) [ -n "${FAKE_JOBS:-}" ] && cat "$FAKE_JOBS" ;;
+esac
 STUB
 chmod +x "$WORK/gh"
+
+# The jobs of the Windows fixture's run: every Cross Platform leg, and the
+# Test Suite, which is named for no OS.
+JOBS="$WORK/jobs.json"
+jq -n '{jobs: ([
+  "Cross Platform (ubuntu-latest, stable)", "Cross Platform (ubuntu-latest, beta)",
+  "Cross Platform (macos-latest, stable)", "Cross Platform (macos-latest, beta)",
+  "Cross Platform (windows-latest, stable)", "Cross Platform (windows-latest, beta)",
+  "Test Suite"] | map({name: .}))}' > "$JOBS"
 
 failures=0
 
 categorize() {
-    out=$(FAKE_LOG="$1" PATH="$WORK:$PATH" "$SCRIPT" 42)
+    out=$(FAKE_LOG="$1" FAKE_JOBS="${2-$JOBS}" PATH="$WORK:$PATH" "$SCRIPT" 42)
 }
 
 expect_json() {
@@ -83,6 +99,19 @@ for awk_impl in "${awks[@]}"; do
     sed 's/windows-latest, stable/macos-latest, stable/' "$WINDOWS" > "$WORK/two_os.log"
     categorize "$WORK/two_os.log"
     expect_json "two OSes: not deterministic" '.totals.deterministic' 0
+
+    # --- One Windows leg fails the test and the other passes it (the beta
+    #     leg is absent from the failed log): a flake, by its error text.
+    grep -F 'windows-latest, stable' "$WINDOWS" > "$WORK/one_leg.log"
+    categorize "$WORK/one_leg.log"
+    expect_json "one leg of two: not deterministic" '.totals.deterministic' 0
+    expect_json "one leg of two: by its error text" '.categories.panic' "[\"$CRLF_TEST\"]"
+
+    # --- Both legs fail, but the run's jobs cannot be listed: the other
+    #     legs are unknown, so not deterministic.
+    categorize "$WINDOWS" ""
+    expect_json "no job list: not deterministic" '.totals.deterministic' 0
+    expect_json "no job list: by its error text" '.categories.panic' "[\"$CRLF_TEST\"]"
 
     # --- A failed integration job: one test failed all three tries, one
     #     passed on its second. Only the first is a failure.

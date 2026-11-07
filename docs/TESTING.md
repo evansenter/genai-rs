@@ -344,8 +344,10 @@ Failed runs are split by event. Only main's (push, schedule, dispatch) are
 categorized; a pull request's red run is usually the change under review,
 so it is counted, not called a flake. A test counts as failed only when its
 last try failed, and one that failed every try in jobs named for one OS
-alone (`Cross Platform (windows-latest, ...)`) is labelled deterministic:
-a break on that OS, not a flake (`.github/scripts/categorize_failures.sh`).
+alone, and in every leg of that OS (`Cross Platform (windows-latest,
+stable)` and `(windows-latest, beta)`), is labelled deterministic: a break
+on that OS, not a flake (`.github/scripts/categorize_failures.sh`). A test
+that fails on one leg while the other passes it is a flake.
 No CI run stops at its first failure: `.config/nextest.toml` turns
 fail-fast off for the default profile, which every job uses.
 

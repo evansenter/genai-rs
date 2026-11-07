@@ -10,16 +10,22 @@
 # printed `test ... FAILED` into the log. Output with no nextest status
 # lines (`cargo test`) counts libtest's `test ... FAILED` lines.
 #
-# A test that failed every try, and only in jobs named for one OS
-# (`Cross Platform (windows-latest, stable)`), is `deterministic`: a break
-# on that OS, not a flake. The rest are categorized by the error text
-# around the test's name. `os` maps each deterministic test to its OS.
+# A test that failed every try, only in jobs named for one OS, and in
+# every leg of that OS in the same matrix (`Cross Platform (windows-latest,
+# stable)` and `(windows-latest, beta)`), is `deterministic`: a break on
+# that OS, not a flake. The legs come from `gh run view --json jobs`, since
+# the failed log holds only the jobs that failed: a test that fails on one
+# leg while its twin passes it is a flake, and so is one whose legs cannot
+# be listed. The rest are categorized by the error text around the test's
+# name. `os` maps each deterministic test to its OS.
 
 set -euo pipefail
 
 RUN_ID="${1:?Usage: categorize_failures.sh <run_id>}"
 
 LOGS=$(gh run view "$RUN_ID" --log-failed 2>/dev/null || echo "")
+# Every job of the run by name, the green ones included.
+JOBS=$(gh run view "$RUN_ID" --json jobs 2>/dev/null | jq -r '.jobs[].name' 2>/dev/null || true)
 
 # `job<TAB>test` for every test whose last try failed, in each job.
 FAILED=$(printf '%s\n' "$LOGS" | "${AWK:-awk}" -v esc=$'\033' '
@@ -91,12 +97,33 @@ job_os() {
   esac
 }
 
+# Whether <test> failed in every job of the run that is named for <os> and
+# shares its matrix (the name before ` (`) with a job it failed in. False
+# when the run's jobs could not be listed.
+every_leg_failed() {
+  local test_name="$1" os="$2" job name families="" legs=0
+  while IFS=$'\t' read -r job name; do
+    if [ "$name" = "$test_name" ]; then
+      families+="${job%% (*}"$'\n'
+    fi
+  done <<<"$FAILED"
+  while IFS= read -r job; do
+    [ -n "$job" ] || continue
+    [ "$(job_os "$job")" = "$os" ] || continue
+    grep -qxF -- "${job%% (*}" <<<"$families" || continue
+    legs=$((legs + 1))
+    grep -qxF -- "$job"$'\t'"$test_name" <<<"$FAILED" || return 1
+  done <<<"$JOBS"
+  [ "$legs" -gt 0 ]
+}
+
 ALL_TESTS=$(cut -f2 <<<"$FAILED" | sort -u | grep -v '^$' || true)
 
 while IFS= read -r test_name; do
   [ -z "$test_name" ] && continue
 
-  # Every job the test failed in names the same OS.
+  # Every job the test failed in names the same OS, and it failed in every
+  # leg of that OS.
   one_os=""
   while IFS=$'\t' read -r job name; do
     [ "$name" = "$test_name" ] || continue
@@ -107,7 +134,7 @@ while IFS= read -r test_name; do
     fi
     one_os="$os"
   done <<<"$FAILED"
-  if [ -n "$one_os" ] && [ "$one_os" != "-" ]; then
+  if [ -n "$one_os" ] && [ "$one_os" != "-" ] && every_leg_failed "$test_name" "$one_os"; then
     DETERMINISTIC+=("$test_name")
     OS_JSON=$(jq -c --arg t "$test_name" --arg os "$one_os" '. + {($t): $os}' <<<"$OS_JSON")
     continue

@@ -291,7 +291,7 @@ EOF
     echo "| $name | $count | $col_24h | $col_7d |"
   }
 
-  format_category_row "Deterministic (every try failed, on one OS only)" "$DETERMINISTIC" "deterministic"
+  format_category_row "Deterministic (every try failed, on every leg of one OS only)" "$DETERMINISTIC" "deterministic"
   format_category_row "API errors (503/timeout)" "$API_ERRORS" "api_errors"
   format_category_row "Rate limit (429)" "$RATE_LIMIT" "rate_limit"
   format_category_row "Assertion failures" "$ASSERTION_FAILURES" "assertion_failures"
@@ -355,7 +355,7 @@ fi
 
 if [ "$DETERMINISTIC" -gt 0 ]; then
   RECOMMENDATIONS=$((RECOMMENDATIONS + 1))
-  echo "$RECOMMENDATIONS. **Fix the deterministic failures** — $DETERMINISTIC failed every try on one OS only: a break on that platform, not a flake"
+  echo "$RECOMMENDATIONS. **Fix the deterministic failures** — $DETERMINISTIC failed every try on every leg of one OS, and nowhere else: a break on that platform, not a flake"
 fi
 
 if [ "$API_ERRORS" -gt 0 ]; then

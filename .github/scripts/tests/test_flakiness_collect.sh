@@ -80,8 +80,17 @@ jq -n --arg d1 "$(ago 1)" --arg d2 "$(ago 2)" --arg d3 "$(ago 3)" --arg old "$(a
   {databaseId: 105, conclusion: "failure", createdAt: $d3, headBranch: "main", event: "pull_request"}
 ]' > "$STUB/runs.json"
 
-# Run 101 (main push): both Windows legs break one test, every try.
+# Run 101 (main push): both Windows legs break one test, every try. Its
+# jobs list both legs, which categorizing checks before calling the break
+# deterministic.
 cp "$FIXTURES/flakiness/windows_legs_run_view.txt" "$STUB/failed-101.log"
+jq -n '{jobs: ([
+  "Cross Platform (ubuntu-latest, stable)", "Cross Platform (ubuntu-latest, beta)",
+  "Cross Platform (windows-latest, stable)", "Cross Platform (windows-latest, beta)",
+  "Test Suite"] | to_entries
+  | map({name: .value, databaseId: (2000 + .key),
+         conclusion: (if (.value | test("windows")) then "failure" else "success" end)}))}' \
+    > "$STUB/jobs-101.json"
 # Run 102 (a pull request): its own test fails. Not a flake.
 printf 'Test Suite\tRun unit tests\t2026-11-05T10:00:00.0Z         FAIL [   0.010s] (1/1) genai-rs::ci_coverage test_the_pr_broke\n' \
     > "$STUB/failed-102.log"

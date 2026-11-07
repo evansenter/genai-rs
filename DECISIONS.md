@@ -1229,8 +1229,10 @@ Only main's failed runs (push, schedule, dispatch on `main`) are
 categorized; pull-request and branch runs are counted apart. Their flakes
 that passed on a retry still count, since every finished run's retry-job
 logs are read. A test is failed when its last try failed. One that failed
-every try, only in jobs named for one OS, is labelled deterministic on that
-OS, per run.
+every try, only in jobs named for one OS, and in every leg of that OS in
+the run (both Cross Platform toolchains), is labelled deterministic on that
+OS, per run. A failure on one leg while the other passes is a flake, and so
+is one whose legs cannot be listed.
 
 The Code Coverage job writes `cargo llvm-cov report --summary-only` to the
 job summary on every run. It uploads to Codecov only when the
@@ -1242,5 +1244,5 @@ lasts. On its first run that is likely `test_google_search_multi_turn`,
 `test_structured_output_with_url_context` and the Antigravity
 `cancel_handle` test, from the grading's counts. The escalation issue stays
 open, with its streak, until each is fixed. A Windows-only timing flake
-that failed once would also be labelled deterministic; its failure count
-tells a one-off from a break.
+that failed on both Windows legs in one run would also be labelled
+deterministic; its failure count tells a one-off from a break.

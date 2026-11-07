@@ -117,7 +117,7 @@ render '{"deterministic": 2}' \
 expect_rc "deterministic alone: no flake target breached" 0
 expect "event split: main" '| Failed on main (push, schedule, dispatch) | 1 of 10 (10.0%) |'
 expect "event split: pull requests" '| Failed on pull requests and branches (not categorized) | 3 of 20 (15.0%) |'
-expect "deterministic: its row" '| Deterministic (every try failed, on one OS only) | 2 | — | — |'
+expect "deterministic: its row" '| Deterministic (every try failed, on every leg of one OS only) | 2 | — | — |'
 expect "deterministic: labelled in the table" '| `crlf_test` | 2 | 0 | deterministic on windows | mod.rs |'
 expect "deterministic: recommended" 'Fix the deterministic failures'
 refute "no examples ran: no example row" 'Examples passed on retry'
