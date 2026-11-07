@@ -377,7 +377,7 @@ async fn test_credentials_reach_sandbox_and_egress() {
                     let output: String = done
                         .code_execution_results()
                         .iter()
-                        .map(|r| r.result)
+                        .map(|r| r.result.text())
                         .collect::<Vec<_>>()
                         .join("\n");
                     let step_types: Vec<_> =

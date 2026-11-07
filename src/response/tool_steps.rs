@@ -69,7 +69,7 @@ impl InteractionResponse {
                     Some(CodeExecutionResultInfo {
                         call_id: call_id.as_str(),
                         is_error: *is_error,
-                        result: result.as_str(),
+                        result,
                     })
                 } else {
                     None
@@ -79,8 +79,10 @@ impl InteractionResponse {
     }
 
     /// Get the first successful code execution output, if any.
+    /// [`CodeExecutionOutput::text`](crate::CodeExecutionOutput::text) reads
+    /// it as text.
     #[must_use]
-    pub fn successful_code_output(&self) -> Option<&str> {
+    pub fn successful_code_output(&self) -> Option<&crate::CodeExecutionOutput> {
         self.steps.iter().find_map(|step| {
             if let Step::CodeExecutionResult {
                 is_error: false,
@@ -88,7 +90,7 @@ impl InteractionResponse {
                 ..
             } = step
             {
-                Some(result.as_str())
+                Some(result)
             } else {
                 None
             }

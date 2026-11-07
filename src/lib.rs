@@ -151,7 +151,7 @@ pub use content::{
 
 // Step types (revision 2026-05-20 response model)
 pub mod steps;
-pub use steps::{FunctionResultPayload, Step, StepDelta, StepError};
+pub use steps::{CodeExecutionOutput, FunctionResultPayload, Step, StepDelta, StepError};
 
 // Request types (includes agent configuration)
 pub mod request;

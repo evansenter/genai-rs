@@ -24,12 +24,14 @@ use crate::content::{
 };
 
 mod accumulator;
+mod code_execution;
 mod delta;
 mod delta_serde;
 mod extra;
 mod step_serde;
 
 pub(crate) use accumulator::StepAccumulator;
+pub use code_execution::CodeExecutionOutput;
 pub use delta::StepDelta;
 
 // =============================================================================
@@ -331,8 +333,9 @@ pub enum Step {
     CodeExecutionResult {
         /// The `id` of the corresponding call.
         call_id: String,
-        /// Output (stdout on success, error message on failure).
-        result: String,
+        /// Output (stdout on success, error message on failure), as a string
+        /// or as content blocks.
+        result: CodeExecutionOutput,
         /// Whether execution errored.
         is_error: bool,
         /// Opaque signature; pass through unchanged.

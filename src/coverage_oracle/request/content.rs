@@ -315,6 +315,14 @@ pub(super) fn steps() -> Vec<Step> {
             extra: Map::new(),
         });
     }
+    // The list arm of the code execution result (google-genai 3.0.0).
+    all.push(Step::CodeExecutionResult {
+        call_id: "c2".into(),
+        result: crate::CodeExecutionOutput::Contents(contents()),
+        is_error: false,
+        signature: Some("c2ln".into()),
+        extra: Map::new(),
+    });
     for step in &all {
         match step {
             Step::UserInput { .. }

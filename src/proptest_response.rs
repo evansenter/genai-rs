@@ -516,7 +516,7 @@ fn recorded_seed_cancelled_agent_response_roundtrips() {
         agent: Some("A_bD".to_string()),
         input: Some(InteractionInput::Steps(vec![Step::CodeExecutionResult {
             call_id: "EH".to_string(),
-            result: random(1),
+            result: random(1).into(),
             is_error: false,
             signature: None,
             extra: Default::default(),

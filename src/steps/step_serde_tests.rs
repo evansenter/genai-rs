@@ -430,10 +430,53 @@ fn test_deserialize_code_execution_result_step() {
         } => {
             assert_eq!(call_id, "call_123");
             assert!(!is_error);
-            assert_eq!(result, "42\n");
+            assert_eq!(result.as_text(), Some("42\n"));
             assert!(signature.is_none());
         }
         _ => panic!("Expected CodeExecutionResult variant, got {step:?}"),
+    }
+}
+
+/// The list arm of the result union (google-genai 3.0.0) reads as content
+/// blocks and is written back as the list.
+#[test]
+fn code_execution_result_step_in_the_list_form_round_trips() {
+    let wire = serde_json::json!({
+        "type": "code_execution_result",
+        "call_id": "call_7",
+        "is_error": false,
+        "result": [
+            {"type": "text", "text": "plotted\n"},
+            {"type": "image", "data": "iVBORw0KGgo=", "mime_type": "image/png"}
+        ]
+    });
+    let step: Step = serde_json::from_value(wire.clone()).expect("Should deserialize");
+    match &step {
+        Step::CodeExecutionResult { result, extra, .. } => {
+            assert_eq!(result.as_contents().map(<[_]>::len), Some(2));
+            assert_eq!(result.text(), "plotted\n");
+            assert!(extra.is_empty(), "{extra:?}");
+        }
+        _ => panic!("Expected CodeExecutionResult variant, got {step:?}"),
+    }
+    assert_eq!(serde_json::to_value(&step).unwrap(), wire);
+}
+
+/// A `result` in neither form cannot be modeled, so the step is kept whole
+/// as `Unknown` (strict mode rejects it).
+#[test]
+fn code_execution_result_in_another_shape_is_kept_as_unknown() {
+    let wire = serde_json::json!({
+        "type": "code_execution_result", "call_id": "call_8", "result": {"stdout": "x"}
+    });
+    let read = serde_json::from_value::<Step>(wire.clone());
+    #[cfg(genai_strict_unknown)]
+    assert!(read.is_err());
+    #[cfg(not(genai_strict_unknown))]
+    {
+        let step = read.expect("Should deserialize");
+        assert!(step.is_unknown(), "{step:?}");
+        assert_eq!(serde_json::to_value(&step).unwrap(), wire);
     }
 }
 
@@ -451,7 +494,7 @@ fn test_deserialize_code_execution_result_step_error() {
         } => {
             assert_eq!(call_id, "call_456");
             assert!(is_error);
-            assert!(result.contains("NameError"));
+            assert!(result.text().contains("NameError"));
         }
         _ => panic!("Expected CodeExecutionResult variant, got {step:?}"),
     }
@@ -483,7 +526,7 @@ fn test_serialize_code_execution_result_step() {
     let step = Step::CodeExecutionResult {
         call_id: "call_123".to_string(),
         is_error: false,
-        result: "42".to_string(),
+        result: "42".into(),
         signature: None,
         extra: Default::default(),
     };
@@ -502,7 +545,7 @@ fn test_serialize_code_execution_result_step_error() {
     let step = Step::CodeExecutionResult {
         call_id: "call_456".to_string(),
         is_error: true,
-        result: "NameError: x not defined".to_string(),
+        result: "NameError: x not defined".into(),
         signature: None,
         extra: Default::default(),
     };
@@ -556,7 +599,7 @@ fn test_roundtrip_built_in_tool_steps() {
     let original = Step::CodeExecutionResult {
         call_id: "call_123".to_string(),
         is_error: false,
-        result: "hello\n".to_string(),
+        result: "hello\n".into(),
         signature: None,
         extra: Default::default(),
     };
@@ -684,7 +727,7 @@ fn test_step_edge_cases_empty_values() {
     let step = Step::CodeExecutionResult {
         call_id: "call_no_output".to_string(),
         is_error: false,
-        result: String::new(),
+        result: crate::CodeExecutionOutput::default(),
         signature: None,
         extra: Default::default(),
     };
@@ -695,7 +738,7 @@ fn test_step_edge_cases_empty_values() {
             call_id, result, ..
         } => {
             assert_eq!(call_id, "call_no_output");
-            assert!(result.is_empty());
+            assert_eq!(result.as_text(), Some(""));
         }
         _ => panic!("Expected CodeExecutionResult"),
     }

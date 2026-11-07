@@ -257,7 +257,7 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `function_call` | `FunctionCall` | `{"id", "name", "arguments": {...}, "signature"?}`, **top-level** arguments. The API returns `signature` and **rejects stateless replay without it** (live 2026-07); the generated bindings omit it |
 | `function_result` | `FunctionResult` | `{"call_id", "name"?, "result": <payload>, "is_error"?: bool, "signature"?}` |
 | `code_execution_call` | `CodeExecutionCall` | `{"id", "arguments": {"language": "python", "code": "..."}, "signature"?}`, **nested** arguments |
-| `code_execution_result` | `CodeExecutionResult` | `{"call_id", "result": "...", "is_error": bool, "signature"?}` |
+| `code_execution_result` | `CodeExecutionResult` | `{"call_id", "result": "..." or [Content], "is_error": bool, "signature"?}`. `result` is `CodeExecutionOutput`; the API sends the string (see [Code execution](#code-execution)) |
 | `url_context_call` | `UrlContextCall` | `{"id", "arguments": {"urls": [...]}, "signature"?}` |
 | `url_context_result` | `UrlContextResult` | `{"call_id", "result": [UrlContextResultItem], "is_error"?, "signature"?}` |
 | `google_search_call` | `GoogleSearchCall` | `{"id", "arguments": {"queries": [...]}, "search_type"?, "signature"?}` |
@@ -857,11 +857,26 @@ verification.
 
 ### Code execution
 
-`code_execution_result` is `{"call_id", "is_error": bool, "result": "...",
+`code_execution_result` is `{"call_id", "is_error": bool, "result",
 "signature"?}`. The official docs describe an `outcome` enum
 (`OUTCOME_OK`), but the wire uses `is_error` + `result` (found with
 `LOUD_WIRE=1`, 2026-01-12, pre-revision). `call_id` is required since
 2026-05-20.
+
+`result` is a union in the google-genai 3.0.0 bindings: the output as a
+string, or a list of content blocks. `CodeExecutionOutput` reads both and
+writes each back in the form it came in. The Gemini API sent the string on
+every run on 2026-11-07 (`gemini-3.8-flash` and `gemini-3.5-flash`: a plain
+run, a matplotlib plot, and a run that wrote a CSV and saved a chart), in
+the create response, the stored `GET` and the stream alike. What a run
+makes is not in `result`: the plot arrived as an `image` block
+(`image/png`) in the next `model_output` step with `result` empty, and the
+CSV run's step held the saved chart's image and the CSV as a `text` block.
+Streamed, `step.start` carries `call_id` and `signature: ""`, then one
+`code_execution_result` delta carries `result` as a string and `is_error`;
+the delta's `result` is a string in the bindings too. Whether the API takes
+the list form back in history is under Tools in
+`docs/INTERACTIONS_API_GAP.md`.
 
 `CodeExecutionLanguage` is lowercase `"python"` in
 `code_execution_call.arguments.language`. `"PYTHON"` (pre-revision) now

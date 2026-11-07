@@ -349,8 +349,11 @@ pub struct CodeExecutionResultInfo<'a> {
     pub call_id: &'a str,
     /// Whether the code execution resulted in an error
     pub is_error: bool,
-    /// The output of the code execution (stdout for success, error message for failure)
-    pub result: &'a str,
+    /// The output of the code execution (stdout for success, error message
+    /// for failure), as a string or as content blocks;
+    /// [`CodeExecutionOutput::text`](crate::CodeExecutionOutput::text) reads
+    /// either as text
+    pub result: &'a crate::CodeExecutionOutput,
 }
 
 /// Information about a URL context result.

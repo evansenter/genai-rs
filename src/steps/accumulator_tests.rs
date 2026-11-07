@@ -668,3 +668,71 @@ fn test_accumulator_concatenates_undecodable_base64_as_text() {
     ]);
     assert_eq!(blocks[0]["data"], "not base64!??");
 }
+
+/// The live stream (2026-11-07): `step.start` carries `call_id` and an empty
+/// `signature`, and one delta carries the whole output as a string.
+#[test]
+fn code_execution_result_deltas_append_to_the_string_form() {
+    let start: Step = serde_json::from_value(json!({
+        "type": "code_execution_result", "call_id": "call_1", "signature": ""
+    }))
+    .unwrap();
+    let mut acc = StepAccumulator::new();
+    acc.start(0, start);
+    for fragment in ["4", "2\n"] {
+        let delta: StepDelta = serde_json::from_value(json!({
+            "type": "code_execution_result", "result": fragment, "is_error": false
+        }))
+        .unwrap();
+        acc.apply_delta(0, &delta);
+    }
+    acc.stop(0);
+    match &acc.finish()[0] {
+        Step::CodeExecutionResult {
+            call_id,
+            result,
+            is_error,
+            ..
+        } => {
+            assert_eq!(call_id, "call_1");
+            assert_eq!(result, &crate::CodeExecutionOutput::Text("42\n".into()));
+            assert!(!is_error);
+        }
+        other => panic!("expected a code execution result, got {other:?}"),
+    }
+}
+
+/// A `step.start` in the list form (not seen live) keeps its blocks, and a
+/// string delta becomes a text block after them.
+#[test]
+fn a_string_delta_after_a_list_form_start_becomes_a_text_block() {
+    let mut acc = StepAccumulator::new();
+    acc.start(
+        0,
+        Step::CodeExecutionResult {
+            call_id: "call_1".into(),
+            result: vec![Content::image_data("iVBORw0KGgo=", "image/png")].into(),
+            is_error: false,
+            signature: None,
+            extra: Default::default(),
+        },
+    );
+    acc.apply_delta(
+        0,
+        &StepDelta::CodeExecutionResult {
+            result: "done".into(),
+            is_error: None,
+            signature: None,
+            extra: Default::default(),
+        },
+    );
+    acc.stop(0);
+    match &acc.finish()[0] {
+        Step::CodeExecutionResult { result, .. } => {
+            let blocks = result.as_contents().expect("the list form");
+            assert_eq!(blocks.len(), 2);
+            assert_eq!(blocks[1].as_text(), Some("done"));
+        }
+        other => panic!("expected a code execution result, got {other:?}"),
+    }
+}

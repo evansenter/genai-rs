@@ -185,7 +185,9 @@ mod google_search {
 mod code_execution {
     use super::*;
     use futures_util::StreamExt;
-    use genai_rs::{Step, StepDelta, StreamChunk};
+    use genai_rs::{
+        CodeExecutionLanguage, Content, InteractionInput, Step, StepDelta, StreamChunk,
+    };
 
     #[tokio::test]
     #[ignore = "Requires API key"]
@@ -213,7 +215,7 @@ mod code_execution {
             .expect("code execution should succeed");
         // A computed value, so a substring check is deterministic.
         assert!(
-            output.contains("3628800"),
+            output.text().contains("3628800"),
             "factorial(10) = 3628800, got: {output}"
         );
         assert!(
@@ -242,7 +244,7 @@ mod code_execution {
         assert!(
             response1
                 .successful_code_output()
-                .is_some_and(|o| o.contains("120")),
+                .is_some_and(|o| o.text().contains("120")),
             "turn 1 should compute 120 in code: {:?}",
             response1.code_execution_results()
         );
@@ -262,7 +264,7 @@ mod code_execution {
         let computed = response2
             .code_execution_results()
             .iter()
-            .any(|r| r.result.contains("240"))
+            .any(|r| r.result.text().contains("240"))
             || response2.as_text().is_some_and(|t| t.contains("240"));
         assert!(computed, "Turn 2 should calculate 120 * 2 = 240");
     }
@@ -306,6 +308,55 @@ mod code_execution {
             summary.code_execution_call_count > 0 && summary.code_execution_result_count > 0,
             "the accumulated response should carry both steps: {summary:?}"
         );
+    }
+
+    /// The list form of a code execution result (google-genai 3.0.0) is
+    /// accepted in stateless history, and the model reads it, though the API
+    /// itself answers in the string form (`docs/ENUM_WIRE_FORMATS.md`, Code
+    /// execution).
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_code_execution_result_list_form_in_history() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let history = vec![
+            Step::user_input(vec![Content::text("Compute 6*7 with code.")]),
+            Step::CodeExecutionCall {
+                id: "call_1".into(),
+                language: CodeExecutionLanguage::Python,
+                code: "print(6 * 7)".into(),
+                signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
+            },
+            Step::CodeExecutionResult {
+                call_id: "call_1".into(),
+                result: vec![Content::text("42\n")].into(),
+                is_error: false,
+                signature: None,
+                extra: Default::default(),
+            },
+            Step::user_input(vec![Content::text(
+                "What number did the code print? Answer with just the number.",
+            )]),
+        ];
+        let response = retry_request!([client, history] => {
+            interaction_builder(&client)
+                .with_input(InteractionInput::Steps(history))
+                .with_code_execution()
+                .with_store_disabled()
+                .create()
+                .await
+        })
+        .expect("a list-form code execution result in history should be accepted");
+
+        assert_eq!(response.status, InteractionStatus::Completed);
+        // The value is in the history, so the answer is exact.
+        let answer = response.as_text().expect("an answer");
+        assert!(answer.contains("42"), "expected 42, got: {answer}");
     }
 }
 

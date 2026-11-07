@@ -32,7 +32,7 @@ use super::response::{
 };
 use super::response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
 use super::safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
-use super::steps::{FunctionResultPayload, Step, StepDelta, StepError};
+use super::steps::{CodeExecutionOutput, FunctionResultPayload, Step, StepDelta, StepError};
 use super::streaming::{AutoFunctionResult, AutoFunctionStreamChunk, FunctionExecutionResult};
 use super::tools::{
     AllowedTools, ExaAiSearchConfig, FunctionCallingMode, FunctionParameters, HybridSearchConfig,

@@ -232,6 +232,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: `Step::CodeExecutionResult`'s `result` is a
+  `CodeExecutionOutput`, not a `String`.** google-genai 3.0.0 types it as
+  the output as a string or as a list of content blocks. The new enum reads
+  both (`Text`, `Contents`) and writes each back in the form it came in, so
+  a list-form result no longer turns the step into `Step::Unknown`.
+  `CodeExecutionResultInfo::result` and
+  `InteractionResponse::successful_code_output()` now give a
+  `&CodeExecutionOutput`. The Gemini API still sends the string (verified
+  live 2026-11-07). Migration: `result.text()` reads either form as text (a
+  `Cow<str>`), `as_text()` returns the string form, and `Display` prints the
+  text, so `println!("{}", r.result)` is unchanged; build one with
+  `"...".into()` or `vec![Content::text("...")].into()`.
+  `StepDelta::CodeExecutionResult`'s `result` stays a `String`, as in the
+  bindings.
 - **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
   `Annotation` has a new `extra` field.** It is a
   `serde_json::Map<String, serde_json::Value>`. The call variants

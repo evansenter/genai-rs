@@ -1,4 +1,5 @@
-//! Property tests: `Step`, `StepDelta` and function result payloads.
+//! Property tests: `Step`, `StepDelta`, function result payloads and code
+//! execution outputs.
 
 use super::content::{
     arb_annotation, arb_code_execution_language, arb_content, arb_google_maps_result_item,
@@ -23,6 +24,15 @@ pub(super) fn arb_function_result_payload() -> impl Strategy<Value = FunctionRes
         arb_text().prop_map(FunctionResultPayload::Text),
         arb_non_string_json_value().prop_map(FunctionResultPayload::Json),
         prop::collection::vec(arb_content(), 1..3).prop_map(FunctionResultPayload::Contents),
+    ]
+}
+
+/// Strategy for CodeExecutionOutput: the string form, or a list of content
+/// blocks (an empty list too, which reads back as the list form).
+pub(super) fn arb_code_execution_output() -> impl Strategy<Value = CodeExecutionOutput> {
+    prop_oneof![
+        arb_text().prop_map(CodeExecutionOutput::Text),
+        prop::collection::vec(arb_content(), 0..3).prop_map(CodeExecutionOutput::Contents),
     ]
 }
 
@@ -122,7 +132,7 @@ pub(super) fn arb_known_step() -> impl Strategy<Value = Step> {
         // code_execution_result
         (
             arb_identifier(),
-            arb_text(),
+            arb_code_execution_output(),
             proptest::bool::ANY,
             proptest::option::of(arb_text()),
         )
@@ -650,6 +660,21 @@ proptest! {
             std::mem::discriminant(&restored)
         );
 
+        let restored_json = serde_json::to_value(&restored).expect("Re-serialization should succeed");
+        prop_assert_eq!(json, restored_json);
+    }
+
+    /// Test that CodeExecutionOutput roundtrips through JSON in the form it
+    /// was written.
+    #[test]
+    fn code_execution_output_roundtrip(output in arb_code_execution_output()) {
+        let json = serde_json::to_value(&output).expect("Serialization should succeed");
+        let restored: CodeExecutionOutput =
+            serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+        prop_assert_eq!(
+            std::mem::discriminant(&output),
+            std::mem::discriminant(&restored)
+        );
         let restored_json = serde_json::to_value(&restored).expect("Re-serialization should succeed");
         prop_assert_eq!(json, restored_json);
     }

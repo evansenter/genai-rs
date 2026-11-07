@@ -209,7 +209,12 @@ from here rather than repeated.
   tool did (2026-08-16).
 - **Code execution:** `gemini-3.8-flash` runs only Python, and
   `gemini-4-argon` runs shell commands through Python's `subprocess`; the
-  spec's `bash` language was never observed (2026-11-01).
+  spec's `bash` language was never observed (2026-11-01). A result's
+  `result` comes back as a string, never the list form the 3.0.0 bindings
+  allow, and a plot or file the code makes arrives in the next
+  `model_output` step (2026-11-07; the shapes are under Code execution in
+  `docs/ENUM_WIRE_FORMATS.md`). A list-form result sent back in stateless
+  history is accepted, and the model reads it (2026-11-07).
 
 ### Agents and environments
 

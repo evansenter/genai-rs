@@ -152,7 +152,7 @@ fn test_step_summary_with_built_in_tools() {
             Step::CodeExecutionResult {
                 call_id: "call_1".to_string(),
                 is_error: false,
-                result: "1\n2\n".to_string(),
+                result: "1\n2\n".into(),
                 signature: None,
                 extra: Default::default(),
             },
