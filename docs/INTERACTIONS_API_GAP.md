@@ -532,20 +532,23 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   single request before the model finished its answer. The model made 60 URL
   context calls. ...`; on 2026-11-01 it read `Model generated too many tool
   calls. Please retry the request. ...`). On 2026-11-07 the thinking level
-  and temperature decided how often: 69 of 129 requests looped at the
-  default settings, 3 of 4 at `thinking_level: "medium"` and 15 of 20 at
-  `"high"`, against 10 of 243 at `"low"` and 1 of 215 at `"low"` with
-  `temperature: 0`. Loops came in bursts; in one batch that alternated the
-  three, 38, 4 and 1 of 60 looped. Above `low`, neither another
+  decided how often: 69 of 129 requests looped at the default level, 3 of 4
+  at `thinking_level: "medium"` and 15 of 20 at `"high"`, against 9 of 219
+  at `"low"` in back-to-back batches, and 3 of 51 single requests at `"low"`
+  spread over the day. Loops came in bursts: in one batch that alternated
+  the default and `low`, 38 and 4 of 60 looped. Above `low`, neither another
   page (three others), another prompt or schema, `tool_choice: "validated"`,
-  a `seed` nor `temperature: 0` alone stopped it, and `tool_choice: "none"`
-  does not stop url_context calls at all. Without the schema, 4 of 4
-  answered after one fetch (6 of 6 on 2026-11-01), as did 4 of 4 with
-  `application/json` output and no schema.
-  `test_structured_output_with_url_context` sends `low` and temperature 0,
-  once, and fails on a loop (21 of 22 runs passed). Until 2026-11-07 it
-  retried the loop up to 4 times at the default settings instead: 41 of its
-  69 CI runs from 2026-11-01 needed a second attempt, and 6 looped on all 4.
+  a `seed` nor `temperature: 0` stopped it, and `tool_choice: "none"` does
+  not stop url_context calls at all. `temperature: 0` at `low` looked better
+  in back-to-back batches (1 of 255 looped) but not in single requests
+  spread over the day (5 of 38). Without the schema, 4 of 4 answered after
+  one fetch (6 of 6 on 2026-11-01), as did 4 of 4 with `application/json`
+  output and no schema, and 24 of 24 two-turn chains that fetched first and
+  asked for the schema on the next turn.
+  `test_structured_output_with_url_context` sends `low`, once, and fails on
+  a loop. Until 2026-11-07 it retried the loop up to 4 times at the default
+  level instead: 41 of its 69 CI runs from 2026-11-01 needed a second
+  attempt, and 6 looped on all 4.
 - **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
   upload response or in listings; files from environment sources still
   report it.

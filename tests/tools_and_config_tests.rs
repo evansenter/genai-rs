@@ -1174,24 +1174,24 @@ mod structured_output {
         );
     }
 
-    /// url_context and a response schema in one request, at low thinking
-    /// and temperature 0.
+    /// url_context and a response schema in one request, at low thinking.
     ///
     /// This pair hits a server bug: the model fetches the page again and
     /// again until the API stops it with `400 too_many_tool_calls` (60 URL
     /// context calls, after about two minutes). On 2026-11-07 it looped in
-    /// 69 of 129 requests at the default settings, 10 of 243 at `low`
-    /// thinking, and 1 of 215 at `low` with temperature 0; in one batch
-    /// that alternated them, 38, 4 and 1 of 60 (docs/INTERACTIONS_API_GAP.md,
-    /// "url_context loops under a response schema"). So the request sets
-    /// both and is sent once: a loop fails the test, naming the bug, and
-    /// the retry nextest gives it is counted by the flakiness report.
+    /// 69 of 129 requests at the default thinking level and 15 of 20 at
+    /// `high`, but in 9 of 219 at `low`, and in 3 of 51 single requests at
+    /// `low` spread over the day (docs/INTERACTIONS_API_GAP.md, "url_context
+    /// loops under a response schema"). So the request sets `low` and is
+    /// sent once. A loop fails the test with the API's own error, which
+    /// names the URL context calls, and the retry nextest gives it is
+    /// counted by the flakiness report.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_with_url_context() {
-        /// A healthy answer takes under 15 s; a loop takes about two
-        /// minutes before the API gives up.
-        const LOOP_BOUND: std::time::Duration = std::time::Duration::from_secs(60);
+        /// A healthy answer takes under 15 s, and the API ends a loop with
+        /// its 400 within about three minutes; this only bounds a hang.
+        const HANG_BOUND: std::time::Duration = std::time::Duration::from_secs(240);
 
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
@@ -1208,14 +1208,8 @@ mod structured_output {
             "required": ["title", "description"]
         });
 
-        // `temperature` is deprecated in the bindings but still accepted.
-        let config = GenerationConfig {
-            thinking_level: Some(ThinkingLevel::Low),
-            temperature: Some(0.0),
-            ..Default::default()
-        };
         let request = async {
-            retry_request!([client, schema, config] => {
+            retry_request!([client, schema] => {
                 interaction_builder(&client)
                     .with_text(format!(
                         "Analyze the page at {} and extract metadata.",
@@ -1223,20 +1217,15 @@ mod structured_output {
                     ))
                     .with_url_context()
                     .with_response_format(schema)
-                    .with_generation_config(config)
+                    .with_thinking_level(ThinkingLevel::Low)
                     .with_store_disabled()
                     .create()
                     .await
             })
         };
-        let result = tokio::time::timeout(LOOP_BOUND, request)
+        let result = tokio::time::timeout(HANG_BOUND, request)
             .await
-            .unwrap_or_else(|_| {
-                panic!(
-                    "no answer within {LOOP_BOUND:?}: the server's url_context loop under a \
-                     response schema (docs/INTERACTIONS_API_GAP.md), rare at these settings"
-                )
-            });
+            .unwrap_or_else(|_| panic!("no answer and no error within {HANG_BOUND:?}"));
         let Some(response) = tool_response(result, "URL context with structured output") else {
             return;
         };

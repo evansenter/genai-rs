@@ -1677,21 +1677,22 @@ handles, found by live probes and recorded with its numbers in
 with a message naming the bug, and the retry nextest gives it is counted.
 A deadline retry for a slow runner, as `DEADLINE_BUDGETS` in the scripted
 suite does, is not a flake retry and stays. The url_context test sends
-`thinking_level: "low"` and `temperature: 0`: the server looped in 1 of
-215 such requests, against 10 of 243 at `low` alone and 69 of 129 at the
-default settings (2026-11-07). No page, prompt, schema, `tool_choice`,
-seed or temperature tried stopped it above `low`. `temperature` is
-deprecated in the bindings but accepted; if the API starts rejecting it,
-the test fails on the 400 and the knob comes out.
+`thinking_level: "low"`: the server looped in 3 of 51 single requests and
+9 of 219 back to back at `low`, against 69 of 129 at the default level
+(2026-11-07). No page, prompt, schema, `tool_choice`, seed or temperature
+tried stopped it above `low`, and `temperature: 0` did not help at `low`
+in single requests (5 of 38). A loop fails the test on the API's own
+`400 too_many_tool_calls`, which names the URL context calls.
 
-**Consequences.** The url_context test still meets the loop now and then
-(1 of 215 probes and 1 of 22 test runs at its settings), and then fails
-after 60 s instead of passing on a later attempt; at that rate it stays
-under the report's 5% chronic line, and the report shows it if it does
-not. The test no longer covers the default thinking level with a schema;
-the gap tracker records that it loops. The report's window still holds the
-graded week's retries until they age out, and a test stays chronic while
-two of its retried runs are in it: the Antigravity test's are all from
-2026-11-01, so it clears from the 2026-11-09 report, and the search test's
-second-to-last is from 2026-11-05, so it clears from the 2026-11-13
-report, with no new retry.
+**Consequences.** The url_context test still meets the loop in about one
+run in sixteen, in bursts, and then fails after about two minutes instead
+of passing on a later attempt. That is near the report's 5% chronic line,
+so the report may still list it some weeks, with this cause on record; the
+choices left then are the owner's: accept the API's step-limit error as
+one of the test's outcomes, or wait for a server fix. The test no longer
+covers the default thinking level with a schema; the gap tracker records
+that it loops. The report's window still holds the graded week's retries
+until they age out, and a test stays chronic while two of its retried runs
+are in it: the Antigravity test's are all from 2026-11-01, so it clears
+from the 2026-11-09 report, and the search test's second-to-last is from
+2026-11-05, so it clears from the 2026-11-13 report, with no new retry.
