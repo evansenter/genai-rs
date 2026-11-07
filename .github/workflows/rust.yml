@@ -747,6 +747,53 @@ jobs:
           path: current-sizes.json
           retention-days: 90
 
+  # A red push to main blocks nothing and tells no one: main's Windows legs
+  # failed on ten pushes in a row before anyone looked (#504). So a red push
+  # opens or updates a `ci-health-escalation` issue of its own ("Push to main
+  # failing: Rust"), and the next green push closes it (D-NEXT-WP14). Not the
+  # scheduled run's issue: a push skips the captured-fixtures refresh, so a
+  # green one must not close a scheduled failure. A live job that fails after
+  # its retries escalates too; the next green push closes the issue.
+  main-push-status:
+    name: Main Push Status
+    # Every other job but scheduled-run-status, which needs this one (the two
+    # never both run). tests/ci_workflows/ enforces it. Jobs that skip
+    # pushes report `skipped` here, which neither escalates nor blocks the
+    # resolve.
+    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'evansenter'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Escalate a failing push to main
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: with the trigger, the join key
+          # between reporter and resolver.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+          ESCALATION_TRIGGER: push
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "Nothing waits on a push to \`main\`, and most of the Cross Platform
+          matrix runs only there and on the weekly schedule (a PR runs Windows
+          stable alone). A red Cross Platform leg is usually a platform
+          difference: line endings broke Windows twice (#486, #504). A red live
+          job failed after its retries, so it is a flake streak or an API
+          change: probe with \`LOUD_WIRE=1\` before changing code. Each further
+          failing push comments below."
+      - name: Clear the failure issue once a push recovers
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+          ESCALATION_TRIGGER: push
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"
+
   # Scheduled runs fail quietly (an email to whoever last committed this file),
   # so a red weekly run opens or updates a `ci-health-escalation` issue and a
   # green one closes it. Its own job, so it sees every job's result.
@@ -754,8 +801,9 @@ jobs:
     name: Scheduled Run Status
     # Every other job, so a job added later can't go red unreported.
     # tests/ci_coverage.rs enforces it. Push- or PR-only jobs report
-    # `skipped` here, which neither escalates nor blocks the resolve.
-    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics]
+    # `skipped` here, which neither escalates nor blocks the resolve (as
+    # main-push-status always does on a schedule).
+    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics, main-push-status]
     if: always() && github.event_name == 'schedule' && github.repository_owner == 'evansenter'
     runs-on: ubuntu-latest
     permissions:

@@ -3,15 +3,17 @@
 //! The workflows are YAML that only runs in CI, so a regression in how they
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a
 //! beta toolchain rewords the diagnostics trybuild pins, and a scheduled
-//! workflow that fails without escalating is noticed only by whoever last
-//! committed it. What CI builds beyond Linux and all features is in
-//! `builds`. These tests read the files as text (the crate has no YAML
-//! dependency); the jobs are the two-space-indented keys under `jobs:`.
+//! workflow or a push to main that fails without escalating is noticed only
+//! by whoever last committed it (`escalation`). What CI builds beyond Linux
+//! and all features is in `builds`. These tests read the files as text (the
+//! crate has no YAML dependency); the jobs are the two-space-indented keys
+//! under `jobs:`.
 //!
 //! Not a test target itself: Cargo only builds `tests/*.rs` and
 //! `tests/*/main.rs`.
 
 mod builds;
+mod escalation;
 
 use std::path::{Path, PathBuf};
 
