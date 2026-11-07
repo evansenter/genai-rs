@@ -108,14 +108,16 @@ pub(crate) struct TcpKeepalive {
     pub(crate) idle: Duration,
     /// The time between unanswered probes.
     pub(crate) interval: Duration,
-    /// How many unanswered probes fail the connection (the OS's own count
-    /// on Windows, which can't set it).
+    /// How many unanswered probes fail the connection. Windows can't set
+    /// it and sends its own 10.
     pub(crate) retries: u32,
 }
 
 /// The TCP keepalive every client sets on its connections: a probe after
 /// 15 s idle, then every 15 s, failing the connection after 3 unanswered,
-/// so a peer that stopped answering is noticed within a minute.
+/// so a peer that stopped answering is noticed within a minute. Windows
+/// sends its own count of 10 probes, which makes that under three minutes
+/// (15 s + 10 x 15 s).
 ///
 /// There is no default read timeout (see [`DEFAULT_CONNECT_TIMEOUT`]), so on
 /// a connection that is silent by design, such as a non-streaming request
@@ -147,7 +149,8 @@ impl TcpKeepalive {
 /// read or total timeout unless one is set. Every connection sends TCP
 /// keepalive probes after 15 s idle, then every 15 s, and fails after 3
 /// unanswered, so a dead peer is noticed within a minute even on a
-/// connection with no read timeout.
+/// connection with no read timeout (under three minutes on Windows, which
+/// sends its own count of 10 probes).
 ///
 /// # Example
 ///
@@ -381,7 +384,16 @@ impl ClientBuilder {
     /// record. Split from [`build`](Self::build) so tests can add a resolver
     /// before building.
     fn reqwest_builder(&self) -> (reqwest::ClientBuilder, Applied) {
-        let tcp_keepalive = TCP_KEEPALIVE;
+        self.reqwest_builder_with(TCP_KEEPALIVE)
+    }
+
+    /// [`reqwest_builder`](Self::reqwest_builder) with `tcp_keepalive` in
+    /// place of [`TCP_KEEPALIVE`], so a test can set a value reqwest doesn't
+    /// default to and find it on the socket.
+    fn reqwest_builder_with(
+        &self,
+        tcp_keepalive: TcpKeepalive,
+    ) -> (reqwest::ClientBuilder, Applied) {
         let mut builder = tcp_keepalive.apply(ReqwestClient::builder());
 
         // `Duration::MAX` sets none. reqwest would otherwise arm a timer
@@ -845,12 +857,13 @@ mod tests {
     }
 
     #[test]
-    fn test_public_constructors_set_tcp_keepalive() {
+    fn test_public_constructors_record_tcp_keepalive() {
         // reqwest's built client doesn't show its keepalive either, so the
         // `Client` records what `reqwest_builder` applied. This pins that
-        // both public constructors set it, whatever the timeouts, and the
-        // values: the first probe plus three retries notice a dead peer
-        // within a minute.
+        // both public constructors go through it with `TCP_KEEPALIVE`,
+        // whatever the timeouts, and the values: the first probe plus three
+        // retries notice a dead peer within a minute (Windows sends 10).
+        // `test_tcp_keepalive_reaches_the_socket` checks the socket itself.
         assert_eq!(
             TCP_KEEPALIVE,
             TcpKeepalive {
@@ -882,6 +895,202 @@ mod tests {
                 "{debug}"
             );
         }
+    }
+
+    /// The keepalive the OS shows on the connection `client` opens for one
+    /// request to a local server, read while both ends hold it open: the
+    /// time left before the first probe on Linux, the idle time itself on
+    /// macOS, `None` when keepalive is off.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    async fn connection_keepalive(client: &reqwest::Client) -> Option<Duration> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = listener.local_addr().unwrap();
+        let serve = tokio::spawn(async move {
+            let (mut stream, peer) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = stream.read(&mut buf).await.unwrap();
+                assert!(n > 0, "the client closed before its request ended");
+                request.extend_from_slice(&buf[..n]);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+                .await
+                .unwrap();
+            (stream, peer)
+        });
+        let response = client
+            .get(format!("http://{server}/"))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "{response:?}");
+        // The server's end, held so the client's end stays established.
+        let (_stream, peer) = serve.await.unwrap();
+
+        // Linux shows one timer per socket, and a retransmit timer still
+        // pending would hide the keepalive one for a moment.
+        let mut last = String::new();
+        for _ in 0..50 {
+            match os_keepalive(peer.port(), server.port()) {
+                Ok(shown) => return shown,
+                Err(e) => last = e,
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("{last}");
+    }
+
+    #[cfg(target_os = "linux")]
+    fn os_keepalive(local: u16, remote: u16) -> Result<Option<Duration>, String> {
+        let table = std::fs::read_to_string("/proc/net/tcp").map_err(|e| e.to_string())?;
+        proc_net_tcp_keepalive(&table, local, remote)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn os_keepalive(local: u16, remote: u16) -> Result<Option<Duration>, String> {
+        let output = std::process::Command::new("lsof")
+            .args(["-a", "-n", "-P", "-T", "fs"])
+            .arg(format!("-p{}", std::process::id()))
+            .arg(format!("-iTCP:{remote}"))
+            .output()
+            .map_err(|e| format!("lsof: {e}"))?;
+        lsof_keepalive(&String::from_utf8_lossy(&output.stdout), local, remote)
+    }
+
+    /// From a `/proc/net/tcp` table, the keepalive timer of the established
+    /// connection from 127.0.0.1:`local` to 127.0.0.1:`remote`: the time
+    /// left on it when it runs (`tr` 2), `None` when no timer runs (`tr`
+    /// 0). An error when the connection isn't listed or shows another
+    /// timer, such as a retransmit.
+    fn proc_net_tcp_keepalive(
+        table: &str,
+        local: u16,
+        remote: u16,
+    ) -> Result<Option<Duration>, String> {
+        // Matched on the ports alone: the address is in the host's byte
+        // order (127.0.0.1 is `0100007F` on x86 and arm64).
+        let (local, remote) = (format!(":{local:04X}"), format!(":{remote:04X}"));
+        for line in table.lines().skip(1) {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            // sl, local_address, rem_address, st, tx_queue:rx_queue, tr:tm->when
+            let [_, from, to, "01", _, timer, ..] = fields[..] else {
+                continue;
+            };
+            if !from.ends_with(&local) || !to.ends_with(&remote) {
+                continue;
+            }
+            let (active, when) = timer.split_once(':').ok_or(line)?;
+            let when = u64::from_str_radix(when, 16).map_err(|e| format!("{e}: {line}"))?;
+            return match active {
+                "00" => Ok(None),
+                // In clock ticks, USER_HZ: 100 a second on every Linux CI runs.
+                "02" => Ok(Some(Duration::from_millis(when * 10))),
+                _ => Err(format!("a timer other than keepalive runs: {line}")),
+            };
+        }
+        Err(format!(
+            "no established {local} -> {remote} (hex ports) in /proc/net/tcp"
+        ))
+    }
+
+    /// From `lsof -T fs` output, the keepalive idle time macOS shows on the
+    /// established connection from 127.0.0.1:`local` to 127.0.0.1:`remote`
+    /// (`SO=KEEPALIVE=<ms>`), `None` when its socket options don't list it.
+    fn lsof_keepalive(output: &str, local: u16, remote: u16) -> Result<Option<Duration>, String> {
+        let connection = format!("127.0.0.1:{local}->127.0.0.1:{remote} (ESTABLISHED");
+        let line = output
+            .lines()
+            .find(|line| line.contains(&connection))
+            .ok_or_else(|| format!("no {connection}) in lsof's output:\n{output}"))?;
+        let options = line
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("SO="))
+            .ok_or_else(|| format!("no socket options: {line}"))?;
+        for option in options.trim_end_matches(')').split(',') {
+            if let Some(ms) = option.strip_prefix("KEEPALIVE=") {
+                let ms = ms.parse().map_err(|e| format!("{e}: {line}"))?;
+                return Ok(Some(Duration::from_millis(ms)));
+            }
+        }
+        Ok(None)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn test_tcp_keepalive_reaches_the_socket() {
+        // hyper-util only logs a keepalive it fails to set, and the record
+        // `test_public_constructors_record_tcp_keepalive` checks is what was
+        // passed on, so this reads the socket. `TCP_KEEPALIVE` is reqwest's
+        // default too, so a second client sets an idle time reqwest doesn't
+        // default to: dropping `apply` fails there. The OS shows only the
+        // idle time; the interval and retries go through the same `apply`.
+        let own = TcpKeepalive {
+            idle: Duration::from_secs(27),
+            ..TCP_KEEPALIVE
+        };
+        let new = Client::new("k".to_string());
+        let built = Client::builder("k".to_string()).build().unwrap();
+        let set = Client::builder("k".to_string())
+            .reqwest_builder_with(own)
+            .0
+            .build()
+            .unwrap();
+        for (client, idle) in [
+            (&new.http.http_client, TCP_KEEPALIVE.idle),
+            (&built.http.http_client, TCP_KEEPALIVE.idle),
+            (&set, own.idle),
+        ] {
+            // Linux shows the time left, a little under `idle`; macOS shows
+            // `idle` give or take a millisecond.
+            let near = idle - Duration::from_secs(5)..idle + Duration::from_secs(1);
+            let shown = connection_keepalive(client).await;
+            assert!(
+                shown.is_some_and(|shown| near.contains(&shown)),
+                "the socket shows keepalive {shown:?}, not about {idle:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_keepalive_is_read_from_proc_net_tcp() {
+        // Lines as Linux prints them: a listener on 127.0.0.1:41969 (A3F1),
+        // three clients of it, one per timer state, and the listener's end
+        // of the first.
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:A3F1 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 41001 1 0000000000000000 100 0 0 10 0
+   1: 0100007F:DD4E 0100007F:A3F1 01 00000000:00000000 02:00000A8C 00000000  1001        0 41002 2 0000000000000000 20 4 30 10 -1
+   2: 0100007F:A3F1 0100007F:DD4E 01 00000000:00000000 00:00000000 00000000  1001        0 41003 1 0000000000000000 20 4 30 10 -1
+   3: 0100007F:DD4F 0100007F:A3F1 01 00000000:00000000 00:00000000 00000000  1001        0 41004 1 0000000000000000 20 4 30 10 -1
+   4: 0100007F:DD50 0100007F:A3F1 01 00000000:00000000 01:00000014 00000000  1001        0 41005 1 0000000000000000 20 4 30 10 -1
+";
+        assert_eq!(
+            proc_net_tcp_keepalive(table, 56654, 41969),
+            Ok(Some(Duration::from_secs(27)))
+        );
+        assert_eq!(proc_net_tcp_keepalive(table, 56655, 41969), Ok(None));
+        assert!(proc_net_tcp_keepalive(table, 56656, 41969).is_err());
+        assert!(proc_net_tcp_keepalive(table, 56657, 41969).is_err());
+    }
+
+    #[test]
+    fn test_keepalive_is_read_from_lsof() {
+        // As macOS's lsof prints it, for a client with keepalive and one
+        // without.
+        let output = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+genai 51659 u 4u IPv4 0xa1 0t0 TCP 127.0.0.1:56647->127.0.0.1:56646 (ESTABLISHED SO=KEEPALIVE=27000,PQLEN=0,QLEN=0,QLIM=0,RCVBUF=3266400,SNDBUF=1175904 TF=MSS=16332)
+genai 51659 u 5u IPv4 0x97 0t0 TCP 127.0.0.1:56646->127.0.0.1:56647 (ESTABLISHED SO=PQLEN=0,QLEN=0,QLIM=0,RCVBUF=3266400,SNDBUF=1175904 TF=MSS=16332)
+genai 51659 u 6u IPv4 0x68 0t0 TCP 127.0.0.1:56648->127.0.0.1:56646 (ESTABLISHED SO=PQLEN=0,QLEN=0,QLIM=0,RCVBUF=3266400,SNDBUF=1175904)
+";
+        assert_eq!(
+            lsof_keepalive(output, 56647, 56646),
+            Ok(Some(Duration::from_secs(27)))
+        );
+        assert_eq!(lsof_keepalive(output, 56648, 56646), Ok(None));
+        assert!(lsof_keepalive(output, 56649, 56646).is_err());
     }
 
     #[test]
