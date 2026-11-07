@@ -30,8 +30,10 @@ const PYTHON: &str = "python3";
 
 /// How long discovery waits for [`PYTHON`] to list its site-packages, and
 /// `spawn()` for the wheel's version metadata, before going on without
-/// them: a hung interpreter or a stalled network mount must not hold
-/// `spawn()` forever.
+/// them: a hung interpreter or a stalled read of the metadata must not hold
+/// `spawn()` forever. Discovery's own file checks and the exec of the
+/// binary are not bounded: on a mount that stalls them, the harness could
+/// not start anyway.
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long to wait for the handshake reply on stdout.
@@ -329,7 +331,7 @@ fn harness_command(
     #[cfg(unix)]
     command.process_group(0);
     // Elsewhere (Windows) there are no process groups to signal: a forced
-    // kill ends the harness process only, and what it started keeps
+    // kill ends the harness process only, and the commands it ran keep
     // running. A Job Object would reach them; none is set up here.
     #[cfg(not(unix))]
     command.kill_on_drop(true);
@@ -519,8 +521,8 @@ impl HarnessProcess {
     /// On Unix that is the harness's process group and the group of each
     /// of its children (`process_tree`). Elsewhere (Windows) there are no
     /// groups and no SIGTERM: either signal terminates the harness process
-    /// alone, and the commands and stdio MCP servers it started keep
-    /// running.
+    /// alone, and the `run_command` commands it started keep running.
+    /// (Stdio MCP servers exit either way, at the end of their stdin.)
     fn signal(&mut self, signal: Signal) {
         let Some(child) = self.child.as_mut() else {
             return;
@@ -545,8 +547,9 @@ impl HarnessProcess {
 /// Dropping a harness that was never shut down kills it, and on Unix every
 /// process it started (stdio MCP servers, `run_command` commands), without
 /// the graceful exit's trajectory persistence. Elsewhere (Windows) only the
-/// harness process is ended (see [`HarnessProcess::signal`]). Signal only:
-/// `Drop` cannot wait, so the reap is left to tokio's orphan reaper.
+/// harness process is ended, and its commands keep running (see
+/// [`HarnessProcess::signal`]). Signal only: `Drop` cannot wait, so the
+/// reap is left to tokio's orphan reaper.
 impl Drop for HarnessProcess {
     fn drop(&mut self) {
         self.signal(Signal::Kill);
@@ -603,16 +606,35 @@ pub(crate) fn harness_version(binary: &Path) -> Option<String> {
     }
 }
 
-/// [`harness_version`] on tokio's blocking pool, given `timeout`: the read
+/// [`harness_version`] on a thread of its own, given `timeout`: the read
 /// resolves symlinks and reads files beside the binary, which a stalled
 /// network mount could hold forever. A read that times out is left to
 /// finish on its own and the version counts as unknown.
+///
+/// The thread is detached rather than taken from tokio's blocking pool
+/// because dropping a runtime waits for the blocking tasks still running
+/// on it: an abandoned read stuck there would hang the end of
+/// `#[tokio::main]` instead of `spawn()`. A panic in the read is resumed
+/// here.
 async fn harness_version_bounded(binary: &Path, timeout: Duration) -> Option<String> {
     let path = binary.to_path_buf();
-    match tokio::time::timeout(timeout, off_runtime(move || harness_version(&path))).await {
-        Ok(Ok(version)) => version,
-        Ok(Err(e)) => {
-            tracing::debug!("reading the harness version did not finish: {e}");
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let started = std::thread::Builder::new()
+        .name("antigravity-version-read".to_string())
+        .spawn(move || {
+            let outcome = std::panic::catch_unwind(|| harness_version(&path));
+            // Fails only when `spawn()` stopped waiting (the timeout fired).
+            let _ = sender.send(outcome);
+        });
+    if let Err(e) = started {
+        tracing::debug!("could not start a thread to read the harness version: {e}");
+        return None;
+    }
+    match tokio::time::timeout(timeout, receiver).await {
+        Ok(Ok(Ok(version))) => version,
+        Ok(Ok(Err(panic))) => std::panic::resume_unwind(panic),
+        Ok(Err(_)) => {
+            tracing::debug!("the harness version read ended without a result");
             None
         }
         Err(_) => {

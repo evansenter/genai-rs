@@ -208,19 +208,8 @@ async fn test_discovery_runs_off_the_runtime_and_bounds_the_interpreter() {
 #[cfg(unix)]
 #[tokio::test] // current-thread: blocking here would stop the ticker
 async fn test_version_read_runs_off_the_runtime_under_a_timeout() {
-    // A METADATA that is a FIFO with no writer blocks its reader, as a
-    // stalled network mount would.
     let dir = tempfile::tempdir().unwrap();
-    let site = dir.path().join("site-packages");
-    let binary = wheel_install(&site, &[]);
-    let dist_info = site.join("google_antigravity-0.1.23.dist-info");
-    std::fs::create_dir_all(&dist_info).unwrap();
-    let fifo = dist_info.join("METADATA");
-    let made = std::process::Command::new("mkfifo")
-        .arg(&fifo)
-        .status()
-        .unwrap();
-    assert!(made.success(), "mkfifo failed");
+    let (binary, fifo) = stalled_wheel_install(dir.path());
 
     let (ticks, ticking) = ticker();
     let started = std::time::Instant::now();
@@ -241,9 +230,61 @@ async fn test_version_read_runs_off_the_runtime_under_a_timeout() {
         ticks >= 5,
         "the runtime's only thread was blocked by the version read: {ticks} ticks in {elapsed:?}"
     );
-    // Release the abandoned read, so the runtime's blocking pool can wind
-    // down when the test ends.
-    drop(std::fs::OpenOptions::new().write(true).open(&fifo).unwrap());
+    release(&fifo);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_an_abandoned_version_read_does_not_hold_runtime_shutdown() {
+    // Dropping a runtime waits for the tasks still running on its blocking
+    // pool, so a read abandoned there would move the hang from `spawn()` to
+    // the end of `#[tokio::main]`.
+    let dir = tempfile::tempdir().unwrap();
+    let (binary, fifo) = stalled_wheel_install(dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let version = runtime.block_on(harness_version_bounded(&binary, Duration::from_millis(300)));
+    assert_eq!(version, None);
+
+    let (dropped, has_dropped) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(runtime);
+        let _ = dropped.send(());
+    });
+    let shut_down = has_dropped.recv_timeout(Duration::from_secs(5));
+    // Release the read whatever happened, so a failure here does not hang.
+    release(&fifo);
+    assert!(
+        shut_down.is_ok(),
+        "dropping the runtime waited on the abandoned version read"
+    );
+}
+
+/// A wheel install whose METADATA is a FIFO with no writer: reading the
+/// version blocks, as a stalled network mount would. Returns the binary
+/// and the FIFO.
+#[cfg(unix)]
+fn stalled_wheel_install(dir: &Path) -> (PathBuf, PathBuf) {
+    let site = dir.join("site-packages");
+    let binary = wheel_install(&site, &[]);
+    let dist_info = site.join("google_antigravity-0.1.23.dist-info");
+    std::fs::create_dir_all(&dist_info).unwrap();
+    let fifo = dist_info.join("METADATA");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success(), "mkfifo failed");
+    (binary, fifo)
+}
+
+/// Lets a read blocked on [`stalled_wheel_install`]'s FIFO finish (it
+/// reads end of file), so the thread doing it ends.
+#[cfg(unix)]
+fn release(fifo: &Path) {
+    drop(std::fs::OpenOptions::new().write(true).open(fifo).unwrap());
 }
 
 /// Lays out a wheel install: the binary under `google/antigravity/bin`
