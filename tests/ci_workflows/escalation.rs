@@ -2,7 +2,7 @@
 //!
 //! Nothing waits on a push to main, and most of the cross-platform matrix
 //! runs only there and on the schedule, so main's Windows legs failed on
-//! ten pushes in a row before anyone looked (#504). `rust.yml` therefore has
+//! eleven pushes in a row before anyone looked (#504). `rust.yml` therefore has
 //! a job that opens a `ci-health-escalation` issue when a push to main goes
 //! red and closes it on the next green one, through the scripts the
 //! scheduled runs use, with `ESCALATION_TRIGGER: push` so the push keeps an

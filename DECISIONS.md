@@ -1200,8 +1200,8 @@ were before #491).
 
 ## D-NEXT-WP14 — A red push to main escalates under its own issue, and a PR runs Windows (2026-11-07)
 
-**Context.** main's Windows Cross Platform legs failed on ten pushes in a
-row (#518 to #529) on one CRLF-sensitive test, the second such streak
+**Context.** main's Windows Cross Platform legs failed on eleven pushes in
+a row (#518 to #531) on one CRLF-sensitive test, the second such streak
 after #486, and nobody noticed: Cross Platform ran only on main pushes,
 it is not a required check, and only a scheduled run escalated a failure
 (`scheduled-run-status`). The failing step also kept the Windows doctests

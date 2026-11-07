@@ -557,7 +557,7 @@ jobs:
     name: Cross Platform (${{ matrix.os }}, ${{ matrix.rust }})
     # Offline on every leg: no key, no live tests. The full matrix runs on
     # main pushes, the weekly schedule and manual runs; a PR runs the Windows
-    # stable leg only, the platform that broke unnoticed (#486, and ten red
+    # stable leg only, the platform that broke unnoticed (#486, and eleven red
     # main pushes in #504), at one runner's cost. That leg keeps the full
     # matrix's check name, `Cross Platform (windows-latest, stable)`.
     runs-on: ${{ matrix.os }}
@@ -591,7 +591,7 @@ jobs:
           NEXTEST_FILTER: ${{ matrix.rust == 'beta' && 'not binary(ui_tests)' || 'all()' }}
         run: cargo nextest run --workspace --cargo-profile release -E "$NEXTEST_FILTER"
       # Not skipped by a red unit test: one failing test once kept the
-      # Windows doctests from running for ten pushes (#504).
+      # Windows doctests from running for eleven pushes (#504).
       - name: Run doctests
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: cargo test --workspace --release --doc
@@ -748,7 +748,7 @@ jobs:
           retention-days: 90
 
   # A red push to main blocks nothing and tells no one: main's Windows legs
-  # failed on ten pushes in a row before anyone looked (#504). So a red push
+  # failed on eleven pushes in a row before anyone looked (#504). So a red push
   # opens or updates a `ci-health-escalation` issue of its own ("Push to main
   # failing: Rust"), and the next green push closes it (D-NEXT-WP14). Not the
   # scheduled run's issue: a push skips the captured-fixtures refresh, so a

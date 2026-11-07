@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_enum_wire_formats_doc_reads_the_same_with_crlf_line_endings() {
-        // main's Windows legs failed on the test above for ten pushes: their
+        // main's Windows legs failed on the test above for eleven pushes: their
         // checkout had the doc with CRLF, so the section was never found.
         let doc = include_str!("../../docs/ENUM_WIRE_FORMATS.md").replace("\r\n", "\n");
         let crlf = doc.replace('\n', "\r\n");
