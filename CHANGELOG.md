@@ -770,10 +770,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AntigravityError::WebSocket { message, source }` where you matched
   `WebSocket(text)`, and `downcast_ref` the source for the transport's own
   error type.
-- **Breaking: `Client::new` takes `impl Into<String>`**, so
-  `Client::new("key")` compiles (#504). A `String` argument is unchanged;
-  a call that converted with `.into()` no longer infers the target type.
-  Migration: pass the `&str` or `String` itself, without `.into()`.
+- **Breaking: `Client::new` and `Client::builder` take `impl Into<String>`**,
+  so `Client::new("key")` and `Client::builder("key")` compile (#504). A
+  `String` argument is unchanged; a call that converted with `.into()` no
+  longer infers the target type, and `Client::builder` is no longer a
+  `const fn`. Migration: pass the `&str` or `String` itself, without
+  `.into()`.
 - `PollOptions` polls no faster than `PollOptions::MIN_POLL_INTERVAL`
   (10 ms): a shorter `with_poll_interval`, `Duration::ZERO` included, is
   raised to it. A zero interval re-polled the moment each status request
