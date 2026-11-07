@@ -3,9 +3,9 @@
 //! Each request type is serialized fully populated, as struct literals with
 //! no `..Default::default()`, so a field added to one of these structs fails
 //! to compile here until it is populated and checked. (The agent configs keep
-//! their fields private, so they are built with every builder instead; a
-//! binding field none of them sets still fails the reverse test below.)
-//! Samples from the
+//! their fields private, so each builds its own literal, `fully_populated()`
+//! in `src/request/agent_config.rs`; `agent_configs_set_every_field` fails on
+//! one left `None` or empty there.) Samples from the
 //! proptest strategies add the union arms and enum values the literals do not
 //! reach. Each value is walked, recursively and path by path, against the
 //! google-genai binding class it is sent as (rank 1, D-004; the spec lags
@@ -27,11 +27,11 @@ use crate::content::Content;
 use crate::proptest_tests as strategies;
 use crate::steps::Step;
 use bodies::{
-    agent_configs, agent_requests, agents, credential_requests, credential_updates,
-    document_imports, document_uploads, environment_requests, environment_specs,
-    file_search_store_requests, generation_configs, inputs, model_requests, response_formats,
-    safety_settings, samples, to_value, trigger_params, trigger_updates, values, voice_requests,
-    webhook_config, webhook_updates, webhooks,
+    agent_config_types, agent_configs, agent_requests, agents, credential_requests,
+    credential_updates, document_imports, document_uploads, environment_requests,
+    environment_specs, file_search_store_requests, generation_configs, inputs, model_requests,
+    response_formats, safety_settings, samples, to_value, trigger_params, trigger_updates, values,
+    voice_requests, webhook_config, webhook_updates, webhooks,
 };
 use content::{contents, steps, tools};
 
@@ -488,6 +488,24 @@ fn a_populated_variant_extra_is_sent_flat_and_not_vouched_for() {
     ]
     .map(|class| format!("{class}.brand_new_field"));
     assert_eq!(added, BTreeSet::from(expected));
+}
+
+/// The agent configs' `fully_populated()` literals set every field: one left
+/// `None` or empty would emit no key, so a field added to a config type, set
+/// to `None` to make the literal compile, would go unchecked. (Set, its key
+/// fails `request_wire_keys_exist_in_bindings` unless the bindings have it.)
+#[test]
+fn agent_configs_set_every_field() {
+    let types = agent_config_types();
+    assert_eq!(types.len(), 4, "one per typed agent config");
+    for (debug, _) in &types {
+        for unset in [": None", ": []"] {
+            assert!(
+                !debug.contains(unset),
+                "a field is unset ({unset}): {debug}"
+            );
+        }
+    }
 }
 
 /// The other direction: every field of every class a request reaches is

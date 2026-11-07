@@ -572,6 +572,93 @@ impl From<CodeMenderConfig> for AgentConfig {
     }
 }
 
+// =============================================================================
+// Fully populated values for the coverage oracle
+// =============================================================================
+
+// The config fields are private, so the request oracle
+// (`src/coverage_oracle/request/bodies.rs`) cannot build these types as struct
+// literals. Each type builds itself here, as a literal with every field set
+// and no `..Default::default()`: a field added to one fails to compile until
+// it is set below, and once set, the oracle checks the key `From` emits
+// against the bindings. `agent_configs_set_every_field` fails on a field set
+// to `None` or an empty list.
+#[cfg(test)]
+impl DeepResearchConfig {
+    pub(crate) fn fully_populated() -> Self {
+        Self {
+            thinking_summaries: Some(ThinkingSummaries::Auto),
+            visualization: Some(Visualization::Auto),
+            collaborative_planning: Some(true),
+            enable_bigquery_tool: Some(true),
+        }
+    }
+}
+
+#[cfg(test)]
+impl DynamicConfig {
+    pub(crate) fn fully_populated() -> Self {
+        // A braced literal, so a field added to the unit struct fails here.
+        Self {}
+    }
+}
+
+#[cfg(test)]
+impl AntigravityConfig {
+    pub(crate) fn fully_populated() -> Self {
+        Self {
+            model: Some("m".into()),
+            max_total_tokens: Some(1000),
+        }
+    }
+}
+
+#[cfg(test)]
+impl CodeMenderFile {
+    pub(crate) fn fully_populated() -> Self {
+        Self {
+            path: Some("src/main.rs".into()),
+            content: Some("fn main() {}".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+impl CodeMenderFindRequest {
+    pub(crate) fn fully_populated() -> Self {
+        Self {
+            description: Some("d".into()),
+            finding_id: Some("f".into()),
+            mode: Some(CodeMenderMode::Verify),
+            source_files: vec![CodeMenderFile::fully_populated()],
+        }
+    }
+}
+
+#[cfg(test)]
+impl CodeMenderFixRequest {
+    pub(crate) fn fully_populated() -> Self {
+        Self {
+            description: Some("d".into()),
+            finding_id: Some("f".into()),
+            source_files: vec![CodeMenderFile::fully_populated()],
+        }
+    }
+}
+
+#[cfg(test)]
+impl CodeMenderConfig {
+    pub(crate) fn fully_populated() -> Self {
+        Self {
+            model: Some("m".into()),
+            session_id: Some("s".into()),
+            max_rounds: Some(3),
+            find_request: Some(CodeMenderFindRequest::fully_populated()),
+            fix_request: Some(CodeMenderFixRequest::fully_populated()),
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "agent_config_tests.rs"]
 mod tests;
