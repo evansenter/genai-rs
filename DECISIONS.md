@@ -1647,3 +1647,48 @@ wait, and it is the shortest interval the crate's paused-clock tests use.
 floor is public, so a caller can read it. It stops a zero interval, not
 fast polling in general; an interval just over 10 ms still polls about
 once per round trip.
+
+---
+
+## D-NEXT-WP23 — A live test does not retry a known flake inside itself (2026-11-07)
+
+**Context.** D-046 made the flakiness report fail on any test that needs a
+retry in more than 5% of its runs, counting the retries nextest makes.
+Three live tests breached it in the graded week, and their causes differed.
+`test_google_search_multi_turn` sent its follow-up without the search tool,
+which `previous_interaction_id` does not carry over, and the model, seeing
+search steps in the history, sometimes called it anyway
+(`malformed_tool_call`, 13 of 99 runs). The Antigravity `cancel_handle`
+test halted only on streamed output, which harness 0.1.23 sometimes never
+streamed; #502 had already fixed it on 2026-11-01, and none of its 7
+retries came after. `test_structured_output_with_url_context` had stopped
+needing nextest's retries on 2026-11-01 only because #483 moved them into
+the test: it sent the request up to 4 times when the server looped
+(url_context under a response schema), and 41 of its 69 runs since needed
+a second attempt, and 6 gave up with a skip marker. The report saw none of
+that.
+
+**Decision.** A live test makes no retries of its own beyond
+`retry_request!`'s transport and transient errors. A known model or server
+failure is fixed at its cause where the test has one: a request that
+follows the API's rules (resend the tools), or a request shape the server
+handles, found by live probes and recorded with its numbers in
+`docs/INTERACTIONS_API_GAP.md`. What is left after that fails the test,
+with a message naming the bug, and the retry nextest gives it is counted.
+A deadline retry for a slow runner, as `DEADLINE_BUDGETS` in the scripted
+suite does, is not a flake retry and stays. The url_context test sends
+`thinking_level: "low"`: the server looped in 6 of 169 such requests,
+against 31 of 69 at the default level and 15 of 20 at `high`
+(2026-11-07). No page, prompt, schema, `tool_choice`, seed or temperature
+tried stopped it above `low`.
+
+**Consequences.** The url_context test still meets the loop now and then
+(6 of 169 requests, in bursts), and then fails after 60 s instead of
+passing on a later attempt; at that rate it stays under the report's 5%
+chronic line, and the report shows it if it does not. The test no longer
+covers the default thinking level with a schema; the gap tracker records
+that it loops. The report's window still holds the graded week's retries
+until they age out, and a test stays chronic while two of its retried runs
+are in it: the Antigravity test's are all from 2026-11-01, so it clears
+from the 2026-11-09 report, and the search test's second-to-last is from
+2026-11-05, so it clears from the 2026-11-13 report, with no new retry.

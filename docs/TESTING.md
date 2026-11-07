@@ -330,6 +330,15 @@ toward the rate, read from the `NEXTEST_RETRIES` in the env GitHub echoes
 into the log, so the antigravity job's offline suite, which shares its
 log, stays out of it.
 
+So a live test makes no retries of its own beyond `retry_request!`'s
+transport and transient errors (D-NEXT-WP23): the report counts a retry
+nextest makes, and never sees one inside the test. When a known model or
+server failure has a cause the test controls, remove it: send the tools a
+follow-up turn needs, since they are not carried over, or a request shape
+the server handles, found by live probes and recorded with its numbers in
+the [gap tracker](INTERACTIONS_API_GAP.md) (the url_context test's
+`thinking_level: "low"`). Otherwise let the test fail and nextest retry it.
+
 The rolling report lists retried tests and examples beside failed ones,
 with the week's rate: tests that passed only on a retry, over live test
 runs. The report fails, and so escalates like any red scheduled workflow,
