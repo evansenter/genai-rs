@@ -460,8 +460,9 @@ checks on it:
   body) is built fully populated as struct literals with no
   `..Default::default()`, so a new field does not compile until it is
   populated (the agent configs, whose fields are private, through each
-  type's `fully_populated()` literal beside it, which
-  `agent_configs_set_every_field` holds to every field), plus proptest samples for the union arms and enum values. An
+  type's `fully_populated()` literal beside it, and
+  `agent_configs_set_every_field` fails on a field there that sends no
+  key), plus proptest samples for the union arms and enum values. An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
@@ -551,11 +552,11 @@ reason to the list that fits:
 
 Date every live fact in a reason (D-010): `live_claims_are_dated` fails on
 a reason in the in-crate lists that says what the API served, rejected or
-accepted, or quotes an error status, without a `YYYY-MM` date. An entry that matches nothing
-fails the test, so the lists only shrink when the crate catches up. A
-`values()` override in `response.rs` replaces a synthesized value where the
-snapshot's type is looser than what the API sends (a function's
-`parameters`, a protobuf int64 sent as a string).
+accepted, or quotes an error status, without a `YYYY-MM` date. An entry
+that matches nothing fails the test, so the lists only shrink when the
+crate catches up. A `values()` override in `response.rs` replaces a
+synthesized value where the snapshot's type is looser than what the API
+sends (a function's `parameters`, a protobuf int64 sent as a string).
 
 ### Refreshing the snapshot
 
