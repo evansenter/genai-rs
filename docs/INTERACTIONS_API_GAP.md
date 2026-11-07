@@ -80,15 +80,16 @@ environments) in [Resource residue](#resource-residue-live-2026-11-05).
   `FileSearchStore.activeDocumentsCount` and `sizeBytes` (string int64s);
   `File.updateTime` and `File.source` (`UPLOADED`); all four modeled since
   (see "Resource residue" below).
-- **In the snapshot, not modeled, not seen live yet:** the `queued` status
-  (#501); `Interaction.agent_config`, `environment`, `continuation_ids`,
-  `output_audio`/`_image`/`_video`, and the spec's `max_total_tokens`; the
-  CodeMender agent config (#501). The resource fields this bullet listed
-  (`Agent.agent_config`, the inline environment's `environment_id`,
-  `embeddingModel`, the document upload and import configs, the `VoiceInput`
-  fields, the store's document counts, `Document.customMetadata`,
-  `File.downloadUri`, `FileStatus.details`) are modeled or reasoned out
-  since; see "Resource residue" below.
+- **In the snapshot, not modeled then:** all since modeled or reasoned
+  out. Modeled: the `queued` status and the CodeMender agent config (#501),
+  `Interaction.agent_config` and `environment`. Not modeled, with the
+  reason: `continuation_ids`, `output_audio`/`_image`/`_video` (#501) and
+  the spec's `max_total_tokens`. Each is under "Interaction residue"
+  below. The resource fields this bullet listed (`Agent.agent_config`, the
+  inline environment's `environment_id`, `embeddingModel`, the document
+  upload and import configs, the `VoiceInput` fields, the store's document
+  counts, `Document.customMetadata`, `File.downloadUri`,
+  `FileStatus.details`) are under "Resource residue" below.
 - **Read but lost:** `StreamChunk::StepDelta` drops the event's
   `metadata.total_usage`. The spec types `file_search_result` delta items
   as opaque objects, and `FileSearchResultItem` keeps only `title`, `text`
