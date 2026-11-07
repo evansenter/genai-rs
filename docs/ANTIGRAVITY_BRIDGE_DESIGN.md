@@ -503,7 +503,8 @@ Subagent tools and model errors (0.1.23, 2026-11-07, scripted model):
 - A fatal model-backend error (an HTTP 400 from the model endpoint) ends
   the session: the harness reports `Agent execution terminated due to
   error` and closes the WebSocket, so the agent's next call fails with a
-  WebSocket error. Respawn the agent after one.
+  WebSocket error (`test_scripted_model_bad_request_fails_the_turn_and_ends_the_session`
+  holds it, accepting `ConnectionClosed` too). Respawn the agent after one.
 
 Questions (0.1.23, 2026-11-07, scripted model,
 `test_scripted_a_question_is_gated_like_any_tool_call`): an `ask_question`

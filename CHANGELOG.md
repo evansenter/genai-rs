@@ -885,8 +885,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request"; and `with_seed` was said to make sampling repeatable, which
   the API does not guarantee. `AntigravityError::Turn` now says that a
   fatal model error (an HTTP 400 from the model endpoint) also ends the
-  harness session on 0.1.23, so the next call fails with `WebSocket` and
-  the agent must be spawned again.
+  harness session on 0.1.23, so the next call fails with `WebSocket` (or
+  `ConnectionClosed`) and the agent must be spawned again.
 - `#[tool]` documents everything it generates: the `<Name>Callable`
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that

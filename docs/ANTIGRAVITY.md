@@ -1350,7 +1350,8 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 A fatal model-backend error (an HTTP 400 from the model endpoint) fails the
 turn with `Turn` and, on harness 0.1.23, ends the session as well: the
 harness closes its WebSocket, so the agent's next call fails with
-`WebSocket`. Respawn the agent after one. (A model error the harness
+`WebSocket` (or `ConnectionClosed`, when its send got out before the
+close). Respawn the agent after one. (A model error the harness
 retries, or one that did not stop the turn, arrives as an
 `AgentEvent::Error` instead; see
 [error severity](#event-decisions-trajectory-identity-and-error-severity).)
