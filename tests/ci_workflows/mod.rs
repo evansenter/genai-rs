@@ -4,11 +4,14 @@
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a
 //! beta toolchain rewords the diagnostics trybuild pins, and a scheduled
 //! workflow that fails without escalating is noticed only by whoever last
-//! committed it. These tests read the files as text (the crate has no YAML
+//! committed it. What CI builds beyond Linux and all features is in
+//! `builds`. These tests read the files as text (the crate has no YAML
 //! dependency); the jobs are the two-space-indented keys under `jobs:`.
 //!
 //! Not a test target itself: Cargo only builds `tests/*.rs` and
 //! `tests/*/main.rs`.
+
+mod builds;
 
 use std::path::{Path, PathBuf};
 

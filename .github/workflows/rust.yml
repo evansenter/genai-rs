@@ -515,6 +515,11 @@ jobs:
         env:
           RUSTFLAGS: --cfg genai_strict_unknown
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # The library a consumer gets with `default-features = false`, which
+      # compiles code the all-features run never sees (the plain wire printer
+      # without `wire-color`). Same command as `make clippy`.
+      - name: Run clippy (no default features)
+        run: cargo clippy --lib --no-default-features -- -D warnings
 
   doc:
     name: Documentation
@@ -550,14 +555,17 @@ jobs:
 
   cross-platform:
     name: Cross Platform (${{ matrix.os }}, ${{ matrix.rust }})
-    # Main pushes only, to keep PR feedback fast.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Offline on every leg: no key, no live tests. The full matrix runs on
+    # main pushes, the weekly schedule and manual runs; a PR runs the Windows
+    # stable leg only, the platform that broke unnoticed (#486, and ten red
+    # main pushes in #504), at one runner's cost. That leg keeps the full
+    # matrix's check name, `Cross Platform (windows-latest, stable)`.
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, beta]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["windows-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        rust: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -570,6 +578,7 @@ jobs:
       # No `if: runner.os == 'Linux'`: the composite guards itself.
       - uses: ./.github/actions/setup-mold
       - name: Build
+        id: build
         run: cargo build --workspace --release
       - name: Run tests
         # Use release mode on Windows to avoid linker resource exhaustion (error 1318).
@@ -581,8 +590,17 @@ jobs:
           # tests/ci_coverage.rs, `ui_tests_do_not_run_on_beta`).
           NEXTEST_FILTER: ${{ matrix.rust == 'beta' && 'not binary(ui_tests)' || 'all()' }}
         run: cargo nextest run --workspace --cargo-profile release -E "$NEXTEST_FILTER"
+      # Not skipped by a red unit test: one failing test once kept the
+      # Windows doctests from running for ten pushes (#504).
       - name: Run doctests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: cargo test --workspace --release --doc
+      # The antigravity module's `cfg(not(unix))` process handling (no
+      # process groups: the harness alone is killed) and its macOS libproc
+      # lookup compile nowhere else: test-antigravity runs on Linux only.
+      - name: Check the antigravity feature
+        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        run: cargo check --features antigravity
 
   coverage:
     name: Code Coverage
