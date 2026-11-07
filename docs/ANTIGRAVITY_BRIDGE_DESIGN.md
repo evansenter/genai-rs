@@ -505,6 +505,14 @@ Subagent tools and model errors (0.1.23, 2026-11-07, scripted model):
   error` and closes the WebSocket, so the agent's next call fails with a
   WebSocket error. Respawn the agent after one.
 
+Questions (0.1.23, 2026-11-07, scripted model,
+`test_scripted_a_question_is_gated_like_any_tool_call`): an `ask_question`
+call reaches the harness's pre-tool callback, where this client evaluates
+its policies and pre-tool hook, before the question is posed, as on
+0.1.18. Under `deny_all()` alone the model gets `denied by pre-tool hook:
+Denied by policy for tool 'ask_question'` and `on_questions` never runs;
+with `allow("ask_question")` beside it, the question reaches the hook.
+
 ## Python SDK parity (google-antigravity 0.1.23)
 
 Every option the 0.1.23 Python SDK exposes for the harness, and what this

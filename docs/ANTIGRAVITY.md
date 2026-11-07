@@ -119,8 +119,10 @@ Windows wheel ships, as the Python SDK does.
 A miss returns `AntigravityError::HarnessNotFound` listing every location
 searched. The search runs on tokio's blocking pool, not on your runtime's
 threads, and `python3` gets 10 seconds to list its site-packages before
-the search moves on to `PATH`; so does the read of the installed wheel's
-version beside the binary.
+the search moves on to `PATH`. The read of the installed wheel's version
+beside the binary gets the same 10 seconds, on a thread of its own, so a
+read abandoned at the limit does not hold up your runtime's shutdown.
+File checks and the start of the binary itself are not bounded.
 
 ## Quick start
 
@@ -546,11 +548,13 @@ up for a question to reach you:
    (autonomous) prompt tells the model nobody will answer, so it asks in
    prose instead of calling the tool; `spawn()` warns about this
    combination.
-3. **Policy allows `ask_question`.** On harness 0.1.18 the call goes
-   through the pre-tool hook like any other tool *before* the question is
-   posed, so `deny_all()` alone blocks every question. (On 0.1.10 question
-   requests bypassed the policy engine; they no longer do.) `ask_question`
-   is also write-capable for the [safety gate](#safety-gate).
+3. **Policy allows `ask_question`.** On the pinned harness (0.1.23, as on
+   0.1.18) the call goes through the policies and the pre-tool hook like
+   any other tool *before* the question is posed, so `deny_all()` alone
+   blocks every question. (On 0.1.10 question requests bypassed the policy
+   engine; they no longer do.) `ask_question` is also write-capable for the
+   [safety gate](#safety-gate). The key-free
+   `test_scripted_a_question_is_gated_like_any_tool_call` holds this.
 
 Set an `on_questions` hook to answer the questions programmatically — route
 them to a CLI prompt, a chat message, or policy code:
@@ -916,10 +920,11 @@ still calling the model. The agent records that the turn never ended, and
 the next `chat`/`send_streaming` halts it and discards its events before
 sending your input (half a second when nothing is left running, five
 seconds at most), so each later turn gets its own reply. A turn that failed
-before the harness ended it (a fatal model error, a lost connection) is
-halted the same way; one the harness failed itself (a pre-turn denial) is
-not. Until that next call the harness may keep working on the abandoned
-turn, so use `cancel()` to stop a turn at once and keep its partial output.
+on this side before the harness ended it is halted the same way; one the
+harness failed itself (a pre-turn denial) is not. A fatal model error ends
+the whole session instead (see [Errors](#errors)). Until that next call the
+harness may keep working on the abandoned turn, so use `cancel()` to stop
+a turn at once and keep its partial output.
 `next_trigger_turn` does not halt anything first: called after an abandoned
 turn, it consumes what is left of that turn. The key-free tests in
 `tests/antigravity_scripted/cancel.rs` abandon a turn each way, with a tool
@@ -1338,6 +1343,14 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 `Config` (spawn-time validation, including the safety gate), `Turn`
 (cancellation, pre-turn denial, fatal model-backend errors), `Timeout`,
 `ToolDispatch`, `WebSocket`, `Protocol`, `Io`, `Json`.
+
+A fatal model-backend error (an HTTP 400 from the model endpoint) fails the
+turn with `Turn` and, on harness 0.1.23, ends the session as well: the
+harness closes its WebSocket, so the agent's next call fails with
+`WebSocket`. Respawn the agent after one. (A model error the harness
+retries, or one that did not stop the turn, arrives as an
+`AgentEvent::Error` instead; see
+[error severity](#event-decisions-trajectory-identity-and-error-severity).)
 
 ## Current limitations (follow-ups)
 

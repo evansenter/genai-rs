@@ -812,7 +812,7 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
              choices. Then answer using their choice.",
         )
         // AskQuestion is write-capable, so it needs a policy to clear the
-        // spawn-time gate even though questions bypass the policy engine.
+        // spawn-time gate, and the policy is consulted for the call itself.
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
         // Required since 0.1.18: the default (autonomous) system prompt
         // tells the model the user will not answer, and it then asks in

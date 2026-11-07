@@ -81,6 +81,11 @@ pub enum AntigravityError {
     },
     /// The turn failed (model backend error, cancellation, or pre-turn
     /// denial).
+    ///
+    /// A fatal model backend error (an HTTP 400 from the model endpoint)
+    /// ends the harness session too, on harness 0.1.23: the harness closes
+    /// its WebSocket, so the agent's next call fails with
+    /// [`WebSocket`](Self::WebSocket). Spawn a new agent after one.
     #[error("agent turn failed: {0}")]
     Turn(String),
     /// WebSocket transport error: the connection to the harness could not
