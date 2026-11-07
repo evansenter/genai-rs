@@ -1,6 +1,6 @@
 //! What CI builds beyond Linux and all features (#504).
 //!
-//! Windows broke twice without a PR noticing (#486, then ten red pushes to
+//! Windows broke twice without a PR noticing (#486, then eleven red pushes to
 //! main): its leg ran only on main pushes, and its checkout had CRLF line
 //! endings that no other leg sees. So a PR runs the Windows stable leg, the
 //! full matrix also runs on the schedule, every text file checks out with LF,
@@ -36,10 +36,48 @@ fn step_condition(step: &str) -> Option<&str> {
         .find_map(|line| line.trim().strip_prefix("if: "))
 }
 
+/// Each matrix key: the one value a PR runs, and the values every other
+/// trigger (main pushes, the schedule, manual runs) must keep.
+const MATRIX: [(&str, &str, &[&str]); 2] = [
+    (
+        "os",
+        "windows-latest",
+        &["ubuntu-latest", "macos-latest", "windows-latest"],
+    ),
+    ("rust", "stable", &["stable", "beta"]),
+];
+
+/// The `&&` terms the antigravity check's `if:` may have. Each keeps the step
+/// on every Windows leg, the PR's included; anything else (another OS test,
+/// an event test, an `||`) is refused rather than read.
+const ANTIGRAVITY_CONDITION_TERMS: [&str; 5] = [
+    "!cancelled()",
+    "always()",
+    "success()",
+    "runner.os != 'Linux'",
+    "runner.os == 'Windows'",
+];
+
+/// A matrix value written `${{ github.event_name == 'pull_request' &&
+/// fromJSON('[..]') || fromJSON('[..]') }}`, as `(the PR's values, every
+/// other trigger's values)`; `None` for any other shape.
+fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
+    let rest = value
+        .strip_prefix("${{ github.event_name == 'pull_request' && fromJSON('")?
+        .strip_suffix("') }}")?;
+    let (on_pr, otherwise) = rest.split_once("') || fromJSON('")?;
+    Some((
+        serde_json::from_str(on_pr).ok()?,
+        serde_json::from_str(otherwise).ok()?,
+    ))
+}
+
 /// Problems with the cross-platform job, empty when it holds: it runs on
 /// every `rust.yml` trigger, the weekly schedule included (no job-level
-/// `if:`); a PR's matrix is the Windows stable leg; the doctests run after a
-/// failed unit-test step; and the antigravity feature is checked on Windows.
+/// `if:`); a PR's matrix is the Windows stable leg and every other trigger's
+/// is the full matrix, none of it excluded; the doctests run after a failed
+/// unit-test step; and the antigravity feature is checked on every Windows
+/// leg.
 fn cross_platform_problems(workflow: &str) -> Vec<String> {
     let body = job(workflow, "cross-platform");
     let mut problems = Vec::new();
@@ -48,19 +86,36 @@ fn cross_platform_problems(workflow: &str) -> Vec<String> {
             "a job-level `if: {condition}`: the job must run on PRs and the schedule too"
         ));
     }
-    for (key, on_pr) in [("os", "windows-latest"), ("rust", "stable")] {
-        let pr_only =
-            format!("github.event_name == 'pull_request' && fromJSON('[\"{on_pr}\"]') ||");
-        let matrix_line = body
+    for (key, on_pr, full) in MATRIX {
+        let value = body
             .lines()
-            .map(str::trim)
-            .find(|line| line.starts_with(&format!("{key}: ")));
-        if !matrix_line.is_some_and(|line| line.contains(&pr_only)) {
+            .find_map(|line| line.trim().strip_prefix(&format!("{key}: ")));
+        let Some((pr_legs, other_legs)) = value.and_then(event_matrix) else {
             problems.push(format!(
-                "the matrix's `{key}` is not `{on_pr}` alone on a PR (`{pr_only} ...`): \
-                 found {matrix_line:?}"
+                "the matrix's `{key}` is not `${{{{ github.event_name == 'pull_request' && \
+                 fromJSON('[..]') || fromJSON('[..]') }}}}`: found {value:?}"
+            ));
+            continue;
+        };
+        if pr_legs != [on_pr] {
+            problems.push(format!(
+                "the matrix's `{key}` on a PR is {pr_legs:?}, not [{on_pr:?}] alone"
             ));
         }
+        let missing: Vec<&str> = full
+            .iter()
+            .copied()
+            .filter(|leg| !other_legs.iter().any(|found| found == leg))
+            .collect();
+        if !missing.is_empty() {
+            problems.push(format!(
+                "the matrix's `{key}` off a PR (main pushes, the schedule) drops {missing:?}: \
+                 found {other_legs:?}"
+            ));
+        }
+    }
+    if body.lines().any(|line| line.trim() == "exclude:") {
+        problems.push("the matrix excludes legs: the full matrix must run whole".into());
     }
     match step_running(&body, "cargo test --workspace --release --doc") {
         Some(step) if step_condition(&step).is_some_and(|c| c.contains("!cancelled()")) => {}
@@ -72,13 +127,23 @@ fn cross_platform_problems(workflow: &str) -> Vec<String> {
     }
     match step_running(&body, "cargo check --features antigravity") {
         Some(step) => {
-            let skips_windows = step_condition(&step).is_some_and(|condition| {
-                condition.contains("runner.os == 'Linux'")
-                    || condition.contains("runner.os == 'macOS'")
-                    || condition.contains("runner.os != 'Windows'")
-            });
-            if skips_windows {
-                problems.push("`cargo check --features antigravity` skips Windows".into());
+            if let Some(condition) = step_condition(&step) {
+                let expression = condition
+                    .strip_prefix("${{")
+                    .and_then(|rest| rest.strip_suffix("}}"))
+                    .unwrap_or(condition);
+                let unknown: Vec<&str> = expression
+                    .split("&&")
+                    .map(str::trim)
+                    .filter(|term| !ANTIGRAVITY_CONDITION_TERMS.contains(term))
+                    .collect();
+                if !unknown.is_empty() {
+                    problems.push(format!(
+                        "`cargo check --features antigravity` must run on every Windows leg, \
+                         the PR's included: its `if:` has {unknown:?}, not only terms from \
+                         {ANTIGRAVITY_CONDITION_TERMS:?}"
+                    ));
+                }
             }
         }
         None => problems.push("no `cargo check --features antigravity` step".into()),
@@ -112,6 +177,31 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
             "github.event_name == 'pull_request' && fromJSON('[\"windows-latest\"]') || ",
             "",
         ),
+        // Every OS on a PR.
+        workflow.replace(
+            "fromJSON('[\"windows-latest\"]') || fromJSON('[\"ubuntu-latest\", \"macos-latest\", \"windows-latest\"]')",
+            "fromJSON('[\"ubuntu-latest\", \"macos-latest\", \"windows-latest\"]') || fromJSON('[\"ubuntu-latest\", \"macos-latest\", \"windows-latest\"]')",
+        ),
+        // Main pushes and the schedule down to Windows: Linux and macOS gone.
+        workflow.replace(
+            "|| fromJSON('[\"ubuntu-latest\", \"macos-latest\", \"windows-latest\"]')",
+            "|| fromJSON('[\"windows-latest\"]')",
+        ),
+        // Main pushes and the schedule down to Linux: Windows gone.
+        workflow.replace(
+            "|| fromJSON('[\"ubuntu-latest\", \"macos-latest\", \"windows-latest\"]')",
+            "|| fromJSON('[\"ubuntu-latest\"]')",
+        ),
+        // Beta gone from main pushes and the schedule.
+        workflow.replace(
+            "|| fromJSON('[\"stable\", \"beta\"]')",
+            "|| fromJSON('[\"stable\"]')",
+        ),
+        // The Windows legs excluded from the full matrix.
+        workflow.replace(
+            "fromJSON('[\"stable\", \"beta\"]') }}\n",
+            "fromJSON('[\"stable\", \"beta\"]') }}\n        exclude:\n          - os: windows-latest\n",
+        ),
         // Doctests skipped again after a red unit test.
         workflow.replace(
             "if: ${{ !cancelled() && steps.build.outcome == 'success' }}\n        run: cargo test --workspace --release --doc",
@@ -121,6 +211,29 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
         workflow.replace(
             "run: cargo check --features antigravity\n",
             "run: cargo check\n",
+        ),
+        // The antigravity check on macOS only, spelt three ways.
+        workflow.replace(
+            "runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
+            "runner.os == 'macOS' }}\n        run: cargo check --features antigravity",
+        ),
+        workflow.replace(
+            "runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
+            "matrix.os == 'macos-latest' }}\n        run: cargo check --features antigravity",
+        ),
+        workflow.replace(
+            "runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
+            "runner.os != 'Linux' && runner.os != 'Windows' }}\n        run: cargo check --features antigravity",
+        ),
+        // The antigravity check off the PR's Windows leg.
+        workflow.replace(
+            "runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
+            "runner.os != 'Linux' && github.event_name != 'pull_request' }}\n        run: cargo check --features antigravity",
+        ),
+        // ... or behind an `||` the terms check cannot read.
+        workflow.replace(
+            "!cancelled() && runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
+            "runner.os == 'macOS' || runner.os == 'Linux' }}\n        run: cargo check --features antigravity",
         ),
     ];
     for (i, text) in broken.iter().enumerate() {
