@@ -29,7 +29,7 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404 since about 2026-11-03, and no new public URL was found (2026-11-04), so the 2026-11-01 copies are the latest. This is the one record of the URL's state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404'd from about 2026-11-03, with no new public URL found (2026-11-04). On 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`; they differ from the committed 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), and refreshing the copies is #511. The daily sweep probes both URLs and comments on #511 when one serves (`watch_spec_urls.sh`). This is the one record of the URL's state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
 
@@ -49,13 +49,15 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
 Completeness against ranks 1 and 1b is a CI check, not a sweep finding:
 `src/coverage_oracle/` and `tests/request_wire_oracle.rs` check every
 request key against the binding classes and every response field for an
-empty `extra`, offline, against the committed snapshot; every binding class
-must be reached by those checks or listed with a reason; and
+empty `extra`, offline, against the committed snapshot (the bindings and
+both specs, v1beta and v1); every binding class and spec schema must be
+reached by those checks or listed with a reason; and
 `tests/ci_coverage.rs` maps every endpoint to the handle verbs that call it
 and requires a live test per handle verb. How it works and how to refresh
 the snapshot is in `docs/TESTING.md` ("Coverage oracle"). Its exception
 lists are this file's working list: the `GAPS`, `NOT_SENT` and `UNMAPPED`
-entries are what is not modeled yet.
+entries are what is not modeled yet. `GAPS` is empty since 2026-11-07,
+when `File.downloadUri`, its last entry, was modeled.
 
 What the first run found (google-genai 2.34.0, spec of 2026-11-01), live
 facts from 2026-11-04. The interaction-side items are closed below, in
@@ -241,6 +243,26 @@ from here rather than repeated.
   `gemini-3.5-flash` (served as `gemini-3.6-flash`) answered that no output
   was visible, while on `gemini-3.8-flash` the same value in the string form
   was read back exactly (2026-11-07).
+- **`tool_choice`** (2026-11-07, `gemini-3.8-flash`, with a weather
+  function declared): the four modes and the `allowed_tools` object are
+  accepted and honored. `"auto"`, `"any"` and `"validated"` each produced a
+  `function_call`, `"none"` a text answer with no call, and `allowed_tools`
+  naming `get_time` a call to `get_time` only. The pre-revision uppercase
+  modes are a `400 Invalid enum value 'AUTO' at
+  'generation_config.tool_choice'`. The shapes are under ToolChoice and
+  FunctionCallingMode in `docs/ENUM_WIRE_FORMATS.md`.
+- **Google Search `search_types`** (2026-11-07): `enterprise_web_search`
+  is Vertex-only (`400 The value 'enterprise_web_search' is not supported
+  for 'tools[0].search_types[0]' on the Gemini API, it is allowed on the
+  Gemini Enterprise Agent Platform. Supported values: 'web_search',
+  'image_search'.`), kept in `SearchType` (D-005). `image_search` is
+  accepted on `gemini-3.1-flash-image` and refused on `gemini-3.8-flash`
+  (`400 Image search as tool is not enabled for
+  models/gemini-3.8-flash`). What the call steps carry is under SearchType
+  in `docs/ENUM_WIRE_FORMATS.md`.
+- **Google Maps `latitude` / `longitude`** are accepted and used: asked
+  for "a coffee shop near me" with Times Square's coordinates, the model
+  answered with one on West 47th Street (2026-11-07).
 
 ### Agents and environments
 
@@ -263,6 +285,12 @@ from here rather than repeated.
   use.
 - **Environment file download** of a path with nothing at it, the root
   (`""`) included, is a `404 Directory not found or is empty` (2026-11-05).
+- **`agent_config.max_total_tokens`** (2026-11-07): an Antigravity run
+  with a budget of 1,000 stopped after one code execution step, at 4,976
+  total tokens, and ended `incomplete`, not with the spec's
+  `budget_exceeded` (deprecated in v1beta). That is one run with no
+  unbudgeted run beside it, so it does not show that the budget stopped
+  it.
 - **`cancel` on `DEFAULT_ANTIGRAVITY_AGENT`** fails; see
   [Server-side changes](#server-side-changes-live-2026-10-01).
 - **The retired agent:** `antigravity-preview-09-2026` replaced
@@ -380,8 +408,11 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
   upload) are modeled, and `sizeBytes` reads a string or a number. A file
   that fails processing serves `error: {code: 3, message}` with no
   `details`; `FileError` models `details` and keeps other keys in `extra`.
-  `downloadUri` stays a `GAPS` entry: no uploaded or failed file carries it,
-  and only a generated file (a video generation) would.
+  No uploaded or failed file carries `downloadUri`, nor did an upload on
+  2026-11-07. The bindings set it only on a downloadable (generated) file,
+  such as a video generation's, which no probe has made: it is modeled from
+  the bindings since 2026-11-07 (`FileMetadata::download_uri`) and not yet
+  seen live.
 - **File Search Stores:** `activeDocumentsCount`, `pendingDocumentsCount`
   (served only while a document indexes) and `sizeBytes` are string int64s,
   all modeled; `failedDocumentsCount`, never seen because an unindexable
@@ -415,11 +446,17 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
   `alt=media` serves the file's bytes under its own content type, and a
   directory as `application/x-tar`. The bindings list that endpoint once,
   for both verbs, so the oracle maps both to it.
-- **Deferred** (SDK verbs outside the bindings' classes and endpoints):
+- **Deferred** (in the bindings, but the crate sends none of them:
+  `tests/ci_coverage.rs` lists the three endpoints in
+  `ENDPOINTS_WITHOUT_A_VERB`, `tests/request_wire_oracle.rs` the triggers
+  `filter` in `NOT_SENT`, and `src/coverage_oracle/` the upload's `name` in
+  `UNMAPPED`):
   `files.download` (an uploaded file is a `400 Only GENERATED files can be
   downloaded`), `files.register_files` (`401 API keys are not supported`),
-  `files.upload(config={"name"})` (accepted, but `FileUpload` is shared with
-  store uploads, which take no name), `file_search_stores.download_media`
+  `files.upload(config={"name"})` (live 2026-11-07: the file is served
+  under the chosen name, and a second upload under it fails at finalize
+  with `409 ... already exists`; not modeled, D-039),
+  `file_search_stores.download_media`
   (needs a `file_citation` `media_id`, never served) and
   `triggers.list(filter_=)` (every expression tried is a `400 Invalid filter
   expression`, syntax undocumented).
@@ -500,7 +537,7 @@ two Files entries below listed in its `ALLOWED`.
 | Surface | Where | Live result |
 |---|---|---|
 | `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files; a non-empty output read the same through the stored `GET` and arrived whole in one stream delta. Generated files come in the next `model_output` step. The list form is accepted back in history, but its content does not reach the model. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
-| `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text }` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
+| `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text, .. }`, built with `TranscriptionMode::smart(..)` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
 | `gemini-3.5-transcribe` in the `Model` literal | `DEFAULT_TRANSCRIPTION_MODEL` | The model on which `transcription_config` takes effect, and on which `word_info` annotations were first seen. See Models above |
 | `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); the coverage oracle holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back; real `.xls` and `.ppt` files are unverified (#530). See Requests above |
 

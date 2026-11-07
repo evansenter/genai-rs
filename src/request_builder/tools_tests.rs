@@ -102,6 +102,7 @@ fn test_interaction_builder_with_google_maps() {
             enable_widget: None,
             latitude: None,
             longitude: None,
+            ..
         }
     ));
 }
@@ -126,8 +127,8 @@ fn test_built_in_tool_setters_replace_instead_of_duplicating() {
     assert_eq!(tools.len(), 4, "one of each kind: {tools:?}");
     let kinds: [fn(&Tool) -> bool; 4] = [
         |t| matches!(t, Tool::GoogleSearch { .. }),
-        |t| matches!(t, Tool::CodeExecution),
-        |t| matches!(t, Tool::UrlContext),
+        |t| matches!(t, Tool::CodeExecution { .. }),
+        |t| matches!(t, Tool::UrlContext { .. }),
         |t| matches!(t, Tool::GoogleMaps { .. }),
     ];
     for kind in kinds {
@@ -153,7 +154,10 @@ fn test_with_google_search_replaces_a_configured_search_tool() {
     assert!(matches!(tools[0], Tool::Function { .. }));
     assert!(matches!(
         tools[1],
-        Tool::GoogleSearch { search_types: None }
+        Tool::GoogleSearch {
+            search_types: None,
+            ..
+        }
     ));
 }
 
@@ -164,8 +168,8 @@ fn test_add_tool_still_accumulates_same_kind() {
         .interaction()
         .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
-        .add_tool(Tool::CodeExecution)
-        .add_tool(Tool::CodeExecution);
+        .add_tool(Tool::code_execution())
+        .add_tool(Tool::code_execution());
     assert_eq!(builder.tools.as_ref().unwrap().len(), 2);
 }
 
@@ -177,8 +181,8 @@ fn test_with_tools_replaces_all_tools() {
         .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
         .with_google_search()
-        .with_tools(vec![Tool::UrlContext]);
-    assert_eq!(builder.tools, Some(vec![Tool::UrlContext]));
+        .with_tools(vec![Tool::url_context()]);
+    assert_eq!(builder.tools, Some(vec![Tool::url_context()]));
 }
 
 #[test]
@@ -266,6 +270,7 @@ fn test_interaction_builder_with_file_search() {
             store_names,
             top_k,
             metadata_filter,
+            ..
         } => {
             assert_eq!(store_names, &vec!["stores/store-123", "stores/store-456"]);
             assert_eq!(*top_k, None);
@@ -297,6 +302,7 @@ fn test_interaction_builder_with_file_search_config() {
             store_names,
             top_k,
             metadata_filter,
+            ..
         } => {
             assert_eq!(store_names, &vec!["stores/my-docs"]);
             assert_eq!(*top_k, Some(10));

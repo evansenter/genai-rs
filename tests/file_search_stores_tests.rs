@@ -370,6 +370,7 @@ async fn test_file_search_retrieval_end_to_end() {
                     store_names: vec![store_name.clone()],
                     top_k: None,
                     metadata_filter: None,
+                    extra: Default::default(),
                 })
                 .create()
                 .await

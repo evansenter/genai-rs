@@ -125,6 +125,15 @@ pub struct FileMetadata {
     #[serde(default)]
     pub uri: String,
 
+    /// Where to download the file's bytes from (the bindings' `downloadUri`).
+    ///
+    /// Modeled from the bindings, which set it only on a downloadable
+    /// (generated) file ([`FileSource::Generated`], such as a generated
+    /// video), and not yet seen live: an uploaded file has none, and asking
+    /// to download one is a `400 Only GENERATED files can be downloaded`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_uri: Option<String>,
+
     /// Processing state of the file
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<FileState>,

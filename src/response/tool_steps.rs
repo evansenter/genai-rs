@@ -236,7 +236,6 @@ impl InteractionResponse {
     /// Returns a borrowed view carrying both fields, matching
     /// [`function_calls`](Self::function_calls) — the `signature` is what a
     /// caller needs for stateless replay, so returning bare ids would not do.
-    /// See #433.
     #[must_use]
     pub fn tool_calls(&self) -> Vec<ToolCallInfo<'_>> {
         self.steps

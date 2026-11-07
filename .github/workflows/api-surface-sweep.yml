@@ -14,12 +14,17 @@ name: API Surface Sweep
 # in .github/last-swept-sdk-version and opens/updates an issue when the
 # generated bindings change: every type under `_gaos/types/` (Interactions
 # and the resources beside it: voices, credentials, environments, ...) plus
-# the endpoint paths in `_gaos/*.py`. Compared as a normalized schema dump
+# the endpoint paths in `_gaos/*.py`, each endpoint's query parameters, and
+# the Api-Revision the bindings pin. Compared as a normalized schema dump
 # (.github/scripts/dump_bindings_schema.py), because a raw `diff -r` of
 # 2.18.1 -> 2.25.0 was 2,771 lines of mostly lint headers and docstring
 # rewraps, and the old `types/interactions`-only scope missed two new
-# resources outright. The dump also covers the Files, File Search Store and
-# Document classes in the hand-written `types.py`.
+# resources outright. The dump also covers the hand-written Files, File
+# Search Store, Document and Operation modules: their endpoints, and the
+# classes in `types.py` their methods' signatures name.
+#
+# Every run also probes the published OpenAPI spec URLs, and says so on
+# #511 when one serves the spec (their record is in the gap tracker).
 #
 # The same dump, resolved (`--json`), is the coverage oracle's snapshot in
 # `tests/fixtures/api_surface/`. Each run checks that the committed copy
@@ -140,7 +145,8 @@ jobs:
             echo "## New Interactions API surface detected"
             echo
             echo "\`google-genai\` moved **$BASELINE → $LATEST** and the generated"
-            echo "bindings changed (types under \`_gaos/types/\`, or endpoint paths)."
+            echo "bindings changed (types under \`_gaos/types/\`, endpoints, query"
+            echo "parameters, the Api-Revision, or the Files and File Search Store modules)."
             echo
             echo "Generated bindings ship *ahead* of prose docs, so treat this as the"
             echo "leading indicator: anything here may be absent from ai.google.dev."
@@ -156,7 +162,8 @@ jobs:
             echo "### Schema diff"
             echo
             echo "\`<\` removed, \`>\` added. One line per model field (\`model\`),"
-            echo "type alias or enum (\`alias\`), and endpoint (\`endpoint\`); unions"
+            echo "type alias or enum (\`alias\`), endpoint (\`endpoint\`), query"
+            echo "parameter (\`query\`) and the pinned Api-Revision (\`revision\`); unions"
             echo "and literals are sorted, so reordering is not reported."
             echo
             echo '<details><summary>Expand</summary>'
@@ -449,6 +456,25 @@ jobs:
           gh issue close "$EXISTING" --reason completed
           echo "Closed issue #$EXISTING"
 
+      # The published OpenAPI spec URLs (the `source` each committed spec
+      # snapshot records) are what #511 tracks; their state is recorded in
+      # docs/INTERACTIONS_API_GAP.md ("How to verify API surface"). This
+      # probes them every day and comments on #511 once per URL that serves
+      # an OpenAPI document, with the commands that refresh the snapshot
+      # from it. A dead
+      # URL is the state #511 tracks, not a failure; a closed #511 gets no
+      # comment. `!cancelled()`: it does not depend on the PyPI diff above.
+      - name: Watch the published OpenAPI spec URLs (#511)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPEC_URL_ISSUE: '511'
+        run: |
+          set -euo pipefail
+          .github/scripts/watch_spec_urls.sh "$SPEC_URL_ISSUE" \
+            tests/fixtures/api_surface/openapi-v1beta.json \
+            tests/fixtures/api_surface/openapi-v1.json
+
       # The coverage oracle (`src/coverage_oracle/`) reads the committed
       # bindings snapshot (#488). Offline, `make test-scripts` checks only
       # that it is for the baseline release and not empty
@@ -489,9 +515,10 @@ jobs:
             "**This is not a new-surface notice.** New google-genai bindings are
           reported on the sweep's own \`api-sweep\` issue and leave this run
           green. A red run means the sweep could not complete: PyPI or the wheel
-          download failed, the bindings dump could not read a wheel, or the
-          committed snapshot no longer matches the baseline release (the last
-          step names it). Check the run log."
+          download failed, the bindings dump could not read a wheel, the spec
+          URL watch could not read or comment on #511, or the committed
+          snapshot no longer matches the baseline release (the last step names
+          it). Check the run log."
 
       - name: Clear the failure issue once the run recovers
         if: success() && github.event_name == 'schedule'

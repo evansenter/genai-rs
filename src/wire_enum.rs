@@ -10,7 +10,9 @@
 //! A non-string value lands in `Unknown` with `<non-string: …>` as its type
 //! and the original JSON in `data`, and serializes back as that JSON, so it
 //! round-trips like a string does. A hand-built `Unknown` always serializes
-//! its type string.
+//! its type string. [`unknown_type`] and [`serialize_wire`] hold that rule,
+//! and the Antigravity harness enums (`src/antigravity/protocol/enums.rs`),
+//! which keep soft typing in strict mode too, share them.
 
 macro_rules! wire_enum {
     (
@@ -78,28 +80,20 @@ macro_rules! wire_enum {
 
         impl serde::Serialize for $name {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                match self {
-                    // A non-string value read from the wire goes back out as
-                    // it came, not as its `<non-string: ...>` descriptor.
-                    Self::Unknown { $field, data }
-                        if !data.is_string()
-                            && *$field == $crate::wire_enum::non_string_descriptor(data) =>
-                    {
-                        serde::Serialize::serialize(data, serializer)
-                    }
-                    _ => serializer.serialize_str(self.as_wire()),
-                }
+                $crate::wire_enum::serialize_wire(self.as_wire(), self.unknown_data(), serializer)
             }
         }
 
         impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
-                let $field = match value.as_str() {
-                    $( Some($wire $(| $alias)*) => return Ok(Self::$variant), )+
-                    Some(other) => other.to_string(),
-                    None => $crate::wire_enum::non_string_descriptor(&value),
-                };
+                if let Some(wire) = value.as_str() {
+                    match wire {
+                        $( $wire $(| $alias)* => return Ok(Self::$variant), )+
+                        _ => {}
+                    }
+                }
+                let $field = $crate::wire_enum::unknown_type(&value);
                 #[cfg(genai_strict_unknown)]
                 {
                     Err(<D::Error as serde::de::Error>::custom(format!(
@@ -128,6 +122,32 @@ pub(crate) use wire_enum;
 /// The `Unknown` type `wire_enum!` gives a non-string wire value.
 pub(crate) fn non_string_descriptor(value: &serde_json::Value) -> String {
     format!("<non-string: {value}>")
+}
+
+/// The `Unknown` type of an unrecognized wire value: the string itself, or
+/// its [`non_string_descriptor`].
+pub(crate) fn unknown_type(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .map_or_else(|| non_string_descriptor(value), str::to_owned)
+}
+
+/// Writes a string enum's wire value. `wire` is the variant's string (an
+/// `Unknown`'s type), and `unknown_data` an `Unknown`'s preserved JSON. A
+/// non-string value read from the wire goes back out as it came, not as its
+/// `<non-string: ...>` descriptor; anything else, a hand-built `Unknown`
+/// included, is written as `wire`.
+pub(crate) fn serialize_wire<S: serde::Serializer>(
+    wire: &str,
+    unknown_data: Option<&serde_json::Value>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match unknown_data {
+        Some(data) if !data.is_string() && wire == non_string_descriptor(data) => {
+            serde::Serialize::serialize(data, serializer)
+        }
+        _ => serializer.serialize_str(wire),
+    }
 }
 
 #[cfg(test)]

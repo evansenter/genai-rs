@@ -13,14 +13,34 @@
 mod common;
 
 use common::{
-    assert_response_semantic, get_client, interaction_builder, is_safety_block_error,
-    stateful_builder,
+    assert_response_semantic, assert_stored, get_client, interaction_builder,
+    is_safety_block_error, stateful_builder, stored_echo,
 };
 use genai_rs::{
     FunctionCallingMode, FunctionDeclaration, GenaiError, GenerationConfig, InteractionResponse,
     InteractionStatus, ThinkingLevel, ThinkingSummaries, Tool,
 };
 use serde_json::json;
+
+/// Reads back what a stored interaction kept at `pointer`, checks it holds
+/// what was sent, and deletes the interaction.
+async fn assert_stored_and_delete(
+    client: &genai_rs::Client,
+    response: &InteractionResponse,
+    what: &str,
+    pointer: &str,
+    sent: &serde_json::Value,
+) {
+    let id = response
+        .id
+        .as_deref()
+        .expect("a stored interaction has an id");
+    let stored = stored_echo(client, id, pointer).await;
+    if let Err(e) = client.interactions().delete(id).await {
+        println!("interactions().delete({id}) failed (tolerated): {e}");
+    }
+    assert_stored(what, sent, stored);
+}
 
 /// Unwraps a built-in tool request, tolerating only the content-safety block
 /// that fetched external pages intermittently trip (observed live 2026-07).
@@ -48,7 +68,7 @@ fn tool_response(
 mod google_search {
     use super::*;
     use futures_util::StreamExt;
-    use genai_rs::StreamChunk;
+    use genai_rs::{GoogleSearchConfig, SearchType, StepDelta, StreamChunk};
 
     /// Search grounding on turn 1, and a follow-up that answers from the
     /// grounded context on turn 2.
@@ -109,6 +129,10 @@ mod google_search {
         .await;
     }
 
+    /// A grounded answer streams its text as `text` deltas and its
+    /// citations as `text_annotation_delta` deltas (`StepDelta::Text` and
+    /// `StepDelta::TextAnnotation`), which the accumulator builds into the
+    /// response: `interaction.completed` carries no steps.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_google_search_streaming() {
@@ -118,14 +142,26 @@ mod google_search {
         };
 
         let mut stream = interaction_builder(&client)
-            .with_text("What's the latest news about Rust programming language?")
+            .with_text(
+                "What's the latest news about the Rust programming language? \
+                 Use search and cite your sources.",
+            )
             .with_google_search()
             .create_stream();
 
+        let (mut text_deltas, mut annotation_deltas) = (0, 0);
+        let mut unknown = Vec::new();
         let mut final_response = None;
         while let Some(result) = stream.next().await {
-            if let StreamChunk::Completed(response) = result.expect("stream error").chunk {
-                final_response = Some(response);
+            match result.expect("stream error").chunk {
+                StreamChunk::StepDelta { delta, .. } => match delta {
+                    StepDelta::Text { .. } => text_deltas += 1,
+                    StepDelta::TextAnnotation { .. } => annotation_deltas += 1,
+                    other if other.is_unknown() => unknown.push(other),
+                    _ => {}
+                },
+                StreamChunk::Completed(response) => final_response = Some(response),
+                _ => {}
             }
         }
 
@@ -135,6 +171,48 @@ mod google_search {
             "the accumulated response should carry the search step: {:?}",
             response.step_summary()
         );
+        assert!(unknown.is_empty(), "deltas read as Unknown: {unknown:?}");
+        assert!(text_deltas > 0, "no `text` delta was streamed");
+        assert!(
+            annotation_deltas > 0 && response.has_annotations(),
+            "the citations should stream as `text_annotation_delta` deltas \
+             ({annotation_deltas}) and accumulate onto the text"
+        );
+    }
+
+    /// `enterprise_web_search` is Vertex-only (D-005: kept in `SearchType`
+    /// and documented): the Gemini API names the platform in its 400. If it
+    /// starts accepting the value, this fails so the docs get updated.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_google_search_enterprise_web_search_is_vertex_only() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        // A 400 is not retried; a transient 5xx or 429 is.
+        let result = retry_request!([client] => {
+            interaction_builder(&client)
+                .with_text("What is the latest stable Rust release?")
+                .add_tool(
+                    GoogleSearchConfig::new().with_search_types(vec![SearchType::EnterpriseWebSearch]),
+                )
+                .create()
+                .await
+        });
+        match result {
+            Err(GenaiError::Api {
+                status_code: 400,
+                message,
+                ..
+            }) => assert!(
+                message.contains("enterprise_web_search")
+                    && message.contains("Gemini Enterprise Agent Platform"),
+                "400 does not say the value is Vertex-only: {message}"
+            ),
+            other => panic!("expected a Vertex-only 400, got: {other:?}"),
+        }
     }
 
     /// Grounded text carries citation annotations pointing at sources.
@@ -206,9 +284,14 @@ mod code_execution {
         })
         .expect("Code execution request failed");
 
+        let calls = response.code_execution_calls();
+        assert!(!calls.is_empty(), "no code was executed");
+        // `arguments.language` is lowercase `"python"` on the wire.
         assert!(
-            !response.code_execution_calls().is_empty(),
-            "no code was executed"
+            calls
+                .iter()
+                .all(|call| call.language == CodeExecutionLanguage::Python),
+            "every call should be Python: {calls:?}"
         );
         let output = response
             .successful_code_output()
@@ -417,6 +500,12 @@ mod url_context {
     /// The fetch must have succeeded: a result whose status is `error` still
     /// names the URL, so checking the URL alone passed on failed fetches.
     pub(super) fn assert_fetched(response: &InteractionResponse) {
+        // The call step's `arguments.urls`, flattened into `urls`.
+        let urls = response.url_context_call_urls();
+        assert!(
+            urls.iter().any(|url| url.contains("iana.org")),
+            "no url_context_call named {URL}: {urls:?}"
+        );
         let items: Vec<_> = response
             .url_context_results()
             .into_iter()
@@ -562,6 +651,38 @@ mod google_maps {
             named_places > 0,
             "maps results should name at least one place"
         );
+    }
+
+    /// `latitude` and `longitude` are accepted and stored with the tool, and
+    /// they place the search: the prompt names no location.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_google_maps_location_is_stored() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        // Times Square.
+        let request = stateful_builder(&client)
+            .with_text("Find a coffee shop near me.")
+            .add_tool(genai_rs::GoogleMapsConfig::new().with_location(40.758, -73.9855))
+            .build()
+            .expect("a valid request");
+        let sent = serde_json::to_value(&request).unwrap()["tools"].clone();
+        assert_eq!(sent[0]["latitude"], 40.758, "{sent}");
+        let response = retry_request!([client, request] => {
+            client.execute(request).await
+        })
+        .expect("Google Maps with a location should succeed");
+
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(
+            response.has_google_maps_results(),
+            "the location should be searched: {:?}",
+            response.step_summary()
+        );
+        assert_stored_and_delete(&client, &response, "Google Maps location", "/tools", &sent).await;
     }
 }
 
@@ -852,30 +973,10 @@ mod computer_use {
             .create()
             .await;
 
-        let response = match result {
-            Ok(response) => response,
-            Err(e) => {
-                let msg = format!("{e:?}").to_lowercase();
-                let unavailable = [
-                    "permission",
-                    "not allowed",
-                    "not supported",
-                    "not available",
-                    "not enabled",
-                ]
-                .iter()
-                .any(|phrase| msg.contains(phrase));
-                let about_computer_use =
-                    msg.contains("computer_use") || msg.contains("computer use");
-                if about_computer_use && unavailable {
-                    // Unmarked: a key that is not allowlisted is a stable
-                    // account property, like having no key at all.
-                    println!("Skipping: computer use not enabled for this key: {e:?}");
-                    return;
-                }
-                panic!("Computer use request failed: {e:?}");
-            }
-        };
+        // No skip on an "unavailable" error: computer use runs on a standard
+        // key (Computer Use in docs/ENUM_WIRE_FORMATS.md), so losing it is a
+        // regression to fail on, not an account property.
+        let response = result.unwrap_or_else(|e| panic!("Computer use request failed: {e:?}"));
 
         let step_types: Vec<&str> = response
             .steps
@@ -1564,6 +1665,114 @@ mod config_fields {
 
 mod function_calling_modes {
     use super::*;
+
+    fn weather_fn() -> FunctionDeclaration {
+        FunctionDeclaration::builder("get_weather")
+            .with_description("Get the current weather for a location")
+            .add_parameter(
+                "location",
+                json!({"type": "string", "description": "The city name"}),
+            )
+            .with_required(vec!["location".to_string()])
+            .build()
+    }
+
+    /// `"none"` keeps the model from calling a declared function: it answers
+    /// in text, and the stored interaction keeps the mode as sent.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_function_calling_none_mode_answers_without_a_call() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let request = stateful_builder(&client)
+            .with_text("What's the weather like in Tokyo?")
+            .add_functions(vec![weather_fn()])
+            .with_function_calling_mode(FunctionCallingMode::None)
+            .build()
+            .expect("a valid request");
+        let sent =
+            serde_json::to_value(&request).unwrap()["generation_config"]["tool_choice"].clone();
+        assert_eq!(sent, "none");
+        let response = retry_request!([client, request] => {
+            client.execute(request).await
+        })
+        .expect("none mode should be accepted");
+
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(
+            response.function_calls().is_empty(),
+            "none mode called a function: {:?}",
+            response.function_calls()
+        );
+        assert!(response.has_text(), "none mode should answer in text");
+        assert_stored_and_delete(
+            &client,
+            &response,
+            "tool_choice none",
+            "/generation_config/tool_choice",
+            &sent,
+        )
+        .await;
+    }
+
+    /// Both `tool_choice` forms are stored as sent: a mode string
+    /// (`"auto"`), and the `allowed_tools` object, whose restriction holds
+    /// (the call is the one function it names, of two declared).
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_tool_choice_forms_are_stored() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let time_fn = FunctionDeclaration::builder("get_time")
+            .with_description("Get the current time in a city")
+            .add_parameter("location", json!({"type": "string"}))
+            .build();
+        let forms = [
+            (FunctionCallingMode::Auto, None),
+            (FunctionCallingMode::Any, Some("get_time")),
+        ];
+        for (mode, only) in forms {
+            let mut builder = stateful_builder(&client)
+                .with_text("What's the weather like in Tokyo, and what time is it there?")
+                .add_functions(vec![weather_fn(), time_fn.clone()])
+                .with_function_calling_mode(mode);
+            if let Some(name) = only {
+                builder = builder.with_allowed_tools(vec![name.to_string()]);
+            }
+            let request = builder.build().expect("a valid request");
+            let sent =
+                serde_json::to_value(&request).unwrap()["generation_config"]["tool_choice"].clone();
+            let response = retry_request!([client, request] => {
+                client.execute(request).await
+            })
+            .unwrap_or_else(|e| panic!("tool_choice {sent} should be accepted: {e:?}"));
+
+            if let Some(name) = only {
+                assert_eq!(sent["allowed_tools"]["tools"], json!([name]), "{sent}");
+                let calls: Vec<&str> = response.function_calls().iter().map(|c| c.name).collect();
+                assert!(
+                    !calls.is_empty() && calls.iter().all(|call| *call == name),
+                    "allowed_tools should limit the calls to {name}: {calls:?}"
+                );
+            } else {
+                assert_eq!(sent, "auto");
+            }
+            assert_stored_and_delete(
+                &client,
+                &response,
+                "tool_choice",
+                "/generation_config/tool_choice",
+                &sent,
+            )
+            .await;
+        }
+    }
 
     /// Validated mode is accepted and yields either a schema-bound call or
     /// text. (`FunctionCallingMode::Any` is covered in

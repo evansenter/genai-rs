@@ -127,7 +127,7 @@ fn borrowed_struct(ty: &Type) -> Option<String> {
 }
 
 /// The source files in `src/`, without the antigravity runtime.
-fn src_files() -> Vec<syn::File> {
+pub fn src_files() -> Vec<syn::File> {
     let mut files = Vec::new();
     rust_files(&root().join("src"), &mut files);
     files
