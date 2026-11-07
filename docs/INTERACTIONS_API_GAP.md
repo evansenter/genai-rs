@@ -534,7 +534,7 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   calls. Please retry the request. ...`). On 2026-11-07 the thinking level
   decided how often: 69 of 129 requests looped at the default level, 3 of 4
   at `thinking_level: "medium"` and 15 of 20 at `"high"`, against 9 of 219
-  at `"low"` in back-to-back batches, and 3 of 51 single requests at `"low"`
+  at `"low"` in back-to-back batches, and 3 of 61 single requests at `"low"`
   spread over the day. Loops came in bursts: in one batch that alternated
   the default and `low`, 38 and 4 of 60 looped. Above `low`, neither another
   page (three others), another prompt or schema, `tool_choice: "validated"`,

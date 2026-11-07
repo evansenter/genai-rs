@@ -1677,7 +1677,7 @@ handles, found by live probes and recorded with its numbers in
 with a message naming the bug, and the retry nextest gives it is counted.
 A deadline retry for a slow runner, as `DEADLINE_BUDGETS` in the scripted
 suite does, is not a flake retry and stays. The url_context test sends
-`thinking_level: "low"`: the server looped in 3 of 51 single requests and
+`thinking_level: "low"`: the server looped in 3 of 61 single requests and
 9 of 219 back to back at `low`, against 69 of 129 at the default level
 (2026-11-07). No page, prompt, schema, `tool_choice`, seed or temperature
 tried stopped it above `low`, and `temperature: 0` did not help at `low`
@@ -1685,7 +1685,7 @@ in single requests (5 of 38). A loop fails the test on the API's own
 `400 too_many_tool_calls`, which names the URL context calls.
 
 **Consequences.** The url_context test still meets the loop in about one
-run in sixteen, in bursts, and then fails after about two minutes instead
+run in twenty, in bursts, and then fails after about two minutes instead
 of passing on a later attempt. That is near the report's 5% chronic line,
 so the report may still list it some weeks, with this cause on record; the
 choices left then are the owner's: accept the API's step-limit error as

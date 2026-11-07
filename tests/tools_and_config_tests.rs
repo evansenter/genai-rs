@@ -1180,7 +1180,7 @@ mod structured_output {
     /// again until the API stops it with `400 too_many_tool_calls` (60 URL
     /// context calls, after about two minutes). On 2026-11-07 it looped in
     /// 69 of 129 requests at the default thinking level and 15 of 20 at
-    /// `high`, but in 9 of 219 at `low`, and in 3 of 51 single requests at
+    /// `high`, but in 9 of 219 at `low`, and in 3 of 61 single requests at
     /// `low` spread over the day (docs/INTERACTIONS_API_GAP.md, "url_context
     /// loops under a response schema"). So the request sets `low` and is
     /// sent once. A loop fails the test with the API's own error, which

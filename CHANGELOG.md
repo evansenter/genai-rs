@@ -1015,7 +1015,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error, because the model calls the tool anyway (verified live
   2026-11-07); send the built-in tools on every turn. The url_context loop
   under a response schema is recorded with what mostly avoids it: at
-  `with_thinking_level(ThinkingLevel::Low)` it looped in 3 of 51 single
+  `with_thinking_level(ThinkingLevel::Low)` it looped in 3 of 61 single
   requests, against 69 of 129 at the default level
   (`docs/INTERACTIONS_API_GAP.md`, #504).
 
