@@ -247,9 +247,9 @@ const SPEC_UNMAPPED: &[Allowed] = &[
     ("WebhookUpdate", REQUEST_BODY),
     (
         "UploadEnvironmentFileRequest",
-        "The upload's options; `EnvironmentFiles::upload` sends `overwrite` \
-         and `extract` as query parameters, as the bindings' \
-         `environments.files.upload` does, and the start request has no body.",
+        "The upload's options, which `EnvironmentFiles::upload` sends as the \
+         `overwrite` and `extract` query parameters; the start request has no \
+         body.",
     ),
     (
         "HttpBody",

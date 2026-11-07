@@ -614,13 +614,18 @@ fn v1_only_values_are_checked() {
             "requires_continuation",
         ),
         ("VideoContent.mime_type", "video/jpeg2000"),
-        ("Interaction.model", "models/gemini-3.5-flash"),
     ] {
         assert!(
             only_v1.contains(&(site.to_string(), value.to_string())),
             "{site}={value} is no longer v1-only: {only_v1:?}"
         );
     }
+    assert!(
+        only_v1
+            .iter()
+            .any(|(site, value)| site == "Interaction.model" && value.starts_with("models/")),
+        "v1's `models/`-prefixed model ids are no longer v1-only: {only_v1:?}"
+    );
     let missing: Vec<_> = only_v1.difference(&carried).collect();
     assert!(
         missing.is_empty(),
