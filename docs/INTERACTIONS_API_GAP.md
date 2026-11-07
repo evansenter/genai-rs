@@ -261,6 +261,17 @@ from here rather than repeated.
   (`400 Image search as tool is not enabled for
   models/gemini-3.8-flash`). What the call steps carry is under SearchType
   in `docs/ENUM_WIRE_FORMATS.md`.
+- **A follow-up that drops a built-in tool can fail.** Tools are not
+  carried over by `previous_interaction_id`, and after a turn that used
+  `google_search`, a follow-up sent without it sometimes ends with the
+  model calling a tool it no longer has: `status: "failed"` with
+  `errors: [{"code": "malformed_tool_call", "message": "Model generated
+  invalid JSON syntax and the output could not be parsed. Please retry the
+  request. ..."}]` in a `200` (1 of 6 on 2026-11-07). In CI the follow-up
+  failed in 13 of 99 runs from 2026-11-01 to 2026-11-06: as a `400
+  malformed_tool_call` through 2026-11-04, as `status: "failed"` from
+  2026-11-05, and twice as `requires_action`. Sent with the tool again, 6
+  of 6 completed, answering from the history without a second search.
 - **Google Maps `latitude` / `longitude`** are accepted and used: asked
   for "a coffee shop near me" with Times Square's coordinates, the model
   answered with one on West 47th Street (2026-11-07).

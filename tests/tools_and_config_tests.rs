@@ -61,6 +61,18 @@ fn tool_response(
     }
 }
 
+/// Asserts the interaction completed, naming the errors and steps it carried
+/// when it did not: a `failed` interaction says why only in `errors`.
+fn assert_completed(response: &InteractionResponse, what: &str) {
+    assert_eq!(
+        response.status,
+        InteractionStatus::Completed,
+        "{what} did not complete; errors: {:?}; steps: {:?}",
+        response.errors,
+        response.step_summary()
+    );
+}
+
 // =============================================================================
 // Built-in Tools: Google Search
 // =============================================================================
@@ -72,6 +84,19 @@ mod google_search {
 
     /// Search grounding on turn 1, and a follow-up that answers from the
     /// grounded context on turn 2.
+    ///
+    /// Turn 2 sends the search tool again: tools are not inherited through
+    /// `previous_interaction_id`. Without it, the model, seeing search steps
+    /// in its history, sometimes emits a search call it has no tool for,
+    /// and the turn ends in `malformed_tool_call` (as a 400, or as
+    /// `status: failed` with that error code) or `requires_action`: 13 of
+    /// 99 CI runs needed a retry for it (2026-11-01 to 2026-11-06), and 1 of
+    /// 6 live turns failed that way without the tool against 0 of 6 with it
+    /// (2026-11-07). One more run failed the old turn-2 check, which held a
+    /// fresh forecast to turn 1's.
+    ///
+    /// Turn 2 names no place ("there"), so only the carried-over context
+    /// says which city the user means: a turn that lost it would have to ask.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_google_search_multi_turn() {
@@ -91,7 +116,7 @@ mod google_search {
             return;
         };
 
-        assert_eq!(response1.status, InteractionStatus::Completed);
+        assert_completed(&response1, "turn 1");
         assert!(
             !response1.google_search_calls().is_empty(),
             "no search was issued: {:?}",
@@ -110,7 +135,8 @@ mod google_search {
         let result2 = retry_request!([client, prev_id] => {
             stateful_builder(&client)
                 .with_previous_interaction(&prev_id)
-                .with_text("Based on the weather information you just found, should I bring an umbrella if I visit Tokyo today?")
+                .with_text("Based on the weather you just found, should I bring an umbrella there today?")
+                .with_google_search()
                 .create()
                 .await
         });
@@ -118,13 +144,20 @@ mod google_search {
             return;
         };
 
-        assert_eq!(response2.status, InteractionStatus::Completed);
+        assert_completed(&response2, "turn 2");
         let text2 = response2.as_text().expect("turn 2 should answer in text");
+        // Whether to bring one is the model's call, and a second search may
+        // find a forecast that differs from turn 1's; what the context must
+        // supply is the place.
         assert_response_semantic(
             &client,
-            &format!("Turn 1 found this Tokyo weather: {text1}. The user then asked whether to bring an umbrella."),
+            &format!(
+                "Turn 1 looked up the weather in Tokyo and reported: {text1}\n\
+                 The user then asked, naming no place: \"should I bring an umbrella there today?\""
+            ),
             text2,
-            "Does this response give umbrella advice consistent with that weather?",
+            "Does this response give umbrella advice for Tokyo based on its weather, \
+             rather than asking which place the user means?",
         )
         .await;
     }
