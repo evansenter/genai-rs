@@ -745,11 +745,36 @@ Rules (matching the reference SDK):
   sees them) nor the harness's own policy evaluator, and workspace
   containment does not confine them: a read-only subagent can read any
   file the process can (pinned by a scripted test; the probe is recorded in
-  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
-  Only the subagent's capabilities limit it, so give a subagent only the
-  builtins it may use ungated. Enabling `invoke_subagent` also offers the
-  harness's built-in `research` subagent. `spawn()` warns whenever
-  `invoke_subagent` is on.
+  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`). The agent's `run_command` sandbox
+  is its own; a subagent's commands are sent with the subagent's
+  capabilities. Only the subagent's capabilities limit it, so give a
+  subagent only the builtins it may use unchecked. Enabling `invoke_subagent` also offers the
+  harness's built-in `research` subagent, even with no subagent added.
+- **`spawn()` refuses subagents beside a gate they bypass** (#520), unless
+  you opt in with `with_ungated_subagents(true)`. The gates are a pre-tool
+  hook, a deny, confirm or `ask_user` policy, `policy::auto()`, workspace
+  containment (on by default with a workspace) and the `run_command`
+  sandbox while `run_command` is enabled; the refusal is an
+  `AntigravityError::Config` naming the ones set. It applies when
+  `invoke_subagent` or `with_define_subagent_tool(true)` is on. Policies
+  that only allow, like `allow_all()` above, refuse nothing and are not a
+  gate:
+
+  ```rust,no_run
+  use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};
+
+  let builder = AntigravityAgent::builder()
+      .add_workspace("/repo")                             // containment: a gate
+      .add_policy(policy::deny_all())                     // a gate
+      .add_policy(policy::allow("view_file"))
+      .add_policy(policy::allow("invoke_subagent"))
+      .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
+      .add_subagent(Subagent::new("reader").with_description("Reads files."))
+      .with_ungated_subagents(true) // the subagents may read outside /repo
+      // ...
+      ;
+  # let _ = builder;
+  ```
 - **Custom tools are referenced by name** and must also be registered on the
   parent agent (`add_tool` / `with_tool_service`) — subagent custom-tool
   calls dispatch through the parent's registry. `spawn()` validates the
@@ -1317,8 +1342,9 @@ The ones a user is likeliest to look for:
   tool only on a multi-thread runtime with two or more workers (see the turn
   deadline under [Streaming](#streaming)).
 - **Subagents are not gated**: on 0.1.23 a subagent's own tool calls skip
-  policies, the pre-tool hook and workspace containment (see
-  [Subagents](#subagents)).
+  policies, the pre-tool hook and workspace containment, so `spawn()`
+  refuses subagents beside those gates without `with_ungated_subagents(true)`
+  (see [Subagents](#subagents)).
 - **Only the bespoke `localharness` protocol**: the harness's
   Interactions-mode transport (`use_interactions_api`) is not used. On
   0.1.23 it rejects every `interaction.create` that carries an agent config,

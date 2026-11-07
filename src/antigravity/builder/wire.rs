@@ -176,8 +176,7 @@ impl AgentBuilder {
     /// containment on unless it says otherwise, so a config sent for the
     /// auto policy alone writes containment off explicitly.
     fn policy_config(&self, engine: &PolicyEngine) -> Option<protocol::PolicyConfig> {
-        // spawn() rejects an explicit opt-in with no workspace.
-        let contain = self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty();
+        let contain = self.contains_workspaces();
         let auto_config = engine.auto().map(|_| protocol::AutoPolicyConfig {
             enabled: true,
             model: None,
