@@ -91,7 +91,9 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
     let mut modes = full.clone();
     modes.tool_choice = Some(ToolChoice::Mode(FunctionCallingMode::Auto));
     modes.transcription_config = Some(TranscriptionConfig {
-        mode: Some(TranscriptionMode::Smart),
+        mode: Some(TranscriptionMode::Smart {
+            source_text: Some("Hello there.".into()),
+        }),
         ..Default::default()
     });
     vec![full, modes]

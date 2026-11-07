@@ -109,6 +109,16 @@ pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 /// turn; see [`Content::speaker_text`].
 pub const DEFAULT_TTS_MODEL: &str = "gemini-3.8-flash-tts";
 
+/// The model to use for speech-to-text transcription.
+///
+/// It answers audio input with its transcript, and is the model on which
+/// [`TranscriptionConfig`] changes the output: a verbatim
+/// [`TranscriptionMode`] adds `word_info` annotations
+/// ([`Annotation::WordInfo`]) with timings and speakers, and a smart mode's
+/// `source_text` steers the wording. It ignores a text prompt beside the
+/// audio, answers text-only input with nothing, and rejects function tools.
+pub const DEFAULT_TRANSCRIPTION_MODEL: &str = "gemini-3.5-transcribe";
+
 /// The model to use for decoding continuation, the only one that supports
 /// it (every other model answers `400 Decoding continuation is not enabled
 /// for this model`). See

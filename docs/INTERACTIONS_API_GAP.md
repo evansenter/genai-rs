@@ -4,8 +4,8 @@
 >
 > | | |
 > |---|---|
-> | **Last swept against** | `google-genai` **2.34.0** |
-> | **Sweep date** | **2026-11-01** |
+> | **Last swept against** | `google-genai` **3.0.0** |
+> | **Sweep date** | **2026-11-07** |
 > | **Baseline in CI** | `.github/last-swept-sdk-version` |
 >
 > "Done" below means *nothing was missing as of the sweep date*. The SDK
@@ -134,6 +134,23 @@ from here rather than repeated.
   `outputTokenLimit` of 65,536 (2026-09-24).
 - **Images:** there is no 3.8 image model, and `gemini-3.8-flash` answers an
   image request with text only (2026-10-01), hence `DEFAULT_IMAGE_MODEL`.
+- **Transcription:** `DEFAULT_TRANSCRIPTION_MODEL` (`gemini-3.5-transcribe`,
+  new in the google-genai 3.0.0 `Model` literal; version
+  `3.5-transcribe-08-2026`, 98,304 input and 32,768 output tokens) answers
+  audio with its transcript and nothing else (2026-11-07, speech from
+  macOS `say` and from `DEFAULT_TTS_MODEL`). It ignores a text prompt beside
+  the audio (asked to translate, it transcribed), answers silence and
+  text-only input with a `completed` interaction holding no steps and zero
+  output tokens, rejects a function tool (`400 Function calling is not
+  enabled for this model`), and streams the transcript as one `text` delta.
+  `transcription_config` changes its output: a verbatim mode with
+  `timestamp_granularities: ["word"]` and `diarization_mode: "speaker"`
+  adds a `word_info` annotation per word (the deprecated top-level
+  `diarization_mode` and `timestamp_granularities` do the same), and a
+  smart mode's `source_text` made the transcript follow the script's
+  spelling (`genai-rs` where the plain transcript had `JRS`). On
+  `DEFAULT_MODEL` the same `source_text` was accepted with no effect, as
+  every transcription setting had been on general models since 2026-09-24.
 - **Decoding continuation** runs only on `CONTINUATION_MODEL` (2026-11-01);
   the rules are under [Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)
   and [Interaction residue](#interaction-residue-2026-11-05).
@@ -462,6 +479,26 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   2026-10-06 3 of 5 returned `500 Internal error encountered`. On 2026-11-01
   all 16 requests answered, 10 of them concurrent, so
   `processing_steps_tests` no longer retries.
+
+## Sweep 2.34.0 → 3.0.0 (2026-11-07)
+
+google-genai 3.0.0 was released 2026-11-06. Every item probed live on
+2026-11-07; the coverage oracle passes against the 3.0.0 snapshot with the
+two Files entries below listed in its `ALLOWED`.
+
+### Modeled
+
+| Surface | Where | Live result |
+|---|---|---|
+| `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files, on create, stored `GET` and stream; generated files come in the next `model_output` step. The list form is accepted back in history. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
+| `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text }` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
+| `gemini-3.5-transcribe` in the `Model` literal | `DEFAULT_TRANSCRIPTION_MODEL` | The model on which `transcription_config` takes effect, and on which `word_info` annotations were first seen. See Models above |
+
+### Deliberately not modeled
+
+| Surface | Why |
+|---|---|
+| `legacy.ClaudeFile` and `ListFilesResponse.data` / `nextPage` | The Claude Files API's list shape, which the 3.0.0 bindings document as not supported in the Gemini API. The Gemini Files API list served `files` and `nextPageToken` only, with two uploaded files at `pageSize=1`, and rejected the `ids` parameter the new cursor describes (`400 Unknown name "ids"`). Listed in the coverage oracle's `ALLOWED`; either field lands in `FileListResponse::extra` if it comes. |
 
 ## Sweep 2.25.0 → 2.34.0 (2026-11-01)
 

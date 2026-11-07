@@ -78,21 +78,36 @@ let clip = Content::audio_data(base64_audio, "audio/mp3");
 # }
 ```
 
+### Transcription
+
+`DEFAULT_TRANSCRIPTION_MODEL` is the speech-to-text model: it answers audio
+with its transcript, ignores a text prompt beside the audio, answers
+text-only input with nothing, and rejects function tools. Other models
+transcribe when asked in the prompt, like any other task.
+
 Speech recognition is tunable via
-`with_transcription_config(TranscriptionConfig::new()...)`:
+`with_transcription_config(TranscriptionConfig::new()...)`, which takes
+effect on the transcription model (general models accept it without
+effect):
 
 - BCP-47 `with_language_codes` hints (omit for auto-detect)
 - `with_custom_vocabulary` biasing
 - `with_mode(TranscriptionMode::Verbatim { diarization_mode, timestamp_granularities })`
-  for speaker diarization (`"speaker"`) and word timestamps (`"word"`), or
-  `TranscriptionMode::Smart`
+  for speaker diarization (`"speaker"`) and word timestamps (`"word"`): the
+  transcript's text block carries an `Annotation::WordInfo` per word, with
+  its byte span, `start_offset` / `end_offset` and speaker
+- `with_mode(TranscriptionMode::Smart { source_text })`, where
+  `source_text` is the script the speaker read: the transcript follows its
+  wording and spelling where the audio agrees
 
 `with_adaptation_phrases`, `with_diarization_mode` and
 `with_timestamp_granularities` still work but are deprecated in the
-google-genai 2.34.0 bindings in favor of `with_mode`.
+google-genai bindings in favor of `with_mode`.
 
 These are the SDK-documented value sets, kept as open strings for forward
-compatibility. `examples/audio_input.rs` is a runnable demo.
+compatibility. `examples/audio_input.rs` is a runnable demo; the live record
+is under Models in
+[INTERACTIONS_API_GAP.md](INTERACTIONS_API_GAP.md#models).
 
 ## Video
 
@@ -299,7 +314,7 @@ The constructors leave them unset; the API fills them in on audio it returns.
 | Image | `jpg`/`jpeg` → `image/jpeg`, `png`, `gif`, `webp`, `heic`, `heif` |
 | Audio | `mp3` → `audio/mp3`, `wav`, `ogg`, `flac`, `aac`, `m4a` |
 | Video | `mp4`, `webm`, `mov` → `video/quicktime`, `avi` → `video/x-msvideo`, `mkv` → `video/x-matroska` |
-| Document | `pdf` → `application/pdf`, `csv` → `text/csv`, `doc` → `application/msword`, `docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `xls` → `application/vnd.ms-excel`, `xlsx` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `ppt` → `application/vnd.ms-powerpoint`, `pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `odt` / `ods` / `odp` → `application/vnd.oasis.opendocument.text` / `.spreadsheet` / `.presentation` |
+| Document | `pdf` → `application/pdf`, `csv` → `text/csv`, `doc` → `application/msword`, `docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `dotx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.template`, `xls` → `application/vnd.ms-excel`, `xlsx` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `ppt` → `application/vnd.ms-powerpoint`, `pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `odt` / `ods` / `odp` → `application/vnd.oasis.opendocument.text` / `.spreadsheet` / `.presentation` |
 | Text | `txt` → `text/plain`, `md` → `text/markdown`, `json`, `html`, `xml` |
 
 Detection doesn't guarantee the API accepts a format inline:
@@ -314,7 +329,7 @@ not `"png"`).
 | Example | Features |
 |---------|----------|
 | `multimodal_image` | Image input, comparison, resolution control |
-| `audio_input` | Audio transcription and analysis |
+| `audio_input` | Transcription on `DEFAULT_TRANSCRIPTION_MODEL`: word timings and `source_text` |
 | `video_input` | Video input |
 | `pdf_input` | PDF document processing |
 | `files_api` | Upload, list, delete files |

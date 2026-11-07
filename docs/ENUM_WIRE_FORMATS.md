@@ -204,7 +204,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `CredentialStatus` | lowercase | `"active"`, `"revoked"` | Output only; `active` observed 2026-09-24 |
 | `InjectionLocation` | lowercase | `"header"`, `"query"`, `"body"` | Sent as a list; the API also accepts a single string (2026-09-24) |
 | `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Server-validated (2026-09-24); no Interactions model outputs video to exercise it |
-| `TranscriptionMode` | string or object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | See [TranscriptionConfig](#transcriptionconfig) |
+| `TranscriptionMode` | string or object | `"smart"` / `{"type": "smart", "source_text": "..."}` / `{"type": "verbatim", "diarization_mode": "speaker"}` | See [TranscriptionConfig](#transcriptionconfig) |
 | `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
 | `GoogleSearchResultItem` | snake_case | `{"search_suggestions": "<html>"}` | The only field in the 2.34.0 bindings and on the wire (live 2026-07 and 2026-11-05); `title`, `url` and `rendered_content` were removed, and one that arrives lands in `extra` |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | `status` is `success`/`error`/`paywall`/`unsafe`; no separate paywall field (2026-01-13) |
@@ -383,7 +383,7 @@ keeps unmodeled fields in `extra`:
 | `file_citation` | `FileCitation` | `document_uri`, `file_name`, `source`, `custom_metadata`, `page_number`, `media_id` |
 | `place_citation` | `PlaceCitation` | `place_id`, `name`, `url`, `review_snippets: [ReviewSnippet { title, url, review_id }]` |
 | `speech_metadata` | `SpeechMetadata` | `speaker`, `style`; indices optional. A TTS **input** annotation: required per turn for multi-speaker on `gemini-3.8-flash-tts`, rejected by older TTS models. Spanned annotations must tile the text without gaps (live 2026-09-24) |
-| `word_info` | `WordInfo` | `text`, `speaker`, `start_offset` / `end_offset` (duration strings), optional indices. Transcription output; not yet observed |
+| `word_info` | `WordInfo` | `text`, `speaker`, `start_offset` / `end_offset` (duration strings), optional indices. Transcription output: one per word on a transcript from `gemini-3.5-transcribe` with word timestamps requested, as `{"start_index": 0, "end_index": 3, "text": "The", "start_offset": "0.100s", "end_offset": "0.100s", "speaker": "spk:0", "type": "word_info"}` (live 2026-11-07); a whole second is written `"4s"` |
 | anything else | `Unknown { annotation_type, data }` | The server's enum also lists `in_context_file_citation` and `reference_metadata`, which are absent from the 2.25 bindings (2026-09-24) |
 
 Citations carry `start_index` / `end_index` as **UTF-8 byte offsets** into
@@ -1140,12 +1140,14 @@ open strings:
 | `language_codes` | BCP-47 codes | Empty or omitted means auto-detect |
 
 `mode` (`TranscriptionMode`) is `"smart"` / `"verbatim"` or
-`{"type": "smart"}` / `{"type": "verbatim", "diarization_mode"?,
-"timestamp_granularities"?}`. The crate sends the object form and reads both.
-The bindings' `language_hints` is not modeled: `400 Unknown parameter
+`{"type": "smart", "source_text"?}` / `{"type": "verbatim",
+"diarization_mode"?, "timestamp_granularities"?}`. The crate sends the
+object form and reads both. `source_text` is new in google-genai 3.0.0; a
+stored interaction serves it back inside `mode` as sent (2026-11-07). The
+bindings' `language_hints` is not modeled: `400 Unknown parameter
 'language_hints'`. Verified live 2026-09-24 with audio input (the enum is
-server-validated: `Invalid enum value 'zzz'`); no output difference, and no
-`word_info` annotation, was observed on general models.
+server-validated: `Invalid enum value 'zzz'`). What each setting does, and
+on which model, is under Models in `docs/INTERACTIONS_API_GAP.md`.
 
 ## Probing a new enum
 

@@ -1,5 +1,5 @@
 {
-  "sdk_version": "2.34.0",
+  "sdk_version": "3.0.0",
   "endpoints": ["DELETE /{}/agents/{}", "DELETE /{}/credentials/{}", "DELETE /{}/environments/{}", "DELETE /{}/interactions/{}", "DELETE /{}/triggers/{}", "DELETE /{}/voices/{}", "DELETE /{}/webhooks/{}", "GET /{}/agents", "GET /{}/agents/{}", "GET /{}/credentials", "GET /{}/credentials/{}", "GET /{}/environments", "GET /{}/environments/{}", "GET /{}/environments/{}/files/{}", "GET /{}/interactions/{}", "GET /{}/triggers", "GET /{}/triggers/{}", "GET /{}/triggers/{}/executions", "GET /{}/voices", "GET /{}/voices/{}", "GET /{}/webhooks", "GET /{}/webhooks/{}", "PATCH /{}/credentials/{}", "PATCH /{}/triggers/{}", "PATCH /{}/webhooks/{}", "POST /{}/agents", "POST /{}/credentials", "POST /{}/environments", "POST /{}/interactions", "POST /{}/interactions/{}/cancel", "POST /{}/triggers", "POST /{}/triggers/{}/executions", "POST /{}/voices", "POST /{}/webhooks", "POST /{}/webhooks/{}:ping", "POST /{}/webhooks/{}:rotateSigningSecret", "PUT /upload/{}/environments/{}/files/{}"],
   "aliases": {
     "agents.AgentTool": {"arms": [{"kind": "ref", "name": "interactions.CodeExecution"}, {"kind": "ref", "name": "interactions.Function"}, {"kind": "ref", "name": "interactions.GoogleSearch"}, {"kind": "ref", "name": "interactions.MCPServer"}, {"kind": "ref", "name": "interactions.URLContext"}], "kind": "union"},
@@ -24,6 +24,7 @@
     "interactions.AudioDeltaMimeType": {"kind": "literal", "open": true, "values": ["audio/aac", "audio/aiff", "audio/alaw", "audio/flac", "audio/l16", "audio/m4a", "audio/mp3", "audio/mpeg", "audio/mulaw", "audio/ogg", "audio/opus", "audio/wav", "audio/webm"]},
     "interactions.AudioResponseFormatDelivery": {"kind": "literal", "open": true, "values": ["inline", "uri"]},
     "interactions.AudioResponseFormatMimeType": {"kind": "literal", "open": true, "values": ["audio/alaw", "audio/l16", "audio/mp3", "audio/mulaw", "audio/ogg_opus", "audio/wav"]},
+    "interactions.CodeExecutionResultStepResult": {"arms": [{"item": {"kind": "ref", "name": "interactions.Content"}, "kind": "list"}, {"kind": "str"}], "kind": "union"},
     "interactions.Content": {"arms": [{"kind": "ref", "name": "interactions.AudioContent"}, {"kind": "ref", "name": "interactions.DocumentContent"}, {"kind": "ref", "name": "interactions.ImageContent"}, {"kind": "ref", "name": "interactions.TextContent"}, {"kind": "ref", "name": "interactions.VideoContent"}], "kind": "union"},
     "interactions.CreateAgentInteractionAgentConfig": {"arms": [{"kind": "ref", "name": "interactions.AntigravityAgentConfig"}, {"kind": "ref", "name": "interactions.CodeMenderAgentConfig"}, {"kind": "ref", "name": "interactions.DeepResearchAgentConfig"}, {"kind": "ref", "name": "interactions.DynamicAgentConfig"}], "kind": "union"},
     "interactions.CreateAgentInteractionEnvironment": {"arms": [{"kind": "ref", "name": "interactions.Environment"}, {"kind": "str"}], "kind": "union"},
@@ -32,8 +33,8 @@
     "interactions.CreateModelInteractionResponseFormat": {"arms": [{"item": {"kind": "ref", "name": "interactions.ResponseFormat"}, "kind": "list"}, {"kind": "ref", "name": "interactions.ResponseFormat"}], "kind": "union"},
     "interactions.Disabled": {"kind": "literal", "open": true, "values": ["disabled"]},
     "interactions.DisabledSafetyPolicy": {"kind": "literal", "open": true, "values": ["account_creation", "communication_tool", "data_modification", "financial_transactions", "legal_terms_and_agreements", "sensitive_data_modification", "user_consent_management"]},
-    "interactions.DocumentContentMimeType": {"kind": "literal", "open": true, "values": ["application/pdf", "text/csv"]},
-    "interactions.DocumentDeltaMimeType": {"kind": "literal", "open": true, "values": ["application/pdf", "text/csv"]},
+    "interactions.DocumentContentMimeType": {"kind": "literal", "open": true, "values": ["application/msword", "application/pdf", "application/vnd.ms-excel", "application/vnd.ms-powerpoint", "application/vnd.oasis.opendocument.presentation", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.text", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.wordprocessingml.template", "text/csv"]},
+    "interactions.DocumentDeltaMimeType": {"kind": "literal", "open": true, "values": ["application/msword", "application/pdf", "application/vnd.ms-excel", "application/vnd.ms-powerpoint", "application/vnd.oasis.opendocument.presentation", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.text", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.wordprocessingml.template", "text/csv"]},
     "interactions.Env": {"arms": [{"kind": "ref", "name": "interactions.EnvVar"}, {"kind": "str"}], "kind": "union"},
     "interactions.EnvironmentEnum": {"kind": "literal", "open": true, "values": ["browser", "desktop", "mobile"]},
     "interactions.FunctionResultDeltaResultUnion": {"arms": [{"item": {"kind": "ref", "name": "interactions.FunctionResultSubcontent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.FunctionResultDeltaResult"}, {"kind": "str"}], "kind": "union"},
@@ -65,7 +66,7 @@
     "interactions.MediaResolution": {"kind": "literal", "open": true, "values": ["high", "low", "medium", "ultra_high"]},
     "interactions.Method": {"kind": "literal", "open": true, "values": ["probability", "severity"]},
     "interactions.Mode": {"kind": "literal", "open": true, "values": ["scan", "verify"]},
-    "interactions.Model": {"kind": "literal", "open": true, "values": ["gemini-2.5-flash", "gemini-2.5-flash-image", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-image", "gemini-3.1-flash-tts-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-4-argon", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-nano-banana-2.1", "gemini-omni-1.1-flash", "gemini-omni-flash-preview", "gemini-pro-latest", "gemini-robotics-er-1.6-preview", "gemini-robotics-er-2-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "lyria-3-clip-preview", "lyria-3-pro-preview", "lyria-3.5", "nano-banana-pro-preview"]},
+    "interactions.Model": {"kind": "literal", "open": true, "values": ["gemini-2.5-flash", "gemini-2.5-flash-image", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-image", "gemini-3.1-flash-tts-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-transcribe", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-4-argon", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-nano-banana-2.1", "gemini-omni-1.1-flash", "gemini-omni-flash-preview", "gemini-pro-latest", "gemini-robotics-er-1.6-preview", "gemini-robotics-er-2-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "lyria-3-clip-preview", "lyria-3-pro-preview", "lyria-3.5", "nano-banana-pro-preview"]},
     "interactions.Network": {"arms": [{"kind": "ref", "name": "interactions.EnvironmentNetworkEgressAllowlist"}, {"kind": "ref", "name": "interactions.NetworkEnum"}], "kind": "union"},
     "interactions.NetworkEnum": {"kind": "literal", "open": true, "values": ["disabled"]},
     "interactions.Processing": {"arms": [{"kind": "ref", "name": "interactions.ProcessingEnum"}, {"kind": "ref", "name": "interactions.StaticMediaProcessing"}], "kind": "union"},
@@ -282,7 +283,7 @@
     "interactions.CodeExecutionResultStep": {"file": "_gaos/types/interactions/codeexecutionresultstep.py", "open": false, "fields": {
       "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
       "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
-      "result": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "result": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.CodeExecutionResultStepResult"}},
       "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
       "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["code_execution_result"]}}
     }},
@@ -819,6 +820,7 @@
       "max_rounds": {"deprecated": false, "required": false, "type": {"kind": "int"}}
     }},
     "interactions.SmartTranscriptionMode": {"file": "_gaos/types/interactions/smarttranscriptionmode.py", "open": false, "fields": {
+      "source_text": {"deprecated": false, "required": false, "type": {"kind": "str"}},
       "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["smart"]}}
     }},
     "interactions.Source": {"file": "_gaos/types/interactions/source.py", "open": false, "fields": {
@@ -1031,6 +1033,16 @@
     "legacy.ChunkingConfig": {"file": "types.py", "open": false, "fields": {
       "whiteSpaceConfig": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.WhiteSpaceConfig"}}
     }},
+    "legacy.ClaudeFile": {"file": "types.py", "open": false, "fields": {
+      "createdAt": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "downloadable": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "expiresAt": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "filename": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mimeType": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "sizeBytes": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
     "legacy.CreateFileSearchStoreConfig": {"file": "types.py", "open": false, "fields": {
       "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
       "embeddingModel": {"deprecated": false, "required": false, "type": {"kind": "str"}}
@@ -1096,7 +1108,9 @@
       "nextPageToken": {"deprecated": false, "required": false, "type": {"kind": "str"}}
     }},
     "legacy.ListFilesResponse": {"file": "types.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.ClaudeFile"}, "kind": "list"}},
       "files": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.File"}, "kind": "list"}},
+      "nextPage": {"deprecated": false, "required": false, "type": {"kind": "str"}},
       "nextPageToken": {"deprecated": false, "required": false, "type": {"kind": "str"}}
     }},
     "legacy.StringList": {"file": "types.py", "open": false, "fields": {

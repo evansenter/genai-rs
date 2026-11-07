@@ -165,6 +165,7 @@ literals elsewhere.
 | `DEFAULT_MODEL` | Everything, unless a row below applies |
 | `DEFAULT_IMAGE_MODEL` | Image generation |
 | `DEFAULT_TTS_MODEL` | Text-to-speech |
+| `DEFAULT_TRANSCRIPTION_MODEL` | Speech-to-text, where `TranscriptionConfig` takes effect |
 | `CONTINUATION_MODEL` | Decoding continuation (the only model that supports it) |
 | `DEFAULT_DEEP_RESEARCH_AGENT`, `DEFAULT_ANTIGRAVITY_AGENT` | `with_agent()` |
 

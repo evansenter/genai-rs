@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `DEFAULT_TRANSCRIPTION_MODEL` (`gemini-3.5-transcribe`, new in google-genai
+  3.0.0's model list), the speech-to-text model on which
+  `TranscriptionConfig` takes effect: a verbatim mode with word timestamps
+  annotates each word of the transcript with an `Annotation::WordInfo`
+  (its span, offsets and speaker), and a smart mode's `source_text` steers
+  the wording; general models accept the config without effect (verified
+  live 2026-11-07). The model only transcribes: it ignores a text prompt
+  beside the audio and rejects function tools. `examples/audio_input.rs`
+  now transcribes speech it synthesizes with `DEFAULT_TTS_MODEL`, showing
+  both modes.
 - `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
   ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
   It reads both shapes the API has used: since 2026-11-05 an
@@ -232,6 +242,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: `TranscriptionMode::Smart` is a struct variant,
+  `Smart { source_text: Option<String> }`**, for google-genai 3.0.0's
+  `SmartTranscriptionMode.source_text`: the text the audio is expected to
+  say, which the transcript follows (accepted and stored as sent, verified
+  live 2026-11-07). A stored interaction's smart mode now keeps it, where
+  the unit variant dropped it. Migration: `TranscriptionMode::Smart` becomes
+  `TranscriptionMode::Smart { source_text: None }` in an expression and
+  `TranscriptionMode::Smart { .. }` in a pattern.
 - **Breaking: `Step::CodeExecutionResult`'s `result` is a
   `CodeExecutionOutput`, not a `String`.** google-genai 3.0.0 types it as
   the output as a string or as a list of content blocks. The new enum reads
