@@ -1244,3 +1244,32 @@ fixtures every example copy is checked against.
 **Consequences.** The example and the live test make one TTS request
 before transcribing. A silent clip still serves the acceptance tests, which
 read the stored config back rather than the transcript.
+
+## D-NEXT-WP15 — A chosen Files API upload name stays unmodeled (2026-11-07)
+
+**Context.** google-genai's `files.upload(config={"name": ...})` sends a
+chosen `files/<id>` in the upload's start request. Probed live on
+2026-11-07: the API accepts it and serves the file under that name, and a
+second upload under the same name fails at finalize, after the bytes are
+sent, with `409 <id> already exists. (ALREADY_EXISTS)`. So a chosen name
+makes an upload idempotent: a retry of one that landed gets the 409
+instead of a duplicate file. `UploadFileConfig` is a hand-written class in
+`types.py`, outside the bindings snapshot, so the coverage oracle does not
+see it. `FileUpload`, the value `Files::upload` takes, is shared with
+`FileSearchStores::upload`, whose documents have no name to choose.
+
+**Decision.** Not modeled for now, and recorded in `docs/RESOURCES.md` and
+`docs/INTERACTIONS_API_GAP.md` with the probe's date. Modeling it is an API
+shape choice, not a field: a `with_name` on the shared `FileUpload` would
+need store uploads to reject it at runtime, so it needs a files-only shape,
+either an `impl Into<...>` wrapper like the store's `DocumentUpload` or a
+separate verb (which the live-per-handle guard would hold to a live test of
+its own). That choice is the owner's; nothing in the crate needs the name
+today.
+
+**Consequences.** A caller who wants an idempotent upload has no way to
+choose the name; a retry after a lost upload response can leave a duplicate
+file, which expires after 48 hours. When WP16 derives the legacy classes
+from the SDK's method signatures, `UploadFileConfig` will enter the
+snapshot and `every_binding_class_is_mapped` will need either the model or
+an `UNMAPPED` entry citing this decision.

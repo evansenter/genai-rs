@@ -115,13 +115,13 @@ become `with_*` setters.
 | `client.voices.delete(id)` | `client.voices().delete(id)` |
 | `client.files.upload(file=path, config={"mime_type": m, "display_name": n})` | `client.files().upload(FileUpload::from_path(path).with_mime_type(m).with_display_name(n))` |
 | `client.files.upload(file=io_object, config={"mime_type": m})` | `client.files().upload(FileUpload::from_bytes(data, m))` |
-| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled: the API accepts a chosen name on the start request, but `FileUpload` is shared with store uploads, which have no such name; outside the bindings' classes |
+| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled (D-NEXT-WP15): the API serves the file under the chosen name, and a second upload under it is a `409` (live 2026-11-07), but `FileUpload` is shared with store uploads, which take no name, so it needs a files-only shape; outside the bindings' classes |
 | `client.files.get(name=)` | `client.files().get(name)` |
 | `client.files.list(config={"page_size": n, "page_token": t})` (one page) | `client.files().list().with_page_size(n).with_page_token(t).send()` |
 | iterating `client.files.list()` | `client.files().list().items()` (or `.pages()`) |
 | `client.files.delete(name=)` | `client.files().delete(name)` |
 | (no equivalent) | `client.files().wait_until_active(name, PollOptions::new())` |
-| `client.files.download(file=)` | Not modeled: only a generated file can be downloaded (an uploaded one is a `400 Only GENERATED files can be downloaded`), and nothing the crate makes is one |
+| `client.files.download(file=)` | Not modeled: only a generated file can be downloaded (an uploaded one is a `400 Only GENERATED files can be downloaded`), and nothing the crate makes is one. A generated file's `FileMetadata::download_uri` says where to download it from |
 | `client.files.register_files(uris=)` | Not modeled: the endpoint refuses API keys (`401 API keys are not supported by this API`) and wants OAuth, which the crate does not do |
 | `client.file_search_stores.create(config={"display_name": n})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_display_name(n))` |
 | `client.file_search_stores.create(config={"embedding_model": "models/<m>"})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_embedding_model("models/<m>"))` |
