@@ -261,6 +261,17 @@ from here rather than repeated.
   (`400 Image search as tool is not enabled for
   models/gemini-3.8-flash`). What the call steps carry is under SearchType
   in `docs/ENUM_WIRE_FORMATS.md`.
+- **A follow-up that drops a built-in tool can fail.** Tools are not
+  carried over by `previous_interaction_id`, and after a turn that used
+  `google_search`, a follow-up sent without it sometimes ends with the
+  model calling a tool it no longer has: `status: "failed"` with
+  `errors: [{"code": "malformed_tool_call", "message": "Model generated
+  invalid JSON syntax and the output could not be parsed. Please retry the
+  request. ..."}]` in a `200` (1 of 6 on 2026-11-07). In CI the follow-up
+  failed in 13 of 99 runs from 2026-11-01 to 2026-11-06: as a `400
+  malformed_tool_call` through 2026-11-04, as `status: "failed"` from
+  2026-11-05, and twice as `requires_action`. Sent with the tool again, 6
+  of 6 completed, answering from the history without a second search.
 - **Google Maps `latitude` / `longitude`** are accepted and used: asked
   for "a coffee shop near me" with Times Square's coordinates, the model
   answered with one on West 47th Street (2026-11-07).
@@ -516,12 +527,34 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   MCP interactions (two non-streamed, one streamed) ended `completed`.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request` (the retired 05-2026 agent accepted it).
-- **url_context loops under a response schema (server bug, 2026-11-01).**
-  With `response_format` set to a JSON schema, `url_context` refetches until
-  the API gives up with `400 too_many_tool_calls ... Please retry the
-  request` after ~117 s, in 8 of 12 requests. Without the schema, 6 of 6
-  answered in ~5 s. `test_structured_output_with_url_context` gives each
-  attempt 30 s and 4 tries.
+- **url_context loops under a response schema (server bug, 2026-11-01; still
+  present 2026-11-07).** With `response_format` set to a JSON schema,
+  `url_context` fetches the same page again and again, each fetch a
+  `success`, until the API gives up with `400 too_many_tool_calls` after
+  about two minutes: 8 of 12 requests on 2026-11-01. A loop ends after 60
+  URL context calls (`The request reached the tool-use step limit for a
+  single request before the model finished its answer. The model made 60 URL
+  context calls. ...`; on 2026-11-01 it read `Model generated too many tool
+  calls. Please retry the request. ...`). On 2026-11-07 the thinking level
+  decided how often: 69 of 129 requests looped at the default level, 3 of 4
+  at `thinking_level: "medium"` and 15 of 20 at `"high"`, against 9 of 219
+  at `"low"` in back-to-back batches, and 3 of 61 single requests at `"low"`
+  spread over the day. Loops came in bursts: in one batch that alternated
+  the default and `low`, 38 and 4 of 60 looped. Above `low`, neither another
+  page (three others), another prompt or schema, `tool_choice: "validated"`,
+  a `seed` nor `temperature: 0` stopped it, and `tool_choice: "none"` does
+  not stop url_context calls at all. `temperature: 0` at `low` looked better
+  in back-to-back batches (1 of 255 looped) but not in single requests
+  spread over the day (5 of 38). Without the schema, 4 of 4 answered after
+  one fetch (6 of 6 on 2026-11-01), as did 4 of 4 with `application/json`
+  output and no schema, and 24 of 24 two-turn chains at `low` that fetched
+  first and asked for the schema on the next turn: 12 sent that turn
+  without url_context, and 12 with it, where the model fetched the page
+  again every time (12 is too few to tell from the single request's rate).
+  `test_structured_output_with_url_context` sends `low`, once, and fails on
+  a loop. Until 2026-11-07 it retried the loop up to 4 times at the default
+  level instead: 41 of its 69 CI runs from 2026-11-01 needed a second
+  attempt, and 6 looped on all 4.
 - **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
   upload response or in listings; files from environment sources still
   report it.

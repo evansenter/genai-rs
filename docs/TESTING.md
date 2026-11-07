@@ -307,8 +307,9 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 | `TINY_RED_PNG_BASE64`, `TINY_BLUE_PNG_BASE64`, `TINY_WAV_BASE64`, `TINY_MP4_BASE64`, `TINY_PDF_BASE64` | Minimal valid media. The MP4 is one second: shorter clips yield no sampled frame and are rejected |
 
 `is_transient_error` matches Spanner UTF-8 errors and three 400s (`invalid
-json syntax`, `there was a problem processing your request`, and any that
-says `please retry the request`); see
+json syntax`, `there was a problem processing your request`, and `please
+retry the request`, the API's advice on `malformed_tool_call`), but never
+`too_many_tool_calls`, the url_context loop, whatever its message says; see
 [Error Handling](ERROR_HANDLING.md#known-transient-errors). A validation
 rejection still fails on the first attempt.
 
@@ -333,6 +334,20 @@ ties to the `rust.yml` jobs that retry. Only the steps that retry count
 toward the rate, read from the `NEXTEST_RETRIES` in the env GitHub echoes
 into the log, so the antigravity job's offline suite, which shares its
 log, stays out of it.
+
+So a live test makes no retries of its own beyond `retry_request!`'s
+transport and transient errors (D-NEXT-WP23): the report counts a retry
+nextest makes, and never sees one inside the test. When a known model or
+server failure has a cause the test controls, remove it: send the tools a
+follow-up turn needs, since they are not carried over, or a request shape
+the server handles, found by live probes and recorded with its numbers in
+the [gap tracker](INTERACTIONS_API_GAP.md) (the url_context test's low
+thinking). Otherwise let the test fail and nextest retry it. Two repeats
+are not flake retries, since neither repeats a failure of the feature under
+test: a deadline retry for a slow runner (`DEADLINE_BUDGETS` in
+`antigravity_scripted.rs`), and a redraw when the server's output lacks
+what the assertion needs (`test_stream_resume_with_last_event_id` draws up
+to three interactions for an event id with text on both sides).
 
 The rolling report lists retried tests and examples beside failed ones,
 with the week's rate: tests that passed only on a retry, over live test

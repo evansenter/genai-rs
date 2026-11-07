@@ -58,7 +58,7 @@ does **not** carry over the request configuration:
 So set `with_system_instruction()` and the tools on **every** turn that should
 have them. `model` (or `agent`) is required on every request anyway.
 
-Two caveats:
+Three caveats:
 
 - The model can still *appear* to follow an earlier system instruction,
   because the replayed turns (including its thoughts) may restate it. Don't
@@ -67,6 +67,11 @@ Two caveats:
   accepts it (`test_parallel_function_calls`). Resending them is also fine,
   and it's what the auto-function loop does: it reuses the whole request,
   system instruction and tools included, every round.
+- After a turn that used a built-in tool such as Google Search, a follow-up
+  that omits the tool can fail rather than just answer without it: the
+  model calls the tool anyway, and the interaction ends `failed` with a
+  `malformed_tool_call` error ([live record](INTERACTIONS_API_GAP.md#tools)).
+  Send the built-in tools again on the follow-up.
 
 ```rust,no_run
 # async fn example(client: &genai_rs::Client, previous_id: &str, tools: Vec<genai_rs::FunctionDeclaration>) -> Result<(), genai_rs::GenaiError> {
