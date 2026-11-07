@@ -598,6 +598,7 @@ impl AgentBuilder {
             idle: Arc::new(tokio::sync::watch::channel(true).0),
             trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             turn_sync: Arc::new(tokio::sync::Mutex::new(())),
+            turn_unfinished: false,
             trigger_tasks: triggers::TriggerTasks::default(),
         };
 

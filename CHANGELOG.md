@@ -896,6 +896,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a timed-out turn reported `stop` and an empty `post_turn` during the
   drain (scripted against harness 0.1.23, 2026-11-06), and a stop hook's
   `Continue` could keep the halted turn running.
+- Antigravity: abandoning a turn no longer desyncs the agent. Dropping a
+  `chat` future (an outer `tokio::time::timeout`, a losing `select!`
+  branch) or a `send_streaming` stream while a custom tool or the pre-tool
+  hook was running left the harness inside that turn, waiting for an answer
+  that never came. The next `chat` hung until its turn timeout (300s by
+  default), and the one after it returned the abandoned turn's reply
+  (scripted against harness 0.1.23, 2026-11-07). The agent now records
+  whether each turn reached its end (its `Finished`, or an error the
+  harness ended it with), and the next `chat`/`send_streaming` halts and
+  drains a turn that did not before sending its message: half a second
+  when nothing is left running, five seconds at most (#504).
 
 ## [0.13.0] - 2026-11-03
 
