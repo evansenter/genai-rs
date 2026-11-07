@@ -710,23 +710,44 @@ fn same_or_unnamed<T: PartialEq>(delta: Option<&T>, block: Option<&T>) -> bool {
     delta.is_none_or(|d| block == Some(d))
 }
 
-/// Appends one base64 chunk to another. Text concatenation is exact when the
-/// first chunk carries no padding, which every streamed chunk so far has
-/// met (live 2026-11-05: 243 TTS chunks, each a multiple of 4 characters
-/// with no `=`). A padded first chunk is decoded, joined as bytes and
-/// encoded again, so the result stays valid base64; data that does not
-/// decode is concatenated as text, as before.
+/// Appends one base64 chunk to another. Each delta's data is its own
+/// base64 encoding, so text concatenation is exact only when both are whole
+/// quanta: a multiple of 4 characters, with no padding before the join.
+/// Every streamed chunk so far has been (live 2026-11-05: 243 TTS chunks,
+/// each a multiple of 4 characters with no `=`). Otherwise the
+/// accumulated text's last, partial or padded quantum and the chunk are
+/// decoded (padded or not), joined as bytes and encoded again, so the
+/// result stays valid base64; the whole quanta before them are untouched.
+/// Data that does not decode is concatenated as text, as before.
 fn append_base64(existing: &mut String, chunk: &str) {
     use base64::Engine;
-    if !existing.ends_with('=') {
+    use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+
+    let whole = |s: &str| s.len().is_multiple_of(4);
+    if whole(existing) && !existing.ends_with('=') && whole(chunk) {
         existing.push_str(chunk);
         return;
     }
-    let engine = base64::engine::general_purpose::STANDARD;
-    match (engine.decode(existing.as_bytes()), engine.decode(chunk)) {
+    // The quanta before `tail` encode whole 3-byte groups, so re-encoding
+    // only `tail` and the chunk gives the same text as re-encoding it all.
+    let tail_len = match existing.len() % 4 {
+        0 if existing.ends_with('=') => 4,
+        partial => partial,
+    };
+    let Some(tail) = existing.get(existing.len() - tail_len..) else {
+        existing.push_str(chunk);
+        return;
+    };
+    let lenient = GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    );
+    match (lenient.decode(tail), lenient.decode(chunk)) {
         (Ok(mut bytes), Ok(more)) => {
             bytes.extend_from_slice(&more);
-            *existing = engine.encode(bytes);
+            let joined = base64::engine::general_purpose::STANDARD.encode(bytes);
+            existing.truncate(existing.len() - tail_len);
+            existing.push_str(&joined);
         }
         _ => existing.push_str(chunk),
     }

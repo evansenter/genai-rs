@@ -114,8 +114,6 @@ jobs:
       # workflow_dispatch also fire on a fork's own main, where it is absent.
       - name: Run harness integration tests
         if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
-        # --retries 2: the shared key sees occasional 429s; retried tests show
-        # as FLAKY.
         run: |
           set -eo pipefail
           # Fail on an empty key: these tests self-skip without one. Whitespace
@@ -124,9 +122,14 @@ jobs:
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"
             exit 1
           fi
-          cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
+          cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Retries for the shared key's occasional 429s; retried tests show
+          # as FLAKY. Set here, not as --retries: the log echoes a step's env,
+          # which is how count_retried_flakes.sh tells this step's tests from
+          # the offline suite's in the same log.
+          NEXTEST_RETRIES: 2
       # Run, not just compiled: some bugs only show up in a real run.
       - name: Smoke-run antigravity examples
         if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
@@ -236,10 +239,9 @@ jobs:
             # the log. rc is captured so the group closes and the skip check
             # still runs on a failure.
             rc=0
-            # --retries 2: the shared key sees occasional 429s; retried tests
-            # show as FLAKY. --no-fail-fast: one failure must not drop the
-            # binary's remaining tests.
-            cargo nextest run --test $test --run-ignored all --retries 2 --no-fail-fast --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
+            # Retried by NEXTEST_RETRIES (env, below). --no-fail-fast: one
+            # failure must not drop the binary's remaining tests.
+            cargo nextest run --test $test --run-ignored all --no-fail-fast --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
             # LIVE_TOOL_EVIDENCE_SKIPPED: a live tool test that could not show
             # the server was reached. Occasional is noise; persistent is a
@@ -261,6 +263,10 @@ jobs:
           fi
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Retries for the shared key's occasional 429s; retried tests show
+          # as FLAKY, and the flakiness report counts them
+          # (count_retried_flakes.sh reads this from the step's echoed env).
+          NEXTEST_RETRIES: 2
 
   example-smoke:
     name: Example Smoke Run

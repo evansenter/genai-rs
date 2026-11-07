@@ -29,6 +29,7 @@ fn test_with_image_config() {
     let config = ImageConfig {
         aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
         image_size: Some(ImageSize::Hd2k),
+        ..Default::default()
     };
 
     let builder = client
@@ -52,6 +53,7 @@ fn test_with_image_config_merges_with_existing_generation_config() {
     let config = ImageConfig {
         aspect_ratio: Some(ImageAspectRatio::Square),
         image_size: None,
+        ..Default::default()
     };
 
     let builder = client
@@ -180,11 +182,13 @@ fn test_builder_multi_speaker_speech_configs() {
             voice: Some("Kore".to_string()),
             language: Some("en-US".to_string()),
             speaker: Some("Alice".to_string()),
+            ..Default::default()
         })
         .add_speech_config(SpeechConfig {
             voice: Some("Puck".to_string()),
             language: Some("en-US".to_string()),
             speaker: Some("Bob".to_string()),
+            ..Default::default()
         })
         .build()
         .unwrap();

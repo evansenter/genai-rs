@@ -273,6 +273,7 @@ fn test_0_1_18_usage_update_with_modality_details_golden() {
         vec![ModalityTokenCount {
             modality: Some(Modality::Text),
             token_count: Some(287),
+            ..Default::default()
         }]
     );
 }
@@ -382,16 +383,19 @@ fn test_input_event_roundtrip_all_variants() {
                         mime_type: Some("image/png".to_string()),
                         description: Some("d".to_string()),
                         data: Some("aGVsbG8=".to_string()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
                 UserInputPart {
                     slash_command: Some(SlashCommand {
                         name: Some("compact".to_string()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         }),
         InputEvent::ToolConfirmation(ToolConfirmation {
             trajectory_id: "t".to_string(),
@@ -471,6 +475,7 @@ fn test_output_event_roundtrip_all_variants() {
                 text_delta: Some("d".to_string()),
                 ..Default::default()
             }))),
+            ..Default::default()
         },
         OutputEvent {
             payload: Some(OutputPayload::TrajectoryStateUpdate(
@@ -686,4 +691,84 @@ fn test_output_event_seq_num_string_and_number() {
     let b: OutputEvent = serde_json::from_str(r#"{"seqNum": 3}"#).unwrap();
     assert_eq!(a.seq_num, Some(3));
     assert_eq!(a, b);
+}
+
+/// Every type read from the harness keeps a field it does not model in
+/// `extra` and writes it back (D-001); these ten dropped one until #504's
+/// follow-ups, beside siblings that kept it.
+#[test]
+fn harness_types_keep_unmodeled_fields() {
+    fn round_trips<T>(name: &str, mut value: serde_json::Value)
+    where
+        T: serde::de::DeserializeOwned + serde::Serialize,
+    {
+        value["futureField"] = json!({"nested": [1, 2]});
+        let parsed: T = serde_json::from_value(value.clone())
+            .unwrap_or_else(|e| panic!("{name} did not parse: {e}"));
+        assert_eq!(
+            serde_json::to_value(&parsed).unwrap(),
+            value,
+            "{name} dropped or changed a field"
+        );
+    }
+    round_trips::<TrajectoryUsageEntry>("TrajectoryUsageEntry", json!({"trajectoryId": "t"}));
+    round_trips::<ModalityTokenCount>(
+        "ModalityTokenCount",
+        json!({"modality": "TEXT", "tokenCount": 3}),
+    );
+    round_trips::<ListDirectoryEntry>(
+        "ListDirectoryEntry",
+        json!({"name": "src", "isDirectory": true}),
+    );
+    round_trips::<DiffBlock>("DiffBlock", json!({"startLine": 1, "endLine": 2}));
+    round_trips::<DiffLine>("DiffLine", json!({"text": "fn a() {}"}));
+    round_trips::<PreTurnArgs>("PreTurnArgs", json!({"trajectoryId": "t"}));
+    round_trips::<PostTurnArgs>("PostTurnArgs", json!({"responseText": "done"}));
+    round_trips::<OnToolErrorArgs>(
+        "OnToolErrorArgs",
+        json!({"toolName": "view_file", "errorMessage": "no such file"}),
+    );
+    round_trips::<OnCompactionArgs>(
+        "OnCompactionArgs",
+        json!({"trajectoryId": "t", "summary": "s"}),
+    );
+    round_trips::<StopArgs>("StopArgs", json!({"responseText": "done"}));
+    // Echoed back: the user input in `PreTurnArgs`, a tool response in an
+    // `ActionCustomTool` step.
+    round_trips::<UserInput>("UserInput", json!({"parts": [{"text": "hi"}]}));
+    round_trips::<UserInputPart>("UserInputPart", json!({"text": "hi"}));
+    round_trips::<Media>("Media", json!({"mimeType": "image/png", "data": "AA=="}));
+    round_trips::<SlashCommand>("SlashCommand", json!({"name": "help"}));
+    round_trips::<ToolResponse>(
+        "ToolResponse",
+        json!({"id": "call_1", "responseJson": "{}"}),
+    );
+}
+
+/// An envelope key a newer harness adds beside a recognized payload is kept
+/// in `extra` and written back; with no recognized payload the leftover key
+/// is still the `Unknown` payload.
+#[test]
+fn output_event_keeps_unmodeled_envelope_keys() {
+    let raw = json!({
+        "seqNum": "7",
+        "trajectoryStateUpdate": {"trajectoryId": "t"},
+        "futureEnvelopeField": {"a": 1}
+    });
+    let event: OutputEvent = serde_json::from_value(raw).unwrap();
+    assert!(matches!(
+        event.payload,
+        Some(OutputPayload::TrajectoryStateUpdate(_))
+    ));
+    assert_eq!(event.extra["futureEnvelopeField"], json!({"a": 1}));
+    let back = serde_json::to_value(&event).unwrap();
+    assert_eq!(back["futureEnvelopeField"], json!({"a": 1}));
+    assert_eq!(back["seqNum"], 7);
+
+    let unknown: OutputEvent = serde_json::from_value(json!({"futureEvent": {"x": 1}})).unwrap();
+    assert!(unknown.extra.is_empty(), "{:?}", unknown.extra);
+    assert!(matches!(
+        unknown.payload,
+        Some(OutputPayload::Unknown { ref event_type, .. }) if event_type == "futureEvent"
+    ));
 }

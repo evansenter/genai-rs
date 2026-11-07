@@ -390,11 +390,21 @@ impl<'a> InteractionBuilder<'a> {
     /// 2026-11-05). A budget you set counts what the decode already
     /// produced, so it must exceed that.
     ///
+    /// The previous interaction and the token always become the
+    /// response's, replacing any set earlier on the builder, and are
+    /// cleared when the response has none: a token continues only the
+    /// interaction that issued it, so a builder-set id or token could only
+    /// pair it with the wrong one. A `store: false` response has no `id`,
+    /// and its request could not have had a previous interaction either
+    /// (chaining needs storage), so its continuation has none. The model
+    /// or agent is replaced only when the response names one.
+    ///
     /// [`build`](Self::build) fails with
     /// [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput) when
     /// `response` carries no token and no input was set, and when it has no
     /// `id` (a `store: false` interaction): for that one, resend the
-    /// original input with [`with_continuation_token`](Self::with_continuation_token).
+    /// original input, with `continue_decode` or
+    /// [`with_continuation_token`](Self::with_continuation_token).
     ///
     /// ```no_run
     /// # use genai_rs::{Client, GenerationConfig, InteractionStatus};
@@ -429,6 +439,7 @@ impl<'a> InteractionBuilder<'a> {
             self.agent = Some(agent.clone());
             self.model = None;
         }
+        // Both replaced, even with nothing: see the doc comment.
         self.previous_interaction_id.clone_from(&response.id);
         self.continuation_token
             .clone_from(&response.continuation_token);

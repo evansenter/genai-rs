@@ -395,3 +395,19 @@ fn chunking_config_serializes_the_white_space_limits() {
         serde_json::json!({"semanticConfig": {}})
     );
 }
+
+/// A white-space config field the crate does not model survives a round
+/// trip (D-001), as on `ChunkingConfig`.
+#[test]
+fn white_space_config_keeps_unmodeled_fields() {
+    let wire = serde_json::json!({
+        "maxTokensPerChunk": 200,
+        "maxOverlapTokens": 20,
+        "minTokensPerChunk": 50
+    });
+    let config: WhiteSpaceConfig = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(config.max_tokens_per_chunk, Some(200));
+    assert_eq!(config.extra["minTokensPerChunk"], 50);
+    assert_eq!(serde_json::to_value(&config).unwrap(), wire);
+    assert!(WhiteSpaceConfig::new(200, 20).extra.is_empty());
+}

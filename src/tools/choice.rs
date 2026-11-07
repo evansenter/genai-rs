@@ -40,13 +40,22 @@ pub struct AllowedTools {
     /// Names of the tools the model is allowed to call.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<String>,
+    /// Fields this crate does not model, kept from a deserialized restriction
+    /// (such as one a stored interaction serves) and sent flat beside the
+    /// modeled ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AllowedTools {
     /// Creates a new tool restriction over the given tool names.
     #[must_use]
     pub fn new(tools: Vec<String>) -> Self {
-        Self { mode: None, tools }
+        Self {
+            mode: None,
+            tools,
+            extra: serde_json::Map::new(),
+        }
     }
 
     /// Sets the function calling mode for the listed tools.
@@ -104,7 +113,11 @@ impl ToolChoice {
     /// Creates a tool restriction choice from a mode and tool names.
     #[must_use]
     pub fn allowed_tools(mode: Option<FunctionCallingMode>, tools: Vec<String>) -> Self {
-        Self::AllowedTools(AllowedTools { mode, tools })
+        Self::AllowedTools(AllowedTools {
+            mode,
+            tools,
+            ..Default::default()
+        })
     }
 
     /// Check if this is an unknown tool choice shape.

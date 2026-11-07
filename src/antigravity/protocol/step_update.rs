@@ -205,6 +205,9 @@ pub struct ListDirectoryEntry {
         skip_serializing_if = "Option::is_none"
     )]
     pub file_size: Option<u64>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `ActionFindFile`.
@@ -331,6 +334,9 @@ pub struct DiffBlock {
     /// The diff lines.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub lines: Vec<DiffLine>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `ActionEditFile.DiffLine`.
@@ -343,6 +349,9 @@ pub struct DiffLine {
     /// What happened to the line.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<LineAction>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `ActionRunCommand`.

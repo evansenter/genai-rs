@@ -376,6 +376,10 @@ pub struct RotateSigningSecretResponse {
     /// returned again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+    /// Fields the API sent that this struct does not model, kept so a
+    /// deserialize/serialize round trip preserves them (Evergreen).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // Custom Debug that redacts the rotated signing secret (mirrors the
@@ -384,6 +388,10 @@ impl std::fmt::Debug for RotateSigningSecretResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RotateSigningSecretResponse")
             .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
+            // Listed so unmodeled keys stay visible. They print verbatim, as
+            // on `Webhook`: nothing can redact a field the crate does not
+            // model yet.
+            .field("extra", &self.extra)
             .finish()
     }
 }
@@ -413,6 +421,11 @@ pub struct WebhookConfig {
     /// User metadata returned on each event emission to the webhooks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_metadata: Option<serde_json::Value>,
+    /// Fields this crate does not model, kept from a deserialized config (such
+    /// as the one a stored interaction serves) and sent flat beside the modeled
+    /// ones (D-001).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl WebhookConfig {
@@ -959,10 +972,24 @@ mod tests {
     fn test_rotate_signing_secret_response_debug_redacts_secret() {
         let response = RotateSigningSecretResponse {
             secret: Some("whsec_rotated_secret".to_string()),
+            ..Default::default()
         };
         let debug = format!("{response:?}");
         assert!(!debug.contains("whsec_rotated_secret"));
         assert!(debug.contains("[REDACTED]"));
+    }
+
+    /// A rotate-response field the crate does not model survives a round
+    /// trip (D-001) and shows in `Debug`.
+    #[test]
+    fn test_rotate_signing_secret_response_keeps_unmodeled_fields() {
+        let wire = json!({"secret": "whsec_rotated_secret", "expire_time": "2026-12-01T00:00:00Z"});
+        let response: RotateSigningSecretResponse = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(response.extra["expire_time"], "2026-12-01T00:00:00Z");
+        assert_eq!(serde_json::to_value(&response).unwrap(), wire);
+        let debug = format!("{response:?}");
+        assert!(debug.contains("expire_time"), "{debug}");
+        assert!(!debug.contains("whsec_rotated_secret"), "{debug}");
     }
 
     #[test]

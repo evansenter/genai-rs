@@ -366,6 +366,7 @@ fn rag_store_config() -> RagStoreConfig {
                 model_name: Some("m".into()),
                 rank_service: Some(RankService {
                     model_name: Some("m".into()),
+                    extra: serde_json::Map::new(),
                 }),
             }),
         }),
@@ -410,6 +411,7 @@ pub(super) fn tools() -> Vec<Tool> {
             allowed_tools: Some(vec![AllowedTools {
                 mode: Some(FunctionCallingMode::Validated),
                 tools: vec!["t".into()],
+                ..Default::default()
             }]),
             headers: Some(HashMap::from([("Authorization".into(), "Bearer x".into())])),
         },

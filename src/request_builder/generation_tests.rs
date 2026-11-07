@@ -305,6 +305,49 @@ fn test_continuation_without_input_needs_the_stored_id() {
     assert!(request.input.is_some() && request.continuation_token.is_some());
 }
 
+/// `continue_decode` replaces the builder's previous interaction and token
+/// with the response's, clearing them when the response has none: a token
+/// belongs to the interaction that issued it, so keeping either would pair
+/// it with another one.
+#[test]
+fn test_continue_decode_replaces_the_id_and_token_even_with_none() {
+    let client = create_test_client();
+    let continued = |response: &crate::InteractionResponse| {
+        client
+            .interaction()
+            .with_text("Write a sonnet about the sea.")
+            .with_previous_interaction("v1_earlier_turn")
+            .with_continuation_token("CiQxYzQ5ZGIwZi0=")
+            .continue_decode(response)
+            .build()
+            .unwrap()
+    };
+
+    let request = continued(&cut_off_response());
+    assert_eq!(
+        request.previous_interaction_id.as_deref(),
+        Some("v1_stored")
+    );
+    assert_eq!(request.continuation_token.as_deref(), Some("CtYBCtEB"));
+
+    // A `store: false` response: no id, so no previous interaction.
+    let mut no_id = cut_off_response();
+    no_id.id = None;
+    let request = continued(&no_id);
+    assert_eq!(request.previous_interaction_id, None);
+    assert_eq!(request.continuation_token.as_deref(), Some("CtYBCtEB"));
+
+    // Nothing to continue: no token, so this is a plain follow-up turn.
+    let mut no_token = cut_off_response();
+    no_token.continuation_token = None;
+    let request = continued(&no_token);
+    assert_eq!(
+        request.previous_interaction_id.as_deref(),
+        Some("v1_stored")
+    );
+    assert_eq!(request.continuation_token, None);
+}
+
 #[test]
 fn test_continue_decode_on_a_response_without_a_token_needs_input() {
     let mut response = cut_off_response();

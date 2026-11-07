@@ -136,6 +136,7 @@ fn test_speech_config_serialization() {
         voice: Some("Fenrir".to_string()),
         language: Some("en-US".to_string()),
         speaker: None,
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -165,6 +166,7 @@ fn test_speech_config_roundtrip() {
         voice: Some("Aoede".to_string()),
         language: Some("es-ES".to_string()),
         speaker: Some("narrator".to_string()),
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -354,6 +356,7 @@ fn test_image_config_serialization_roundtrip() {
     let config = ImageConfig {
         aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
         image_size: Some(ImageSize::Hd2k),
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -374,6 +377,7 @@ fn test_image_config_partial_fields() {
     let config = ImageConfig {
         aspect_ratio: Some(ImageAspectRatio::Square),
         image_size: None,
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&config).unwrap();
@@ -396,6 +400,7 @@ fn test_generation_config_with_image_config() {
         image_config: Some(ImageConfig {
             aspect_ratio: Some(ImageAspectRatio::Portrait9x16),
             image_size: Some(ImageSize::Uhd4k),
+            ..Default::default()
         }),
         ..Default::default()
     };

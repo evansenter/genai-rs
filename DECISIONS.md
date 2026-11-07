@@ -471,6 +471,22 @@ implementation module `src/steps/mod.rs` 774; the largest test files
 `src/content/content_tests.rs` 1,336, `src/response/response_tests.rs`
 1,260 and `tests/http_mock_resources/file_search_stores.rs` 1,052.
 
+**Enforced since 2026-11-06 (#504).** The bars are now a CI property, not
+an audit finding: `tests/module_size.rs` fails on any file over its bar and
+names the file, its count and the limit. It measures as this entry does:
+an implementation module in `src/` or `genai-rs-macros/src/` by its lines
+outside its own `#[cfg(test)]` test modules (`mod tests` or
+`mod <name>_tests`), at most 800 (each sits at the end of its file, so
+these are the lines before it; one declared earlier would not hide the code
+after it); a unit-test file in `src/` (`*_tests.rs`,
+`tests.rs`, `proptest_*.rs`) at most 1,500; the shared test modules
+`tests/common/` and `tests/live_verbs/` at most 800; and every other file
+under `tests/` at most 2,000. "Roughly" is gone: the bar is the number.
+Every file was under its bar when the test landed (the largest
+implementation module `src/steps/mod.rs` at 774, the largest test file
+`tests/antigravity_harness.rs` at 1,808), so it has no allowlist; a file
+that must stay over would need an entry there with its reason.
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)
@@ -1068,3 +1084,76 @@ turn: the API accepted it and the model answered from both.
 `docs/BUILDER_API.md`'s composition tree spells the rule out. An empty
 content list is now refused in `build()` (#452), since with history it
 would otherwise be an empty final turn.
+
+---
+
+## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
+
+**Context.** The leaked-resource janitor (#492) deletes only resources
+that carry a live test's marker, but environments cannot carry one except
+in their inline sources: the resource is `id`, `sources`, `network`,
+`status`, `file_count`, `size_bytes` and three timestamps, with no name,
+label or metadata (google-genai 2.34.0, and a read-only listing of the
+shared key on 2026-11-06). The tests' own sourceless environments come
+from calls that take no sources: an agent interaction run without an
+environment creates one, a fork (`from_environment`) lists none, and so
+does a network-only create. The janitor's first cut deleted every
+sourceless environment on the key, a person's included.
+
+**Decision.** Narrow the rule to what the data allows: no sources, no
+files (`file_count` and `size_bytes` zero or absent), and no activity
+within the age floor, an environment's age being the latest of its
+create, update and last-access times. Such an environment holds nothing
+to lose. A sourceless environment that holds files, a leaked fork for one,
+is kept and listed in the run's summary for a person to check. The
+workflow header, the script and `docs/TESTING.md` say plainly that opting
+in (`JANITOR_DELETE`) deletes every empty, idle, sourceless environment on
+the key, whoever made it.
+
+Rejected for now: giving every test's sourceless environment a marker
+source (a marked inline environment on each agent interaction, a marker
+source on the network-only create) and dropping the sourceless rule. It
+changes live tests that would each need a live run to verify, and a fork
+lists no sources whatever its parent had, so forks would still need a
+rule of their own.
+
+**Consequences.** The rule still matches an empty, idle environment a
+person made without sources; whether that is acceptable on the shared key
+is the owner's call when setting `JANITOR_DELETE`. On 2026-11-06 the key
+held 35 sourceless environments, all empty, 34 of them from July. A leaked
+fork, which holds its parent's files, is listed rather than deleted.
+
+---
+
+## D-034 — Request-side types the API echoes keep an `extra` map too (2026-11-06)
+
+**Context.** D-001 keeps unmodeled fields in a flattened `extra` map, and
+`tests/non_exhaustive_responses.rs` checked it for response structs only:
+the request-side types listed in its `REQUEST_SIDE` (exempt from
+`#[non_exhaustive]` so callers can build them) were skipped silently, and
+so was all of `src/antigravity/`. But a stored interaction serves its
+request config back (`generation_config`, `safety_settings`,
+`webhook_config`), so `SpeechConfig`, `ImageConfig`, `VideoConfig`,
+`TranscriptionConfig`, `AllowedTools`, `SafetySetting` and
+`WebhookConfig` dropped a field the API adds, under a `GenerationConfig`
+that kept its own. Fifteen Antigravity types read from the harness did the
+same beside siblings that kept theirs.
+
+**Decision.** Every deserializable struct keeps an `extra` map unless
+nothing serves it back, and the guard checks request-side and Antigravity
+types too. The exceptions are listed with a reason each: `CRATE_MADE` (the
+crate builds them) and `SENT_ONLY` (only sent: the retrieval tool's
+configs, which the Gemini API rejects, so no stored interaction holds one;
+`FunctionDeclaration`, made into a `Tool::Function` before it is sent;
+`WebhookUpdate`; and the harness config, options, question answers and
+hook replies). The guard also requires the map to be a flattened map, not
+merely a field named `extra`.
+
+**Consequences.** A breaking change for struct literals of the seven
+request configs and the Antigravity types (D-007): add
+`..Default::default()`. `SafetySetting::new` loses `const`. A caller can
+now also send a field of these configs the crate does not model yet, as
+`GenerationConfig::extra` allowed. Not covered: the `Tool` enum's known
+variants, which keep no `extra` (enums are outside the guard, as `Step`'s
+were before #491).
+

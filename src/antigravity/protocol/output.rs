@@ -23,6 +23,11 @@ pub struct OutputEvent {
     pub usage_metadata: Option<UsageMetadata>,
     /// The event payload (`None` if the oneof was empty).
     pub payload: Option<OutputPayload>,
+    /// Envelope keys left over beside a recognized payload: a field a newer
+    /// harness adds to the envelope, kept rather than dropped (Evergreen).
+    /// With no recognized payload, the first leftover key is the payload
+    /// instead, as [`OutputPayload::Unknown`].
+    pub extra: Map<String, Value>,
 }
 
 /// The oneof payload of an [`OutputEvent`].
@@ -98,6 +103,7 @@ impl Serialize for OutputEvent {
         len += usize::from(self.timestamp_micros.is_some());
         len += usize::from(self.usage_metadata.is_some());
         len += usize::from(self.payload.is_some());
+        len += self.extra.len();
         let mut map = serializer.serialize_map(Some(len))?;
         if let Some(seq_num) = self.seq_num {
             map.serialize_entry("seqNum", &seq_num)?;
@@ -138,6 +144,9 @@ impl Serialize for OutputEvent {
         }
         if let Some(usage_metadata) = &self.usage_metadata {
             map.serialize_entry("usageMetadata", usage_metadata)?;
+        }
+        for (key, value) in &self.extra {
+            map.serialize_entry(key, value)?;
         }
         map.end()
     }
@@ -231,9 +240,11 @@ impl<'de> Deserialize<'de> for OutputEvent {
                 break;
             }
         }
-        // Any leftover field is an unrecognized oneof variant: preserve it.
+        // With no recognized payload, a leftover field is an unrecognized
+        // oneof variant: preserve it as the payload.
         if payload.is_none()
-            && let Some((event_type, data)) = map.into_iter().next()
+            && let Some(event_type) = map.keys().next().cloned()
+            && let Some(data) = map.remove(&event_type)
         {
             tracing::warn!(
                 "Unknown OutputEvent variant: '{}'. Preserving in Unknown variant.",
@@ -247,6 +258,7 @@ impl<'de> Deserialize<'de> for OutputEvent {
             timestamp_micros,
             usage_metadata,
             payload,
+            extra: map,
         })
     }
 }
@@ -287,6 +299,9 @@ pub struct TrajectoryUsageEntry {
     /// Its usage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<UsageMetadata>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `SandboxStatus` — whether the harness can enforce the OS command
@@ -319,6 +334,9 @@ pub struct ModalityTokenCount {
         skip_serializing_if = "Option::is_none"
     )]
     pub token_count: Option<u64>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `UsageMetadata` — token accounting for a step.

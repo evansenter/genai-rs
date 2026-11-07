@@ -17,12 +17,14 @@
 # counts once per run it was flaky in.
 #
 # Only runs under retries count, flakes and tests run alike: in a job log,
-# a run counts when its step's command, which the log echoes between
-# `##[group]Run ...` and `##[endgroup]`, has `nextest run ... --retries` on
-# one line or sets NEXTEST_RETRIES. The antigravity job also runs the
-# offline suite, ~1,700 tests with no retries, in the same log; counting
-# them would dilute the rate about eightfold. Output with no step header
-# (plain nextest output) counts whole: the caller chose what to pass.
+# a run counts when its step, which the log echoes between `##[group]Run
+# ...` and `##[endgroup]`, sets NEXTEST_RETRIES in its env (as every
+# workflow step that retries does) or runs `nextest run ... --retries` as
+# one command, its backslash-continued lines joined. The antigravity job
+# also runs the offline suite, ~1,700 tests with no retries, in the same
+# log; counting them would dilute the rate about eightfold. Output with no
+# step header (plain nextest output) counts whole: the caller chose what
+# to pass.
 #
 # Output (JSON on stdout):
 #   {"tests_run": N, "flaky": F,
@@ -44,7 +46,7 @@ command -v jq >/dev/null 2>&1 || {
 # mawk). ESC is passed in rather than written as `\x1b`, which mawk does
 # not understand in a regex.
 "${AWK:-awk}" -v esc=$'\033' '
-  FNR == 1 { header_seen = 0; in_header = 0; retried_step = 0 }
+  FNR == 1 { header_seen = 0; in_header = 0; retried_step = 0; pending = "" }
   {
     line = $0
     sub(/\r$/, "", line)
@@ -63,13 +65,24 @@ command -v jq >/dev/null 2>&1 || {
     # integration loop opens, not a step.) The first line may carry a
     # byte-order mark, so the markers are found anywhere in the line.
     if (index(line, "##[group]Run ") > 0) {
-      header_seen = 1; in_header = 1; retried_step = 0
+      header_seen = 1; in_header = 1; retried_step = 0; pending = ""
       next
     }
     if (in_header) {
-      if (index(line, "##[endgroup]") > 0) in_header = 0
-      else if ((index(line, "nextest run") > 0 && line ~ /--retries[ =]*[1-9]/) \
-               || line ~ /NEXTEST_RETRIES: *[1-9]/) retried_step = 1
+      if (index(line, "##[endgroup]") > 0) {
+        in_header = 0; pending = ""
+        next
+      }
+      # One command may span lines ending in a backslash: join them, so
+      # `nextest run \` with `--retries 2` on a later line is one command.
+      cmd = pending line
+      if (cmd ~ /\\$/) {
+        pending = substr(cmd, 1, length(cmd) - 1) " "
+        next
+      }
+      pending = ""
+      if ((index(cmd, "nextest run") > 0 && cmd ~ /--retries[ =]*[1-9]/) \
+          || cmd ~ /NEXTEST_RETRIES: *[1-9]/) retried_step = 1
       next
     }
     if (header_seen && !retried_step) next
