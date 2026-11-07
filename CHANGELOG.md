@@ -863,10 +863,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that never came. The next `chat` hung until its turn timeout (300s by
   default), and the one after it returned the abandoned turn's reply
   (scripted against harness 0.1.23, 2026-11-07). The agent now records
-  whether each turn reached its end, and the next `chat`/`send_streaming`
-  halts and drains a turn that did not, or that failed, before sending its
-  message: half a second when nothing is left running, five seconds at
-  most (#504).
+  whether each turn reached its end (its `Finished`, or an error the
+  harness ended it with), and the next `chat`/`send_streaming` halts and
+  drains a turn that did not before sending its message: half a second
+  when nothing is left running, five seconds at most (#504).
 
 ## [0.13.0] - 2026-11-03
 

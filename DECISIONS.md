@@ -1208,19 +1208,23 @@ next turn sends its input. `Drop` cannot await, so halting when the turn is
 dropped means spawning a task to send the halt.
 
 **Decision.** The agent records whether the turn it last drove reached its
-end: a `Finished`, or a turn timeout whose halt-and-drain went quiet.
-`begin_turn` halts and drains a turn that did not, before it sends the new
-input, the way it already discarded a trigger turn. A turn that ended in an
-error counts as unfinished too: the harness may or may not have ended it,
-and a halt sent to an idle harness does nothing but cost the drain's
-half-second silence window. Nothing is sent when the turn is dropped.
+end: a `Finished`, a terminal error from the harness (the main trajectory
+went idle with an error, or was cancelled, as on a pre-turn denial), or a
+turn timeout whose halt-and-drain went quiet. `begin_turn` halts and drains
+a turn that did not, before it sends the new input, the way it already
+discarded a trigger turn. Any other error (a fatal model error read from a
+step, a lost connection, a hook thread that could not start) counts as
+unfinished: the harness may still be inside the turn, and a halt sent to an
+idle harness does nothing but cost the drain's half-second silence window.
+Nothing is sent when the turn is dropped.
 
 **Consequences.** The halt and the next turn's input go out in order from
 the same task, so a halt can never arrive after the next input and cancel
 the new turn, as one sent from a spawned task could. The cost: until the
 next `chat` or `send_streaming`, the harness keeps working on an abandoned
 turn (a slow model call, or builtins the turn goes on to run), and the call
-after a failed turn takes half a second longer. `cancel_handle()` remains
-the way to stop a turn at once and keep its partial output.
-`next_trigger_turn` does not halt an abandoned turn first: it consumes what
-is left of it.
+after a turn that failed on this side takes half a second longer.
+`cancel_handle()` remains the way to stop a turn at once and keep its
+partial output. `next_trigger_turn` does not halt an abandoned turn first:
+it consumes what is left of it. The scripted cancel tests count halts: a
+halt after a turn that ended in any of those three ways fails them.

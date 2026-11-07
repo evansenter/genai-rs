@@ -877,13 +877,15 @@ still calling the model. The agent records that the turn never ended, and
 the next `chat`/`send_streaming` halts it and discards its events before
 sending your input (half a second when nothing is left running, five
 seconds at most), so each later turn gets its own reply. A turn that failed
-is halted the same way. Until that next call the harness may keep working
-on the abandoned turn, so use `cancel()` to stop a turn at once and keep
-its partial output. `next_trigger_turn` does not halt anything first:
-called after an abandoned turn, it consumes what is left of that turn. The
-key-free tests in `tests/antigravity_scripted/cancel.rs` abandon a turn
-each way, with a tool hanging, a pre-tool hook pending or the model slow,
-and check that the next two chats get their own replies.
+before the harness ended it (a fatal model error, a lost connection) is
+halted the same way; one the harness failed itself (a pre-turn denial) is
+not. Until that next call the harness may keep working on the abandoned
+turn, so use `cancel()` to stop a turn at once and keep its partial output.
+`next_trigger_turn` does not halt anything first: called after an abandoned
+turn, it consumes what is left of that turn. The key-free tests in
+`tests/antigravity_scripted/cancel.rs` abandon a turn each way, with a tool
+hanging, a pre-tool hook pending or the model slow, and check that the next
+two chats get their own replies and that only the first of them halts.
 
 `with_turn_timeout(Duration)` bounds each turn's wall-clock time. When the
 budget is exceeded, the crate halts the harness's still-running turn and

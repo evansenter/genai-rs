@@ -2,7 +2,7 @@ use super::hooks::LifecycleHooks;
 use super::policies::PolicyEngine;
 use super::process::HarnessProcess;
 use super::prompt::{Prompt, user_input};
-use super::protocol::{self, InputEvent, OutputPayload, StepUpdate};
+use super::protocol::{self, InputEvent, OutputEvent, OutputPayload, StepUpdate};
 use super::session::{Session, SinkHandle};
 use super::tools::ToolDispatcher;
 use super::turn::TurnState;
@@ -73,9 +73,9 @@ pub struct AntigravityAgent {
     /// injecting its message into the user's turn (see [`triggers`]).
     pub(super) turn_sync: Arc<tokio::sync::Mutex<()>>,
     /// `true` from the moment a turn starts until this client sees the
-    /// harness end it (its `Finished`, or a timeout's halt-and-drain). A
-    /// turn abandoned before that, by a dropped `chat` future or
-    /// `send_streaming` stream, leaves it set, and the next
+    /// harness end it (its `Finished`, its terminal error, or a timeout's
+    /// halt-and-drain). A turn abandoned before that, by a dropped `chat`
+    /// future or `send_streaming` stream, leaves it set, and the next
     /// [`begin_turn`](Self::begin_turn) halts and drains the harness's
     /// still-running turn before sending its own input.
     pub(super) turn_unfinished: bool,
@@ -222,10 +222,12 @@ impl AntigravityAgent {
     /// [`send_streaming`](Self::send_streaming) halts it and discards its
     /// events before sending its own message (half a second when nothing is
     /// left running, five seconds at most), so that call gets its own
-    /// reply. A turn that failed is halted the same way. To stop the
-    /// harness at once instead, or to keep the turn's partial output,
-    /// cancel through [`cancel_handle`](Self::cancel_handle) rather than
-    /// dropping the future.
+    /// reply. A turn that failed before the harness ended it (a fatal model
+    /// error, a lost connection) is halted the same way; one the harness
+    /// failed itself (a pre-turn denial) is not. To stop the harness at
+    /// once instead, or to keep the turn's partial output, cancel through
+    /// [`cancel_handle`](Self::cancel_handle) rather than dropping the
+    /// future.
     ///
     /// # Errors
     ///
@@ -399,7 +401,7 @@ impl AntigravityAgent {
         };
         self.turn_unfinished = true;
         let mut turn = TurnState::new(self.turn_timeout, Some(guard));
-        self.process_event(first, &mut turn).await?;
+        self.process_turn_event(first, &mut turn).await?;
         loop {
             match self.next_turn_event(&mut turn).await? {
                 Some(AgentEvent::Finished(response)) => return Ok(Some(*response)),
@@ -593,9 +595,9 @@ impl AntigravityAgent {
             // hung one would otherwise hold the turn past its budget.
             let deadline = turn.deadline;
             let step = self.receive_and_process(turn);
-            let result = match deadline {
+            match deadline {
                 Some(deadline) => match tokio::time::timeout_at(deadline, step).await {
-                    Ok(result) => result,
+                    Ok(result) => result?,
                     Err(_) => {
                         // The harness is still driving this turn. Without a
                         // halt, its remaining events (including its terminal
@@ -612,16 +614,8 @@ impl AntigravityAgent {
                         });
                     }
                 },
-                None => step.await,
-            };
-            // Only a completed turn counts as ended. An error leaves the
-            // flag set even when the harness did end the turn: the next
-            // turn's halt is then a no-op, and an error that left the
-            // harness mid-turn is drained.
-            if turn.finished {
-                self.turn_unfinished = false;
+                None => step.await?,
             }
-            result?;
         }
     }
 
@@ -634,14 +628,36 @@ impl AntigravityAgent {
                 stderr,
             });
         };
-        self.process_event(event, turn).await
+        self.process_turn_event(event, turn).await
+    }
+
+    /// Handles one event of a turn this client drives, and clears
+    /// `turn_unfinished` once the harness has ended the turn: completed, or
+    /// failed by its main trajectory's terminal state (idle with an error,
+    /// or cancelled, as on a pre-turn denial), the only way a trajectory
+    /// update fails. Any other error may leave the harness mid-turn, so the
+    /// next turn halts it.
+    async fn process_turn_event(
+        &mut self,
+        event: OutputEvent,
+        turn: &mut TurnState,
+    ) -> Result<(), AntigravityError> {
+        let trajectory_update =
+            matches!(event.payload, Some(OutputPayload::TrajectoryStateUpdate(_)));
+        let result = self.process_event(event, turn).await;
+        let harness_failed_it =
+            trajectory_update && matches!(result, Err(AntigravityError::Turn(_)));
+        if turn.finished || harness_failed_it {
+            self.turn_unfinished = false;
+        }
+        result
     }
 
     /// Marks the agent busy and, when a trigger delivered since the last
     /// client-driven turn or the last turn never ended (it was abandoned
-    /// mid-flight, or failed), halts and drains the harness's turn. Returns
-    /// the guard that flips the agent back to idle on drop, with the new
-    /// turn marked unfinished until its end is seen.
+    /// mid-flight, or failed on this side), halts and drains the harness's
+    /// turn. Returns the guard that flips the agent back to idle on drop,
+    /// with the new turn marked unfinished until its end is seen.
     ///
     /// Invariant (shared with [`triggers::spawn_trigger_task`]): flipping
     /// the idle flag and consuming `trigger_fired` happen under

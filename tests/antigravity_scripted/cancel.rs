@@ -13,10 +13,11 @@
 //!
 //! The halt is not free (half a second of draining at least), so these
 //! tests also count halts: only the turn after an unfinished one sends
-//! one. The turn after one that finished, or after a turn timeout whose
-//! own halt drained the harness, sends none.
+//! one. The turn after one that finished, one the harness itself failed,
+//! or a turn timeout whose own halt drained the harness sends none.
 
 use super::*;
+use genai_rs::antigravity::TurnDecision;
 
 /// The start of the debug line each halt-and-drain logs.
 const HALT_LINE: &str = "Halting and draining the harness turn";
@@ -262,6 +263,42 @@ async fn assert_next_turns_survive(blocker: Blocker, abandon: Abandon) {
     }
 
     drop(release);
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// A turn the harness itself ended with an error is over. A pre-turn hook's
+/// denial cancels the trajectory; the next chat gets its reply without a
+/// halt.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_turn_the_harness_failed_is_not_halted_again() {
+    let halts = Halts::default();
+    let _recording = halts.install();
+    let fake = FakeGemini::start(vec![ModelTurn::text(SECOND_REPLY)]).await;
+    let mut agent = scripted_agent(&fake)
+        .on_pre_turn(|turn| {
+            if turn.text.contains(FIRST) {
+                TurnDecision::deny("pre-turn-denied-6301")
+            } else {
+                TurnDecision::Allow
+            }
+        })
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let err = agent.chat(FIRST).await.unwrap_err();
+    assert!(
+        matches!(&err, AntigravityError::Turn(m) if m.contains("pre-turn-denied-6301")),
+        "{err:?}"
+    );
+    let response = agent.chat(SECOND).await.expect("the turn after the denial");
+    assert_eq!(response.text(), SECOND_REPLY);
+    assert_eq!(
+        halts.take(),
+        Vec::<String>::new(),
+        "a turn the harness failed needs no halt"
+    );
     agent.shutdown().await.expect("shutdown");
 }
 
