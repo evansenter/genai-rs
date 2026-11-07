@@ -54,10 +54,22 @@ date), parsed into a `Duration`. It is populated on `Api` errors, typically
 
 ## Recommended: `backon`
 
-```rust,no_run
+```rust
 use backon::{ExponentialBuilder, Retryable};
 use genai_rs::GenaiError;
 use std::time::Duration;
+
+/// The longest wait between attempts.
+const MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// The wait before the next attempt, or `None` once the attempts are used
+/// up: the server's `Retry-After` when it sent one, but never past
+/// `MAX_DELAY`. `adjust` replaces backon's delay after `with_max_delay`
+/// has capped it, so without the `min` a server asking for an hour gets
+/// one.
+fn next_delay(e: &GenaiError, backoff: Option<Duration>) -> Option<Duration> {
+    backoff.map(|d| e.retry_after().map_or(d, |asked| asked.min(MAX_DELAY)))
+}
 
 # async fn run(client: genai_rs::Client) -> Result<(), GenaiError> {
 let request = client
@@ -68,17 +80,29 @@ let request = client
 
 let backoff = ExponentialBuilder::default()
     .with_min_delay(Duration::from_millis(100))
-    .with_max_delay(Duration::from_secs(30))
+    .with_max_delay(MAX_DELAY)
     .with_max_times(3);
 
 let response = (|| async { client.execute(request.clone()).await })
     .retry(backoff)
     .when(|e: &GenaiError| e.is_retryable())
-    // Prefer the server's Retry-After over our own backoff step
-    .adjust(|e: &GenaiError, dur: Option<Duration>| dur.map(|d| e.retry_after().unwrap_or(d)))
+    .adjust(next_delay)
     .await?;
 # let _ = response;
 # Ok(())
+# }
+# fn main() {
+#     let asked = |secs| GenaiError::Api {
+#         status_code: 429,
+#         message: String::new(),
+#         request_id: None,
+#         retry_after: Some(Duration::from_secs(secs)),
+#     };
+#     let step = Some(Duration::from_millis(100));
+#     assert_eq!(next_delay(&asked(3600), step), Some(MAX_DELAY));
+#     assert_eq!(next_delay(&asked(2), step), Some(Duration::from_secs(2)));
+#     assert_eq!(next_delay(&GenaiError::InvalidInput(String::new()), step), step);
+#     assert_eq!(next_delay(&asked(2), None), None);
 # }
 ```
 

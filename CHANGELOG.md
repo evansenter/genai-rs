@@ -729,6 +729,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `backon` retry snippet in `docs/RELIABILITY.md` and
+  `examples/retry_with_backoff.rs` let a server's `Retry-After` bypass
+  `with_max_delay`: `adjust` replaces backon's delay after the cap, so a
+  429 asking for an hour slept for an hour. Both cap it at the backoff's
+  maximum now; copy the change into a loop built from either.
 - `#[tool]` documents everything it generates: the `<Name>Callable`
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that
