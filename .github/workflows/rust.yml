@@ -613,11 +613,12 @@ jobs:
         # isolation and flake under plain `cargo test` threads (#418).
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       # Every run, token or not: with no Codecov upload, the job summary is
-      # where the coverage is read.
+      # where the coverage is read. `--workspace` as above: without it the
+      # report covers the root package only, not genai-rs-macros.
       - name: Coverage summary
         run: |
           set -euo pipefail
-          cargo llvm-cov report --summary-only | tee coverage-summary.txt
+          cargo llvm-cov report --workspace --summary-only | tee coverage-summary.txt
           {
             echo "## Code coverage"
             echo
