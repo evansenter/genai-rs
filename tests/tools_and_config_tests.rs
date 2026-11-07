@@ -1167,9 +1167,24 @@ mod structured_output {
         );
     }
 
+    /// url_context and a response schema in one request, at
+    /// `ThinkingLevel::Low`.
+    ///
+    /// This pair hits a server bug: the model fetches the page again and
+    /// again until the API stops it with `400 too_many_tool_calls` (60 URL
+    /// context calls, after about two minutes). It looped in 31 of 69
+    /// requests at the default thinking level and 15 of 20 at `high`, but
+    /// in 6 of 169 at `low` (2026-11-07; docs/INTERACTIONS_API_GAP.md,
+    /// "url_context loops under a response schema"). So the request sets
+    /// `low` and is sent once: a loop fails the test, naming the bug, and
+    /// the retry nextest gives it is counted by the flakiness report.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_with_url_context() {
+        /// A healthy answer takes under 15 s; a loop takes about two
+        /// minutes before the API gives up.
+        const LOOP_BOUND: std::time::Duration = std::time::Duration::from_secs(60);
+
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -1185,47 +1200,28 @@ mod structured_output {
             "required": ["title", "description"]
         });
 
-        // Server bug (2026-11-01): with a response schema, url_context loops
-        // until `400 too_many_tool_calls` about half the time (8 of 12 raw
-        // requests looped ~117s; without the schema, 6 of 6 answered in 5s).
-        // A healthy answer takes under 10s, so each attempt gets 30s and up
-        // to 4 tries, the way processing_steps_tests handled #473's agentic
-        // video. Transient errors get another attempt too; any other error
-        // still fails.
-        let mut result = None;
-        for attempt in 1..=4 {
-            let request = stateful_builder(&client)
-                .with_text(format!(
-                    "Analyze the page at {} and extract metadata.",
-                    url_context::URL
-                ))
-                .with_url_context()
-                .with_response_format(schema.clone())
-                .create();
-            match tokio::time::timeout(std::time::Duration::from_secs(30), request).await {
-                Err(_) => println!("attempt {attempt}/4: url_context looped past 30s"),
-                Ok(Err(GenaiError::Api { message, .. }))
-                    if message.contains("too_many_tool_calls") =>
-                {
-                    println!("attempt {attempt}/4: too_many_tool_calls");
-                }
-                // What retry_request! retried before this loop replaced it.
-                Ok(Err(e)) if e.is_retryable() || common::is_transient_error(&e) => {
-                    println!("attempt {attempt}/4: transient error: {e}");
-                }
-                Ok(other) => {
-                    result = Some(other);
-                    break;
-                }
-            }
-        }
-        let Some(result) = result else {
-            println!(
-                "LIVE_TOOL_EVIDENCE_SKIPPED: url_context with a response schema looped on all 4 \
-                 attempts (server bug, docs/INTERACTIONS_API_GAP.md)"
-            );
-            return;
+        let request = async {
+            retry_request!([client, schema] => {
+                interaction_builder(&client)
+                    .with_text(format!(
+                        "Analyze the page at {} and extract metadata.",
+                        url_context::URL
+                    ))
+                    .with_url_context()
+                    .with_response_format(schema)
+                    .with_thinking_level(ThinkingLevel::Low)
+                    .create()
+                    .await
+            })
         };
+        let result = tokio::time::timeout(LOOP_BOUND, request)
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "no answer within {LOOP_BOUND:?}: the server's url_context loop under a \
+                     response schema (docs/INTERACTIONS_API_GAP.md), rare at low thinking"
+                )
+            });
         let Some(response) = tool_response(result, "URL context with structured output") else {
             return;
         };

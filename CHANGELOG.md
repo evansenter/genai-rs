@@ -1009,6 +1009,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness ended it with), and the next `chat`/`send_streaming` halts and
   drains a turn that did not before sending its message: half a second
   when nothing is left running, five seconds at most (#504).
+- `docs/CONVERSATIONS.md` no longer suggests a follow-up turn can simply
+  drop a built-in tool. After a turn that used Google Search, a follow-up
+  sent without it sometimes ends `failed` with a `malformed_tool_call`
+  error, because the model calls the tool anyway (verified live
+  2026-11-07); send the built-in tools on every turn. The url_context loop
+  under a response schema is recorded with what mostly avoids it: with
+  `with_thinking_level(ThinkingLevel::Low)` it looped in 6 of 169
+  requests, against 31 of 69 at the default level
+  (`docs/INTERACTIONS_API_GAP.md`, #504).
 
 ## [0.13.0] - 2026-11-03
 

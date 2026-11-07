@@ -23,8 +23,9 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 /// Known model-side flakes worth retrying: Spanner UTF-8 errors (#60), and
 /// 400s that pass on re-run: "invalid json syntax" from structured output,
 /// the bare "there was a problem processing your request" burst, and any 400
-/// that tells the caller to retry (`too_many_tool_calls`, which failed a
-/// url_context test 3 of 3 tries on main, and `malformed_tool_call`).
+/// that tells the caller to retry (`malformed_tool_call`). `too_many_tool_calls`
+/// said so on 2026-11-01; by 2026-11-07 it read "The request reached the
+/// tool-use step limit ...", which is not retried.
 /// Transport transience (network, timeouts, 429, 5xx) is
 /// [`GenaiError::is_retryable`]'s job.
 #[allow(dead_code)]
