@@ -238,7 +238,8 @@ src/antigravity/
   tools.rs         Custom tool dispatch onto FunctionRegistry / ToolService
   session.rs       WebSocket transport: connect, send/receive, wire inspection
   handshake.rs     Binary-proto InputConfig/OutputConfig encode/decode
-  process.rs       Discovery, spawn, stderr drain, ordered shutdown
+  process.rs       Discovery, spawn, ordered shutdown
+  harness_stderr.rs The stderr drain and its bounded tail
   process_tree.rs  Signals the harness's process group and its children's
   error.rs         AntigravityError
   protocol/        Proto-JSON wire types: config.rs (HarnessConfig),

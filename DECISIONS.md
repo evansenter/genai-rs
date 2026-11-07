@@ -1218,3 +1218,22 @@ reason, so a wheel that changes them shows in its diff.
 **Consequences.** `BuiltinTool` has no `RunWorkflow`, and the toggle stays
 off. Revisit if the harness runs workflows written some other way, or the
 feature leaves beta and users ask for Python workflows driven from Rust.
+
+---
+
+## D-NEXT-WP17-a — The Antigravity stderr drain moves to `harness_stderr.rs` (2026-11-07)
+
+**Context.** Bounding harness discovery and capping stderr lines (#504,
+WP17) took `src/antigravity/process.rs` to 821 lines, over D-014's 800.
+
+**Decision.** Moved, per D-011, with no behavior change beyond that work:
+
+| From | To |
+|------|----|
+| `StderrRing`, `drain_stderr` and their limits in `src/antigravity/process.rs` | `src/antigravity/harness_stderr.rs` |
+| The stderr tests in `src/antigravity/process_tests.rs` | `src/antigravity/harness_stderr_tests.rs` |
+
+`process.rs` keeps discovery, the version read, spawn and shutdown.
+
+**Consequences.** Links to `src/antigravity/process.rs:<line>` for the
+stderr drain, written before 2026-11-07, point at the old layout.
