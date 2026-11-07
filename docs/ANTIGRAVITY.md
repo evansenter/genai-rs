@@ -73,8 +73,8 @@ since `userInput` kept its name while changing shape.
 **The version is checked at spawn.** The binary carries no version of its
 own, so `spawn()` reads it from the wheel install the binary sits in
 (`google_antigravity-<version>.dist-info` beside
-`google/antigravity/bin/localharness`, following a `PATH` symlink into its
-venv) and logs a `warn!` when it differs from `SUPPORTED_HARNESS_VERSION`.
+`google/antigravity/bin/localharness`, or `localharness.exe` on Windows,
+following a `PATH` symlink into its venv) and logs a `warn!` when it differs from `SUPPORTED_HARNESS_VERSION`.
 `AntigravityAgent::harness_version()` returns it (`None` for a binary that
 is not inside a wheel install). A known mismatch is also named in an
 `InitFailed` message and in a turn's `Timeout` diagnosis.

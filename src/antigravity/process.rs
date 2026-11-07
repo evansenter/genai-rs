@@ -603,19 +603,20 @@ enum Signal {
 /// The binary carries no version of its own (`localharness --version` just
 /// reads stdin for a handshake, 0.1.23), and the handshake reply carries
 /// none either. A wheel install lays the binary out as
-/// `<site-packages>/google/antigravity/bin/localharness` beside
+/// `<site-packages>/google/antigravity/bin/localharness[.exe]` (one of
+/// `names`, which is [`HARNESS_FILE_NAMES`] outside tests) beside
 /// `<site-packages>/google_antigravity-<version>.dist-info/METADATA`, so
 /// the version is read from there. Symlinks (a pipx or `uv tool` shim on
 /// `PATH`) are resolved first.
 ///
 /// `None` when the binary is not inside a wheel install (a hand-placed
 /// copy), or the metadata is missing or names more than one version.
-pub(crate) fn harness_version(binary: &Path) -> Option<String> {
+pub(crate) fn harness_version(names: &[&str], binary: &Path) -> Option<String> {
     let binary = binary
         .canonicalize()
         .unwrap_or_else(|_| binary.to_path_buf());
     let site_packages = binary.ancestors().nth(4)?;
-    let in_wheel = HARNESS_FILE_NAMES.iter().any(|name| {
+    let in_wheel = names.iter().any(|name| {
         site_packages
             .join(format!("{SITE_PACKAGES_BIN_DIR}/{name}"))
             .is_file()
@@ -658,7 +659,7 @@ async fn harness_version_bounded(binary: &Path, timeout: Duration) -> Option<Str
     let started = std::thread::Builder::new()
         .name("antigravity-version-read".to_string())
         .spawn(move || {
-            let outcome = std::panic::catch_unwind(|| harness_version(&path));
+            let outcome = std::panic::catch_unwind(|| harness_version(HARNESS_FILE_NAMES, &path));
             // Fails only when `spawn()` stopped waiting (the timeout fired).
             let _ = sender.send(outcome);
         });

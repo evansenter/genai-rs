@@ -377,7 +377,10 @@ fn wheel_install(site: &Path, versions: &[&str]) -> PathBuf {
 fn test_harness_version_reads_the_wheel_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let binary = wheel_install(&dir.path().join("site-packages"), &["0.1.23"]);
-    assert_eq!(harness_version(&binary).as_deref(), Some("0.1.23"));
+    assert_eq!(
+        harness_version(HARNESS_FILE_NAMES, &binary).as_deref(),
+        Some("0.1.23")
+    );
 }
 
 #[cfg(unix)]
@@ -390,7 +393,10 @@ fn test_harness_version_follows_a_path_symlink_into_the_wheel() {
     let link = dir.path().join("bin/localharness");
     std::fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&binary, &link).unwrap();
-    assert_eq!(harness_version(&link).as_deref(), Some("0.1.18"));
+    assert_eq!(
+        harness_version(HARNESS_FILE_NAMES, &link).as_deref(),
+        Some("0.1.18")
+    );
 }
 
 #[test]
@@ -399,13 +405,28 @@ fn test_harness_version_is_none_outside_a_wheel_or_when_ambiguous() {
     // A hand-placed binary: no wheel layout around it.
     let bare = dir.path().join("bin/localharness");
     touch_executable(&bare);
-    assert_eq!(harness_version(&bare), None);
+    assert_eq!(harness_version(HARNESS_FILE_NAMES, &bare), None);
     // The layout, but no metadata.
     let unlabelled = wheel_install(&dir.path().join("a"), &[]);
-    assert_eq!(harness_version(&unlabelled), None);
+    assert_eq!(harness_version(HARNESS_FILE_NAMES, &unlabelled), None);
     // Two installed versions: there is no telling which one this is.
     let ambiguous = wheel_install(&dir.path().join("b"), &["0.1.18", "0.1.23"]);
-    assert_eq!(harness_version(&ambiguous), None);
+    assert_eq!(harness_version(HARNESS_FILE_NAMES, &ambiguous), None);
+}
+
+#[test]
+fn test_harness_version_reads_the_windows_wheel_with_the_exe() {
+    // The win32 wheel ships `localharness.exe` and no bare name.
+    let dir = tempfile::tempdir().unwrap();
+    let bare = wheel_install(&dir.path().join("site-packages"), &["0.1.23"]);
+    let exe = bare.with_file_name("localharness.exe");
+    std::fs::rename(&bare, &exe).unwrap();
+    assert_eq!(
+        harness_version(harness_file_names(true), &exe).as_deref(),
+        Some("0.1.23")
+    );
+    // Off Windows the `.exe` is not the harness, so this is no wheel install.
+    assert_eq!(harness_version(harness_file_names(false), &exe), None);
 }
 
 #[test]
