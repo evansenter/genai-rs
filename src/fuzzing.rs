@@ -17,6 +17,13 @@
 //!   back equal after one serialization, apart from two normalizations the
 //!   crate makes on purpose (see `Normalize`), and a second write and read
 //!   changes neither the wire form nor the value.
+//!
+//! A failed check panics, as a test's does: that is how `cargo fuzz` and
+//! `fuzzing_tests.rs` report it.
+#![expect(
+    clippy::expect_used,
+    reason = "a fuzz entry point reports a failed check by panicking, as a test does"
+)]
 
 use crate::http::context::HttpContext;
 use crate::http::interactions::interaction_events;
@@ -85,7 +92,6 @@ fn outcomes(
         .map(|result| match result {
             Ok(value) => Ok(value),
             Err(GenaiError::MalformedResponse(_)) => Err("parse"),
-            Err(GenaiError::Utf8(_)) => Err("utf8"),
             Err(GenaiError::StreamInterrupted { .. }) => Err("interrupted"),
             Err(other) => panic!("the SSE parser returned an unexpected error: {other:?}"),
         })

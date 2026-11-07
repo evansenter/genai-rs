@@ -13,10 +13,10 @@ follow.
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
 | Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
-| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
+| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, and a reason above every `ignore` fence) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
-| Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
+| Doctests | Rustdoc examples and the markdown guides (`#[doc = include_str!(..)]` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
 | Scripted harness | `tests/antigravity_scripted.rs`; each test is `#[ignore = "Requires localharness binary"]` | No, only `localharness` | See [Scripted harness tests](#scripted-harness-tests) |
 | Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
 | Fuzz | `fuzz/` (cargo-fuzz targets over `src/fuzzing.rs`; failing inputs replayed by `src/fuzzing_tests.rs`) | No | `cargo +nightly fuzz run <target>` in `fuzz/`; see [fuzz/README.md](../fuzz/README.md) |
@@ -215,7 +215,10 @@ must not flake.
 
 - **Ignore reason.** A live test is `#[ignore = "Requires API key"]`, that
   exact string. `tests/ci_coverage.rs` fails if any top-level `tests/*.rs`
-  file uses another reason (`antigravity_harness` is exempt).
+  file uses another reason, except the two Antigravity suites, whose
+  key-free tests are `#[ignore = "Requires localharness binary"]`
+  (`antigravity_harness` and `antigravity_scripted`, which run in the
+  `test-antigravity` job rather than the matrix).
 - **CI matrix.** Every top-level file with a live test must be listed in
   exactly one `test-integration` group in `.github/workflows/rust.yml`.
   `ci_coverage.rs` fails on a missing binary, a binary listed twice, or a
@@ -303,8 +306,10 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 | `stored_echo(client, id, pointer)`, `assert_stored(what, sent, stored)` | Read a stored interaction back at a JSON pointer, and check it holds everything sent. The read returns a `Result`, so cancel and delete before asserting |
 | `TINY_RED_PNG_BASE64`, `TINY_BLUE_PNG_BASE64`, `TINY_WAV_BASE64`, `TINY_MP4_BASE64`, `TINY_PDF_BASE64` | Minimal valid media. The MP4 is one second: shorter clips yield no sampled frame and are rejected |
 
-`is_transient_error` matches Spanner UTF-8 errors and two 400s (`invalid json
-syntax`, `there was a problem processing your request`); see
+`is_transient_error` matches Spanner UTF-8 errors and three 400s (`invalid
+json syntax`, `there was a problem processing your request`, and `please
+retry the request`, the API's advice on `malformed_tool_call`), but never
+`too_many_tool_calls`, the url_context loop, whatever its message says; see
 [Error Handling](ERROR_HANDLING.md#known-transient-errors). A validation
 rejection still fails on the first attempt.
 
@@ -329,6 +334,20 @@ ties to the `rust.yml` jobs that retry. Only the steps that retry count
 toward the rate, read from the `NEXTEST_RETRIES` in the env GitHub echoes
 into the log, so the antigravity job's offline suite, which shares its
 log, stays out of it.
+
+So a live test makes no retries of its own beyond `retry_request!`'s
+transport and transient errors (D-052): the report counts a retry
+nextest makes, and never sees one inside the test. When a known model or
+server failure has a cause the test controls, remove it: send the tools a
+follow-up turn needs, since they are not carried over, or a request shape
+the server handles, found by live probes and recorded with its numbers in
+the [gap tracker](INTERACTIONS_API_GAP.md) (the url_context test's low
+thinking). Otherwise let the test fail and nextest retry it. Two repeats
+are not flake retries, since neither repeats a failure of the feature under
+test: a deadline retry for a slow runner (`DEADLINE_BUDGETS` in
+`antigravity_scripted.rs`), and a redraw when the server's output lacks
+what the assertion needs (`test_stream_resume_with_last_event_id` draws up
+to three interactions for an event id with text on both sides).
 
 The rolling report lists retried tests and examples beside failed ones,
 with the week's rate: tests that passed only on a retry, over live test
@@ -358,8 +377,8 @@ fail-fast off for the default profile, which every job uses.
 
 Uploaded files expire 48 hours after upload, and a test deletes the
 stored interactions it creates itself (they cannot be listed). Nothing else
-a live test creates expires on its own: environments from 2026-07 were
-still there in November. `test-resource-janitor.yml` runs
+a live test creates expires on its own: the shared key has held
+environments for months (D-033). `test-resource-janitor.yml` runs
 `.github/scripts/cleanup_test_resources.py` daily over resources that
 carry a live test's marker and are more than six hours old: credentials
 and agents whose id starts with `genai-rs-test`, triggers, file search
@@ -367,18 +386,17 @@ stores (with their documents) and prompted voices whose display name does,
 webhooks on the test endpoint, and environments whose sources are all
 test fixtures. Anything else on the key is left alone, with one exception.
 
-Environments have no name, label or metadata a test can set (the
-bindings' `Environment` and the live listing, 2026-11-06), so only their
-inline sources carry a marker. A test's environment with no sources (an
-agent interaction run without one, a fork, a network-only create) looks
-exactly like anyone else's. The janitor takes a sourceless environment
+Environments have no name, label or metadata a test can set (neither the
+bindings' `Environment` nor the live listing has one; D-033), so only
+their inline sources carry a marker. A test's environment with no sources
+(an agent interaction run without one, a fork, a network-only create)
+looks exactly like anyone else's. The janitor takes a sourceless environment
 when it holds no files and has not been created, updated or used within
 the six hours, **whoever made it**: opting in deletes every empty, idle,
 sourceless environment on the key, not only the tests' (D-033). A
 sourceless environment that holds files, such as a leaked fork, is kept
-and listed in the summary for a person to check. On 2026-11-06 the key held 35
-sourceless environments, all empty, 34 of them from July. To see what it
-would delete:
+and listed in the summary for a person to check. D-033 records what the
+shared key held when the rule was set. To see what it would delete now:
 
 ```bash
 python3 .github/scripts/cleanup_test_resources.py --dry-run
@@ -387,11 +405,9 @@ python3 .github/scripts/cleanup_test_resources.py --dry-run
 Deleting is the key owner's opt-in. A scheduled run is a dry run that
 lists what it would delete in the job summary, unless the repository
 variable `JANITOR_DELETE` is `true` (Settings, Secrets and variables,
-Actions, Variables); the first deleting run on the shared key would remove
-112 environments (77 holding only fixture sources, 35 sourceless and
-empty) and 3 credentials (dry run, 2026-11-06). A manual run follows its
-`mode` input whatever the variable says, and is a dry run unless `mode` is
-`delete`. The harness,
+Actions, Variables); read the latest scheduled run's summary before
+setting it. A manual run follows its `mode` input whatever the variable
+says, and is a dry run unless `mode` is `delete`. The harness,
 `.github/scripts/tests/test_cleanup_test_resources.sh`, replays recorded
 listings through a local fake API and asserts the exact set of deletes in
 each mode, including that a scheduled run deletes nothing without the
@@ -474,7 +490,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL and comments on #511 once it serves the spec again (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -614,11 +630,13 @@ cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | bi
 ```
 
 Then update the `docs/INTERACTIONS_API_GAP.md` header (CI checks it matches
-the baseline). With a newer copy of the OpenAPI spec, add
-`--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD` (and
-`--spec-source URL`, the URL it was downloaded from; it defaults to
-`manual`). The baseline is written last, so a failed download or dump
-leaves it and the snapshot unchanged.
+the baseline). With a newer copy of an OpenAPI spec, add `--spec-v1beta
+FILE` or `--spec-v1 FILE`, with `--spec-source URL`, the URL it was
+downloaded from (it defaults to `manual`), and `--spec-fetched
+YYYY-MM-DD` (it defaults to today). One `--spec-source` is recorded for
+every spec in the run, and the two specs have their own URLs, so refresh
+them in two runs. The baseline is written last, so a failed download or
+dump leaves it and the snapshot unchanged.
 
 The committed `bindings.json` must match a fresh dump of the baseline
 release, so a dump-script change needs a refresh too (run the script

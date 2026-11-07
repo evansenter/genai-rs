@@ -41,6 +41,12 @@
 //! JSON-RPC types are sent as well as received and are built with
 //! `..Default::default()`, so the request/response split does not apply.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use syn::punctuated::Punctuated;
@@ -222,10 +228,7 @@ const SENT_ONLY: &[(&str, &str)] = &[
 
 /// Public enums without `#[non_exhaustive]`, each with its reason. Keyed by
 /// `path:Name`.
-const EXHAUSTIVE_ENUMS: &[(&str, &str)] = &[(
-    "src/antigravity/handshake.rs:DecodeError",
-    "crate-internal: `handshake` is a private module and nothing re-exports it",
-)];
+const EXHAUSTIVE_ENUMS: &[(&str, &str)] = &[];
 
 /// Deserializable enums with no `Unknown` variant, each with the reason a
 /// value the crate does not model still has somewhere to go. Keyed by
@@ -385,7 +388,7 @@ const STREAM_CHUNK: &str = "a parsed SSE event, serialized only in the crate's o
      `{chunk_type, data}` log form; nothing sends one back to the API, and the \
      payloads inside (`InteractionResponse`, `Step`, `StepDelta`, \
      `UsageMetadata`) keep their own `extra`. A key the API adds to the event \
-     envelope itself is not kept (D-034)";
+     envelope itself is not kept (D-034; tracked in #538)";
 
 /// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
 const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \

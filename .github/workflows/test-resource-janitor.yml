@@ -3,8 +3,7 @@ name: Test Resource Janitor
 # Deletes the resources the live tests leaked on the shared test key (#492).
 #
 # Every live test deletes what it creates, but one that dies first (a
-# timeout, a cancelled job) leaves it, and nothing expires on its own: on
-# 2026-11-03 the key held 99 test-created environments, some from July.
+# timeout, a cancelled job) leaves it, and nothing expires on its own.
 # .github/scripts/cleanup_test_resources.py deletes only resources carrying
 # a live test's marker (the `genai-rs-test` prefix, the test webhook
 # endpoint, or an environment holding only fixture sources) that are more
@@ -23,11 +22,9 @@ name: Test Resource Janitor
 # Deleting is the key owner's opt-in. A scheduled run is a dry run, listing
 # what it would delete in the job summary, unless the repository variable
 # JANITOR_DELETE is `true` (Settings > Secrets and variables > Actions >
-# Variables): its first deleting run would remove 112 environments (77
-# holding only fixture sources, 35 sourceless and empty) and 3 credentials
-# from the shared key (dry run, 2026-11-06). A manual run follows its
-# `mode` input whatever the variable says, and is a dry run unless `mode`
-# is `delete`.
+# Variables); D-033 records what the first dry run listed. A manual run
+# follows its `mode` input whatever the variable says, and is a dry run
+# unless `mode` is `delete`.
 
 on:
   schedule:

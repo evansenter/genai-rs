@@ -82,12 +82,12 @@ impl AgentBuilder {
     /// [`with_agent_behavior(AgentBehavior::Interactive)`](Self::with_agent_behavior),
     /// without which the model is told nobody will answer.
     ///
-    /// On harness 0.1.18 the `ask_question` call passes through the
-    /// pre-tool hook *before* its `questions_request` arrives, so policies
-    /// govern it like any other tool: `deny_all()` needs an
-    /// `allow("ask_question")` beside it, and `deny("ask_question")`
-    /// prevents questions. (On 0.1.10 question requests bypassed the policy
-    /// engine.)
+    /// On the pinned harness 0.1.23, as on 0.1.18, the `ask_question` call
+    /// passes through the pre-tool hook *before* its `questions_request`
+    /// arrives, so policies govern it like any other tool: `deny_all()`
+    /// needs an `allow("ask_question")` beside it, and
+    /// `deny("ask_question")` prevents questions. (On 0.1.10 question
+    /// requests bypassed the policy engine.)
     ///
     /// [`BuiltinTool::AskQuestion`]: crate::antigravity::BuiltinTool::AskQuestion
     /// [`Capabilities::read_only()`]: crate::antigravity::Capabilities::read_only

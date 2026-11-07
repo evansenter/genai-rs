@@ -964,6 +964,13 @@ told apart only by message; `ClientBuild(String)` dropped the
   serialize, and an unexpected failure reading back a document an upload or
   import already made (the message names it).
 - `ClientBuild` holds the `reqwest::Error` as its `source()`.
+- Amended 2026-11-07 (#504): `Utf8` is removed with its
+  `From<Utf8Error>`. Its one producer was the SSE parser, so it was a parse
+  failure under another name. Each case goes where its retryability puts
+  it: a complete line that is not UTF-8 is `MalformedResponse`, since the
+  server sent those bytes and a retry gets them again, and a line the body
+  ended inside (a multi-byte character cut in two) is `StreamInterrupted`,
+  as any cut-off tail is.
 
 **Consequences.** Code that matched `Internal` and parsed its message for
 these cases needs the new arms. `GenaiError` was already
@@ -1121,9 +1128,27 @@ recorded facts disagreed, the more recent one won.
 
 **Consequences.** A behavior change is one edit in a home and one in the
 sentence that states it, not a search. A guide's reader sees what is true
-now, with the evidence one link away. Nothing enforces the rule yet: #495's
-triage proposes a script that fails on a date outside the two homes, which
-would need an allowlist for every exception above.
+now, with the evidence one link away.
+
+**Enforcement (amended 2026-11-07, #504's WP21).**
+`.github/scripts/check_dated_facts.sh` fails on a date (a day or a month)
+in any Markdown file but the two homes above, the harness probe record in
+`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, this file and `CHANGELOG.md`; in a
+doc comment of non-test code in `src/` and `genai-rs-macros/src/`,
+crate-private items included, since a private item's dated evidence
+belongs in a `//` comment; and in any comment in `examples/`, whose bodies
+`examples/CLAUDE.md` holds to the header rule. The exceptions above are
+read from the tree's structure rather than an allowlist: a file under a
+`tests/` directory, a test-only source file (`*_tests.rs`, `proptest_*.rs`,
+`src/coverage_oracle/`) or `#[cfg(test)]` item, a `//` comment in `src/`,
+a link's target (a home's dated heading), a timestamp in example data, and
+the revision `2026-05-20`. It also fails on a code block fenced `ignore`,
+in Markdown or in that rustdoc, without an `<!-- ignore: reason -->` line
+directly above the fence (CONTRIBUTING.md). `make test-scripts` runs it and
+its harness, so the Shell Scripts CI job does too. It cannot tell a dated
+fact from any other date in the files it reads, so a date that is not a
+fact (a release date in a guide) has to be phrased without one or added to
+the script's `NAMES`.
 
 ## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
 
@@ -1158,8 +1183,10 @@ rule of their own.
 **Consequences.** The rule still matches an empty, idle environment a
 person made without sources; whether that is acceptable on the shared key
 is the owner's call when setting `JANITOR_DELETE`. On 2026-11-06 the key
-held 35 sourceless environments, all empty, 34 of them from July. A leaked
-fork, which holds its parent's files, is listed rather than deleted.
+held 35 sourceless environments, all empty, 34 of them from July, and a
+dry run would have deleted 112 environments (77 holding only fixture
+sources, and those 35) and 3 credentials. A leaked fork, which holds its
+parent's files, is listed rather than deleted.
 
 ---
 
@@ -1222,11 +1249,11 @@ its reason in the guard:
 - The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
   stream events that nothing sends back, serialized only in the crate's own
   `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
-  a key the API adds to an SSE event's envelope itself is dropped.
+  a key the API adds to an SSE event's envelope itself is dropped (tracked
+  in #538).
 - The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
   crate only sends to the harness. A payload struct keeps its own `extra`;
   a bool or string payload has no fields.
-- `DecodeError`, which is exhaustive but crate-internal.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1360,7 +1387,7 @@ today.
 choose the name; a retry after a lost upload response can leave a duplicate
 file, which expires after 48 hours. `legacy.UploadFileConfig` is in the
 coverage oracle's `UNMAPPED` list with this reason, so modeling the name
-means removing that entry.
+means removing that entry (tracked in #539).
 
 ## D-040 — The bindings snapshot carries query parameters, the legacy endpoints and the Api-Revision (2026-11-07)
 
@@ -1405,6 +1432,12 @@ change; and the watch comments rather than refreshing the spec snapshot
 itself, since a refresh feeds the response-side spec pass. A new
 legacy class appears in `bindings.json` as soon as a signature names it,
 so `every_binding_class_is_mapped` lists it until it is mapped.
+
+**Amended 2026-11-07 (#504's WP21).** #511 closed once both spec URLs
+served again and the snapshots were refreshed from them. The watch
+comments only on an open issue, so the sweep's step now probes the URLs
+and logs what each serves. Nothing yet compares a served spec with its
+committed snapshot; that watch is left to the owner.
 
 ---
 
@@ -1647,3 +1680,195 @@ wait, and it is the shortest interval the crate's paused-clock tests use.
 floor is public, so a caller can read it. It stops a zero interval, not
 fast polling in general; an interval just over 10 ms still polls about
 once per round trip.
+
+---
+
+## D-048 — Library code panics only where it says why; tests and examples are exempt per crate (2026-11-07)
+
+**Context.** #504 (C7, C9): nothing stopped a new `unwrap()` or `expect()`
+in library code, or an `unsafe` block without a SAFETY comment, and a
+poisoned Antigravity stderr-ring mutex panicked every later stderr line and
+error message. Two matches on enums the crate defines ended in an
+`#[allow(unreachable_patterns)]` wildcard, which hides a variant a change
+adds: inside the crate `#[non_exhaustive]` does not apply, so the wildcard
+was never needed.
+
+**Decision.**
+
+- `clippy::unwrap_used`, `clippy::expect_used` and
+  `clippy::undocumented_unsafe_blocks` are on at warn in
+  `[workspace.lints]`, so `make clippy` and CI deny them. A panic that
+  cannot happen carries `#[expect(clippy::expect_used, reason = "...")]`
+  naming the invariant, on the narrowest item that holds it; `expect` and
+  not `allow`, so the attribute fails once the call is gone. Where the
+  invariant can be put in the types instead, it is (a `match` on
+  `Value::Object` in place of `as_object_mut().expect(..)`).
+- A poisoned stderr ring is recovered with `PoisonError::into_inner`: its
+  lines stay whole when a panic interrupts a holder.
+- Tests are exempt. `clippy.toml`'s `allow-unwrap-in-tests` and
+  `allow-expect-in-tests` cover `#[test]` functions and `#[cfg(test)]`
+  modules; every integration-test crate root and every example crate root
+  also carries `#![allow(clippy::unwrap_used, clippy::expect_used, reason
+  = ...)]`, because clippy's test exemption does not reach an integration
+  test's helpers (`tests/common/`) or an example's `main`. An example may
+  stop on a missing key or a poisoned lock; the library may not. The
+  fuzz entry points (`src/fuzzing.rs`) report a failed check by panicking,
+  as a test does, and say so at the top of the module.
+- `unreachable_patterns` is `forbid`, not left at its default `warn`: a
+  wildcard arm after every variant of an in-crate enum is an error, and an
+  `#[allow(unreachable_patterns)]` to bring one back fails to compile
+  (`E0453`). A wildcard on another crate's `#[non_exhaustive]` enum is
+  reachable, so it is unaffected.
+
+Rejected: rewriting the examples' `expect`s into `?`. The one most of them
+have reads `GEMINI_API_KEY`, where a panic naming the variable is the
+clearest failure an example can give, and the Antigravity examples lock
+mutexes inside hook closures that cannot return an error.
+
+**Consequences.** A new test or example crate needs the crate-level allow
+if it unwraps outside a `#[test]` function. A new invariant panic in the
+library needs its reason written down.
+
+---
+
+## D-049 — `AntigravityError::WebSocket` keeps its cause as a boxed error (2026-11-07)
+
+**Context.** #504 (C5): `AntigravityError::WebSocket(String)` kept only
+the transport error's text, so a caller could not tell a refused
+connection from a reset, and an error reporter walking `source()` found
+nothing.
+
+**Decision.** `WebSocket { message, source }`, with `source` a
+`Box<dyn std::error::Error + Send + Sync>` marked `#[source]`. Every
+producer has a cause: a malformed harness URL (`InvalidUri`), the last
+failed connect attempt, a failed read or send (`tungstenite::Error`), so
+`source` is not an `Option`. The connect loop returns its last attempt's
+error directly rather than keeping an `Option` it would have to unwrap.
+Boxed rather than `tungstenite::Error`, because the URL case is another
+type, and naming `tokio-tungstenite`'s error in the public API would make
+its major version part of genai-rs's; a caller who needs it downcasts.
+`Display` keeps the cause's text after `message`, as `ClientBuild` and
+`StreamInterrupted` do, for callers that print only the top error.
+
+**Consequences.** A pattern on `WebSocket(text)` becomes
+`WebSocket { message, source }`. A `tokio-tungstenite` upgrade changes
+what a downcast finds, not genai-rs's API.
+
+---
+
+## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
+
+**Context.** The Python SDK finds the harness at
+`google/antigravity/bin/localharness.exe` on win32, and `shutil.which`
+finds `localharness.exe` on `PATH`; genai-rs looked only for
+`localharness`, so a pip-installed harness on Windows was not found.
+
+**Decision.** On Windows the site-packages and `PATH` steps try
+`localharness.exe`, then `localharness` (`harness_file_names(true)`);
+elsewhere only `localharness`. The bare name stays on Windows because
+discovery always accepted it there and the SDK's metadata step accepts
+either; dropping it could only lose a harness someone placed by hand. The
+names are chosen by a function of `windows: bool`, so a test on every OS
+checks both lists, and the version read beside the binary checks the same
+names. The Windows Job Object (killing the harness's child processes on
+Windows) is not part of this; `docs/ANTIGRAVITY.md` states that scope.
+
+**Consequences.** A Windows search that misses lists both names for each
+site-packages directory.
+
+---
+
+## D-051 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
+
+**Context.** WP15 removed every "See #N" and "Tracked in #N" that sent a
+reader to a closed issue for current behavior. Thirty-four `(#491)` tags
+in 22 files and seven `(#459)` tags, `src/response/mcp.rs`'s module doc
+among them, remained (outside this file and `CHANGELOG.md`), on rules and
+code those issues introduced. Both issues are closed, and #504 asked whether such
+tags stay.
+
+**Decision.** They stay. A provenance tag, `(#N)` beside a rule or a
+behavior, names where it came from, as a decision number does; a closed
+issue still holds the discussion behind it, and the rule has not changed
+because the issue closed. A pointer ("see #N", "tracked in #N", "until #N
+lands", "#493 item 7") sends the reader to the issue for what is still
+open, so it names an open issue only: when the issue closes, the outcome
+is stated in place and the pointer goes. `CLAUDE.md` states the rule
+beside D-032's.
+
+Rejected: removing every reference to a closed issue. It would delete the
+only link from the `extra` maps to the reasoning behind them, and the
+reader of a provenance tag is looking for history, which a closed issue
+is. Rejected for now: a check in `check_dated_facts.sh`. Telling an open
+issue from a closed one needs the network, which `make test-scripts` does
+not use, and a pointer is phrasing, not a pattern the script could find
+without guessing.
+
+**Consequences.** A reviewer, not a script, catches a pointer left on a
+closed issue. Closing an issue that a pointer names means editing that
+sentence in the same change.
+
+## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
+
+**Context.** D-046 made the flakiness report fail on any test that needs a
+retry in more than 5% of its runs, counting the retries nextest makes.
+Three live tests breached it in the graded week, and their causes differed.
+`test_google_search_multi_turn` sent its follow-up without the search tool,
+which `previous_interaction_id` does not carry over, and the model, seeing
+search steps in the history, sometimes called it anyway
+(`malformed_tool_call`, 13 of 99 runs). The Antigravity `cancel_handle`
+test halted only after 200 streamed characters and timed the turn from its
+start: on harness 0.1.23 a turn sometimes streamed nothing before it ended,
+so no halt was sent, or streamed only after a long stall, so the halt went
+out late and the turn overran the bound. #502 had already fixed both on
+2026-11-01 (a halt deadline, timed from the halt), and none of its 7
+retries came after. `test_structured_output_with_url_context` had stopped
+needing nextest's retries on 2026-11-01 only because #483 moved them into
+the test: it sent the request up to 4 times when the server looped
+(url_context under a response schema), and 41 of its 69 runs since needed
+a second attempt, and 6 gave up with a skip marker. The report saw none of
+that.
+
+**Decision.** A live test makes no retries of its own beyond
+`retry_request!`'s transport and transient errors, and the url_context
+loop is not one of those: `is_transient_error` excludes
+`too_many_tool_calls` by its code, since that error's message asked to be
+retried on 2026-11-01 and did not on 2026-11-07. A known model or server
+failure is fixed at its cause where the test has one: a request that
+follows the API's rules (resend the tools), or a request shape the server
+handles, found by live probes and recorded with its numbers in
+`docs/INTERACTIONS_API_GAP.md`. What is left after that fails the test,
+with a message naming the bug, and the retry nextest gives it is counted.
+Two kinds of repeat are not flake retries, since neither repeats a failure
+of the feature under test, and they stay: a deadline retry for a slow
+runner, as `DEADLINE_BUDGETS` in the scripted suite does, and a redraw when
+the server's output lacks what the assertion needs, as
+`test_stream_resume_with_last_event_id` draws up to three interactions for
+an event id with text on both sides. The url_context test sends
+`thinking_level: "low"`: the server looped in 3 of 61 single requests and
+9 of 219 back to back at `low`, against 69 of 129 at the default level
+(2026-11-07). No page, prompt, schema, `tool_choice`, seed or temperature
+tried stopped it above `low`, and `temperature: 0` did not help at `low`
+in single requests (5 of 38). A loop fails the test on the API's own
+`400 too_many_tool_calls`, which names the URL context calls.
+
+**Consequences.** The url_context test still meets the loop in about one
+run in twenty, in bursts, and then fails after about two minutes instead
+of passing on a later attempt. That is near the report's 5% chronic line,
+so the report may still list it some weeks, with this cause on record; the
+choices left then are the owner's: accept the API's step-limit error as
+one of the test's outcomes, move the schema to a second turn, or wait for a
+server fix. The second turn is not taken here. Sent without url_context, it
+cannot loop, but it no longer tests the tool and the schema in one request,
+which is the pair the test exists for, and it drops a built-in tool on a
+follow-up, the failure the search test had. Sent with url_context, it
+fetched the page again in 12 of 12 probes, so it is the same request with
+history; 12 clean runs cannot tell its rate from the single request's 3 of
+61 (at 5%, 12 clean runs happen more than half the time), and showing a
+real drop needs about 60. The test no longer
+covers the default thinking level with a schema; the gap tracker records
+that it loops. The report's window still holds the graded week's retries
+until they age out, and a test stays chronic while two of its retried runs
+are in it: the Antigravity test's are all from 2026-11-01, so it clears
+from the 2026-11-09 report, and the search test's second-to-last is from
+2026-11-05, so it clears from the 2026-11-13 report, with no new retry.

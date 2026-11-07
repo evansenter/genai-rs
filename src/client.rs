@@ -458,9 +458,9 @@ impl Client {
     ///
     /// * `api_key` - Your Google AI API key.
     #[must_use]
-    pub const fn builder(api_key: String) -> ClientBuilder {
+    pub fn builder(api_key: impl Into<String>) -> ClientBuilder {
         ClientBuilder {
-            api_key,
+            api_key: api_key.into(),
             base_url: None,
             api_version: None,
             timeout: None,
@@ -477,7 +477,7 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `api_key` - Your Google AI API key.
+    /// * `api_key` - Your Google AI API key: a `String` or a `&str`.
     ///
     /// # Panics
     ///
@@ -486,7 +486,7 @@ impl Client {
     /// in some minimal containers). [`Client::builder`]`(..).build()`
     /// reports the same failure as [`GenaiError::ClientBuild`] instead.
     #[must_use]
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: impl Into<String>) -> Self {
         match Self::builder(api_key).build() {
             Ok(client) => client,
             Err(e) => panic!("{e}"),
@@ -761,6 +761,18 @@ mod tests {
     #[test]
     fn test_client_new() {
         let client = Client::new("test_key".to_string());
+        assert_eq!(client.http.api_key, "test_key");
+    }
+
+    #[test]
+    fn test_client_new_takes_a_str() {
+        let client = Client::new("test_key");
+        assert_eq!(client.http.api_key, "test_key");
+    }
+
+    #[test]
+    fn test_client_builder_takes_a_str() {
+        let client = Client::builder("test_key").build().unwrap();
         assert_eq!(client.http.api_key, "test_key");
     }
 

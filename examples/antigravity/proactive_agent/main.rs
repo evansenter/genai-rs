@@ -62,6 +62,12 @@
 //! Triggers delivered during this run: 2
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::antigravity::{AntigravityAgent, Capabilities, TriggerConfig};
 use genai_rs::wire::{WireEvent, WireInspector};
 use std::sync::{Arc, Mutex};

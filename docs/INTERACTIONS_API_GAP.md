@@ -29,9 +29,9 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404'd from about 2026-11-03, with no new public URL found (2026-11-04). On 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`; they differ from the committed 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), and refreshing the copies is #511. The daily sweep probes both URLs and comments on #511 when one serves (`watch_spec_urls.sh`). This is the one record of the URL's state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`, and the committed snapshots are those copies, fetched 2026-11-07. They differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. Each snapshot records its URL, and the daily sweep probes both (`watch_spec_urls.sh`). This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
-| 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
+| 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
 Rank 2 disagrees with rank 1 in both directions, which is why nothing from
 the bindings is modeled until it is probed. From the 2.25.0 sweep:
@@ -261,6 +261,17 @@ from here rather than repeated.
   (`400 Image search as tool is not enabled for
   models/gemini-3.8-flash`). What the call steps carry is under SearchType
   in `docs/ENUM_WIRE_FORMATS.md`.
+- **A follow-up that drops a built-in tool can fail.** Tools are not
+  carried over by `previous_interaction_id`, and after a turn that used
+  `google_search`, a follow-up sent without it sometimes ends with the
+  model calling a tool it no longer has: `status: "failed"` with
+  `errors: [{"code": "malformed_tool_call", "message": "Model generated
+  invalid JSON syntax and the output could not be parsed. Please retry the
+  request. ..."}]` in a `200` (1 of 6 on 2026-11-07). In CI the follow-up
+  failed in 13 of 99 runs from 2026-11-01 to 2026-11-06: as a `400
+  malformed_tool_call` through 2026-11-04, as `status: "failed"` from
+  2026-11-05, and twice as `requires_action`. Sent with the tool again, 6
+  of 6 completed, answering from the history without a second search.
 - **Google Maps `latitude` / `longitude`** are accepted and used: asked
   for "a coffee shop near me" with Times Square's coordinates, the model
   answered with one on West 47th Street (2026-11-07).
@@ -493,13 +504,17 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
 
 - **Namespaced function names.** On the second user turn of a non-streamed
   chain, a declared function is called as `default_api:<name>`. The
-  auto-function loops resolve it. MCP tools run server-side appear as an
-  answered `function_call` / `function_result` pair named `<server>:<tool>`,
-  not `tool_call` steps; `pending_function_calls()` leaves them out.
-  Re-verified 2026-11-04, streamed and not: `<server>` is the declared
-  `mcp_server` name, and `mcp_calls()` reads the pairs back with server and
-  tool split (#459). A declared client function named `weather:get` was
-  accepted the same day, so the colon alone does not mark an MCP call.
+  auto-function loops resolve it. From 2026-10-01 to 2026-11-04, MCP tools
+  run server-side appeared as an answered `function_call` /
+  `function_result` pair named `<server>:<tool>`, not `tool_call` steps,
+  and `pending_function_calls()` left them out. Re-verified 2026-11-04,
+  streamed and not: `<server>` was the declared `mcp_server` name. A
+  declared client function named `weather:get` was accepted the same day,
+  so the colon alone does not mark an MCP call. Since 2026-11-05 a
+  non-streamed MCP call arrives as an `mcp_server_tool_call` step, and
+  `mcp_calls()` reads both shapes back with server and tool split (#459;
+  the shapes and their dates are under MCP identity in
+  `docs/ENUM_WIRE_FORMATS.md`).
 - **Streamed multi-turn function calling failed (server bug, fixed by
   2026-11-01).** When the user turn and the turn before it were both
   streamed, the function result was rejected with `400 Please ensure that
@@ -512,12 +527,34 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   MCP interactions (two non-streamed, one streamed) ended `completed`.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request` (the retired 05-2026 agent accepted it).
-- **url_context loops under a response schema (server bug, 2026-11-01).**
-  With `response_format` set to a JSON schema, `url_context` refetches until
-  the API gives up with `400 too_many_tool_calls ... Please retry the
-  request` after ~117 s, in 8 of 12 requests. Without the schema, 6 of 6
-  answered in ~5 s. `test_structured_output_with_url_context` gives each
-  attempt 30 s and 4 tries.
+- **url_context loops under a response schema (server bug, 2026-11-01; still
+  present 2026-11-07).** With `response_format` set to a JSON schema,
+  `url_context` fetches the same page again and again, each fetch a
+  `success`, until the API gives up with `400 too_many_tool_calls` after
+  about two minutes: 8 of 12 requests on 2026-11-01. A loop ends after 60
+  URL context calls (`The request reached the tool-use step limit for a
+  single request before the model finished its answer. The model made 60 URL
+  context calls. ...`; on 2026-11-01 it read `Model generated too many tool
+  calls. Please retry the request. ...`). On 2026-11-07 the thinking level
+  decided how often: 69 of 129 requests looped at the default level, 3 of 4
+  at `thinking_level: "medium"` and 15 of 20 at `"high"`, against 9 of 219
+  at `"low"` in back-to-back batches, and 3 of 61 single requests at `"low"`
+  spread over the day. Loops came in bursts: in one batch that alternated
+  the default and `low`, 38 and 4 of 60 looped. Above `low`, neither another
+  page (three others), another prompt or schema, `tool_choice: "validated"`,
+  a `seed` nor `temperature: 0` stopped it, and `tool_choice: "none"` does
+  not stop url_context calls at all. `temperature: 0` at `low` looked better
+  in back-to-back batches (1 of 255 looped) but not in single requests
+  spread over the day (5 of 38). Without the schema, 4 of 4 answered after
+  one fetch (6 of 6 on 2026-11-01), as did 4 of 4 with `application/json`
+  output and no schema, and 24 of 24 two-turn chains at `low` that fetched
+  first and asked for the schema on the next turn: 12 sent that turn
+  without url_context, and 12 with it, where the model fetched the page
+  again every time (12 is too few to tell from the single request's rate).
+  `test_structured_output_with_url_context` sends `low`, once, and fails on
+  a loop. Until 2026-11-07 it retried the loop up to 4 times at the default
+  level instead: 41 of its 69 CI runs from 2026-11-01 needed a second
+  attempt, and 6 looped on all 4.
 - **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
   upload response or in listings; files from environment sources still
   report it.

@@ -5,6 +5,12 @@
 //!
 //! Run with: cargo run --example text_to_speech
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{Client, Content, InteractionInput, InteractionResponse, SpeechConfig};
 use std::error::Error;
 use std::path::Path;

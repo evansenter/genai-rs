@@ -16,6 +16,12 @@
 //!
 //! Run with: `cargo run --example webhooks_and_background`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{
     Client, CreateEnvironmentRequest, CreateTriggerRequest, EnvironmentSource, InteractionInput,
     InteractionRequest, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,

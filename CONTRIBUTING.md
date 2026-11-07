@@ -31,8 +31,11 @@ Integration tests take 2-5 minutes and some flake on LLM variability. Doctests
 run in CI only, not in `make test` (see D-009). They include the guides in
 `docs/` and the README (`src/lib.rs`, `doc_tests`), so after changing a code
 block run `cargo test --workspace --doc --all-features`. A block that cannot
-compile is `rust,ignore` with an `<!-- ignore: reason -->` line above its
-fence; prefer `no_run` with hidden (`# `) setup lines.
+compile is `rust,ignore` with an `<!-- ignore: reason -->` line directly
+above its fence, in a guide or in rustdoc; prefer `no_run` with hidden
+(`# `) setup lines. `make test-scripts` fails on an `ignore` fence without
+one, and on a dated live fact outside its home (D-032), through
+`.github/scripts/check_dated_facts.sh`.
 
 `make test-scripts` exercises `setup-dev.sh` against the checkout's real
 `.cargo/config.toml` and restores it on exit. If you kill the run outright, the
@@ -69,12 +72,13 @@ sources disagree, consistently in one direction — see D-004 in
    header (and in `.github/last-swept-sdk-version`); diff from there. The
    `api-surface-sweep` workflow opens an issue when a newer SDK ships. The
    coverage oracle checks the crate against a committed dump of that
-   release's bindings and the OpenAPI spec (`docs/TESTING.md`, "Coverage
+   release's bindings and the OpenAPI specs (`docs/TESTING.md`, "Coverage
    oracle"):
    `cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'`.
 2. **Live probe** — `curl` against `generativelanguage.googleapis.com`, or a
    test with `LOUD_WIRE=1`
-3. **Prose docs** — `ai.google.dev` and this repo's own; both lag
+3. **Prose docs** — Google's, on `aistudio.google.com` (the old
+   `ai.google.dev` URLs redirect there), and this repo's own; both lag
 
 Changes to wire format need a live probe, not a spec reading. Video
 `processing` (#419) was in the 2.18.1 bindings and in neither published doc.

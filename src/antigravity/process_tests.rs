@@ -1,6 +1,10 @@
 use super::*;
 use std::collections::BTreeMap;
 
+/// Where the wheel puts the binary off Windows, and where discovery still
+/// looks on Windows after `localharness.exe`.
+const SITE_PACKAGES_SUFFIX: &str = "google/antigravity/bin/localharness";
+
 /// A `site_dirs` source that must never be consulted.
 fn no_python() -> Vec<PathBuf> {
     panic!("discovery asked python3 for site-packages it did not need")
@@ -23,7 +27,14 @@ fn test_discovery_prefers_explicit_path() {
     let env = dir.path().join("env/localharness");
     touch_executable(&explicit);
     touch_executable(&env);
-    let found = discover_in(Some(&explicit), Some(&env), no_python, None).unwrap();
+    let found = discover_in(
+        HARNESS_FILE_NAMES,
+        Some(&explicit),
+        Some(&env),
+        no_python,
+        None,
+    )
+    .unwrap();
     assert_eq!(found, explicit);
 }
 
@@ -34,7 +45,7 @@ fn test_discovery_env_var_beats_site_packages() {
     let site = dir.path().join("site");
     touch_executable(&env);
     touch_executable(&site.join(SITE_PACKAGES_SUFFIX));
-    let found = discover_in(None, Some(&env), no_python, None).unwrap();
+    let found = discover_in(HARNESS_FILE_NAMES, None, Some(&env), no_python, None).unwrap();
     assert_eq!(found, env);
 }
 
@@ -46,6 +57,7 @@ fn test_discovery_site_packages_beats_path() {
     touch_executable(&site.join(SITE_PACKAGES_SUFFIX));
     touch_executable(&path_dir.join("localharness"));
     let found = discover_in(
+        HARNESS_FILE_NAMES,
         None,
         None,
         || vec![site.clone()],
@@ -56,11 +68,58 @@ fn test_discovery_site_packages_beats_path() {
 }
 
 #[test]
+fn test_harness_file_names_add_the_exe_on_windows() {
+    assert_eq!(
+        harness_file_names(true),
+        ["localharness.exe", "localharness"]
+    );
+    assert_eq!(harness_file_names(false), ["localharness"]);
+    assert_eq!(HARNESS_FILE_NAMES, harness_file_names(cfg!(windows)));
+}
+
+#[test]
+fn test_discovery_finds_the_windows_exe_in_site_packages_and_on_path() {
+    let windows = harness_file_names(true);
+    let dir = tempfile::tempdir().unwrap();
+    let site = dir.path().join("site");
+    let exe = site.join("google/antigravity/bin/localharness.exe");
+    touch_executable(&exe);
+    let found = discover_in(windows, None, None, || vec![site.clone()], None).unwrap();
+    assert_eq!(found, exe);
+
+    let path_dir = dir.path().join("bin");
+    touch_executable(&path_dir.join("localharness.exe"));
+    let found = discover_in(windows, None, None, Vec::new, Some(path_dir.as_os_str())).unwrap();
+    assert_eq!(found, path_dir.join("localharness.exe"));
+
+    // Off Windows only the bare name counts.
+    let err = discover_in(
+        harness_file_names(false),
+        None,
+        None,
+        || vec![site.clone()],
+        Some(path_dir.as_os_str()),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AntigravityError::HarnessNotFound { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn test_discovery_falls_back_to_path() {
     let dir = tempfile::tempdir().unwrap();
     let path_dir = dir.path().join("bin");
     touch_executable(&path_dir.join("localharness"));
-    let found = discover_in(None, None, Vec::new, Some(path_dir.as_os_str())).unwrap();
+    let found = discover_in(
+        HARNESS_FILE_NAMES,
+        None,
+        None,
+        Vec::new,
+        Some(path_dir.as_os_str()),
+    )
+    .unwrap();
     assert_eq!(found, path_dir.join("localharness"));
 }
 
@@ -70,7 +129,14 @@ fn test_discovery_missing_explicit_falls_through() {
     let missing = dir.path().join("nope/localharness");
     let path_dir = dir.path().join("bin");
     touch_executable(&path_dir.join("localharness"));
-    let found = discover_in(Some(&missing), None, Vec::new, Some(path_dir.as_os_str())).unwrap();
+    let found = discover_in(
+        HARNESS_FILE_NAMES,
+        Some(&missing),
+        None,
+        Vec::new,
+        Some(path_dir.as_os_str()),
+    )
+    .unwrap();
     assert_eq!(found, path_dir.join("localharness"));
 }
 
@@ -311,7 +377,10 @@ fn wheel_install(site: &Path, versions: &[&str]) -> PathBuf {
 fn test_harness_version_reads_the_wheel_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let binary = wheel_install(&dir.path().join("site-packages"), &["0.1.23"]);
-    assert_eq!(harness_version(&binary).as_deref(), Some("0.1.23"));
+    assert_eq!(
+        harness_version(HARNESS_FILE_NAMES, &binary).as_deref(),
+        Some("0.1.23")
+    );
 }
 
 #[cfg(unix)]
@@ -324,7 +393,10 @@ fn test_harness_version_follows_a_path_symlink_into_the_wheel() {
     let link = dir.path().join("bin/localharness");
     std::fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&binary, &link).unwrap();
-    assert_eq!(harness_version(&link).as_deref(), Some("0.1.18"));
+    assert_eq!(
+        harness_version(HARNESS_FILE_NAMES, &link).as_deref(),
+        Some("0.1.18")
+    );
 }
 
 #[test]
@@ -333,13 +405,28 @@ fn test_harness_version_is_none_outside_a_wheel_or_when_ambiguous() {
     // A hand-placed binary: no wheel layout around it.
     let bare = dir.path().join("bin/localharness");
     touch_executable(&bare);
-    assert_eq!(harness_version(&bare), None);
+    assert_eq!(harness_version(HARNESS_FILE_NAMES, &bare), None);
     // The layout, but no metadata.
     let unlabelled = wheel_install(&dir.path().join("a"), &[]);
-    assert_eq!(harness_version(&unlabelled), None);
+    assert_eq!(harness_version(HARNESS_FILE_NAMES, &unlabelled), None);
     // Two installed versions: there is no telling which one this is.
     let ambiguous = wheel_install(&dir.path().join("b"), &["0.1.18", "0.1.23"]);
-    assert_eq!(harness_version(&ambiguous), None);
+    assert_eq!(harness_version(HARNESS_FILE_NAMES, &ambiguous), None);
+}
+
+#[test]
+fn test_harness_version_reads_the_windows_wheel_with_the_exe() {
+    // The win32 wheel ships `localharness.exe` and no bare name.
+    let dir = tempfile::tempdir().unwrap();
+    let bare = wheel_install(&dir.path().join("site-packages"), &["0.1.23"]);
+    let exe = bare.with_file_name("localharness.exe");
+    std::fs::rename(&bare, &exe).unwrap();
+    assert_eq!(
+        harness_version(harness_file_names(true), &exe).as_deref(),
+        Some("0.1.23")
+    );
+    // Off Windows the `.exe` is not the harness, so this is no wheel install.
+    assert_eq!(harness_version(harness_file_names(false), &exe), None);
 }
 
 #[test]
@@ -425,6 +512,7 @@ fn test_discovery_error_lists_searched_locations() {
     let site = dir.path().join("site");
     std::fs::create_dir_all(&site).unwrap();
     let err = discover_in(
+        HARNESS_FILE_NAMES,
         Some(&missing),
         None,
         || vec![site.clone()],

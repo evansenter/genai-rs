@@ -37,6 +37,8 @@ test-all:
 # missing interpreter is named rather than reported as a failing assertion.
 # An empty glob, for the harnesses or for any directory shellcheck lints, is
 # an error that names it, not a pass or shellcheck's "No such file" (#456).
+# check_dated_facts.sh then reads the checkout itself: D-032's one home per
+# dated live fact, and a reason above every `ignore` code fence.
 test-scripts:
 	@for tool in jq python3; do \
 		command -v "$$tool" >/dev/null 2>&1 || { \
@@ -75,6 +77,8 @@ test-scripts:
 		echo "no harnesses matched .github/scripts/tests/*.sh — expected at least one" >&2; \
 		exit 1; \
 	fi; \
+	echo "==> .github/scripts/check_dated_facts.sh"; \
+	bash .github/scripts/check_dated_facts.sh || rc=1; \
 	exit "$$rc"
 
 # Build documentation with warnings as errors (all features with private

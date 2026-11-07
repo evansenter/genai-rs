@@ -12,6 +12,11 @@
 //! cargo nextest run --test api_canary_tests --run-ignored all
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
 // Skip all tests in this module when strict mode is enabled
 #![cfg(not(genai_strict_unknown))]
 

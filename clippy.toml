@@ -1,0 +1,5 @@
+# `unwrap_used` and `expect_used` (Cargo.toml's [workspace.lints.clippy])
+# guard library code. A `#[test]` function or `#[cfg(test)]` module may
+# unwrap: a panic there is the failure report.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

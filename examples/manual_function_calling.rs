@@ -16,6 +16,12 @@
 //!
 //! Run with: `cargo run --example manual_function_calling`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use futures_util::future::join_all;
 use genai_rs::{Client, FunctionDeclaration, Step};
 use serde_json::{Value, json};

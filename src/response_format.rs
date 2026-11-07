@@ -250,10 +250,13 @@ impl ResponseFormat {
 ///   `ResponseFormat::Text { mime_type: "application/json", schema }` —
 ///   preserving the pre-0.8 `with_response_format(schema_json)` behavior.
 impl From<serde_json::Value> for ResponseFormat {
+    #[expect(
+        clippy::expect_used,
+        reason = "deserializing a tagged object falls back to Unknown, never fails"
+    )]
     fn from(value: serde_json::Value) -> Self {
         let tag = value.get("type").and_then(|t| t.as_str());
         if matches!(tag, Some("text" | "audio" | "image" | "video")) {
-            // Deserialization only falls back to Unknown, never fails.
             serde_json::from_value(value).expect("ResponseFormat deserialization is infallible")
         } else {
             Self::json_schema(value)

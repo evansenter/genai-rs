@@ -8,6 +8,12 @@
 //!
 //! Run with: `cargo run --example tool_service`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{
     CallableFunction, Client, FunctionDeclaration, FunctionError, FunctionFuture, ToolService,
 };

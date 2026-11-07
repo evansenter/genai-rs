@@ -18,6 +18,12 @@ missing_docs = "warn"
 # `--cfg genai_strict_unknown` turns on strict mode for unknown API values
 # (D-030): a cfg rather than a Cargo feature, because it is not additive.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)", "cfg(genai_strict_unknown)"] }
+# A wildcard arm after every variant of an enum is already listed is an
+# error: inside the crate `#[non_exhaustive]` does not apply, so such an
+# arm only hides the variant a change adds. Forbid, not deny, so an
+# `#[allow(unreachable_patterns)]` cannot switch the check back off. The
+# lint does not see a `_ =>` after a partial list, which stays reachable.
+unreachable_patterns = "forbid"
 
 # Pedantic lints chosen one by one, beyond clippy's defaults (#501).
 # `make clippy` and CI run with `-D warnings`, so each is enforced in src/,
@@ -35,6 +41,15 @@ redundant_closure_for_method_calls = "warn"
 must_use_candidate = "warn"
 # A public function returning `Result` says when it fails, under `# Errors`.
 missing_errors_doc = "warn"
+# A panic in library code is a reviewed decision, as `unsafe` is: an
+# invariant `unwrap`/`expect` carries `#[expect(clippy::..., reason = "...")]`
+# naming why it cannot fail, and anything else returns an error. Tests may
+# unwrap freely (`clippy.toml`, and an allow at the top of each test and
+# example crate).
+unwrap_used = "warn"
+expect_used = "warn"
+# Every `unsafe` block says why it is sound, in a `// SAFETY:` comment.
+undocumented_unsafe_blocks = "warn"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -149,7 +164,6 @@ bytes = { workspace = true }
 futures-util = { workspace = true }
 proptest = "1.11"
 chrono = { workspace = true }
-doc-comment = "0.3"
 regex = "1"
 backon = "1.6"
 # tests/credentials_tests.rs compares SHA-256 digests of credential values.

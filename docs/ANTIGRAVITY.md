@@ -73,8 +73,8 @@ since `userInput` kept its name while changing shape.
 **The version is checked at spawn.** The binary carries no version of its
 own, so `spawn()` reads it from the wheel install the binary sits in
 (`google_antigravity-<version>.dist-info` beside
-`google/antigravity/bin/localharness`, following a `PATH` symlink into its
-venv) and logs a `warn!` when it differs from `SUPPORTED_HARNESS_VERSION`.
+`google/antigravity/bin/localharness`, or `localharness.exe` on Windows,
+following a `PATH` symlink into its venv) and logs a `warn!` when it differs from `SUPPORTED_HARNESS_VERSION`.
 `AntigravityAgent::harness_version()` returns it (`None` for a binary that
 is not inside a wheel install). A known mismatch is also named in an
 `InitFailed` message and in a turn's `Timeout` diagnosis.
@@ -113,11 +113,16 @@ expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 3. `google/antigravity/bin/localharness` inside `python3`'s site-packages.
 4. `localharness` on `PATH`.
 
+On Windows steps 3 and 4 look for `localharness.exe` first, the name the
+Windows wheel ships, as the Python SDK does.
+
 A miss returns `AntigravityError::HarnessNotFound` listing every location
 searched. The search runs on tokio's blocking pool, not on your runtime's
 threads, and `python3` gets 10 seconds to list its site-packages before
-the search moves on to `PATH`; so does the read of the installed wheel's
-version beside the binary.
+the search moves on to `PATH`. The read of the installed wheel's version
+beside the binary gets the same 10 seconds, on a thread of its own, so a
+read abandoned at the limit does not hold up your runtime's shutdown.
+File checks and the start of the binary itself are not bounded.
 
 ## Quick start
 
@@ -506,7 +511,7 @@ check `Append` too.
 ### Unrecognized tool confirmations
 
 Harness-side builtins can pause in a *waiting* step until the client
-confirms them (none observed doing so on 0.1.18 — see above); the pending
+confirms them (none observed doing so since 0.1.18 — see above); the pending
 action's identity comes solely from which action field the step carries
 (the confirmation request itself is an empty marker on the wire — verified
 against the pinned harness proto). Two edge cases:
@@ -543,11 +548,13 @@ up for a question to reach you:
    (autonomous) prompt tells the model nobody will answer, so it asks in
    prose instead of calling the tool; `spawn()` warns about this
    combination.
-3. **Policy allows `ask_question`.** On harness 0.1.18 the call goes
-   through the pre-tool hook like any other tool *before* the question is
-   posed, so `deny_all()` alone blocks every question. (On 0.1.10 question
-   requests bypassed the policy engine; they no longer do.) `ask_question`
-   is also write-capable for the [safety gate](#safety-gate).
+3. **Policy allows `ask_question`.** On the pinned harness (0.1.23, as on
+   0.1.18) the call goes through the policies and the pre-tool hook like
+   any other tool *before* the question is posed, so `deny_all()` alone
+   blocks every question. (On 0.1.10 question requests bypassed the policy
+   engine; they no longer do.) `ask_question` is also write-capable for the
+   [safety gate](#safety-gate). The key-free
+   `test_scripted_a_question_is_gated_like_any_tool_call` holds this.
 
 Set an `on_questions` hook to answer the questions programmatically — route
 them to a CLI prompt, a chat message, or policy code:
@@ -810,15 +817,17 @@ Rules (matching the reference SDK):
   steps and trajectories with a `parentTrajectoryId`, which the bridge uses
   to keep a subagent from ever being mistaken for the turn's own
   trajectory). `ToolAction::subagent_name()` exposes the invoked subagent's
-  name **if the harness reports it** — harnesses 0.1.5 through 0.1.18 emit
-  an empty `invokeSubagent` action (verified via `LOUD_WIRE`), so it is
+  name **if the harness reports it** — harnesses 0.1.5 through the pinned
+  0.1.23 emit an empty `invokeSubagent` action (verified via `LOUD_WIRE`
+  and the live `test_antigravity_subagent_is_actually_invoked`), so it is
   `None`; the name is visible only in the pre-tool hook's arguments
   (`Subagents[].TypeName`).
 - Enabling the subagent builtin exposes `invoke_subagent`,
   `manage_subagents` and `send_message`. The harness would also offer
   `define_subagent`, with which the model writes subagents of its own at
   runtime; it is **off** unless you call `with_define_subagent_tool(true)`
-  (D-023).
+  (D-023). Harness 0.1.23 offers it only beside `invoke_subagent`: the
+  setter alone adds no tool.
 
 ## Streaming
 
@@ -913,10 +922,11 @@ still calling the model. The agent records that the turn never ended, and
 the next `chat`/`send_streaming` halts it and discards its events before
 sending your input (half a second when nothing is left running, five
 seconds at most), so each later turn gets its own reply. A turn that failed
-before the harness ended it (a fatal model error, a lost connection) is
-halted the same way; one the harness failed itself (a pre-turn denial) is
-not. Until that next call the harness may keep working on the abandoned
-turn, so use `cancel()` to stop a turn at once and keep its partial output.
+on this side before the harness ended it is halted the same way; one the
+harness failed itself (a pre-turn denial) is not. A fatal model error ends
+the whole session instead (see [Errors](#errors)). Until that next call the
+harness may keep working on the abandoned turn, so use `cancel()` to stop
+a turn at once and keep its partial output.
 `next_trigger_turn` does not halt anything first: called after an abandoned
 turn, it consumes what is left of that turn. The key-free tests in
 `tests/antigravity_scripted/cancel.rs` abandon a turn each way, with a tool
@@ -1013,9 +1023,10 @@ if let Some(value) = response.structured_output() {
 A turn the harness stops early — the model backend's quota exhausted, or a
 harness-side budget exceeded — still *finishes*: it ends in the same
 terminal state as a completed turn, so the only symptom would be a short or
-empty `text()`. Harness 0.1.18 attaches a reason, surfaced as
-`ChatResponse::stop_reason()` (`Some(StopReason::MaxToolCallsExceeded)`,
-`Some(StopReason::QuotaExhausted)`, ...; `None` for a normal completion).
+empty `text()`. The harness attaches a reason, as it has since 0.1.18,
+surfaced as `ChatResponse::stop_reason()`
+(`Some(StopReason::MaxToolCallsExceeded)`, `Some(StopReason::QuotaExhausted)`,
+...; `None` for a normal completion).
 Budgets are set with `with_budget` (see below).
 
 ## Model and harness options
@@ -1336,6 +1347,15 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 (cancellation, pre-turn denial, fatal model-backend errors), `Timeout`,
 `ToolDispatch`, `WebSocket`, `Protocol`, `Io`, `Json`.
 
+A fatal model-backend error (an HTTP 400 from the model endpoint) fails the
+turn with `Turn` and, on harness 0.1.23, ends the session as well: the
+harness closes its WebSocket, so the agent's next call fails with
+`WebSocket` (or `ConnectionClosed`, when its send got out before the
+close). Respawn the agent after one. (A model error the harness
+retries, or one that did not stop the turn, arrives as an
+`AgentEvent::Error` instead; see
+[error severity](#event-decisions-trajectory-identity-and-error-severity).)
+
 ## Current limitations (follow-ups)
 
 The [parity table](ANTIGRAVITY_BRIDGE_DESIGN.md#python-sdk-parity-google-antigravity-0123)
@@ -1364,11 +1384,10 @@ The ones a user is likeliest to look for:
 - **Trigger turns are surfaced on request**: `next_trigger_turn` drives
   them; nothing reads them in the background, so call it between user
   turns, and a trigger turn nobody consumes is halted by the next `chat`.
-  A background consumer (#493 item 7) would read the harness while the
-  agent is idle, which means moving turn processing (hooks, policies,
-  custom tools) out of `&mut self` into a task of its own: a redesign of
-  `AntigravityAgent`, left for its own change. The `schedule` builtin
-  waits on it.
+  A background consumer (#535) would read the harness while the agent is
+  idle, which means moving turn processing (hooks, policies, custom tools)
+  out of `&mut self` into a task of its own: a redesign of
+  `AntigravityAgent`. The `schedule` builtin waits on it.
 - **No `schedule` builtin**: a turn the agent schedules for itself could
   start while a `chat` turn does, and its events would land in that turn.
 - **On Windows a forced kill ends the harness only**: the `run_command`

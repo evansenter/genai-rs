@@ -23,7 +23,7 @@ cargo +nightly fuzz run sse_parser corpus/sse_parser seeds/sse_parser -- -max_to
 ```
 
 `seeds/<target>/` is the committed seed corpus (small real shapes, including
-a live text stream captured 2026-11-04, and inputs that once failed). Pass it
+a captured live text stream, and inputs that once failed). Pass it
 after the scratch corpus directory so new finds land in `corpus/`, which is
 gitignored with `artifacts/`. The crate's own tests replay every seed
 through its target (`committed_seeds_replay_through_their_targets` in

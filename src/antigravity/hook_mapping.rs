@@ -164,11 +164,12 @@ fn insert_request_text(step: &StepUpdate, args: &mut Value) {
 ///    mirroring the reference SDK: the concrete call follows as a
 ///    `tool_call` with its own policy check, so nothing is bypassed.
 ///
-/// On harness 0.1.18 no observed flow — builtins, custom tools, MCP,
-/// subagents — waits on a confirmation at all: every call is gated by the
-/// pre-tool hook instead (see `pre_tool_invocation`). This path is kept
-/// because the protocol still defines it, and the reference SDK still
-/// answers it.
+/// Since harness 0.1.18 no observed flow — builtins, custom tools, MCP,
+/// `invoke_subagent` — waits on a confirmation at all: the agent's own
+/// calls are gated by the pre-tool hook instead (see
+/// `pre_tool_invocation`), and on 0.1.23 a subagent's own calls are gated
+/// by neither. This path is kept because the protocol still defines it,
+/// and the reference SDK still answers it.
 /// 3. **No recognized action but unrecognized step fields** — most likely a
 ///    harness builtin newer than this client, whose confirmation is its
 ///    *only* gate. Fails closed unless a policy rule (wildcard `allow_all`

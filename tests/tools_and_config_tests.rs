@@ -10,6 +10,12 @@
 //! cargo nextest run --test tools_and_config_tests --run-ignored all
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{
@@ -61,6 +67,18 @@ fn tool_response(
     }
 }
 
+/// Asserts the interaction completed, naming the errors and steps it carried
+/// when it did not: a `failed` interaction says why only in `errors`.
+fn assert_completed(response: &InteractionResponse, what: &str) {
+    assert_eq!(
+        response.status,
+        InteractionStatus::Completed,
+        "{what} did not complete; errors: {:?}; steps: {:?}",
+        response.errors,
+        response.step_summary()
+    );
+}
+
 // =============================================================================
 // Built-in Tools: Google Search
 // =============================================================================
@@ -72,6 +90,19 @@ mod google_search {
 
     /// Search grounding on turn 1, and a follow-up that answers from the
     /// grounded context on turn 2.
+    ///
+    /// Turn 2 sends the search tool again: tools are not inherited through
+    /// `previous_interaction_id`. Without it, the model, seeing search steps
+    /// in its history, sometimes emits a search call it has no tool for,
+    /// and the turn ends in `malformed_tool_call` (as a 400, or as
+    /// `status: failed` with that error code) or `requires_action`: 13 of
+    /// 99 CI runs needed a retry for it (2026-11-01 to 2026-11-06), and 1 of
+    /// 6 live turns failed that way without the tool against 0 of 6 with it
+    /// (2026-11-07). One more run failed the old turn-2 check, which held a
+    /// fresh forecast to turn 1's.
+    ///
+    /// Turn 2 names no place ("there"), so only the carried-over context
+    /// says which city the user means: a turn that lost it would have to ask.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_google_search_multi_turn() {
@@ -91,7 +122,7 @@ mod google_search {
             return;
         };
 
-        assert_eq!(response1.status, InteractionStatus::Completed);
+        assert_completed(&response1, "turn 1");
         assert!(
             !response1.google_search_calls().is_empty(),
             "no search was issued: {:?}",
@@ -110,21 +141,36 @@ mod google_search {
         let result2 = retry_request!([client, prev_id] => {
             stateful_builder(&client)
                 .with_previous_interaction(&prev_id)
-                .with_text("Based on the weather information you just found, should I bring an umbrella if I visit Tokyo today?")
+                .with_text("Based on the weather you just found, should I bring an umbrella there today?")
+                .with_google_search()
                 .create()
                 .await
         });
+        // Both turns are stored, and neither is needed past here.
+        let id2 = result2.as_ref().ok().and_then(|r| r.id.clone());
+        for id in std::iter::once(prev_id).chain(id2) {
+            if let Err(e) = client.interactions().delete(&id).await {
+                println!("interactions().delete({id}) failed (tolerated): {e}");
+            }
+        }
         let Some(response2) = tool_response(result2, "Google Search turn 2") else {
             return;
         };
 
-        assert_eq!(response2.status, InteractionStatus::Completed);
+        assert_completed(&response2, "turn 2");
         let text2 = response2.as_text().expect("turn 2 should answer in text");
+        // Whether to bring one is the model's call, and a second search may
+        // find a forecast that differs from turn 1's; what the context must
+        // supply is the place.
         assert_response_semantic(
             &client,
-            &format!("Turn 1 found this Tokyo weather: {text1}. The user then asked whether to bring an umbrella."),
+            &format!(
+                "Turn 1 looked up the weather in Tokyo and reported: {text1}\n\
+                 The user then asked, naming no place: \"should I bring an umbrella there today?\""
+            ),
             text2,
-            "Does this response give umbrella advice consistent with that weather?",
+            "Does this response give umbrella advice for Tokyo based on its weather, \
+             rather than asking which place the user means?",
         )
         .await;
     }
@@ -1022,7 +1068,7 @@ mod structured_output {
     use genai_rs::StreamChunk;
 
     fn parse_json(response: &InteractionResponse) -> serde_json::Value {
-        assert_eq!(response.status, InteractionStatus::Completed);
+        assert_completed(response, "the structured output request");
         let text = response.as_text().expect("Should have text response");
         serde_json::from_str(text).unwrap_or_else(|e| panic!("not valid JSON ({e}): {text}"))
     }
@@ -1134,9 +1180,27 @@ mod structured_output {
         );
     }
 
+    /// url_context and a response schema in one request, at low thinking.
+    ///
+    /// This pair hits a server bug: the model fetches the page again and
+    /// again until the API stops it with `400 too_many_tool_calls` (60 URL
+    /// context calls, after about two minutes). On 2026-11-07 it looped in
+    /// 69 of 129 requests at the default thinking level and 15 of 20 at
+    /// `high`, but in 9 of 219 at `low`, and in 3 of 61 single requests at
+    /// `low` spread over the day (docs/INTERACTIONS_API_GAP.md, "url_context
+    /// loops under a response schema"). So the request sets `low` and is
+    /// sent once: `retry_request!` retries transport errors, but never
+    /// `too_many_tool_calls`, whatever its message says. A loop fails the
+    /// test with the API's own error, which names the URL context calls (as
+    /// a 400, or in `errors` should it arrive as `status: failed`), and the
+    /// retry nextest gives it is counted by the flakiness report.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_with_url_context() {
+        /// A healthy answer takes under 15 s, and the API ends a loop with
+        /// its 400 within about three minutes; this only bounds a hang.
+        const HANG_BOUND: std::time::Duration = std::time::Duration::from_secs(240);
+
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -1152,47 +1216,24 @@ mod structured_output {
             "required": ["title", "description"]
         });
 
-        // Server bug (2026-11-01): with a response schema, url_context loops
-        // until `400 too_many_tool_calls` about half the time (8 of 12 raw
-        // requests looped ~117s; without the schema, 6 of 6 answered in 5s).
-        // A healthy answer takes under 10s, so each attempt gets 30s and up
-        // to 4 tries, the way processing_steps_tests handled #473's agentic
-        // video. Transient errors get another attempt too; any other error
-        // still fails.
-        let mut result = None;
-        for attempt in 1..=4 {
-            let request = stateful_builder(&client)
-                .with_text(format!(
-                    "Analyze the page at {} and extract metadata.",
-                    url_context::URL
-                ))
-                .with_url_context()
-                .with_response_format(schema.clone())
-                .create();
-            match tokio::time::timeout(std::time::Duration::from_secs(30), request).await {
-                Err(_) => println!("attempt {attempt}/4: url_context looped past 30s"),
-                Ok(Err(GenaiError::Api { message, .. }))
-                    if message.contains("too_many_tool_calls") =>
-                {
-                    println!("attempt {attempt}/4: too_many_tool_calls");
-                }
-                // What retry_request! retried before this loop replaced it.
-                Ok(Err(e)) if e.is_retryable() || common::is_transient_error(&e) => {
-                    println!("attempt {attempt}/4: transient error: {e}");
-                }
-                Ok(other) => {
-                    result = Some(other);
-                    break;
-                }
-            }
-        }
-        let Some(result) = result else {
-            println!(
-                "LIVE_TOOL_EVIDENCE_SKIPPED: url_context with a response schema looped on all 4 \
-                 attempts (server bug, docs/INTERACTIONS_API_GAP.md)"
-            );
-            return;
+        let request = async {
+            retry_request!([client, schema] => {
+                interaction_builder(&client)
+                    .with_text(format!(
+                        "Analyze the page at {} and extract metadata.",
+                        url_context::URL
+                    ))
+                    .with_url_context()
+                    .with_response_format(schema)
+                    .with_thinking_level(ThinkingLevel::Low)
+                    .with_store_disabled()
+                    .create()
+                    .await
+            })
         };
+        let result = tokio::time::timeout(HANG_BOUND, request)
+            .await
+            .unwrap_or_else(|_| panic!("no answer and no error within {HANG_BOUND:?}"));
         let Some(response) = tool_response(result, "URL context with structured output") else {
             return;
         };

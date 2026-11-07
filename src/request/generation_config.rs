@@ -267,7 +267,8 @@ impl TranscriptionMode {
         }
     }
 
-    /// Mutable access to [`extra`](Self::extra).
+    /// Mutable access to [`extra`](Self::extra). An entry named after a
+    /// modeled field, or `type`, is never written.
     pub fn extra_mut(&mut self) -> Option<&mut serde_json::Map<String, serde_json::Value>> {
         match self {
             Self::Smart { extra, .. } | Self::Verbatim { extra, .. } => Some(extra),
@@ -525,7 +526,7 @@ where
 /// # Available Voices
 ///
 /// Common voices include: Aoede, Charon, Fenrir, Kore, Puck, and others.
-/// See [Google's TTS documentation](https://ai.google.dev/gemini-api/docs/text-generation)
+/// See [Google's TTS documentation](https://aistudio.google.com/docs/speech-generation)
 /// for the full list of available voices.
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct SpeechConfig {

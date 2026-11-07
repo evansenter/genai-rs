@@ -5,6 +5,12 @@
 //! cargo nextest run --test tool_service_tests --run-ignored all
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{

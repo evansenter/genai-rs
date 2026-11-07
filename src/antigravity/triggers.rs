@@ -341,7 +341,9 @@ const IGNORED_DIRS: &[&str] = &[
 /// The baseline is the state of `path` when `on_file_change` is called, so
 /// a change made during `spawn()` or just after it is reported, with no
 /// wait for the watch to start. Taking it reads the tree once, on the
-/// calling thread.
+/// calling thread. If `path` exists but cannot be read then, the first
+/// snapshot that reads it becomes the baseline instead, and is not
+/// reported.
 pub fn on_file_change(
     path: impl Into<PathBuf>,
     poll_interval: Duration,
@@ -351,7 +353,7 @@ pub fn on_file_change(
 }
 
 /// Takes the snapshots of a watch: [`snapshot`], or a stand-in in tests.
-type Snapshotter = fn(&Path) -> BTreeMap<PathBuf, Stamp>;
+type Snapshotter = fn(&Path) -> Option<BTreeMap<PathBuf, Stamp>>;
 
 /// [`on_file_change`] with the snapshot function given.
 fn watch_files(
@@ -360,6 +362,10 @@ fn watch_files(
     on_change: impl Fn(&[FileChange]) -> Option<String> + Send + Sync + 'static,
     take_snapshot: Snapshotter,
 ) -> impl FnOnce(TriggerContext) -> BoxFuture<Result<(), AntigravityError>> + Send + 'static {
+    // `None` when the path exists but could not be read: the first
+    // snapshot that reads it becomes the baseline, unreported, rather than
+    // every file in it reading as added. (A missing path is an empty
+    // baseline, so files created in it are reported.)
     let baseline = take_snapshot(&path);
     move |context: TriggerContext| {
         Box::pin(async move {
@@ -378,8 +384,12 @@ fn watch_files(
                 let Some(now) = snapshot_of(&path, take_snapshot).await else {
                     continue;
                 };
-                let changes = diff_snapshots(&reported, &now);
-                reported = now;
+                // With no baseline yet, this snapshot becomes it.
+                let changes = match &reported {
+                    Some(before) => diff_snapshots(before, &now),
+                    None => Vec::new(),
+                };
+                reported = Some(now);
                 if changes.is_empty() {
                     continue;
                 }
@@ -400,12 +410,20 @@ fn watch_files(
 type Stamp = (Option<SystemTime>, u64);
 
 /// Takes a snapshot of `path` off the runtime's worker threads. `None`,
-/// with a warning, when the snapshot task fails (it panicked, or the
-/// runtime is shutting down): the caller skips that tick.
+/// with a warning, when `path` itself could not be read or the snapshot
+/// task failed (it panicked, or the runtime is shutting down): the caller
+/// skips that tick.
 async fn snapshot_of(path: &Path, take_snapshot: Snapshotter) -> Option<BTreeMap<PathBuf, Stamp>> {
     let owned = path.to_path_buf();
     match tokio::task::spawn_blocking(move || take_snapshot(&owned)).await {
-        Ok(snapshot) => Some(snapshot),
+        Ok(Some(snapshot)) => Some(snapshot),
+        Ok(None) => {
+            tracing::warn!(
+                "The file watch could not read {}; skipping this poll",
+                path.display()
+            );
+            None
+        }
         Err(e) => {
             tracing::warn!(
                 "The file watch on {} could not take a snapshot ({e}); skipping this poll",
@@ -417,13 +435,19 @@ async fn snapshot_of(path: &Path, take_snapshot: Snapshotter) -> Option<BTreeMap
 }
 
 /// Every file under `path` (or `path` itself, when it is a file) with its
-/// stamp. Unreadable entries are skipped; a missing path is empty.
-pub(crate) fn snapshot(path: &Path) -> BTreeMap<PathBuf, Stamp> {
+/// stamp. Unreadable entries below `path` are skipped, and a missing path is
+/// empty. `None` when `path` itself exists but could not be read (an I/O or
+/// permission error on its metadata or listing): an empty snapshot then
+/// would report every file deleted, and the next one every file added.
+pub(crate) fn snapshot(path: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
+    let unreadable = |e: &std::io::Error| e.kind() != std::io::ErrorKind::NotFound;
     let mut files = BTreeMap::new();
     let mut pending = vec![path.to_path_buf()];
     while let Some(next) = pending.pop() {
-        let Ok(metadata) = std::fs::symlink_metadata(&next) else {
-            continue;
+        let metadata = match std::fs::symlink_metadata(&next) {
+            Ok(metadata) => metadata,
+            Err(e) if next == path && unreadable(&e) => return None,
+            Err(_) => continue,
         };
         if metadata.is_file() {
             files.insert(next, (metadata.modified().ok(), metadata.len()));
@@ -436,12 +460,14 @@ pub(crate) fn snapshot(path: &Path) -> BTreeMap<PathBuf, Stamp> {
             if skipped {
                 continue;
             }
-            if let Ok(entries) = std::fs::read_dir(&next) {
-                pending.extend(entries.flatten().map(|entry| entry.path()));
+            match std::fs::read_dir(&next) {
+                Ok(entries) => pending.extend(entries.flatten().map(|entry| entry.path())),
+                Err(e) if next == path && unreadable(&e) => return None,
+                Err(_) => {}
             }
         }
     }
-    files
+    Some(files)
 }
 
 /// The changes from `before` to `after`, ordered by path.

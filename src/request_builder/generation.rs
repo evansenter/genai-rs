@@ -97,8 +97,8 @@ impl<'a> InteractionBuilder<'a> {
     /// Sets the safety settings for this request, replacing any previously
     /// added ones.
     ///
-    /// Accepted by the Gemini API (verified live 2026-10-30); some category
-    /// and threshold values are Vertex-only, see [`SafetySetting`].
+    /// Accepted by the Gemini API; some category and threshold values are
+    /// Vertex-only, see [`SafetySetting`].
     ///
     /// # Example
     ///
@@ -139,11 +139,12 @@ impl<'a> InteractionBuilder<'a> {
     /// Sets the user-defined metadata labels for this request, replacing
     /// any previously added ones.
     ///
-    /// Accepted by the Gemini API and echoed as
-    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels)
-    /// (verified live 2026-09-24). Stored in a `BTreeMap` so the serialized
-    /// key order is deterministic; a repeated key in the input keeps the
-    /// last value.
+    /// Accepted and stored by the Gemini API. A create response does not
+    /// echo them: the stored interaction, read back with
+    /// [`interactions().get`](crate::Interactions::get), carries them as
+    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels).
+    /// Stored in a `BTreeMap` so the serialized key order is deterministic;
+    /// a repeated key in the input keeps the last value.
     #[must_use]
     pub fn with_labels(
         mut self,
@@ -347,8 +348,8 @@ impl<'a> InteractionBuilder<'a> {
     /// one, which has no id to continue from: build the request as before,
     /// with the same input, and raise `max_output_tokens`, which the API
     /// counts across continuations. Only
-    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports continuation
-    /// (verified live 2026-11-01).
+    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports
+    /// continuation.
     ///
     /// ```no_run
     /// # use genai_rs::{Client, GenerationConfig, InteractionStatus};
@@ -382,13 +383,13 @@ impl<'a> InteractionBuilder<'a> {
     /// previous interaction, and its
     /// [`continuation_token`](crate::InteractionResponse::continuation_token).
     ///
-    /// The API continues a stored interaction from its id and token alone
-    /// (verified live 2026-11-05 on
-    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL), the only model
-    /// that supports continuation). No `max_output_tokens` is sent unless
-    /// you set one; the continuation then ran to completion (live
-    /// 2026-11-05). A budget you set counts what the decode already
-    /// produced, so it must exceed that.
+    /// The API continues a stored interaction from its id and token alone,
+    /// on [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL), the only model
+    /// that supports continuation. No `max_output_tokens` is sent unless
+    /// you set one, and the continuation then runs to completion. A budget
+    /// you set counts what the decode already produced, so it must exceed
+    /// that. The live record is under Interaction residue in
+    /// `docs/INTERACTIONS_API_GAP.md`.
     ///
     /// The previous interaction and the token always become the
     /// response's, replacing any set earlier on the builder, and are

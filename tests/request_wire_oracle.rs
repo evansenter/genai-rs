@@ -20,6 +20,12 @@
 //! dropped, and a parameter a new release adds all fail it, and so does a
 //! request to a path no endpoint takes.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod api_surface;
 mod common;
 mod live_verbs;

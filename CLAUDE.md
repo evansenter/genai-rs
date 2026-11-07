@@ -14,11 +14,11 @@ Prose docs lag the API; absence from them is not evidence of absence. In
 order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
-   releases to find new surface). The OpenAPI spec is the same surface in
-   machine-readable form. The oracle reads the committed snapshot, and
-   the daily sweep watches the published URL (#511); the URL's state is
-   recorded in `docs/INTERACTIONS_API_GAP.md` ("How to verify API
-   surface").
+   releases to find new surface). The OpenAPI specs (v1beta and v1) are
+   the same surface in machine-readable form. The oracle reads their
+   committed snapshots, and the daily sweep probes the published URLs
+   (`watch_spec_urls.sh`); their state is recorded in
+   `docs/INTERACTIONS_API_GAP.md` ("How to verify API surface").
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
@@ -34,10 +34,24 @@ wire, `docs/INTERACTIONS_API_GAP.md` for what the API accepts, rejects and
 does. Guides, the README, example headers and rustdoc state the current
 behavior without a date and link there; Antigravity harness facts name the
 harness version, with the dated record in
-`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
+`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`. In Rust, a doc comment carries no
+date (private items included); dated evidence for the code beside it goes
+in a `//` comment, and tests keep theirs. `make test-scripts` runs
+`.github/scripts/check_dated_facts.sh`, which fails on a date anywhere
+else, and on a code fence marked `ignore` without an
+`<!-- ignore: reason -->` line directly above it.
+
+An issue number in a doc or a comment is one of two things
+(D-051). A provenance tag, `(#491)`, names the issue a rule or
+behavior came from, and stays when the issue closes, as a decision number
+does. A pointer ("see #N", "tracked in #N", "until #N lands", "#N item
+M") sends the reader to the issue for what is still open, so it names an
+open issue only: when the issue closes, state the outcome in place and
+drop the pointer. Nothing checks this, since an issue's state needs the
+network.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
-`.github/last-swept-sdk-version`) and the spec as a snapshot, and the
+`.github/last-swept-sdk-version`) and both specs as snapshots, and the
 coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
 checks the crate against it offline: request keys against the binding
 classes, query keys against each endpoint's parameters, every response
@@ -66,7 +80,7 @@ make check        # pre-push gate: fmt + clippy + test + test-scripts
 make test         # unit/offline tests (no doctests)
 make test-strict  # the same in strict mode (--cfg genai_strict_unknown, D-030)
 make test-all     # + live integration tests (needs GEMINI_API_KEY)
-make test-scripts # shell-script harnesses (needs bash, jq, python3; PyYAML for one)
+make test-scripts # shell-script harnesses and check_dated_facts.sh (needs bash, jq, python3; PyYAML for one)
 make docs         # rustdoc -D warnings, all-features and docs.rs feature set
 
 cargo nextest run -E 'test(/name/)'            # one test
@@ -194,7 +208,14 @@ reaches the wire must use a real id.
   doc comment, a public fallible function an `# Errors` section, and
   clippy's `uninlined_format_args`, `assigning_clones`,
   `redundant_closure_for_method_calls` and `must_use_candidate` hold in
-  src/, tests/ and examples/; `make clippy` denies warnings.
+  src/, tests/ and examples/; `make clippy` denies warnings. Library code
+  does not `unwrap()` or `expect()`: a panic that cannot happen carries
+  `#[expect(clippy::expect_used, reason = "...")]`, and each test and
+  example crate root allows both (D-048). Every `unsafe` block has
+  a `// SAFETY:` comment. `unreachable_patterns` is forbidden: a wildcard
+  after every variant is listed is an error, and its allow cannot come
+  back. The lint does not catch a `_ =>` after a partial list, so on an
+  enum this crate defines, list the variants rather than add a wildcard.
 - Errors: `GenaiError` (`src/errors.rs`) for API/transport, `FunctionError`
   for tool execution.
 - Logging (`docs/LOGGING_STRATEGY.md`): `warn` for recoverable issues

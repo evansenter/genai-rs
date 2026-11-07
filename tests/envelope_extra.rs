@@ -3,6 +3,12 @@
 //! Offline: no API key needed. Written from outside the crate so it only uses
 //! what a downstream caller can.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 use serde_json::json;
 
 /// Deserializes `{<token_key>: "t", "future_field": {...}}` into `$ty`, then

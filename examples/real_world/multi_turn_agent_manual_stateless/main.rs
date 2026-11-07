@@ -15,6 +15,12 @@
 //!
 //! Run with: `cargo run --example multi_turn_agent_manual_stateless`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{Client, FunctionDeclaration, Step};
 use serde_json::{Value, json};
 use std::env;

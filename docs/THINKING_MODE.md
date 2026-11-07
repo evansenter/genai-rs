@@ -170,7 +170,7 @@ let followup = client
 # }
 ```
 
-See Google's [thought signatures guide](https://ai.google.dev/gemini-api/docs/thought-signatures.md.txt).
+See Google's [thought signatures guide](https://aistudio.google.com/docs/thought-signatures.md).
 It describes `generateContent`, where the field sits in a different place;
 this crate follows what the Interactions API actually returns.
 

@@ -776,7 +776,7 @@ async fn import_file_does_not_follow_an_operation_outside_the_store() {
 }
 
 /// On the paused clock, with each request holding it while in flight
-/// (#501): the import, then polls every 10 ms (`PollOptions`' floor,
+/// (#501): the import, then polls every 10 ms (the `PollOptions` floor,
 /// D-047) until the 100 ms deadline.
 #[tokio::test(start_paused = true)]
 async fn import_file_times_out_on_an_operation_that_never_finishes() {

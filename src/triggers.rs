@@ -278,25 +278,17 @@ where
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
         None | Some(serde_json::Value::Null) => Ok(None),
-        // Catch-all like the serde_util helpers: a non-object interaction
-        // (a stray scalar, an array) degrades to None with a warn! instead
-        // of failing the whole list response.
-        Some(other) if !other.is_object() => {
-            tracing::warn!("Unexpected JSON type for trigger interaction, dropping: {other:?}");
-            Ok(None)
-        }
-        Some(mut value) => {
-            // Take `input` out and parse the rest — one parse each, no
-            // clone (the catch-all arm above guarantees an object here).
-            let obj = value
-                .as_object_mut()
-                .expect("non-object interactions are handled by the arm above");
+        Some(serde_json::Value::Object(mut obj)) => {
+            // Take `input` out and parse the rest: one parse each, no clone.
             let raw_input = obj.remove("input");
-            // Warn-and-drop like the arms above: a type mismatch on a
+            // Warn-and-drop like the arm below: a type mismatch on a
             // modeled field (numeric `model`, string `tools`) must not
             // zero the whole page either.
-            let Ok(mut request) = serde_json::from_value::<InteractionRequest>(value)
-                .map_err(|e| tracing::warn!("Undeserializable trigger interaction, dropping: {e}"))
+            let Ok(mut request) =
+                serde_json::from_value::<InteractionRequest>(serde_json::Value::Object(obj))
+                    .map_err(|e| {
+                        tracing::warn!("Undeserializable trigger interaction, dropping: {e}")
+                    })
             else {
                 return Ok(None);
             };
@@ -312,6 +304,13 @@ where
                     .ok(),
             };
             Ok(Some(request))
+        }
+        // Catch-all like the serde_util helpers: a non-object interaction
+        // (a stray scalar, an array) degrades to None with a warn! instead
+        // of failing the whole list response.
+        Some(other) => {
+            tracing::warn!("Unexpected JSON type for trigger interaction, dropping: {other:?}");
+            Ok(None)
         }
     }
 }

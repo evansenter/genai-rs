@@ -2,7 +2,7 @@
 //! can never block it, and kept as a bounded tail for error messages.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -48,6 +48,14 @@ impl StderrRing {
     pub(super) fn tail(&self) -> String {
         self.lines.iter().cloned().collect::<Vec<_>>().join("\n")
     }
+}
+
+/// Locks the ring. A panic while it was held leaves the mutex poisoned, but
+/// the lines in it are still whole, so the lock is taken anyway: the drain
+/// keeps recording, and an error message still gets its stderr tail,
+/// rather than every later line and error panicking in turn.
+pub(super) fn lock_ring(ring: &Mutex<StderrRing>) -> MutexGuard<'_, StderrRing> {
+    ring.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// How a stderr line read by [`drain_stderr`] ended.
@@ -136,7 +144,7 @@ fn record_stderr_line(bytes: &[u8], end: LineEnd, ring: &Mutex<StderrRing>, wire
         id: wire.id(),
         line: line.clone(),
     });
-    ring.lock().expect("stderr ring lock").push(line);
+    lock_ring(ring).push(line);
 }
 
 #[cfg(test)]

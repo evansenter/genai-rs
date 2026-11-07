@@ -10,6 +10,12 @@
 //!
 //! Run with: `cargo run --example deep_research`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{
     Client, DeepResearchConfig, InteractionResponse, InteractionStatus, ThinkingSummaries,
 };

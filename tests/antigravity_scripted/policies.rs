@@ -117,6 +117,75 @@ async fn test_scripted_ask_user_handler_approves_and_refuses() {
     agent.shutdown().await.expect("shutdown");
 }
 
+/// `ask_question` is gated like any other call, before the question is
+/// posed (docs/ANTIGRAVITY.md, "Answering agent questions"): `deny_all()`
+/// alone keeps every question from `on_questions`, an `allow` rule lets one
+/// through, and a pre-tool hook sees the call first.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_question_is_gated_like_any_tool_call() {
+    use genai_rs::antigravity::{AgentBehavior, QuestionReply};
+
+    let ask = ModelTurn::call(
+        "ask_question",
+        json!({
+            "questions": [{"question": "Which color?", "options": ["red", "blue"]}],
+            "toolSummary": "Color question",
+            "toolAction": "Asking question",
+        }),
+    );
+    for (rules, pre_tool_hook, posed) in [
+        (vec![policy::deny_all()], false, false),
+        (
+            vec![policy::deny_all(), policy::allow("ask_question")],
+            false,
+            true,
+        ),
+        (Vec::new(), true, true),
+    ] {
+        let fake = FakeGemini::start(vec![ask.clone(), ModelTurn::text("done")]).await;
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let (on_question, on_tool) = (Arc::clone(&log), Arc::clone(&log));
+        let mut builder = scripted_agent(&fake)
+            .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
+            .with_agent_behavior(AgentBehavior::Interactive)
+            .on_questions(move |questions| {
+                on_question
+                    .lock()
+                    .unwrap()
+                    .push(format!("asked {}", questions.len()));
+                QuestionReply::Answers(Vec::new())
+            });
+        for rule in rules {
+            builder = builder.add_policy(rule);
+        }
+        if pre_tool_hook {
+            builder = builder.on_pre_tool(move |call| {
+                on_tool
+                    .lock()
+                    .unwrap()
+                    .push(format!("pre-tool {}", call.name));
+                PreToolDecision::Allow
+            });
+        }
+        let mut agent = builder.spawn().await.expect("spawn");
+        agent.chat("ask me").await.expect("turn");
+        let log = log.lock().unwrap().clone();
+        let answer = function_response_text(&fake, 1);
+        if posed {
+            let mut want = vec!["asked 1".to_string()];
+            if pre_tool_hook {
+                want.insert(0, "pre-tool ask_question".to_string());
+            }
+            assert_eq!(log, want, "{answer}");
+        } else {
+            assert!(log.is_empty(), "{log:?}");
+            assert!(answer.contains("Denied by policy"), "{answer}");
+        }
+        agent.shutdown().await.expect("shutdown");
+    }
+}
+
 /// A scripted model for the auto policy: the agent asks for a destructive
 /// command; the harness's assessor (the request declaring `vet_*` tools)
 /// vets it, and its follow-up analysis gets an answer it cannot parse, so

@@ -503,7 +503,21 @@ Subagent tools and model errors (0.1.23, 2026-11-07, scripted model):
 - A fatal model-backend error (an HTTP 400 from the model endpoint) ends
   the session: the harness reports `Agent execution terminated due to
   error` and closes the WebSocket, so the agent's next call fails with a
-  WebSocket error. Respawn the agent after one.
+  WebSocket error (`test_scripted_model_bad_request_fails_the_turn_and_ends_the_session`
+  holds it, accepting `ConnectionClosed` too). Respawn the agent after one.
+
+Questions (0.1.23, 2026-11-07, scripted model,
+`test_scripted_a_question_is_gated_like_any_tool_call`): an `ask_question`
+call reaches the harness's pre-tool callback, where this client evaluates
+its policies and pre-tool hook, before the question is posed, as on
+0.1.18. Under `deny_all()` alone the model gets `denied by pre-tool hook:
+Denied by policy for tool 'ask_question'` and `on_questions` never runs;
+with `allow("ask_question")` beside it, the question reaches the hook.
+
+Subagent names (0.1.23, 2026-11-07, live
+`test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`
+action still carries no name, as on 0.1.5 through 0.1.18, so
+`ToolAction::subagent_name()` is `None`.
 
 ## Python SDK parity (google-antigravity 0.1.23)
 
@@ -693,7 +707,7 @@ turn's outcome.
 
 | Python SDK option | genai-rs | Notes |
 |---|---|---|
-| `AgentConfig.triggers`, `triggers.every` | `add_trigger(TriggerConfig::new(message, interval))` | A trigger's turn is driven by `next_trigger_turn`, on request; Python consumes it in the background. A background consumer needs turn processing moved off `&mut self` into a task of its own, deferred (#493 item 7). |
+| `AgentConfig.triggers`, `triggers.every` | `add_trigger(TriggerConfig::new(message, interval))` | A trigger's turn is driven by `next_trigger_turn`, on request; Python consumes it in the background. A background consumer needs turn processing moved off `&mut self` into a task of its own, tracked in #535. |
 | `triggers.trigger`, `TriggerContext.send` | `add_custom_trigger(\|ctx\| async move { ctx.send(..).await })` | Sends wait while a turn runs. |
 | `triggers.on_file_change` | `triggers::on_file_change(path, poll_interval, callback)` | Polls size and modification time (no OS watcher dependency); skips the directories `watchfiles` skips. Changes made during a turn reach the callback as one batch once the agent is idle. |
 | `FileChange.kind`, `FileChange.path`, `FileChangeKind.ADDED`, `FileChangeKind.MODIFIED`, `FileChangeKind.DELETED` | `triggers::FileChange`, `FileChangeKind` | What the callback is handed. |

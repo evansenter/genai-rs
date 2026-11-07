@@ -186,8 +186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continuation, which the v1 spec leaves out), the Files API (uploads
   included, under `/upload/v1`) and the File Search Store API, and answers
   404 for agents, environments, webhooks, credentials, voices and triggers.
-  An interaction created on one version reads on the other. `v1beta` stays the default, since only it has every
-  resource.
+  An interaction created on one version reads on the other. `v1beta` stays the
+  default, since only it has every resource.
 - `CodeMenderConfig`, with `CodeMenderFindRequest`, `CodeMenderFixRequest`,
   `CodeMenderFile` and `CodeMenderMode`, builds the CodeMender agent config
   of the google-genai 2.34.0 bindings (`agent_config.type: "code-mender"`:
@@ -277,12 +277,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractionResponse::successful_code_output()` now give a
   `&CodeExecutionOutput`. The Gemini API still sends the string, and it
   accepts the list form in replayed history without showing its content to
-  the model, so replay the string form (verified live 2026-11-07). Migration: `result.text()` reads either form as text (a
-  `Cow<str>`), `as_text()` returns the string form, and `Display` prints the
-  text, so `println!("{}", r.result)` is unchanged; build one with
-  `"...".into()` or `vec![Content::text("...")].into()`.
-  `StepDelta::CodeExecutionResult`'s `result` stays a `String`, as in the
-  bindings.
+  the model, so replay the string form (verified live 2026-11-07). Migration:
+  `result.text()` reads either form as text (a `Cow<str>`), `as_text()`
+  returns the string form, and `Display` prints the text, so
+  `println!("{}", r.result)` is unchanged; build one with `"...".into()` or
+  `vec![Content::text("...")].into()`. `StepDelta::CodeExecutionResult`'s
+  `result` stays a `String`, as in the bindings.
 - **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
   `Annotation` has a new `extra` field.** It is a
   `serde_json::Map<String, serde_json::Value>`. The call variants
@@ -573,8 +573,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `..Default::default()`, or build them with `RemoteEnvironment::new()` and
   `CreateVoiceRequest`'s constructors and `with_*` setters.
 - **Breaking: `FileSearchDocument` and `FileSearchDocumentListResponse` no
-  longer implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration: `==`
-  still works (`PartialEq`); drop `Eq` bounds that required it.
+  longer implement `Eq`**, since `CustomMetadata` holds an `f64`. Migration:
+  `==` still works (`PartialEq`); drop `Eq` bounds that required it.
 - **Breaking: `FileSearchStores::upload` takes `impl Into<DocumentUpload>`
   and uses the resumable upload protocol.** A `FileUpload` converts, so
   existing calls compile unchanged. The upload is now a start request
@@ -644,11 +644,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   misspelled `inputs`) input, since a trigger never fires a continuation,
   and a malformed `input` value is still a parse error. A stored trigger's
   interaction without an input, or with one that does not parse, reads as
-  `None` where it read as empty text. `build()` still requires input, except for
-  a continuation. Migration: write `input: Some(InteractionInput::Text(..))`
-  in a struct literal, match `Some(InteractionInput::Steps(..))` where you
-  read it, and replace `InteractionInput::default()` with the input you
-  mean (or `None`).
+  `None` where it read as empty text. `build()` still requires input, except
+  for a continuation. Migration: write
+  `input: Some(InteractionInput::Text(..))` in a struct literal, match
+  `Some(InteractionInput::Steps(..))` where you read it, and replace
+  `InteractionInput::default()` with the input you mean (or `None`).
 - **Breaking: genai-rs no longer forces reqwest's default features on.**
   It depends on reqwest with `default-features = false`, and reqwest's
   `http2`, `system-proxy` and `charset` come through genai-rs's own default
@@ -744,6 +744,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[build]` in `.cargo/config.toml`; replace
   `#[cfg(feature = "strict-unknown")]` in your tests with
   `#[cfg(genai_strict_unknown)]`.
+- **Breaking: `GenaiError::Utf8` and its `From<std::str::Utf8Error>` impl
+  are removed** (#504). The SSE parser was its only producer. A streamed
+  line that is not valid UTF-8 is `MalformedResponse` now, not retryable
+  as `Utf8` was: the server sent those bytes, and a retry gets them again.
+  A line cut off at the end of the body inside a multi-byte character is
+  still the retryable `StreamInterrupted`. Migration: match
+  `MalformedResponse` where you matched `Utf8`; where `?` converted a
+  `Utf8Error` into a `GenaiError`, map it into your own error.
+- **Breaking: `FunctionDeclaration::new` and `FunctionParameters::new` are
+  no longer public** (#504). They were `#[doc(hidden)]` plumbing for
+  `#[tool]`, which now builds its declaration through the doc-hidden
+  `genai_rs::__private`, with no semver guarantee. Migration: build a
+  declaration with
+  `FunctionDeclaration::builder(name).with_description(..).add_parameter(..).with_required(..).build()`,
+  or deserialize one with `serde_json`; bump `genai-rs` and
+  `genai-rs-macros` together.
+- **Breaking: `AntigravityError::WebSocket` is a struct variant,
+  `WebSocket { message, source }`** (#504). `source` is the transport's
+  error, a `Box<dyn std::error::Error + Send + Sync>`, and `source()`
+  returns it; the variant used to hold only its text. `message` says what
+  failed: connecting (with the port and attempt count), a read, or a send.
+  The `Display` text is `websocket error: {message}: {source}`, as before
+  for a failed connect or send. Migration: match
+  `AntigravityError::WebSocket { message, source }` where you matched
+  `WebSocket(text)`, and `downcast_ref` the source for the transport's own
+  error type.
+- **Breaking: `Client::new` and `Client::builder` take `impl Into<String>`**,
+  so `Client::new("key")` and `Client::builder("key")` compile (#504). A
+  `String` argument is unchanged; a call that converted with `.into()` no
+  longer infers the target type, and `Client::builder` is no longer a
+  `const fn`. Migration: pass the `&str` or `String` itself, without
+  `.into()`.
 - `PollOptions` polls no faster than `PollOptions::MIN_POLL_INTERVAL`
   (10 ms): a shorter `with_poll_interval`, `Duration::ZERO` included, is
   raised to it. A zero interval re-polled the moment each status request
@@ -810,9 +842,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be readable yet.
 - One SSE event may hold up to 64 MiB. Past that, the stream fails with
   `GenaiError::MalformedResponse`; before, a body that never sent a newline
-  was buffered without bound. The largest real events, measured live 2026-11-04 on
-  `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
-  and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
+  was buffered without bound. The largest real events, measured live
+  2026-11-04 on `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB
+  `image` delta and a 15.7 MB `thought_signature` delta; TTS audio deltas are
+  under 8 KB.
 - The published crate holds the library, its examples and the guides its
   doctests include, and no longer the integration tests, their fixtures, CI
   files, scripts or the library's unit-test sources: 184 files and about
@@ -833,17 +866,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build()` used to refuse the pair, a rule left from when content went on
   the wire as a bare array; the API takes the composed form like any
   history (verified live 2026-11-06).
-- `detect_mime_type`, `FunctionDeclaration::new` and
-  `FunctionParameters::new` are `#[must_use]`, so a call that discards the
-  result warns.
+- `detect_mime_type` is `#[must_use]`, so a call that discards the result
+  warns.
 
 ### Fixed
 
+- On Windows, Antigravity harness discovery finds the wheel's
+  `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
+  Python SDK does; it looked only for `localharness`, so a pip-installed
+  harness was not found without `ANTIGRAVITY_HARNESS_PATH`.
 - The `backon` retry snippet in `docs/RELIABILITY.md` and
   `examples/retry_with_backoff.rs` let a server's `Retry-After` bypass
   `with_max_delay`: `adjust` replaces backon's delay after the cap, so a
   429 asking for an hour slept for an hour. Both cap it at the backoff's
   maximum now; copy the change into a loop built from either.
+- Docs that said more than holds: `with_labels` said labels are echoed on
+  the response, but only a stored interaction read back with
+  `interactions().get` carries them; the retry predicate in
+  `docs/ERROR_HANDLING.md` left out the 400s that say "please retry the
+  request"; and `with_seed` was said to make sampling repeatable, which
+  the API does not guarantee. `AntigravityError::Turn` now says that a
+  fatal model error (an HTTP 400 from the model endpoint) also ends the
+  harness session on 0.1.23, so the next call fails with `WebSocket` (or
+  `ConnectionClosed`) and the agent must be spawned again.
 - `#[tool]` documents everything it generates: the `<Name>Callable`
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that
@@ -905,16 +950,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all for error messages. Output with no newlines used to grow one buffer
   without limit.
 - `triggers::on_file_change` skips a poll whose snapshot failed (the
-  snapshot task panicked, or the runtime was shutting down) and logs a
-  warning. It used to take the failure for an empty tree, reporting every
-  watched file deleted, then added back on the next poll.
+  snapshot task panicked, the runtime was shutting down, or the watched
+  path exists but could not be read, such as a transient I/O error on a
+  network mount) and logs a warning. It used to take the failure for an
+  empty tree, reporting every watched file deleted, then added back on the
+  next poll. If the path cannot be read when the watch is created, the
+  first snapshot that reads it becomes the baseline instead of reporting
+  every file in it added. A watched path that no longer exists still reads
+  as empty.
 - `document_from_file()` sends `.txt` and `.md` files as text content
   (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
   `text/markdown` document content, which the API rejects with a 400 since
-  2026-11-04. A file that isn't valid UTF-8 returns `GenaiError::InvalidInput`.
-  If you match on the returned `Content`, expect `Content::Text` for these
-  extensions. `document_from_file_with_mime()` is unchanged and still sends
-  any MIME type as a document (#514).
+  2026-11-04. A file that isn't valid UTF-8 returns
+  `GenaiError::InvalidInput`. If you match on the returned `Content`, expect
+  `Content::Text` for these extensions. `document_from_file_with_mime()` is
+  unchanged and still sends any MIME type as a document (#514).
 - `Webhooks::create` sent a `Webhook`'s output-only fields (`id`, `state`,
   `signing_secrets`, `new_signing_secret`, `create_time`, `update_time`)
   whenever they were set, as on a webhook read back from the API. The
@@ -1009,6 +1059,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness ended it with), and the next `chat`/`send_streaming` halts and
   drains a turn that did not before sending its message: half a second
   when nothing is left running, five seconds at most (#504).
+- `docs/CONVERSATIONS.md` no longer suggests a follow-up turn can simply
+  drop a built-in tool. After a turn that used Google Search, a follow-up
+  sent without it sometimes ends `failed` with a `malformed_tool_call`
+  error, because the model calls the tool anyway (verified live
+  2026-11-07); send the built-in tools on every turn. The url_context loop
+  under a response schema is recorded with what mostly avoids it: at
+  `with_thinking_level(ThinkingLevel::Low)` it looped in 3 of 61 single
+  requests, against 69 of 129 at the default level
+  (`docs/INTERACTIONS_API_GAP.md`, #504).
 
 ## [0.13.0] - 2026-11-03
 

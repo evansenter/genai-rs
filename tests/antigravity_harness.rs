@@ -17,6 +17,11 @@
 //! ```
 
 #![cfg(feature = "antigravity")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
 
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
@@ -584,20 +589,32 @@ async fn test_antigravity_structured_output_follows_response_schema() {
 
 /// A `CancelHandle` taken before a turn must be able to halt that turn
 /// from outside the `&mut self` borrow that `send_streaming` holds — which
-/// is the entire reason the handle exists, and is not exercised anywhere
-/// else.
+/// is the entire reason the handle exists. This is the live counterpart of
+/// `test_scripted_cancel_halts_a_turn_waiting_on_the_model`, against a
+/// real model mid-turn.
 ///
 /// This test also pins *how* a cancelled turn ends, which is not what the
-/// crate documented before it was run: harness 0.1.10 (and still 0.1.18)
-/// answers a
-/// `haltRequest` with `STATE_FULLY_IDLE`, not `STATE_CANCELLED`, so the
-/// turn resolves as a normal `Finished` carrying whatever partial output
-/// existed — it does **not** fail with `AntigravityError::Turn`. The
+/// crate documented before it was run: every harness from 0.1.10 through
+/// 0.1.23 answers a `haltRequest` with `STATE_FULLY_IDLE`, not
+/// `STATE_CANCELLED`, so the turn resolves as a normal `Finished` carrying
+/// whatever partial output existed — it does **not** fail with
+/// `AntigravityError::Turn`. The
 /// `Cancelled` arm in the turn loop still matters for harness-initiated
 /// cancellation; it is simply not the client-halt path.
 ///
 /// The prompt is long on purpose: it has to still be running when the
 /// cancel lands, or the test proves nothing.
+///
+/// Its CI retries (7 of 97 runs, all on 2026-11-01) came from the old
+/// trigger and bound: it halted only after 200 streamed characters, and
+/// timed the turn from its start. On harness 0.1.23 a turn sometimes
+/// streamed nothing before it ended, so no halt was sent (5 failed
+/// attempts in that day's logs), or streamed only after a stall of
+/// seconds to minutes, so the halt went out late and the turn overran the
+/// 30 s bound counted from its start (6). The `HALT_AFTER` deadline and
+/// timing from the halt (#502) fixed both. Each of the 55 CI runs since
+/// passed on its first try, in 8 to 11 s: the halt came at the deadline,
+/// and the turn ended soon after.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
@@ -754,13 +771,13 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
             finished,
             "the stream ended without a Finished event and without an error"
         ),
-        // Not what 0.1.10/0.1.18 do, but the turn loop still maps a harness
-        // STATE_CANCELLED here; accept it rather than fail if the harness
-        // changes its mind, and say so loudly.
+        // Not what 0.1.10 through 0.1.23 do, but the turn loop still maps a
+        // harness STATE_CANCELLED here; accept it rather than fail if the
+        // harness changes its mind, and say so loudly.
         Err(AntigravityError::Turn(message)) => {
             println!(
                 "note: this harness reported cancellation as a Turn error \
-                 ({message:?}) — 0.1.18 ended the turn as Finished. Update the \
+                 ({message:?}) — 0.1.23 ended the turn as Finished. Update the \
                  CancelHandle docs if this is the new behavior."
             );
         }
@@ -807,7 +824,7 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
              choices. Then answer using their choice.",
         )
         // AskQuestion is write-capable, so it needs a policy to clear the
-        // spawn-time gate even though questions bypass the policy engine.
+        // spawn-time gate, and the policy is consulted for the call itself.
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
         // Required since 0.1.18: the default (autonomous) system prompt
         // tells the model the user will not answer, and it then asks in

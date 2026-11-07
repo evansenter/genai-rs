@@ -39,6 +39,9 @@
 //! numbers, and go through the crate's shared protobuf-JSON int64 helpers
 //! accordingly.
 //!
+//! The live behavior these docs state is recorded, with the date it was
+//! observed, under File Search in `docs/ENUM_WIRE_FORMATS.md`.
+//!
 //! # Example
 //!
 //! ```no_run

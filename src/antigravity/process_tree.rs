@@ -121,6 +121,10 @@ pub(crate) fn parse_proc_stat(stat: &str) -> Option<(i32, i32)> {
 pub(crate) fn child_process_groups(parent: libc::pid_t) -> Vec<libc::pid_t> {
     const CAPACITY: usize = 4096;
     let mut pids = vec![0 as libc::pid_t; CAPACITY];
+    #[expect(
+        clippy::expect_used,
+        reason = "CAPACITY pids are 16 KiB, far below c_int::MAX"
+    )]
     let bytes = libc::c_int::try_from(CAPACITY * std::mem::size_of::<libc::pid_t>())
         .expect("buffer size fits in c_int");
     // SAFETY: the buffer is valid for `bytes` bytes and outlives the call;

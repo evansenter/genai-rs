@@ -9,6 +9,12 @@
 //!
 //! Run with: `cargo run --example auto_function_calling`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{AutoFunctionResult, CallableFunction, Client, FunctionCallingMode};
 use genai_rs_macros::tool;
 use std::env;

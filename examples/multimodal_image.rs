@@ -7,6 +7,12 @@
 //!
 //! Run with: `cargo run --example multimodal_image`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::{Client, Content, Resolution};
 use std::env;
 use std::error::Error;

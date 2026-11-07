@@ -82,11 +82,11 @@ call `with_generation_config()` first if you mix them.
 
 ### Seeds
 
-`with_seed(n)` makes sampling repeatable for identical requests: identical
-seeded requests have returned identical text (see Models in the
-[gap tracker](INTERACTIONS_API_GAP.md#models)). The API doesn't document a
-guarantee, though, so tests should still assert on structure rather than
-exact text (see [Testing](TESTING.md)).
+`with_seed(n)` asks for repeatable sampling. Identical seeded requests have
+returned identical text (see Models in the
+[gap tracker](INTERACTIONS_API_GAP.md#models)), but the API documents no
+guarantee, so tests should still assert on structure rather than exact text
+(see [Testing](TESTING.md)).
 
 ### Decoding continuation
 

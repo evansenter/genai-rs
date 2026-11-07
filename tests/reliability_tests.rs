@@ -13,6 +13,12 @@
 //! until its response is read. The other way, turning the connect timeout
 //! off with `Duration::MAX`, is tested here too.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use std::sync::{Arc, Mutex};

@@ -19,8 +19,10 @@ fn observable_trigger_with_sync(
     let handle = spawn_trigger_task(config, idle, turn_sync, move |message| {
         let tx = tx.clone();
         async move {
-            tx.send(message)
-                .map_err(|e| AntigravityError::WebSocket(e.to_string()))
+            tx.send(message).map_err(|e| AntigravityError::WebSocket {
+                message: "send failed".to_string(),
+                source: Box::new(e),
+            })
         }
     });
     (handle, rx)
@@ -133,7 +135,12 @@ async fn test_trigger_task_exits_when_send_fails() {
         TriggerConfig::new("x", Duration::from_millis(1)),
         idle_rx,
         Arc::new(tokio::sync::Mutex::new(())),
-        |_message| async { Err(AntigravityError::WebSocket("closed".to_string())) },
+        |_message| async {
+            Err(AntigravityError::WebSocket {
+                message: "send failed".to_string(),
+                source: "closed".into(),
+            })
+        },
     );
     handle.await.expect("task exits cleanly after send failure");
 }
@@ -165,8 +172,10 @@ fn observable_context(
         Arc::new(move |message| {
             let tx = tx.clone();
             Box::pin(async move {
-                tx.send(message)
-                    .map_err(|e| AntigravityError::WebSocket(e.to_string()))
+                tx.send(message).map_err(|e| AntigravityError::WebSocket {
+                    message: "send failed".to_string(),
+                    source: Box::new(e),
+                })
             })
         }),
     );
@@ -218,7 +227,7 @@ fn test_snapshot_diff_reports_added_modified_and_deleted_files() {
     // Ignored, like watchfiles' default filter.
     std::fs::create_dir_all(dir.path().join(".git")).unwrap();
     std::fs::write(dir.path().join(".git/HEAD"), "ref").unwrap();
-    let before = snapshot(dir.path());
+    let before = snapshot(dir.path()).unwrap();
     assert_eq!(before.len(), 3, "{before:?}");
 
     std::fs::write(&edit, "version two").unwrap();
@@ -226,7 +235,7 @@ fn test_snapshot_diff_reports_added_modified_and_deleted_files() {
     let added = dir.path().join("new.txt");
     std::fs::write(&added, "hi").unwrap();
     std::fs::write(dir.path().join(".git/HEAD"), "changed").unwrap();
-    let after = snapshot(dir.path());
+    let after = snapshot(dir.path()).unwrap();
 
     let changes = diff_snapshots(&before, &after);
     let shape: Vec<(FileChangeKind, &Path)> =
@@ -241,8 +250,49 @@ fn test_snapshot_diff_reports_added_modified_and_deleted_files() {
     );
     assert!(diff_snapshots(&after, &after).is_empty());
     // A single file can be watched too; a missing path is empty.
-    assert_eq!(snapshot(&keep).len(), 1);
-    assert!(snapshot(&dir.path().join("missing")).is_empty());
+    assert_eq!(snapshot(&keep).unwrap().len(), 1);
+    assert_eq!(snapshot(&dir.path().join("missing")), Some(BTreeMap::new()));
+}
+
+/// Restores a directory's permissions when dropped, so a failed assertion
+/// does not leave a tempdir that cannot be removed.
+#[cfg(unix)]
+struct Unlocked<'a>(&'a Path);
+
+#[cfg(unix)]
+impl Drop for Unlocked<'_> {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_of_an_unreadable_root_is_none() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let locked = root.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(root.join("a.txt"), "a").unwrap();
+    std::fs::write(locked.join("b.txt"), "b").unwrap();
+    // Dropped in reverse: the root is unlocked first, so `locked` can be.
+    let _unlock_locked = Unlocked(&locked);
+    let _unlock_root = Unlocked(&root);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        // Running as root: permissions do not stop the read, so there is no
+        // unreadable directory to test with.
+        return;
+    }
+    // Below the root, an unreadable directory is skipped.
+    let below = snapshot(&root).unwrap();
+    assert_eq!(below.keys().collect::<Vec<_>>(), vec![&root.join("a.txt")]);
+    // The root itself unreadable: no snapshot, rather than an empty one.
+    assert_eq!(snapshot(&locked), None);
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o000)).unwrap();
+    assert_eq!(snapshot(&root), None);
 }
 
 #[tokio::test]
@@ -325,19 +375,21 @@ async fn test_on_file_change_holds_changes_during_a_turn_and_sends_one_batch() {
 /// Calls to [`flaky_snapshot`].
 static FLAKY_SNAPSHOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// A watched tree as a script: `a.txt` throughout, a failed snapshot on the
-/// first poll, `b.txt` added from the third.
-fn flaky_snapshot(_: &Path) -> BTreeMap<PathBuf, Stamp> {
+/// A watched tree as a script: `a.txt` throughout, a failed snapshot task
+/// on the first poll, an unreadable root on the second, `b.txt` added from
+/// the fourth.
+fn flaky_snapshot(_: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
     let call = FLAKY_SNAPSHOTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut files = BTreeMap::from([(PathBuf::from("a.txt"), (None, 1))]);
     match call {
         1 => panic!("the snapshot task failed (scripted)"),
-        0 | 2 => {}
+        2 => return None,
+        0 | 3 => {}
         _ => {
             files.insert(PathBuf::from("b.txt"), (None, 1));
         }
     }
-    files
+    Some(files)
 }
 
 #[tokio::test]
@@ -367,8 +419,58 @@ async fn test_on_file_change_skips_a_poll_whose_snapshot_failed() {
     assert_eq!(
         message.as_deref(),
         Some("Added b.txt"),
-        "the failed poll is skipped, not diffed as an empty tree"
+        "the failed polls are skipped, not diffed as an empty tree"
     );
-    assert!(FLAKY_SNAPSHOTS.load(std::sync::atomic::Ordering::SeqCst) >= 4);
+    assert!(FLAKY_SNAPSHOTS.load(std::sync::atomic::Ordering::SeqCst) >= 5);
+    handle.abort();
+}
+
+/// Calls to [`late_snapshot`].
+static LATE_SNAPSHOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A watched tree as a script: unreadable when the baseline is taken, then
+/// `a.txt`, with `b.txt` added from the third call.
+fn late_snapshot(_: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
+    let call = LATE_SNAPSHOTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut files = BTreeMap::from([(PathBuf::from("a.txt"), (None, 1))]);
+    match call {
+        0 => return None,
+        1 => {}
+        _ => {
+            files.insert(PathBuf::from("b.txt"), (None, 1));
+        }
+    }
+    Some(files)
+}
+
+#[tokio::test]
+async fn test_on_file_change_takes_its_baseline_once_the_path_reads() {
+    // An unreadable baseline used to read as an empty tree, so the first
+    // poll that could read the path reported every file in it added.
+    let (_idle_tx, idle_rx) = watch::channel(true);
+    let (context, mut rx) = observable_context(idle_rx);
+    let trigger = watch_files(
+        PathBuf::from("/watched"),
+        Duration::from_millis(10),
+        |changes| {
+            Some(
+                changes
+                    .iter()
+                    .map(|c| format!("{:?} {}", c.kind, c.path.display()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        },
+        late_snapshot,
+    );
+    let handle = tokio::spawn(trigger(context));
+    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("a message within 5s");
+    assert_eq!(
+        message.as_deref(),
+        Some("Added b.txt"),
+        "the first readable snapshot is the baseline, not a batch of additions"
+    );
     handle.abort();
 }

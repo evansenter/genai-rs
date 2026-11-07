@@ -19,6 +19,11 @@
 //! ```
 
 #![cfg(feature = "antigravity")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
 
 mod common;
 
@@ -546,8 +551,12 @@ async fn test_scripted_trigger_turn_reaches_the_model_and_chat_still_works() {
 
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
-async fn test_scripted_model_bad_request_fails_the_turn() {
-    let fake = FakeGemini::start(vec![ModelTurn::error(400, "scripted-bad-request-4410")]).await;
+async fn test_scripted_model_bad_request_fails_the_turn_and_ends_the_session() {
+    let fake = FakeGemini::start(vec![
+        ModelTurn::error(400, "scripted-bad-request-4410"),
+        ModelTurn::text("never-reached-8812"),
+    ])
+    .await;
     let mut agent = scripted_agent(&fake).spawn().await.expect("spawn");
 
     let err = agent.chat("this request is bad").await.unwrap_err();
@@ -556,7 +565,24 @@ async fn test_scripted_model_bad_request_fails_the_turn() {
     };
     assert!(message.contains("HTTP 400"), "{message}");
     assert!(message.contains("scripted-bad-request-4410"), "{message}");
-    agent.shutdown().await.expect("shutdown");
+
+    // The harness ends the session on a fatal model error, so the next
+    // call fails on the connection (the send, or the read after it)
+    // instead of running a turn: AntigravityError::Turn's rustdoc and the
+    // guide's Errors section tell the caller to respawn.
+    let next = tokio::time::timeout(Duration::from_secs(30), agent.chat("try again"))
+        .await
+        .expect("the next call must fail promptly, not wait out the turn timeout")
+        .unwrap_err();
+    assert!(
+        matches!(
+            next,
+            AntigravityError::WebSocket { .. } | AntigravityError::ConnectionClosed { .. }
+        ),
+        "the call after a fatal model error must fail on the connection, got {next:?}"
+    );
+    assert_eq!(fake.requests().len(), 1, "no second model call");
+    let _ = agent.shutdown().await;
 }
 
 #[tokio::test]

@@ -40,7 +40,7 @@ let response = client.execute(request.clone()).await?;
 | `Timeout(_)` (request-level timeout) | Yes |
 | `StreamInterrupted { .. }` (a stream cut off before its terminal event) | Yes; see [Cut-off streams](#cut-off-streams) |
 | Any other `Api` status (400, 401, 403, 404, ...) | No |
-| `Utf8`, `Internal`, `InvalidInput`, `MalformedResponse`, `PollTimeout`, `ProcessingFailed`, `Stream`, `ClientBuild` | No |
+| `Internal`, `InvalidInput`, `MalformedResponse`, `PollTimeout`, `ProcessingFailed`, `Stream`, `ClientBuild` | No |
 
 A few 400s are transient in practice but are **not** covered by
 `is_retryable()`; see

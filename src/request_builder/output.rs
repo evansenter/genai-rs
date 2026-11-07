@@ -351,7 +351,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # Available Voices
     ///
     /// Common voices include: Aoede, Charon, Fenrir, Kore, Puck, and others.
-    /// See [Google's TTS documentation](https://ai.google.dev/gemini-api/docs/text-generation)
+    /// See [Google's TTS documentation](https://aistudio.google.com/docs/speech-generation)
     /// for the full list.
     ///
     /// # Example

@@ -38,7 +38,7 @@
   "POST /{api_version}/webhooks/{id}:rotateSigningSecret",
   "PUT /upload/{api_version}/environments/{environment}/files/{path}"
  ],
- "fetched": "2026-11-01",
+ "fetched": "2026-11-07",
  "schemas": {
   "Agent": {
    "properties": {
@@ -473,7 +473,17 @@
      "type": "boolean"
     },
     "result": {
-     "type": "string"
+     "oneOf": [
+      {
+       "items": {
+        "$ref": "#/components/schemas/Content"
+       },
+       "type": "array"
+      },
+      {
+       "type": "string"
+      }
+     ]
     },
     "signature": {
      "format": "byte",
@@ -1012,7 +1022,17 @@
     "mime_type": {
      "enum": [
       "application/pdf",
-      "text/csv"
+      "text/csv",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.oasis.opendocument.presentation",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "application/vnd.oasis.opendocument.text",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+      "application/vnd.oasis.opendocument.spreadsheet"
      ],
      "type": "string"
     },
@@ -1039,7 +1059,17 @@
     "mime_type": {
      "enum": [
       "application/pdf",
-      "text/csv"
+      "text/csv",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.oasis.opendocument.presentation",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "application/vnd.oasis.opendocument.text",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+      "application/vnd.oasis.opendocument.spreadsheet"
      ],
      "type": "string"
     },
@@ -3556,6 +3586,9 @@
   },
   "SmartTranscriptionMode": {
    "properties": {
+    "source_text": {
+     "type": "string"
+    },
     "type": {
      "const": "smart"
     }
@@ -5031,6 +5064,6 @@
    "x-speakeasy-model-namespace": "interactions"
   }
  },
- "source": "https://ai.google.dev/static/api/interactions.openapi.json",
+ "source": "https://aistudio.google.com/api-reference/interactions.openapi.json",
  "version": "v1beta"
 }

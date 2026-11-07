@@ -62,6 +62,12 @@
 //! ✓ The agent recalled the fact from run 1.
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::antigravity::{AntigravityAgent, AntigravityError, Capabilities};
 use std::path::Path;
 

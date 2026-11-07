@@ -20,9 +20,9 @@
 # --spec-v1beta, --spec-v1
 #                  A freshly downloaded OpenAPI spec to snapshot. Downloading
 #                  it is manual (the URL's state is recorded in
-#                  docs/INTERACTIONS_API_GAP.md, "How to verify API surface";
-#                  the daily sweep comments on #511 when it serves): without
-#                  these flags the committed spec snapshots are kept.
+#                  docs/INTERACTIONS_API_GAP.md, "How to verify API surface",
+#                  and the daily sweep probes it with watch_spec_urls.sh):
+#                  without these flags the committed spec snapshots are kept.
 # --spec-fetched   The download date recorded with the spec (default today).
 # --spec-source    Where the spec came from, recorded with it (default
 #                  "manual"): the URL it was downloaded from.

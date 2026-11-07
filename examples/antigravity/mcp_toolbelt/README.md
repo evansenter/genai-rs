@@ -39,6 +39,7 @@ LOUD_WIRE=mcpTool,summary cargo run --example mcp_toolbelt --features antigravit
 
 The fixture stands in for something like:
 
+<!-- ignore: two alternative expressions, not a program; this README is not a doctest -->
 ```rust,ignore
 McpServer::stdio("uvx", ["mcp-server-git"]).with_name("git")
 // or

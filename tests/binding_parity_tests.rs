@@ -11,6 +11,12 @@
 //! cargo nextest run --test binding_parity_tests --run-ignored all
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{TINY_MP4_BASE64, TINY_WAV_BASE64, assert_stored, get_client, stored_echo};

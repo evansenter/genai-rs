@@ -63,7 +63,6 @@ fn json_value_to_tokens(value: &serde_json::Value) -> TokenStream {
 /// - A `{func_name}_declaration()` function returning the `FunctionDeclaration`
 /// - A `{func_name}_callable_factory()` function for the registry
 /// - Automatic registration via `inventory::submit!`
-#[allow(clippy::too_many_lines)]
 pub fn generate_declaration_function(
     func: &ItemFn,
     func_name: &str,
@@ -180,14 +179,11 @@ pub fn generate_declaration_function(
 
         impl ::genai_rs::function_calling::CallableFunction for #callable_struct_name {
             fn declaration(&self) -> ::genai_rs::FunctionDeclaration {
-                ::genai_rs::FunctionDeclaration::new(
-                    #func_name.to_string(),
-                    #func_description.to_string(),
-                    ::genai_rs::FunctionParameters::new(
-                        "object".to_string(),
-                        #properties_tokens,
-                        #required_field_tokens,
-                    ),
+                ::genai_rs::__private::function_declaration(
+                    #func_name,
+                    #func_description,
+                    #properties_tokens,
+                    #required_field_tokens,
                 )
             }
 

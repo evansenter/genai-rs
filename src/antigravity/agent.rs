@@ -222,10 +222,11 @@ impl AntigravityAgent {
     /// [`send_streaming`](Self::send_streaming) halts it and discards its
     /// events before sending its own message (half a second when nothing is
     /// left running, five seconds at most), so that call gets its own
-    /// reply. A turn that failed before the harness ended it (a fatal model
-    /// error, a lost connection) is halted the same way; one the harness
-    /// failed itself (a pre-turn denial) is not. To stop the harness at
-    /// once instead, or to keep the turn's partial output, cancel through
+    /// reply. A turn that failed on this side before the harness ended it
+    /// is halted the same way; one the harness failed itself (a pre-turn
+    /// denial) is not. A fatal model error ends the whole session instead
+    /// (see [`AntigravityError::Turn`]). To stop the harness at once
+    /// instead, or to keep the turn's partial output, cancel through
     /// [`cancel_handle`](Self::cancel_handle) rather than dropping the
     /// future.
     ///

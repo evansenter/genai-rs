@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/genai-rs.svg)](https://crates.io/crates/genai-rs)
 [![Documentation](https://docs.rs/genai-rs/badge.svg)](https://docs.rs/genai-rs)
 [![CI](https://github.com/evansenter/genai-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/evansenter/genai-rs/actions/workflows/rust.yml)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0.html)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A Rust client library for Google's Generative AI (Gemini) API, built on the
@@ -392,7 +392,7 @@ agentic code-review application with subagents and a structured report.
 |----------|-------------|
 | [Interactions API Reference](https://aistudio.google.com/api-reference/interactions-api.md) | Official API specification |
 | [Interactions API Guide](https://aistudio.google.com/docs/interactions-overview.md) | Usage patterns |
-| [Function Calling Guide](https://ai.google.dev/gemini-api/docs/function-calling.md.txt) | Google's function calling docs |
+| [Function Calling Guide](https://aistudio.google.com/docs/function-calling.md) | Google's function calling docs |
 
 ## Debugging & Wire Inspection
 

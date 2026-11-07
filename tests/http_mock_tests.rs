@@ -5,6 +5,12 @@
 //! key. The stub lives in `common/http_stub.rs`, shared with
 //! `http_mock_resources.rs`.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use std::sync::Arc;

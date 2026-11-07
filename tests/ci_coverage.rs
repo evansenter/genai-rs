@@ -23,6 +23,12 @@
 //! Windows leg, the flakiness report reads every retry it claims to count,
 //! and Code Coverage writes its summary on every run.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod ci_workflows;
 mod live_verbs;
 
@@ -33,7 +39,7 @@ use std::path::PathBuf;
 /// `outside_matrix_binaries_run_in_the_antigravity_job`).
 const OUTSIDE_MATRIX: &[&str] = &["antigravity_harness", "antigravity_scripted"];
 
-/// The one ignore reason for a live test (CLAUDE.md, "Test conventions").
+/// The one ignore reason for a live test (CLAUDE.md, "Tests").
 const LIVE_REASON: &str = "Requires API key";
 
 fn root() -> PathBuf {

@@ -3,6 +3,12 @@
 //! Run with: `cargo run --example simple_interaction`
 //! (`LOUD_WIRE=1` prints the request and response on the wire.)
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "an example may stop on a missing key or a poisoned lock; the library may not"
+)]
+
 use genai_rs::Client;
 use std::env;
 use std::error::Error;

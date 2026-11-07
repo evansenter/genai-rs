@@ -30,9 +30,6 @@ pub enum GenaiError {
     /// non-streamed body that failed while it was read.
     #[error("HTTP request error: {0}")]
     Http(#[from] reqwest::Error),
-    /// A response body was not valid UTF-8.
-    #[error("UTF-8 decoding error: {0}")]
-    Utf8(#[from] std::str::Utf8Error),
     /// API error with structured context for debugging and automated handling.
     ///
     /// Contains the HTTP status code (for retry logic), error message, and
@@ -73,7 +70,8 @@ pub enum GenaiError {
     /// possibly due to API evolution or an undocumented response format.
     /// Unlike `InvalidInput` (user's fault), this represents an issue with
     /// the API response itself. It includes a streamed SSE event that does
-    /// not parse, and one that grows past 64 MiB without ending.
+    /// not parse or is not valid UTF-8, and one that grows past 64 MiB
+    /// without ending.
     ///
     /// A stream cut off before its terminal event is
     /// [`StreamInterrupted`](Self::StreamInterrupted), not this.
@@ -286,8 +284,7 @@ impl GenaiError {
             // These are permanent errors - retrying won't help. A poll
             // timeout's resource may still be processing: re-sending the
             // request (an import) would duplicate it.
-            GenaiError::Utf8(_)
-            | GenaiError::Internal(_)
+            GenaiError::Internal(_)
             | GenaiError::InvalidInput(_)
             | GenaiError::MalformedResponse(_)
             | GenaiError::PollTimeout { .. }
@@ -420,16 +417,6 @@ mod tests {
         let display = format!("{error}");
         assert!(display.contains("Invalid input"));
         assert!(display.contains("Missing model or agent"));
-    }
-
-    #[test]
-    fn test_genai_error_utf8_from() {
-        // Create an invalid UTF-8 byte sequence
-        let bytes = vec![0xff, 0xfe];
-        let utf8_err = std::str::from_utf8(&bytes).unwrap_err();
-        let genai_err: GenaiError = utf8_err.into();
-        let display = format!("{genai_err}");
-        assert!(display.contains("UTF-8 decoding error"));
     }
 
     #[test]
@@ -677,17 +664,6 @@ mod tests {
         assert!(
             !error.is_retryable(),
             "ClientBuild errors should NOT be retryable"
-        );
-    }
-
-    #[test]
-    fn test_is_retryable_utf8_error_not_retryable() {
-        let bytes = vec![0xff, 0xfe];
-        let utf8_err = std::str::from_utf8(&bytes).unwrap_err();
-        let error: GenaiError = utf8_err.into();
-        assert!(
-            !error.is_retryable(),
-            "UTF-8 errors should NOT be retryable"
         );
     }
 

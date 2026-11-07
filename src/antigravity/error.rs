@@ -81,11 +81,26 @@ pub enum AntigravityError {
     },
     /// The turn failed (model backend error, cancellation, or pre-turn
     /// denial).
+    ///
+    /// A fatal model backend error (an HTTP 400 from the model endpoint)
+    /// ends the harness session too, on harness 0.1.23: the harness closes
+    /// its WebSocket, so the agent's next call fails with
+    /// [`WebSocket`](Self::WebSocket) (or
+    /// [`ConnectionClosed`](Self::ConnectionClosed), when its send got out
+    /// before the close). Spawn a new agent after one.
     #[error("agent turn failed: {0}")]
     Turn(String),
-    /// WebSocket transport error.
-    #[error("websocket error: {0}")]
-    WebSocket(String),
+    /// WebSocket transport error: the connection to the harness could not
+    /// be opened, or a read or send on it failed.
+    #[error("websocket error: {message}: {source}")]
+    WebSocket {
+        /// What was being done: connecting, reading or sending.
+        message: String,
+        /// The transport's error, also returned by
+        /// [`source()`](std::error::Error::source).
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
     /// The harness sent something this client could not parse.
     #[error("protocol error: {0}")]
     Protocol(String),

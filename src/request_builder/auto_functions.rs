@@ -48,7 +48,7 @@ impl<'a> InteractionBuilder<'a> {
     /// across function calling turns. This method uses `previous_interaction_id` to link
     /// turns, which allows the server to manage thought signatures automatically.
     ///
-    /// See <https://ai.google.dev/gemini-api/docs/thought-signatures> for more details.
+    /// See <https://aistudio.google.com/docs/thought-signatures> for more details.
     ///
     /// # Runtime Validation
     ///

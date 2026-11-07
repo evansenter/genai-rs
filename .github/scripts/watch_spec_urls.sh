@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Probes the published OpenAPI spec URLs, the `source` each committed spec
-# snapshot records, and when one serves an OpenAPI document again, says so
-# once on the issue that tracks them (#511). The daily api-surface-sweep runs
-# it.
+# snapshot records, and logs what each serves. When one serves an OpenAPI
+# document, it says so once on the issue given as its first argument, while
+# that issue is open. The daily api-surface-sweep runs it.
 #
 # Usage: .github/scripts/watch_spec_urls.sh <issue number> <spec snapshot>...
 #

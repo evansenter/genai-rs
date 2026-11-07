@@ -17,6 +17,12 @@
 //! cargo nextest run --test streaming_resume_tests --run-ignored all
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test reports a failure by panicking"
+)]
+
 mod common;
 
 use common::{consume_stream, get_client, stateful_builder, with_timeout};
