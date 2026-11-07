@@ -145,10 +145,12 @@ def test_items(lines):
             j += 1
         if j >= len(lines):
             break
-        end = j
-        if lines[j].rstrip().endswith("{"):
+        # A signature can span lines: the body opens on the first line that
+        # ends in `{`, unless a `;` ends the item first.
+        end = next((k for k in range(j, len(lines)) if lines[k].rstrip().endswith(("{", ";"))), j)
+        if lines[end].rstrip().endswith("{"):
             close = indent + "}"
-            end = next((k for k in range(j + 1, len(lines)) if lines[k].rstrip() == close), len(lines) - 1)
+            end = next((k for k in range(end + 1, len(lines)) if lines[k].rstrip() == close), len(lines) - 1)
         skip.update(range(i, end + 1))
         i = end + 1
     return skip

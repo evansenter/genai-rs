@@ -297,11 +297,12 @@ pub use function_calling::{CallableFunction, FunctionError, FunctionFuture, Tool
 ///
 /// The generated code registers each function with `inventory` through
 /// `submit!` and `CallableFunctionFactory`, builds its declaration with
-/// `function_declaration`, and builds JSON with `serde_json`. Resolving `::serde_json` would look it up in the
-/// *consumer's* dependency graph, which forced every downstream crate to add
-/// it as a direct dependency just to use the macro (#402). Routing through
-/// here resolves both in this crate's graph instead, so `genai-rs` +
-/// `genai-rs-macros` is the whole dependency list.
+/// `function_declaration`, and builds JSON with `serde_json`. Resolving
+/// `::serde_json` would look it up in the *consumer's* dependency graph,
+/// which forced every downstream crate to add it as a direct dependency just
+/// to use the macro (#402). Routing through here resolves both in this
+/// crate's graph instead, so `genai-rs` + `genai-rs-macros` is the whole
+/// dependency list.
 #[doc(hidden)]
 pub mod __private {
     pub use inventory::submit;

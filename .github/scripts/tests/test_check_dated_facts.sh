@@ -153,6 +153,16 @@ printf '%s\n' '#[cfg(test)]' '#[path = "lib_tests.rs"]' 'mod tests;' '/// Stored
 run_check "$T"
 expect "an out-of-line test module hides only itself" 1 "src/lib.rs:16"
 
+# A gated item whose signature spans lines is skipped through its body,
+# and the check resumes after it.
+base_tree "$T"
+printf '%s\n' '#[cfg(test)]' 'fn helper(' '    a: u8,' ') {' '    /// Seen live 2026-11-05.' '    let _ = a;' '}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a gated fn with a multi-line signature is skipped whole" 0 "No dated live fact"
+printf '%s\n' '/// Stored (live 2026-11-01).' 'pub fn after() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "the check resumes after a multi-line gated item" 1 "src/lib.rs:20"
+
 # Untracked files are read, so a new guide is checked before its commit.
 base_tree "$T"
 printf '%s\n' 'Observed 2026-11-05.' >"$T/docs/NEW.md"
