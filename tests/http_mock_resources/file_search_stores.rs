@@ -775,12 +775,14 @@ async fn import_file_does_not_follow_an_operation_outside_the_store() {
     assert_eq!(stub.requests().len(), 1);
 }
 
-#[tokio::test]
+/// On the paused clock, with each request holding it while in flight
+/// (#501): the import, then polls every 5 ms until the 100 ms deadline.
+#[tokio::test(start_paused = true)]
 async fn import_file_times_out_on_an_operation_that_never_finishes() {
     let stub = Stub::start(|_, _| import_operation(Some(false), None)).await;
 
     let err = stub
-        .client()
+        .paused_clock_client()
         .file_search_stores()
         .import_file(
             STORE,
@@ -809,7 +811,10 @@ async fn import_file_times_out_on_an_operation_that_never_finishes() {
     );
     assert!(message.contains("second document"), "{message}");
     assert!(!message.contains("try again"), "{message}");
-    assert!(stub.requests().len() >= 2, "{:?}", stub.requests().len());
+    // Virtual time: the import and polls at 0, 5, ..., 95 ms; the one at
+    // 100 would start at the deadline.
+    assert!(message.contains("waited 95ms"), "{message}");
+    assert_eq!(stub.requests().len(), 21, "{message}");
 }
 
 /// A non-retryable error from the operation poll keeps its status and
