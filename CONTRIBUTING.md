@@ -72,7 +72,7 @@ sources disagree, consistently in one direction — see D-004 in
    header (and in `.github/last-swept-sdk-version`); diff from there. The
    `api-surface-sweep` workflow opens an issue when a newer SDK ships. The
    coverage oracle checks the crate against a committed dump of that
-   release's bindings and the OpenAPI spec (`docs/TESTING.md`, "Coverage
+   release's bindings and the OpenAPI specs (`docs/TESTING.md`, "Coverage
    oracle"):
    `cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'`.
 2. **Live probe** — `curl` against `generativelanguage.googleapis.com`, or a
