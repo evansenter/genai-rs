@@ -15,9 +15,10 @@
 //! parameter of its endpoint in the bindings (`bindings.json`'s `endpoints`)
 //! or listed in [`QUERY_ALLOWED`], and every binding query parameter is sent
 //! by some verb or listed in [`NOT_SENT`], each with its reason. The test
-//! calls every verb of every resource handle, with every option set, so a
-//! misspelled key, a key the API dropped, and a parameter a new release adds
-//! all fail it.
+//! calls every verb of every resource handle, with every list builder
+//! option set (both are checked), so a misspelled key, a key the API
+//! dropped, and a parameter a new release adds all fail it, and so does a
+//! request to a path no endpoint takes.
 
 mod api_surface;
 mod common;
@@ -701,18 +702,51 @@ fn binding_endpoints() -> BTreeMap<String, BTreeSet<String>> {
         .collect()
 }
 
+/// The resource names a named path parameter takes, each with its source.
+///
+/// The dump spells a legacy resource name out from its class's collection
+/// path; one it cannot place keeps its own name (`{operationName}`), and
+/// stands for a full resource name. Matched against any path, such a
+/// template would take every GET, so a request to no endpoint would never
+/// be a finding: it matches only the names listed here, and a named
+/// parameter not listed here matches nothing.
+const FULL_NAMES: &[(&str, &[&str], &str)] = &[
+    (
+        "{clean_id}",
+        &["fileSearchStores/{}/media/{}"],
+        "file_search_stores.download_media's media ID: google-genai rejects one \
+         without `/media/`, and names the route `GET /{name=fileSearchStores/*/media/*}`.",
+    ),
+    (
+        "{operationName}",
+        &[
+            "fileSearchStores/{}/operations/{}",
+            "fileSearchStores/{}/upload/operations/{}",
+        ],
+        "The operations the API serves: an import's and a store upload's \
+         (docs/ENUM_WIRE_FORMATS.md, \"File Search\").",
+    ),
+];
+
 /// How a template segment matches a request path's segments, with the
 /// number of literal segments it matched; `None` when it does not.
 ///
 /// `{}` is one segment, also inside one (`{}:importFile`); a named
-/// parameter (`{operationName}`, a full resource name) is the rest of the
-/// path; anything else is literal.
+/// parameter is one of the resource names [`FULL_NAMES`] gives it;
+/// anything else is literal.
 fn match_segments(template: &[&str], path: &[&str]) -> Option<usize> {
     let Some((head, rest)) = template.split_first() else {
         return path.is_empty().then_some(0);
     };
     if head.starts_with('{') && head.ends_with('}') && *head != "{}" {
-        return (rest.is_empty() && !path.is_empty()).then_some(0);
+        let (_, shapes, _) = FULL_NAMES.iter().find(|(name, ..)| name == head)?;
+        return shapes
+            .iter()
+            .filter_map(|shape| {
+                let spelled: Vec<&str> = shape.split('/').chain(rest.iter().copied()).collect();
+                match_segments(&spelled, path)
+            })
+            .max();
     }
     let (segment, path_rest) = path.split_first()?;
     let literal = match head.split_once("{}") {
@@ -732,9 +766,8 @@ fn match_segments(template: &[&str], path: &[&str]) -> Option<usize> {
 }
 
 /// The endpoints a request may have gone to: the templates for its method
-/// that match its path with the most literal segments. Two templates that
-/// each take a full resource name (`{operationName}`, `{clean_id}`) match
-/// the same paths, so both come back, and a key either takes is its own.
+/// that match its path with the most literal segments. Two that match it
+/// equally well both come back, and a key either takes is its own.
 fn endpoints_for<'a>(
     endpoints: impl IntoIterator<Item = &'a str>,
     method: &str,
@@ -1300,19 +1333,192 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
     );
 }
 
+/// A list builder a handle verb returns: `(handle, verb)`.
+type ListVerb = (String, String);
+
+/// Every option of every list builder a handle verb returns, by the verb:
+/// the paging pair each `paging::list_builder!` defines, and every public
+/// method of the builder's own `impl` blocks that returns the builder.
+fn list_builder_options(
+    files: &[syn::File],
+    handles: &live_verbs::Handles,
+) -> BTreeMap<ListVerb, BTreeSet<String>> {
+    fn flatten(items: &[syn::Item], out: &mut Vec<syn::Item>) {
+        for item in items {
+            if let syn::Item::Mod(m) = item
+                && let Some((_, inner)) = &m.content
+            {
+                flatten(inner, out);
+            }
+            out.push(item.clone());
+        }
+    }
+    fn last_ident(ty: &syn::Type) -> Option<String> {
+        match ty {
+            syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+            _ => None,
+        }
+    }
+    let mut items = Vec::new();
+    for file in files {
+        flatten(&file.items, &mut items);
+    }
+    // The builders: the struct each `list_builder!` invocation defines.
+    let mut options: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for item in &items {
+        let syn::Item::Macro(m) = item else { continue };
+        if !m
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "list_builder")
+        {
+            continue;
+        }
+        // The ident after the top-level `struct`; a doc attribute is one
+        // token tree, so a "struct" in its text is not read.
+        let struct_name = |input: syn::parse::ParseStream| {
+            let mut name = None;
+            while !input.is_empty() {
+                if name.is_none() && input.peek(syn::Token![struct]) {
+                    input.parse::<syn::Token![struct]>()?;
+                    name = Some(input.parse::<syn::Ident>()?);
+                    continue;
+                }
+                input.step(|cursor| {
+                    let (_, next) = cursor.token_tree().expect("not at the end");
+                    Ok(((), next))
+                })?;
+            }
+            name.ok_or_else(|| input.error("no struct"))
+        };
+        let name = syn::parse::Parser::parse2(struct_name, m.mac.tokens.clone())
+            .expect("a list_builder! invocation defines a struct")
+            .to_string();
+        options.insert(
+            name,
+            BTreeSet::from(["with_page_size".into(), "with_page_token".into()]),
+        );
+    }
+    let mut verbs: BTreeMap<ListVerb, String> = BTreeMap::new();
+    for item in &items {
+        let syn::Item::Impl(imp) = item else { continue };
+        let Some(owner) = last_ident(&imp.self_ty).filter(|_| imp.trait_.is_none()) else {
+            continue;
+        };
+        for item in &imp.items {
+            let syn::ImplItem::Fn(f) = item else { continue };
+            if f.sig.receiver().is_none() || !matches!(f.vis, syn::Visibility::Public(_)) {
+                continue;
+            }
+            let syn::ReturnType::Type(_, ty) = &f.sig.output else {
+                continue;
+            };
+            let Some(ret) = last_ident(ty) else { continue };
+            let name = f.sig.ident.to_string();
+            if let Some(own) = options.get_mut(&owner) {
+                if ret == "Self" || ret == owner {
+                    own.insert(name);
+                }
+            } else if handles.verbs.contains_key(&owner) && options.contains_key(&ret) {
+                verbs.insert((owner.clone(), name), ret);
+            }
+        }
+    }
+    for builder in options.keys() {
+        assert!(
+            verbs.values().any(|b| b == builder),
+            "no handle verb returns the list builder {builder}"
+        );
+    }
+    verbs
+        .into_iter()
+        .map(|(verb, builder)| (verb, options[&builder].clone()))
+        .collect()
+}
+
+/// The options the test function `test` sets on each list builder: every
+/// method call on a chain that starts at a `Client` accessor
+/// (`client.triggers().list().with_page_size(5)`), reaches a handle through
+/// accessors, and that handle's list verb, so an option counts only on the
+/// builder of the verb it follows.
+fn options_set(
+    file: &syn::File,
+    test: &str,
+    handles: &live_verbs::Handles,
+    builders: &BTreeMap<ListVerb, BTreeSet<String>>,
+) -> BTreeSet<(ListVerb, String)> {
+    use syn::visit::Visit;
+    struct Chains(Vec<Vec<String>>);
+    impl<'ast> Visit<'ast> for Chains {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            let mut names = vec![call.method.to_string()];
+            let mut receiver = &*call.receiver;
+            loop {
+                match receiver {
+                    syn::Expr::MethodCall(inner) => {
+                        names.push(inner.method.to_string());
+                        receiver = &inner.receiver;
+                    }
+                    syn::Expr::Await(inner) => receiver = &inner.base,
+                    _ => break,
+                }
+            }
+            names.reverse();
+            self.0.push(names);
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+    let function = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(f) if f.sig.ident == test => Some(f),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no function {test}"));
+    let mut chains = Chains(Vec::new());
+    chains.visit_item_fn(function);
+
+    let mut set = BTreeSet::new();
+    for names in chains.0 {
+        let mut ty = "Client".to_string();
+        let mut builder: Option<ListVerb> = None;
+        for name in names {
+            match &builder {
+                Some(verb) if builders[verb].contains(&name) => {
+                    set.insert((verb.clone(), name));
+                }
+                Some(_) => break,
+                None => {
+                    let key = (ty.clone(), name);
+                    if let Some(next) = handles.accessors.get(&key) {
+                        ty.clone_from(next);
+                    } else if builders.contains_key(&key) {
+                        builder = Some(key);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    set
+}
+
 /// Every verb of every resource handle is called by the query test above,
-/// so every query string the crate builds is checked.
+/// and every option of every list builder is set there, so every query
+/// string the crate builds is checked. (A request type's own options, such
+/// as `EnvironmentFileUpload`'s, are set there by hand.)
 #[test]
 fn every_verb_is_called_by_the_query_test() {
+    const TEST: &str = "every_query_key_a_verb_sends_is_a_binding_query_parameter";
     let handles = live_verbs::handles();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file!());
     let source = std::fs::read_to_string(&path).expect("read this file");
     let file = syn::parse_file(&source).expect("parse this file");
-    let called = live_verbs::calls_from(
-        &file,
-        "every_query_key_a_verb_sends_is_a_binding_query_parameter",
-        &handles,
-    );
+    let called = live_verbs::calls_from(&file, TEST, &handles);
     let missing: Vec<String> = handles
         .verbs
         .iter()
@@ -1329,6 +1535,92 @@ fn every_verb_is_called_by_the_query_test() {
         missing.is_empty(),
         "verbs the query test does not call (call each, with every option set):\n  {}",
         missing.join("\n  ")
+    );
+
+    let builders = list_builder_options(&live_verbs::src_files(), &handles);
+    assert!(
+        builders.len() >= 11,
+        "found too few list builders: {:?}",
+        builders.keys()
+    );
+    let set = options_set(&file, TEST, &handles, &builders);
+    let unset: Vec<String> = builders
+        .iter()
+        .flat_map(|(verb, options)| options.iter().map(move |option| (verb, option)))
+        .filter(|(verb, option)| !set.contains(&((*verb).clone(), (*option).clone())))
+        .map(|((handle, verb), option)| format!("{handle}::{verb}(..).{option}(..)"))
+        .collect();
+    assert!(
+        unset.is_empty(),
+        "list builder options the query test does not set (set each on its verb's \
+         builder there):\n  {}",
+        unset.join("\n  ")
+    );
+}
+
+/// The builder discovery reads `list_builder!` and the builder's own
+/// `impl`, and an option counts only on the builder of the verb it follows.
+#[test]
+fn list_builder_options_are_found_and_checked_per_verb() {
+    let src: syn::File = syn::parse_quote! {
+        #[must_use = "a resource handle does nothing until you call one of its methods"]
+        pub struct Things<'a> { client: &'a Client }
+        impl Client {
+            pub fn things(&self) -> Things<'_> { todo!() }
+        }
+        impl<'a> Things<'a> {
+            pub fn list(self) -> ListThings<'a> { todo!() }
+            pub fn list_parts(self, id: &str) -> ListParts<'a> { todo!() }
+            pub async fn get(self, id: &str) -> Result<Thing, GenaiError> { todo!() }
+        }
+        paging::list_builder! {
+            /// Things: a struct Decoy in the docs is not the builder.
+            pub struct ListThings<'a> {}
+            page: ThingPage => Thing;
+            label: "things";
+        }
+        paging::list_builder! {
+            /// Parts.
+            pub struct ListParts<'a> { id: String }
+            page: PartPage => Part;
+            label: "parts";
+        }
+        impl ListThings<'_> {
+            pub fn with_filter(mut self, filter: impl Into<String>) -> Self { self }
+            pub fn filter(&self) -> Option<&str> { None }
+            fn with_hidden(self) -> Self { self }
+        }
+    };
+    let files = [src];
+    let handles = live_verbs::handles_in(&files);
+    let builders = list_builder_options(&files, &handles);
+    let things = ("Things".to_string(), "list".to_string());
+    let parts = ("Things".to_string(), "list_parts".to_string());
+    assert_eq!(
+        builders[&things],
+        BTreeSet::from([
+            "with_filter".into(),
+            "with_page_size".into(),
+            "with_page_token".into()
+        ])
+    );
+    assert_eq!(
+        builders[&parts],
+        BTreeSet::from(["with_page_size".into(), "with_page_token".into()])
+    );
+
+    let test: syn::File = syn::parse_quote! {
+        async fn the_test() {
+            client.things().list().with_page_size(5).send().await.expect("list");
+            client.things().list_parts("p").with_filter("x").with_page_token("t").send().await;
+            other.list().with_filter("x");
+        }
+    };
+    let set = options_set(&test, "the_test", &handles, &builders);
+    assert_eq!(
+        set,
+        BTreeSet::from([(things, "with_page_size".to_string())]),
+        "with_filter is not an option of ListParts, so the chain stops there"
     );
 }
 
@@ -1363,9 +1655,45 @@ fn a_request_maps_to_its_most_literal_endpoint() {
     );
     assert!(find("POST", "/v1beta/fileSearchStores/s:other").is_empty());
     assert!(find("DELETE", "/v1beta/fileSearchStores/s").is_empty());
+    // A full resource name matches only the names FULL_NAMES gives it, so a
+    // path no endpoint takes maps to nothing.
+    assert!(find("GET", "/v1beta/bogus/x").is_empty());
+    assert!(find("GET", "/v1beta/fileSearchStores/s/operations").is_empty());
+    assert!(find("GET", "/v1beta/fileSearchStores/s/documents/d/extra").is_empty());
+    assert!(endpoints_for(["GET /{}/{unlisted}"], "GET", "/v1beta/a/b").is_empty());
     assert_eq!(
-        endpoints_for(["GET /{}/{name}", "GET /{}/{media}"], "GET", "/v1beta/a/b"),
-        ["GET /{}/{name}", "GET /{}/{media}"]
+        endpoints_for(
+            ["GET /{}/{clean_id}", "GET /{}/fileSearchStores/{}/media/{}"],
+            "GET",
+            "/v1beta/fileSearchStores/s/media/m"
+        ),
+        ["GET /{}/{clean_id}", "GET /{}/fileSearchStores/{}/media/{}"]
+    );
+}
+
+/// Every named path parameter in the bindings has its resource names in
+/// [`FULL_NAMES`], and every entry there names one: a new one would
+/// otherwise take no request at all.
+#[test]
+fn every_named_path_parameter_has_its_resource_names() {
+    let named: BTreeSet<String> = binding_endpoints()
+        .keys()
+        .flat_map(|endpoint| {
+            endpoint
+                .split(['/', ' '])
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|segment| segment.starts_with('{') && segment.ends_with('}') && segment != "{}")
+        .collect();
+    let listed: BTreeSet<String> = FULL_NAMES
+        .iter()
+        .map(|(name, ..)| (*name).to_string())
+        .collect();
+    assert_eq!(
+        named, listed,
+        "named path parameters in bindings.json (left) and FULL_NAMES (right) differ: \
+         give a new one its resource names, and delete an entry the bindings dropped"
     );
 }
 
@@ -1424,5 +1752,26 @@ fn a_misspelled_or_unsent_query_key_is_a_finding() {
     assert!(
         nowhere[0].contains("no endpoint in the bindings"),
         "{nowhere:?}"
+    );
+
+    // A template that takes a full resource name does not swallow a GET
+    // to no endpoint.
+    let mut with_operations = endpoints.clone();
+    with_operations.insert("GET /{}/{operationName}".to_string(), BTreeSet::new());
+    let nowhere = query_findings(
+        &with_operations,
+        &[
+            (
+                "GET".to_string(),
+                "/v1beta/things?page_size=5&page_token=t".to_string(),
+            ),
+            ("GET".to_string(), "/v1beta/bogus/x".to_string()),
+        ],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        nowhere,
+        ["GET /v1beta/bogus/x: no endpoint in the bindings"]
     );
 }

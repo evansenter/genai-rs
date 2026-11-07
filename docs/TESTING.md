@@ -483,11 +483,14 @@ checks on it:
   when one is not called there or listed in `NO_JSON_BODY`.
 - **Query strings on the wire** (`tests/request_wire_oracle.rs`,
   `every_query_key_a_verb_sends_is_a_binding_query_parameter`). Every verb
-  of every resource handle runs against the stub with every option set
-  (`every_verb_is_called_by_the_query_test` fails on one that is not), and
-  each request is matched to its endpoint in `bindings.json`. A key the
-  endpoint does not take fails (a misspelling, a key the API dropped), and
-  so does a binding query parameter no verb sends (one a release adds).
+  of every resource handle runs against the stub with every list builder
+  option set (`every_verb_is_called_by_the_query_test` fails on a verb not
+  called or an option not set on its verb's builder), and each request is
+  matched to its endpoint in `bindings.json`. A key the endpoint does not
+  take fails (a misspelling, a key the API dropped), and so does a binding
+  query parameter no verb sends (one a release adds) and a request to a
+  path no endpoint takes. A template that keeps a full resource name
+  (`{operationName}`) matches only the names `FULL_NAMES` gives it.
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each

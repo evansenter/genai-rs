@@ -1270,11 +1270,14 @@ are the ones those methods' signatures name (return type, `config`,
 `*OrDict` arguments, a TypeVar's bound), with inherited fields, without
 the fields a converter routes into the URL or query string, and without
 a root that has no wire field left. `tests/request_wire_oracle.rs` calls
-every handle verb with every option and checks each query key against
-its endpoint, with `QUERY_ALLOWED` and `NOT_SENT` holding the reasoned
-exceptions; `tests/ci_coverage.rs` maps the legacy endpoints and holds
-every `API_REVISION` copy to the bindings'. The sweep probes the spec
-URLs daily and comments on #511 once per URL that serves again.
+every handle verb with every list builder option (both checked) and
+checks each query key against its endpoint, with `QUERY_ALLOWED` and
+`NOT_SENT` holding the reasoned exceptions; a template that keeps a full
+resource name matches only the resource names `FULL_NAMES` gives it, so
+it cannot take every GET. `tests/ci_coverage.rs` maps the legacy
+endpoints and holds every `API_REVISION` copy to the bindings'. The
+sweep probes the spec URLs daily and comments on #511 once per URL that
+serves again.
 
 **Consequences.** Conservative choices, left for the owner: the crate
 keeps sending `page_size`/`page_token` to the store and document
