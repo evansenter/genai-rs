@@ -1,5 +1,6 @@
-//! Multimodal input: images, audio, video, PDFs, mixed media, streaming with
-//! media, loading media from files, and text-to-speech output.
+//! Multimodal input: images, audio and its transcription, video, PDFs,
+//! mixed media, streaming with media, loading media from files, and
+//! text-to-speech output.
 //!
 //! Inline media uses the base64 fixtures in `tests/common`; `gs://` URIs are
 //! rejected by the API, which `test_image_input_gcs_uri_unsupported` pins.
@@ -237,7 +238,137 @@ mod image {
 
 mod audio {
     use crate::common::{TINY_WAV_BASE64, get_client, stateful_builder};
-    use genai_rs::{Content, InteractionInput, InteractionStatus};
+    use genai_rs::{
+        Annotation, Client, Content, InteractionInput, InteractionStatus, TranscriptionConfig,
+        TranscriptionMode,
+    };
+
+    /// One sentence of speech from `DEFAULT_TTS_MODEL` (WAV), as the audio
+    /// block to transcribe.
+    async fn synthesized_speech(client: &Client, text: &str) -> Content {
+        let text = text.to_string();
+        let response = crate::retry_request!([client, text] => {
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_TTS_MODEL)
+                .with_text(text)
+                .with_audio_output()
+                .with_store_disabled()
+                .create()
+                .await
+        })
+        .expect("speech synthesis failed");
+        response
+            .output_contents()
+            .into_iter()
+            .find(|c| matches!(c, Content::Audio { .. }))
+            .cloned()
+            .expect("the TTS response carried no audio")
+    }
+
+    /// On `DEFAULT_TRANSCRIPTION_MODEL` a verbatim mode with word timestamps
+    /// and diarization annotates the transcript with a `word_info` per word,
+    /// each spanning its word and carrying offsets and a speaker.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_transcription_model_annotates_words() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let speech =
+            synthesized_speech(&client, "The quick brown fox jumps over the lazy dog.").await;
+        let config = TranscriptionConfig::new()
+            .with_language_codes(["en-US"])
+            .with_mode(TranscriptionMode::Verbatim {
+                diarization_mode: Some("speaker".to_string()),
+                timestamp_granularities: Some(vec!["word".to_string()]),
+            });
+        let response = crate::retry_request!([client, speech, config] => {
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_TRANSCRIPTION_MODEL)
+                .with_content(vec![speech])
+                .with_transcription_config(config)
+                .with_store_disabled()
+                .create()
+                .await
+        })
+        .expect("transcription failed");
+
+        assert_eq!(response.status, InteractionStatus::Completed);
+        let transcript = response.as_text().expect("a transcript");
+        let words: Vec<_> = response
+            .all_annotations()
+            .into_iter()
+            .filter(|a| matches!(a, Annotation::WordInfo { .. }))
+            .collect();
+        // Nine words were spoken; recognition may merge or split a few.
+        assert!(
+            words.len() >= 5,
+            "expected a word_info per word of {transcript:?}, got {words:?}"
+        );
+        for word in words {
+            let Annotation::WordInfo {
+                text: Some(text),
+                start_offset: Some(_),
+                end_offset: Some(_),
+                speaker: Some(_),
+                ..
+            } = word
+            else {
+                panic!("a word_info without its text, offsets or speaker: {word:?}");
+            };
+            assert_eq!(
+                word.extract_span(transcript),
+                Some(text.as_str()),
+                "the word_info's indices should span its word in {transcript:?}"
+            );
+        }
+    }
+
+    /// On `DEFAULT_TRANSCRIPTION_MODEL` a smart mode's `source_text` steers
+    /// the transcript's spelling. The speech says "Smith"; "Smyth" can only
+    /// come from `source_text` (without it the transcript read "Smith",
+    /// 2026-11-07).
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_transcription_source_text_steers_spelling() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let speech = synthesized_speech(
+            &client,
+            "My friend Caitlin Smith runs the bakery on Main Street.",
+        )
+        .await;
+        let config = TranscriptionConfig::new().with_mode(TranscriptionMode::Smart {
+            source_text: Some(
+                "My friend Kaytlinn Smyth runs the bakery on Main Street.".to_string(),
+            ),
+        });
+        let response = crate::retry_request!([client, speech, config] => {
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_TRANSCRIPTION_MODEL)
+                .with_content(vec![speech])
+                .with_transcription_config(config)
+                .with_store_disabled()
+                .create()
+                .await
+        })
+        .expect("transcription failed");
+
+        assert_eq!(response.status, InteractionStatus::Completed);
+        let transcript = response.as_text().expect("a transcript");
+        assert!(
+            transcript.contains("Smyth"),
+            "the transcript should follow source_text's spelling: {transcript:?}"
+        );
+    }
 
     #[tokio::test]
     #[ignore = "Requires API key"]

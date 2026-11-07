@@ -114,8 +114,9 @@ fn no_hardcoded_model_ids_outside_the_constants() {
     assert!(
         hits.is_empty(),
         "hardcoded model id(s) found — use genai_rs::DEFAULT_MODEL (or \
-         DEFAULT_IMAGE_MODEL / DEFAULT_TTS_MODEL / \
-         DEFAULT_DEEP_RESEARCH_AGENT / DEFAULT_ANTIGRAVITY_AGENT) so a bump \
+         DEFAULT_IMAGE_MODEL / DEFAULT_TTS_MODEL / DEFAULT_TRANSCRIPTION_MODEL / \
+         CONTINUATION_MODEL / DEFAULT_DEEP_RESEARCH_AGENT / \
+         DEFAULT_ANTIGRAVITY_AGENT) so a bump \
          stays a one-line change:\n  {}",
         hits.join("\n  ")
     );

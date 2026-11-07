@@ -204,7 +204,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `CredentialStatus` | lowercase | `"active"`, `"revoked"` | Output only; `active` observed 2026-09-24 |
 | `InjectionLocation` | lowercase | `"header"`, `"query"`, `"body"` | Sent as a list; the API also accepts a single string (2026-09-24) |
 | `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Server-validated (2026-09-24); no Interactions model outputs video to exercise it |
-| `TranscriptionMode` | string or object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | See [TranscriptionConfig](#transcriptionconfig) |
+| `TranscriptionMode` | string or object | `"smart"` / `{"type": "smart", "source_text": "..."}` / `{"type": "verbatim", "diarization_mode": "speaker"}` | See [TranscriptionConfig](#transcriptionconfig) |
 | `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
 | `GoogleSearchResultItem` | snake_case | `{"search_suggestions": "<html>"}` | The only field in the 2.34.0 bindings and on the wire (live 2026-07 and 2026-11-05); `title`, `url` and `rendered_content` were removed, and one that arrives lands in `extra` |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | `status` is `success`/`error`/`paywall`/`unsafe`; no separate paywall field (2026-01-13) |
@@ -257,7 +257,7 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `function_call` | `FunctionCall` | `{"id", "name", "arguments": {...}, "signature"?}`, **top-level** arguments. The API returns `signature` and **rejects stateless replay without it** (live 2026-07); the generated bindings omit it |
 | `function_result` | `FunctionResult` | `{"call_id", "name"?, "result": <payload>, "is_error"?: bool, "signature"?}` |
 | `code_execution_call` | `CodeExecutionCall` | `{"id", "arguments": {"language": "python", "code": "..."}, "signature"?}`, **nested** arguments |
-| `code_execution_result` | `CodeExecutionResult` | `{"call_id", "result": "...", "is_error": bool, "signature"?}` |
+| `code_execution_result` | `CodeExecutionResult` | `{"call_id", "result": "..." or [Content], "is_error": bool, "signature"?}`. `result` is `CodeExecutionOutput`; the API sends the string (see [Code execution](#code-execution)) |
 | `url_context_call` | `UrlContextCall` | `{"id", "arguments": {"urls": [...]}, "signature"?}` |
 | `url_context_result` | `UrlContextResult` | `{"call_id", "result": [UrlContextResultItem], "is_error"?, "signature"?}` |
 | `google_search_call` | `GoogleSearchCall` | `{"id", "arguments": {"queries": [...]}, "search_type"?, "signature"?}` |
@@ -383,7 +383,7 @@ keeps unmodeled fields in `extra`:
 | `file_citation` | `FileCitation` | `document_uri`, `file_name`, `source`, `custom_metadata`, `page_number`, `media_id` |
 | `place_citation` | `PlaceCitation` | `place_id`, `name`, `url`, `review_snippets: [ReviewSnippet { title, url, review_id }]` |
 | `speech_metadata` | `SpeechMetadata` | `speaker`, `style`; indices optional. A TTS **input** annotation: required per turn for multi-speaker on `gemini-3.8-flash-tts`, rejected by older TTS models. Spanned annotations must tile the text without gaps (live 2026-09-24) |
-| `word_info` | `WordInfo` | `text`, `speaker`, `start_offset` / `end_offset` (duration strings), optional indices. Transcription output; not yet observed |
+| `word_info` | `WordInfo` | `text`, `speaker`, `start_offset` / `end_offset` (duration strings), optional indices. Transcription output: one per word on a transcript from `gemini-3.5-transcribe` with word timestamps requested, as `{"start_index": 0, "end_index": 3, "text": "The", "start_offset": "0.100s", "end_offset": "0.100s", "speaker": "spk:0", "type": "word_info"}` (live 2026-11-07); a whole second is written `"4s"` |
 | anything else | `Unknown { annotation_type, data }` | The server's enum also lists `in_context_file_citation` and `reference_metadata`, which are absent from the 2.25 bindings (2026-09-24) |
 
 Citations carry `start_index` / `end_index` as **UTF-8 byte offsets** into
@@ -857,11 +857,34 @@ verification.
 
 ### Code execution
 
-`code_execution_result` is `{"call_id", "is_error": bool, "result": "...",
+`code_execution_result` is `{"call_id", "is_error": bool, "result",
 "signature"?}`. The official docs describe an `outcome` enum
 (`OUTCOME_OK`), but the wire uses `is_error` + `result` (found with
 `LOUD_WIRE=1`, 2026-01-12, pre-revision). `call_id` is required since
 2026-05-20.
+
+`result` is a union in the google-genai 3.0.0 bindings: the output as a
+string, or a list of content blocks. `CodeExecutionOutput` reads both and
+writes each back in the form it came in. The Gemini API sent the string on
+every run probed on 2026-11-07 (`gemini-3.8-flash`; the plot also on
+`gemini-3.5-flash`, which the response names `gemini-3.6-flash`):
+
+| Run | Read through | `result` |
+|---|---|---|
+| A plain run (stdout) | create | the stdout |
+| A matplotlib plot | create, stored `GET`, stream | `""` |
+| A run that printed a CSV and saved a chart | create | the printed CSV |
+| A run printing 2**200 and 40 Fibonacci numbers (272 chars) | stream, stored `GET` | the stdout |
+| A run printing 1,500 lines (31,559 chars) | stream | the stdout |
+
+What a run makes is not in `result`: the plot arrived as an `image` block
+(`image/png`) in the next `model_output` step, and the CSV run's next step
+held the saved chart's image and the CSV as a `text` block. Streamed,
+`step.start` carries `call_id` and `signature: ""`, then a single
+`code_execution_result` delta carries the whole `result` as a string, with
+`is_error`; the 31,559-character output was not split. The delta's `result`
+is a string in the bindings too. What the API does with the list form sent
+back in history is under Tools in `docs/INTERACTIONS_API_GAP.md`.
 
 `CodeExecutionLanguage` is lowercase `"python"` in
 `code_execution_call.arguments.language`. `"PYTHON"` (pre-revision) now
@@ -1125,12 +1148,14 @@ open strings:
 | `language_codes` | BCP-47 codes | Empty or omitted means auto-detect |
 
 `mode` (`TranscriptionMode`) is `"smart"` / `"verbatim"` or
-`{"type": "smart"}` / `{"type": "verbatim", "diarization_mode"?,
-"timestamp_granularities"?}`. The crate sends the object form and reads both.
-The bindings' `language_hints` is not modeled: `400 Unknown parameter
+`{"type": "smart", "source_text"?}` / `{"type": "verbatim",
+"diarization_mode"?, "timestamp_granularities"?}`. The crate sends the
+object form and reads both. `source_text` is new in google-genai 3.0.0; a
+stored interaction serves it back inside `mode` as sent (2026-11-07). The
+bindings' `language_hints` is not modeled: `400 Unknown parameter
 'language_hints'`. Verified live 2026-09-24 with audio input (the enum is
-server-validated: `Invalid enum value 'zzz'`); no output difference, and no
-`word_info` annotation, was observed on general models.
+server-validated: `Invalid enum value 'zzz'`). What each setting does, and
+on which model, is under Models in `docs/INTERACTIONS_API_GAP.md`.
 
 ## Probing a new enum
 

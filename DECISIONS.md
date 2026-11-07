@@ -1195,3 +1195,52 @@ now also send a field of these configs the crate does not model yet, as
 variants, which keep no `extra` (enums are outside the guard, as `Step`'s
 were before #491).
 
+
+## D-035 — A code execution result is a string or content blocks (2026-11-07)
+
+**Context.** google-genai 3.0.0 types `CodeExecutionResultStep.result` as
+`Union[List[Content], str]`; the delta's `result` stays a string. The
+Gemini API sent the string on every run probed on 2026-11-07, plots and
+files included (those arrive in the next `model_output` step). It accepts
+the list form back in history, but the model does not see that content.
+With `result: String`, a list-form result would have turned the whole step
+into `Step::Unknown`.
+
+**Decision.** A new two-arm enum, `CodeExecutionOutput { Text, Contents }`,
+for the step's `result`, written back in the form it came in. Not
+`FunctionResultPayload`: its `Json` arm and its send-side `From<Value>`
+(which wraps arrays) admit shapes this union does not have. Any other shape
+fails the field, so the step is kept whole as `Step::Unknown`, as for any
+malformed known step. The delta keeps `result: String`; the accumulator
+appends a fragment to the string, or, after a list-form `step.start`, to
+its trailing text block (a new one when the last block is not text).
+`CodeExecutionResultInfo::result` and `successful_code_output()` give the
+enum, with `text()` (a `Cow<str>` of the string or the joined text blocks)
+and `Display` for the common case.
+
+**Consequences.** Breaking for callers that read `result` as a `&str`
+(D-007); the migration is `.text()`, and `println!("{}", r.result)` is
+unchanged. A content-block result keeps its images, which a text view
+would have dropped.
+
+## D-036 — Transcription has its own model constant; `audio_input` synthesizes its speech (2026-11-07)
+
+**Context.** google-genai 3.0.0's `Model` literal adds
+`gemini-3.5-transcribe`. Probed on 2026-11-07, it is the model on which
+`transcription_config` changes the output (`word_info` annotations,
+`source_text`); general models accept the config without effect. It
+answers silence with nothing, so the `audio_input` example, which sent the
+silent `TINY_WAV_BASE64` clip, could not show it.
+
+**Decision.** Add `DEFAULT_TRANSCRIPTION_MODEL` (D-006). `audio_input` and
+the transcription-mode live tests use it; the example and a live test in
+`multimodal_tests` transcribe one sentence synthesized with
+`DEFAULT_TTS_MODEL`, so no audio file is committed.
+`test_transcription_config_accepted` stays on `DEFAULT_MODEL`, where it
+checks that a general model takes and stores the config. No example embeds
+`TINY_WAV_BASE64` any more, so `tests/temp_file_tests.rs` drops it from the
+fixtures every example copy is checked against.
+
+**Consequences.** The example and the live test make one TTS request
+before transcribing. A silent clip still serves the acceptance tests, which
+read the stored config back rather than the transcript.

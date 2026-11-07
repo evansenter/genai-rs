@@ -399,8 +399,9 @@ async fn test_video_from_temp_file() {
 /// matcher itself: reformatting or removing a known copy fails here.
 #[test]
 fn example_fixtures_match_test_fixtures() {
+    // No example embeds `TINY_WAV_BASE64`: `audio_input` synthesizes speech,
+    // since the transcription model answers silence with nothing.
     let canonical = [
-        ("TINY_WAV_BASE64", TINY_WAV_BASE64),
         ("TINY_MP4_BASE64", TINY_MP4_BASE64),
         ("TINY_PDF_BASE64", TINY_PDF_BASE64),
         ("TINY_RED_PNG_BASE64", TINY_RED_PNG_BASE64),

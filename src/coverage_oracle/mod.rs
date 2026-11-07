@@ -192,6 +192,32 @@ fn every_binding_class_is_mapped() {
     );
 }
 
+/// The types `document_from_file()` sends as documents are the bindings'
+/// document MIME lists, so a baseline bump that adds a type fails here until
+/// the type is probed live and added to `DOCUMENT_MIME_TYPES`. A type the
+/// endpoint rejects would need an exception here with its dated reason.
+#[test]
+fn document_mime_types_are_the_bindings_list() {
+    let surface = Surface::bindings();
+    let sent: BTreeSet<&str> = crate::multimodal::DOCUMENT_MIME_TYPES
+        .iter()
+        .copied()
+        .collect();
+    for alias in [
+        "interactions.DocumentContentMimeType",
+        "interactions.DocumentDeltaMimeType",
+    ] {
+        let Some(api_surface::Ty::Literal { values, .. }) = surface.aliases.get(alias) else {
+            panic!("{alias} is not a literal alias in the snapshot");
+        };
+        let listed: BTreeSet<&str> = values
+            .iter()
+            .map(|v| v.as_str().expect("a string literal"))
+            .collect();
+        assert_eq!(sent, listed, "{alias}");
+    }
+}
+
 /// Each source loads and is not empty: an inert loader would pass every
 /// check vacuously.
 #[test]

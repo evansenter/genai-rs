@@ -4,8 +4,8 @@
 >
 > | | |
 > |---|---|
-> | **Last swept against** | `google-genai` **2.34.0** |
-> | **Sweep date** | **2026-11-01** |
+> | **Last swept against** | `google-genai` **3.0.0** |
+> | **Sweep date** | **2026-11-07** |
 > | **Baseline in CI** | `.github/last-swept-sdk-version` |
 >
 > "Done" below means *nothing was missing as of the sweep date*. The SDK
@@ -134,6 +134,23 @@ from here rather than repeated.
   `outputTokenLimit` of 65,536 (2026-09-24).
 - **Images:** there is no 3.8 image model, and `gemini-3.8-flash` answers an
   image request with text only (2026-10-01), hence `DEFAULT_IMAGE_MODEL`.
+- **Transcription:** `DEFAULT_TRANSCRIPTION_MODEL` (`gemini-3.5-transcribe`,
+  new in the google-genai 3.0.0 `Model` literal; version
+  `3.5-transcribe-08-2026`, 98,304 input and 32,768 output tokens) answers
+  audio with its transcript and nothing else (2026-11-07, speech from
+  macOS `say` and from `DEFAULT_TTS_MODEL`). It ignores a text prompt beside
+  the audio (asked to translate, it transcribed), answers silence and
+  text-only input with a `completed` interaction holding no steps and zero
+  output tokens, rejects a function tool (`400 Function calling is not
+  enabled for this model`), and streams the transcript as one `text` delta.
+  `transcription_config` changes its output: a verbatim mode with
+  `timestamp_granularities: ["word"]` and `diarization_mode: "speaker"`
+  adds a `word_info` annotation per word (the deprecated top-level
+  `diarization_mode` and `timestamp_granularities` do the same), and a
+  smart mode's `source_text` made the transcript follow the script's
+  spelling (`genai-rs` where the plain transcript had `JRS`). On
+  `DEFAULT_MODEL` the same `source_text` was accepted with no effect, as
+  every transcription setting had been on general models since 2026-09-24.
 - **Decoding continuation** runs only on `CONTINUATION_MODEL` (2026-11-01);
   the rules are under [Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)
   and [Interaction residue](#interaction-residue-2026-11-05).
@@ -155,13 +172,18 @@ from here rather than repeated.
 - **`response_mime_type`** is rejected even beside `response_format`: `400
   responseFormat must be set when responseMimeType is set` (2026-07), so it
   was removed.
-- **Inline document content** is accepted for `application/pdf`,
-  `text/csv` and the Office/OpenDocument types (`.docx`, `.xlsx`, `.pptx`,
-  `.odt`, `.ods`, `.odp`, and the legacy `.doc`, `.xls`, `.ppt`), each read
-  back from a real file (2026-11-05). The legacy three passed the MIME
-  check only with plain-text bytes, so parsing a real legacy file is
-  unverified. Since 2026-11-04 `text/plain` and `text/markdown` are a 400
-  (#514), as is every other type tried (`text/html`, `application/json`,
+- **Inline document content** is accepted for the twelve types of the
+  bindings' `DocumentContentMimeType` (google-genai 3.0.0):
+  `application/pdf`, `text/csv` and the Office/OpenDocument types (`.docx`,
+  the Word template `.dotx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, and
+  the legacy `.doc`, `.xls`, `.ppt`). Each was read back from a real file on
+  2026-11-05 except `.dotx` and the legacy three. A real `.dotx` (new in
+  3.0.0's list) and a real legacy `.doc` (an OLE2 Word file) were read back
+  on 2026-11-07. `.xls` and `.ppt` passed the MIME check only with
+  plain-text bytes (2026-11-05), so parsing a real one is unverified
+  (#530).
+  Since 2026-11-04 `text/plain` and `text/markdown` are a 400 (#514), as
+  is every other type tried (`text/html`, `application/json`,
   `application/xml`, `application/rtf`): `Unsupported mime_type '...' in
   document content` (2026-11-05). A `.txt` or `.md` file uploaded to the
   Files API still works as a document by URI (2026-11-05).
@@ -209,7 +231,16 @@ from here rather than repeated.
   tool did (2026-08-16).
 - **Code execution:** `gemini-3.8-flash` runs only Python, and
   `gemini-4-argon` runs shell commands through Python's `subprocess`; the
-  spec's `bash` language was never observed (2026-11-01).
+  spec's `bash` language was never observed (2026-11-01). A result's
+  `result` comes back as a string, never the list form the 3.0.0 bindings
+  allow, and a plot or file the code makes arrives in the next
+  `model_output` step (2026-11-07; the shapes are under Code execution in
+  `docs/ENUM_WIRE_FORMATS.md`). A list-form result sent back in stateless
+  history is accepted (`200`), but the model does not see its content:
+  asked what a random-number program printed, `gemini-3.8-flash` and
+  `gemini-3.5-flash` (served as `gemini-3.6-flash`) answered that no output
+  was visible, while on `gemini-3.8-flash` the same value in the string form
+  was read back exactly (2026-11-07).
 
 ### Agents and environments
 
@@ -457,6 +488,27 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   2026-10-06 3 of 5 returned `500 Internal error encountered`. On 2026-11-01
   all 16 requests answered, 10 of them concurrent, so
   `processing_steps_tests` no longer retries.
+
+## Sweep 2.34.0 → 3.0.0 (2026-11-07)
+
+google-genai 3.0.0 was released 2026-11-06. Every item probed live on
+2026-11-07; the coverage oracle passes against the 3.0.0 snapshot with the
+two Files entries below listed in its `ALLOWED`.
+
+### Modeled
+
+| Surface | Where | Live result |
+|---|---|---|
+| `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files; a non-empty output read the same through the stored `GET` and arrived whole in one stream delta. Generated files come in the next `model_output` step. The list form is accepted back in history, but its content does not reach the model. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
+| `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text }` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
+| `gemini-3.5-transcribe` in the `Model` literal | `DEFAULT_TRANSCRIPTION_MODEL` | The model on which `transcription_config` takes effect, and on which `word_info` annotations were first seen. See Models above |
+| `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); the coverage oracle holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back; real `.xls` and `.ppt` files are unverified (#530). See Requests above |
+
+### Deliberately not modeled
+
+| Surface | Why |
+|---|---|
+| `legacy.ClaudeFile` and `ListFilesResponse.data` / `nextPage` | The Claude Files API's list shape, which the 3.0.0 bindings document as not supported in the Gemini API. The Gemini Files API list served `files` and `nextPageToken` only, with two uploaded files at `pageSize=1`, and rejected the `ids` parameter the new cursor describes (`400 Unknown name "ids"`). Listed in the coverage oracle's `ALLOWED`; either field lands in `FileListResponse::extra` if it comes. |
 
 ## Sweep 2.25.0 → 2.34.0 (2026-11-01)
 

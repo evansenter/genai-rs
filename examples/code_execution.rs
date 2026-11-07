@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     for result in response.code_execution_results() {
         let label = if result.is_error { "error" } else { "output" };
-        println!("--- {label} ---\n{}", result.result.trim_end());
+        println!("--- {label} ---\n{}", result.result.text().trim_end());
     }
     println!(
         "--- answer ---\n{}",

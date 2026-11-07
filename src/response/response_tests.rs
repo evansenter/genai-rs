@@ -744,7 +744,7 @@ fn test_interaction_response_all_annotations_skips_non_text() {
             Step::CodeExecutionResult {
                 call_id: "call_1".to_string(),
                 is_error: false,
-                result: "result".to_string(),
+                result: "result".into(),
                 signature: None,
                 extra: Default::default(),
             },

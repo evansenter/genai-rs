@@ -1,9 +1,11 @@
-//! Live checks that request fields added in google-genai 2.19–2.25 are
+//! Live checks that request fields added in google-genai 2.19–3.0 are
 //! accepted by the Gemini API, and stored as sent.
 //!
-//! Neither field changed the output observably when probed (2026-09-24),
-//! so each test reads the stored interaction back and compares the field
-//! with what it sent (#492), rather than trusting the 200.
+//! Each test reads the stored interaction back and compares the field with
+//! what it sent (#492), rather than trusting the 200: the video name has no
+//! observable effect, and the transcription modes have one only on speech,
+//! which `multimodal_tests` checks (the verbatim mode's word timings and the
+//! smart mode's `source_text`).
 //!
 //! ```bash
 //! cargo nextest run --test binding_parity_tests --run-ignored all
@@ -78,7 +80,10 @@ async fn test_transcription_modes_are_accepted() {
     };
 
     for mode in [
-        TranscriptionMode::Smart,
+        TranscriptionMode::Smart { source_text: None },
+        TranscriptionMode::Smart {
+            source_text: Some("The quick brown fox jumps over the lazy dog.".to_string()),
+        },
         TranscriptionMode::Verbatim {
             diarization_mode: Some("speaker".to_string()),
             timestamp_granularities: Some(vec!["word".to_string()]),
@@ -86,7 +91,7 @@ async fn test_transcription_modes_are_accepted() {
     ] {
         let response = client
             .interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_TRANSCRIPTION_MODEL)
             .with_input(InteractionInput::Content(vec![
                 Content::text("Transcribe this audio."),
                 Content::audio_data(TINY_WAV_BASE64, "audio/wav"),

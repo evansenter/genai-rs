@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `DEFAULT_TRANSCRIPTION_MODEL` (`gemini-3.5-transcribe`, new in google-genai
+  3.0.0's model list), the speech-to-text model on which
+  `TranscriptionConfig` takes effect: a verbatim mode with word timestamps
+  annotates each word of the transcript with an `Annotation::WordInfo`
+  (its span, offsets and speaker), and a smart mode's `source_text` steers
+  the wording; general models accept the config without effect (verified
+  live 2026-11-07). The model only transcribes: it ignores a text prompt
+  beside the audio and rejects function tools. `examples/audio_input.rs`
+  now transcribes speech it synthesizes with `DEFAULT_TTS_MODEL`, showing
+  both modes.
+- `document_from_file()` sends Word templates (`.dotx`,
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.template`)
+  as document content, and `detect_mime_type()` maps the extension. The type
+  is new in google-genai 3.0.0's document MIME list, which the crate's
+  document types now match exactly; a real template was read back live
+  (2026-11-07), as was a real legacy `.doc` file, which until then had only
+  passed the API's MIME check.
 - `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
   ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
   It reads both shapes the API has used: since 2026-11-05 an
@@ -232,6 +249,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: `TranscriptionMode::Smart` is a struct variant,
+  `Smart { source_text: Option<String> }`**, for google-genai 3.0.0's
+  `SmartTranscriptionMode.source_text`: the text the audio is expected to
+  say, which the transcript follows (accepted and stored as sent, verified
+  live 2026-11-07). A stored interaction's smart mode now keeps it, where
+  the unit variant dropped it. Migration: `TranscriptionMode::Smart` becomes
+  `TranscriptionMode::Smart { source_text: None }` in an expression and
+  `TranscriptionMode::Smart { .. }` in a pattern.
+- **Breaking: `Step::CodeExecutionResult`'s `result` is a
+  `CodeExecutionOutput`, not a `String`.** google-genai 3.0.0 types it as
+  the output as a string or as a list of content blocks. The new enum reads
+  both (`Text`, `Contents`) and writes each back in the form it came in, so
+  a list-form result no longer turns the step into `Step::Unknown`.
+  `CodeExecutionResultInfo::result` and
+  `InteractionResponse::successful_code_output()` now give a
+  `&CodeExecutionOutput`. The Gemini API still sends the string, and it
+  accepts the list form in replayed history without showing its content to
+  the model, so replay the string form (verified live 2026-11-07). Migration: `result.text()` reads either form as text (a
+  `Cow<str>`), `as_text()` returns the string form, and `Display` prints the
+  text, so `println!("{}", r.result)` is unchanged; build one with
+  `"...".into()` or `vec![Content::text("...")].into()`.
+  `StepDelta::CodeExecutionResult`'s `result` stays a `String`, as in the
+  bindings.
 - **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
   `Annotation` has a new `extra` field.** It is a
   `serde_json::Map<String, serde_json::Value>`. The call variants

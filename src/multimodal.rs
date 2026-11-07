@@ -128,6 +128,7 @@ use std::path::Path;
 /// - `csv` → `text/csv`
 /// - `doc` → `application/msword`
 /// - `docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+/// - `dotx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.template`
 /// - `xls` → `application/vnd.ms-excel`
 /// - `xlsx` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 /// - `ppt` → `application/vnd.ms-powerpoint`
@@ -182,6 +183,7 @@ pub fn detect_mime_type(path: &Path) -> Option<&'static str> {
         "csv" => Some("text/csv"),
         "doc" => Some("application/msword"),
         "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "dotx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.template"),
         "xls" => Some("application/vnd.ms-excel"),
         "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         "ppt" => Some("application/vnd.ms-powerpoint"),
@@ -583,17 +585,19 @@ pub async fn video_from_file_with_mime(
     Ok(Content::video_data(data, mime_type))
 }
 
-/// MIME types [`document_from_file`] sends as document content: the ones the
-/// Interactions API accepts inline, each read back from a real file. The
-/// legacy `.doc`, `.xls` and `.ppt` types only passed the API's MIME check
-/// with plain-text bytes; parsing a real legacy file is unverified. The API
-/// rejects other inline document types with `400 Unsupported mime_type`.
-/// The dated record is under Requests in `docs/INTERACTIONS_API_GAP.md`.
-const DOCUMENT_MIME_TYPES: &[&str] = &[
+/// MIME types [`document_from_file`] sends as document content: the
+/// bindings' `DocumentContentMimeType` list, which the Interactions API
+/// accepts inline, each read back from a real file except the legacy `.xls`
+/// and `.ppt`, which only passed the API's MIME check with plain-text bytes.
+/// The API rejects other inline document types with `400 Unsupported
+/// mime_type`. The dated record is under Requests in
+/// `docs/INTERACTIONS_API_GAP.md`.
+pub(crate) const DOCUMENT_MIME_TYPES: &[&str] = &[
     "application/pdf",
     "text/csv",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.ms-powerpoint",
@@ -617,6 +621,7 @@ const TEXT_FILE_MIME_TYPES: &[&str] = &["text/plain", "text/markdown"];
 /// | `.pdf` | Document content (`application/pdf`) |
 /// | `.csv` | Document content (`text/csv`) |
 /// | `.docx` | Document content (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`) |
+/// | `.dotx` | Document content (`application/vnd.openxmlformats-officedocument.wordprocessingml.template`) |
 /// | `.xlsx` | Document content (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`) |
 /// | `.pptx` | Document content (`application/vnd.openxmlformats-officedocument.presentationml.presentation`) |
 /// | `.odt` | Document content (`application/vnd.oasis.opendocument.text`) |
@@ -629,8 +634,8 @@ const TEXT_FILE_MIME_TYPES: &[&str] = &["text/plain", "text/markdown"];
 ///
 /// Document content is base64-encoded. These are the document types the
 /// Interactions API accepts inline (each read back from a real file; for
-/// `.doc`, `.xls` and `.ppt`, only that the API accepts the MIME type, not
-/// that it parses a real legacy file).
+/// `.xls` and `.ppt`, only that the API accepts the MIME type, not that it
+/// parses a real legacy file).
 ///
 /// The Interactions API rejects `text/plain` and `text/markdown` as document
 /// content, so plain-text files are sent as text instead; the model reads them
@@ -812,6 +817,10 @@ mod tests {
             (
                 "letter.docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            (
+                "letter.dotx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
             ),
             ("sheet.xls", "application/vnd.ms-excel"),
             (
@@ -1003,6 +1012,7 @@ mod tests {
             "doc.pdf",
             "data.csv",
             "letter.docx",
+            "letter.dotx",
             "sheet.xlsx",
             "deck.pptx",
             "letter.doc",

@@ -35,10 +35,19 @@ fn test_transcription_mode_wire_forms() {
         }})
     );
     for (wire, expected) in [
-        (serde_json::json!("smart"), TranscriptionMode::Smart),
+        (
+            serde_json::json!("smart"),
+            TranscriptionMode::Smart { source_text: None },
+        ),
         (
             serde_json::json!({"type": "smart"}),
-            TranscriptionMode::Smart,
+            TranscriptionMode::Smart { source_text: None },
+        ),
+        (
+            serde_json::json!({"type": "smart", "source_text": "Hello there."}),
+            TranscriptionMode::Smart {
+                source_text: Some("Hello there.".into()),
+            },
         ),
         (
             serde_json::json!("verbatim"),
@@ -74,7 +83,16 @@ fn test_transcription_mode_serialized_strings() {
         }
     };
     for (mode, expected) in [
-        (TranscriptionMode::Smart, r#"{"type":"smart"}"#),
+        (
+            TranscriptionMode::Smart { source_text: None },
+            r#"{"type":"smart"}"#,
+        ),
+        (
+            TranscriptionMode::Smart {
+                source_text: Some("Hi.".into()),
+            },
+            r#"{"type":"smart","source_text":"Hi."}"#,
+        ),
         (verbatim(None, None), r#"{"type":"verbatim"}"#),
         (
             verbatim(Some("speaker"), None),

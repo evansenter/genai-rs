@@ -25,7 +25,7 @@ fn test_interaction_response_code_execution_helpers() {
             Step::CodeExecutionResult {
                 call_id: "call_123".to_string(),
                 is_error: false,
-                result: "42\n".to_string(),
+                result: "42\n".into(),
                 signature: None,
                 extra: Default::default(),
             },
@@ -49,10 +49,15 @@ fn test_interaction_response_code_execution_helpers() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].call_id, "call_123");
     assert!(!results[0].is_error);
-    assert_eq!(results[0].result, "42\n");
+    assert_eq!(results[0].result.as_text(), Some("42\n"));
 
     // Test successful_code_output helper
-    assert_eq!(response.successful_code_output(), Some("42\n"));
+    assert_eq!(
+        response
+            .successful_code_output()
+            .and_then(CodeExecutionOutput::as_text),
+        Some("42\n")
+    );
 }
 
 #[test]
@@ -371,14 +376,14 @@ fn test_interaction_response_code_execution_results() {
             Step::CodeExecutionResult {
                 call_id: "call_1".to_string(),
                 is_error: false,
-                result: "first output".to_string(),
+                result: "first output".into(),
                 signature: None,
                 extra: Default::default(),
             },
             Step::CodeExecutionResult {
                 call_id: "call_2".to_string(),
                 is_error: true,
-                result: "error message".to_string(),
+                result: "error message".into(),
                 signature: None,
                 extra: Default::default(),
             },
@@ -392,14 +397,42 @@ fn test_interaction_response_code_execution_results() {
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].call_id, "call_1");
     assert!(!results[0].is_error);
-    assert_eq!(results[0].result, "first output");
+    assert_eq!(results[0].result.as_text(), Some("first output"));
     assert_eq!(results[1].call_id, "call_2");
     assert!(results[1].is_error);
-    assert_eq!(results[1].result, "error message");
+    assert_eq!(results[1].result.as_text(), Some("error message"));
 
     // Test successful_code_output - should return first successful output
     let success = response.successful_code_output();
-    assert_eq!(success, Some("first output"));
+    assert_eq!(success.map(|o| o.text()).as_deref(), Some("first output"));
+}
+
+/// The list form of the output (google-genai 3.0.0) reaches the view whole.
+#[test]
+fn code_execution_results_carry_the_list_form() {
+    let blocks = vec![
+        Content::text("plotted\n"),
+        Content::image_data("iVBORw0KGgo=", "image/png"),
+    ];
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::CodeExecutionResult {
+            call_id: "call_1".to_string(),
+            is_error: false,
+            result: blocks.clone().into(),
+            signature: None,
+            extra: Default::default(),
+        }],
+        ..Default::default()
+    };
+
+    let results = response.code_execution_results();
+    assert_eq!(results[0].result.as_contents(), Some(blocks.as_slice()));
+    assert_eq!(results[0].result.text(), "plotted\n");
+    let output = response
+        .successful_code_output()
+        .expect("a successful result");
+    assert_eq!(output.to_string(), "plotted\n");
 }
 
 #[test]
@@ -564,7 +597,7 @@ fn test_interaction_response_complex_roundtrip() {
             Step::CodeExecutionResult {
                 call_id: "code-exec-001".to_string(),
                 is_error: false,
-                result: "4".to_string(),
+                result: "4".into(),
                 signature: None,
                 extra: Default::default(),
             },
@@ -693,7 +726,7 @@ fn test_interaction_response_complex_roundtrip() {
     let code_results = deserialized.code_execution_results();
     assert_eq!(code_results.len(), 1);
     assert!(!code_results[0].is_error);
-    assert_eq!(code_results[0].result, "4");
+    assert_eq!(code_results[0].result.as_text(), Some("4"));
 
     // Verify Google Search results
     let search_results = deserialized.google_search_results();

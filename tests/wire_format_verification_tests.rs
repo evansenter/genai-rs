@@ -814,7 +814,7 @@ mod step {
             },
             Step::CodeExecutionResult {
                 call_id: "exec_1".to_string(),
-                result: "1".to_string(),
+                result: "1".into(),
                 is_error: false,
                 signature: None,
                 extra: Default::default(),

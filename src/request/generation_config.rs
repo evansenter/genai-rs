@@ -124,7 +124,8 @@ pub struct GenerationConfig {
 ///
 /// Set via
 /// [`GenerationConfig::transcription_config`] to control how audio input is
-/// transcribed.
+/// transcribed. It takes effect on
+/// [`DEFAULT_TRANSCRIPTION_MODEL`](crate::DEFAULT_TRANSCRIPTION_MODEL).
 ///
 /// # Example
 ///
@@ -170,8 +171,9 @@ pub struct TranscriptionConfig {
     /// [`TranscriptionMode::Verbatim`] in `mode`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_granularities: Option<Vec<String>>,
-    /// Transcription mode. Accepted and validated by the API; no output
-    /// difference was observed on general models.
+    /// Transcription mode. It changes the output on
+    /// [`DEFAULT_TRANSCRIPTION_MODEL`](crate::DEFAULT_TRANSCRIPTION_MODEL);
+    /// general models validate it and accept it without effect.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<TranscriptionMode>,
     /// Fields this crate does not model, kept from a deserialized config (such
@@ -183,15 +185,25 @@ pub struct TranscriptionConfig {
 
 /// Transcription mode (`transcription_config.mode`).
 ///
-/// Serializes as the tagged object (`{"type": "smart"}`,
+/// Serializes as the tagged object (`{"type": "smart", ...}`,
 /// `{"type": "verbatim", ...}`); the bare strings `"smart"` / `"verbatim"`
 /// the API also accepts deserialize to the same variants.
+///
+/// A mode changes the output on a transcription model
+/// ([`DEFAULT_TRANSCRIPTION_MODEL`](crate::DEFAULT_TRANSCRIPTION_MODEL));
+/// general models accept it without effect.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TranscriptionMode {
     /// Smart transcription.
-    Smart,
+    Smart {
+        /// The text the audio is expected to say, such as the script a
+        /// speaker read. The transcript follows its wording and spelling
+        /// where the audio agrees with it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_text: Option<String>,
+    },
     /// Verbatim transcription.
     Verbatim {
         /// Speaker diarization; `"speaker"` is the documented value.
@@ -250,7 +262,12 @@ impl<'de> Deserialize<'de> for TranscriptionMode {
             serde_json::from_value(value.get(key)?.clone()).ok()
         };
         match tag {
-            Some("smart") => Ok(Self::Smart),
+            Some("smart") => Ok(Self::Smart {
+                source_text: value
+                    .get("source_text")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            }),
             Some("verbatim") => Ok(Self::Verbatim {
                 diarization_mode: value
                     .get("diarization_mode")

@@ -156,6 +156,15 @@ if response.has_code_execution_calls() {
 
 Code execution appears in `response.steps` as `Step::CodeExecutionCall { id, language, code, .. }` followed by `Step::CodeExecutionResult { call_id, result, is_error, .. }`. The `CodeExecutionLanguage` wire format is lowercase (`"python"`).
 
+`result` is a `CodeExecutionOutput`: the program's output as a string, which
+is what the Gemini API sends, or as content blocks, which the bindings also
+allow. `result.text()` reads either form as text, and `Display` prints it.
+To replay a result in stateless history, use the string form: the API
+accepts the list form there but does not show its content to the model.
+A plot or file the code makes is not in `result`: it arrives as an image or
+text block in the `model_output` step that follows (see Code execution in
+[ENUM_WIRE_FORMATS.md](ENUM_WIRE_FORMATS.md#code-execution)).
+
 `response.successful_code_output()` returns the first non-error result.
 The models run Python (`CodeExecutionLanguage::Python`); the spec's `Bash`
 is modeled but has not been seen.
@@ -564,7 +573,7 @@ let result = client
 | `code_execution_calls()` | Code Execution | `Vec<CodeExecutionCallInfo>` |
 | `has_code_execution_results()` | Code Execution | `bool` |
 | `code_execution_results()` | Code Execution | `Vec<CodeExecutionResultInfo>` |
-| `successful_code_output()` | Code Execution | `Option<&str>` |
+| `successful_code_output()` | Code Execution | `Option<&CodeExecutionOutput>` |
 | `has_url_context_calls()` | URL Context | `bool` |
 | `url_context_call_urls()` | URL Context | `Vec<&str>` |
 | `has_url_context_results()` | URL Context | `bool` |

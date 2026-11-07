@@ -61,6 +61,8 @@ const ALLOWED: &[Allowed] = &[
         "legacy.File.source=SOURCE_UNSPECIFIED",
         "The protobuf default; never served.",
     ),
+    ("legacy.ListFilesResponse.data", CLAUDE_FILES),
+    ("legacy.ListFilesResponse.nextPage", CLAUDE_FILES),
     ("CreateAgentInteractionParams.created", TRIGGER_OUTPUT_ONLY),
     (
         "CreateAgentInteractionParams.environment_id",
@@ -113,6 +115,13 @@ const OUTPUT_CONVENIENCE: &str = "A convenience copy of the output in the \
      `steps`, read by `images()` and `audios()`; no model outputs video. \
      It lands in `extra` if it ever comes.";
 
+const CLAUDE_FILES: &str = "The Claude Files API's list shape (`data` of \
+     `ClaudeFile`, `nextPage`), new in google-genai 3.0.0 and documented there \
+     as not supported in the Gemini API: the Gemini Files API list serves \
+     `files` and `nextPageToken` only (live 2026-11-07, two uploaded files at \
+     `pageSize=1`), and rejects the cursor's `ids` query parameter (`400 \
+     Unknown name \"ids\"`). It lands in `FileListResponse::extra` if it ever \
+     comes.";
 const DEPRECATED: &str = "Deprecated, superseded by response_format (or rejected live, \
      D-005), and not served: a stored interaction read back carries neither \
      (live 2026-11-04).";
