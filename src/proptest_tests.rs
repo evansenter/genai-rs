@@ -24,7 +24,8 @@ use super::environments::{
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
     ImageConfig, ImageSize, InteractionInput, ServiceTier, SpeechConfig, ThinkingLevel,
-    ThinkingSummaries, TranscriptionConfig, TurnContent, VideoConfig, VideoTask, Visualization,
+    ThinkingSummaries, TranscriptionConfig, TranscriptionMode, TurnContent, VideoConfig, VideoTask,
+    Visualization,
 };
 use super::response::{
     GroundingToolCount, InteractionResponse, InteractionStatus, ModalityTokens,

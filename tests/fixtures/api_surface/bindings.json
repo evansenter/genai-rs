@@ -1,6 +1,62 @@
 {
   "sdk_version": "3.0.0",
-  "endpoints": ["DELETE /{}/agents/{}", "DELETE /{}/credentials/{}", "DELETE /{}/environments/{}", "DELETE /{}/interactions/{}", "DELETE /{}/triggers/{}", "DELETE /{}/voices/{}", "DELETE /{}/webhooks/{}", "GET /{}/agents", "GET /{}/agents/{}", "GET /{}/credentials", "GET /{}/credentials/{}", "GET /{}/environments", "GET /{}/environments/{}", "GET /{}/environments/{}/files/{}", "GET /{}/interactions/{}", "GET /{}/triggers", "GET /{}/triggers/{}", "GET /{}/triggers/{}/executions", "GET /{}/voices", "GET /{}/voices/{}", "GET /{}/webhooks", "GET /{}/webhooks/{}", "PATCH /{}/credentials/{}", "PATCH /{}/triggers/{}", "PATCH /{}/webhooks/{}", "POST /{}/agents", "POST /{}/credentials", "POST /{}/environments", "POST /{}/interactions", "POST /{}/interactions/{}/cancel", "POST /{}/triggers", "POST /{}/triggers/{}/executions", "POST /{}/voices", "POST /{}/webhooks", "POST /{}/webhooks/{}:ping", "POST /{}/webhooks/{}:rotateSigningSecret", "PUT /upload/{}/environments/{}/files/{}"],
+  "api_revision": "2026-05-20",
+  "endpoints": {
+    "DELETE /{}/agents/{}": {"query": []},
+    "DELETE /{}/credentials/{}": {"query": []},
+    "DELETE /{}/environments/{}": {"query": []},
+    "DELETE /{}/fileSearchStores/{}": {"query": ["force"]},
+    "DELETE /{}/fileSearchStores/{}/documents/{}": {"query": ["force"]},
+    "DELETE /{}/files/{}": {"query": []},
+    "DELETE /{}/interactions/{}": {"query": []},
+    "DELETE /{}/triggers/{}": {"query": []},
+    "DELETE /{}/voices/{}": {"query": []},
+    "DELETE /{}/webhooks/{}": {"query": []},
+    "GET /{}/agents": {"query": ["page_size", "page_token", "parent"]},
+    "GET /{}/agents/{}": {"query": []},
+    "GET /{}/credentials": {"query": ["page_size", "page_token"]},
+    "GET /{}/credentials/{}": {"query": []},
+    "GET /{}/environments": {"query": ["page_size", "page_token"]},
+    "GET /{}/environments/{}": {"query": []},
+    "GET /{}/environments/{}/files/{}": {"query": ["page_size", "page_token", "recursive"]},
+    "GET /{}/fileSearchStores": {"query": ["pageSize", "pageToken"]},
+    "GET /{}/fileSearchStores/{}": {"query": []},
+    "GET /{}/fileSearchStores/{}/documents": {"query": ["pageSize", "pageToken"]},
+    "GET /{}/fileSearchStores/{}/documents/{}": {"query": []},
+    "GET /{}/files": {"query": ["pageSize", "pageToken"]},
+    "GET /{}/files/{}": {"query": []},
+    "GET /{}/files/{}:download": {"query": ["alt"]},
+    "GET /{}/interactions/{}": {"query": ["include_input", "last_event_id", "stream"]},
+    "GET /{}/triggers": {"query": ["filter", "page_size", "page_token"]},
+    "GET /{}/triggers/{}": {"query": []},
+    "GET /{}/triggers/{}/executions": {"query": ["page_size", "page_token"]},
+    "GET /{}/voices": {"query": ["accent", "context", "gender", "language_code", "page_size", "page_token", "persona", "pitch", "region_code", "search", "type"]},
+    "GET /{}/voices/{}": {"query": []},
+    "GET /{}/webhooks": {"query": ["page_size", "page_token"]},
+    "GET /{}/webhooks/{}": {"query": []},
+    "GET /{}/{clean_id}": {"query": ["alt"]},
+    "GET /{}/{operationName}": {"query": []},
+    "PATCH /{}/credentials/{}": {"query": ["update_mask"]},
+    "PATCH /{}/triggers/{}": {"query": []},
+    "PATCH /{}/webhooks/{}": {"query": ["update_mask"]},
+    "POST /upload/{}/fileSearchStores/{}:uploadToFileSearchStore": {"query": []},
+    "POST /upload/{}/files": {"query": []},
+    "POST /{}/agents": {"query": []},
+    "POST /{}/credentials": {"query": []},
+    "POST /{}/environments": {"query": []},
+    "POST /{}/fileSearchStores": {"query": []},
+    "POST /{}/fileSearchStores/{}:importFile": {"query": []},
+    "POST /{}/files:register": {"query": []},
+    "POST /{}/interactions": {"query": []},
+    "POST /{}/interactions/{}/cancel": {"query": []},
+    "POST /{}/triggers": {"query": []},
+    "POST /{}/triggers/{}/executions": {"query": []},
+    "POST /{}/voices": {"query": []},
+    "POST /{}/webhooks": {"query": []},
+    "POST /{}/webhooks/{}:ping": {"query": []},
+    "POST /{}/webhooks/{}:rotateSigningSecret": {"query": []},
+    "PUT /upload/{}/environments/{}/files/{}": {"query": ["extract", "overwrite"]}
+  },
   "aliases": {
     "agents.AgentTool": {"arms": [{"kind": "ref", "name": "interactions.CodeExecution"}, {"kind": "ref", "name": "interactions.Function"}, {"kind": "ref", "name": "interactions.GoogleSearch"}, {"kind": "ref", "name": "interactions.MCPServer"}, {"kind": "ref", "name": "interactions.URLContext"}], "kind": "union"},
     "agents.BaseEnvironment": {"arms": [{"kind": "ref", "name": "interactions.Environment"}, {"kind": "str"}], "kind": "union"},
@@ -1053,6 +1109,10 @@
       "stringListValue": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.StringList"}},
       "stringValue": {"deprecated": false, "required": false, "type": {"kind": "str"}}
     }},
+    "legacy.DeleteFileResponse": {"file": "types.py", "open": false, "fields": {
+      "id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
     "legacy.Document": {"file": "types.py", "open": false, "fields": {
       "createTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
       "customMetadata": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.CustomMetadata"}, "kind": "list"}},
@@ -1099,6 +1159,17 @@
       "chunkingConfig": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.ChunkingConfig"}},
       "customMetadata": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.CustomMetadata"}, "kind": "list"}}
     }},
+    "legacy.ImportFileOperation": {"file": "types.py", "open": false, "fields": {
+      "done": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "error": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "metadata": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "response": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.ImportFileResponse"}}
+    }},
+    "legacy.ImportFileResponse": {"file": "types.py", "open": false, "fields": {
+      "documentName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "parent": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
     "legacy.ListDocumentsResponse": {"file": "types.py", "open": false, "fields": {
       "documents": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.Document"}, "kind": "list"}},
       "nextPageToken": {"deprecated": false, "required": false, "type": {"kind": "str"}}
@@ -1113,14 +1184,39 @@
       "nextPage": {"deprecated": false, "required": false, "type": {"kind": "str"}},
       "nextPageToken": {"deprecated": false, "required": false, "type": {"kind": "str"}}
     }},
+    "legacy.Operation": {"file": "types.py", "open": false, "fields": {
+      "done": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "error": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "metadata": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.RegisterFilesResponse": {"file": "types.py", "open": false, "fields": {
+      "files": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.File"}, "kind": "list"}}
+    }},
     "legacy.StringList": {"file": "types.py", "open": false, "fields": {
       "values": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "legacy.UploadFileConfig": {"file": "types.py", "open": false, "fields": {
+      "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mimeType": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}}
     }},
     "legacy.UploadToFileSearchStoreConfig": {"file": "types.py", "open": false, "fields": {
       "chunkingConfig": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.ChunkingConfig"}},
       "customMetadata": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.CustomMetadata"}, "kind": "list"}},
       "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
       "mimeType": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.UploadToFileSearchStoreOperation": {"file": "types.py", "open": false, "fields": {
+      "done": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "error": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "metadata": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "response": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.UploadToFileSearchStoreResponse"}}
+    }},
+    "legacy.UploadToFileSearchStoreResponse": {"file": "types.py", "open": false, "fields": {
+      "documentName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "parent": {"deprecated": false, "required": false, "type": {"kind": "str"}}
     }},
     "legacy.WhiteSpaceConfig": {"file": "types.py", "open": false, "fields": {
       "maxOverlapTokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},

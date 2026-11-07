@@ -12,7 +12,7 @@ follow.
 | Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` (and `tests/http_mock_resources/`), `tests/reliability_tests.rs` | No | `make test` |
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
-| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
+| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
 | CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
@@ -448,8 +448,7 @@ A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
 the model chose not to call the tool or the tool is broken. A skip whose
 guard names the specific cause stays unmarked, so it doesn't annotate every
-run. Examples are no API key, or a key that isn't allowlisted for computer
-use: that guard needs both the tool name and an unavailability phrase.
+run, such as a run with no API key.
 
 ## Serialization tests
 
@@ -457,7 +456,7 @@ Serialization is tested twice, on purpose:
 
 | Layer | Where | Purpose |
 |-------|-------|---------|
-| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491) |
+| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491); it does the same over a whole generated `InteractionResponse`, reaching every known `Tool`, `ResponseFormat`, `TranscriptionMode` and `ToolChoice` variant a stored interaction serves back, except under the keys `NOT_INJECTED_UNDER` lists with their reasons (#504) |
 | Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
 Keep both: the examples are documentation, and they run fast. Both take
@@ -471,8 +470,8 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 
 | File | What it is | Written by |
 |------|------------|------------|
-| `bindings.json` | google-genai's generated classes, every type reference resolved, plus the Files, File Search Store and Document classes from its `types.py` (camelCase on the wire), and its endpoints. The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date is in the file, and the published URL no longer serves them (see the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL and comments on #511 once it serves the spec again (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -484,8 +483,10 @@ checks on it:
   response formats, the environment, and every resource's create and update
   body) is built fully populated as struct literals with no
   `..Default::default()`, so a new field does not compile until it is
-  populated (the agent configs, whose fields are private, through every
-  builder), plus proptest samples for the union arms and enum values. An
+  populated (the agent configs, whose fields are private, through each
+  type's `fully_populated()` literal beside it, and
+  `agent_configs_set_every_field` fails on a field there that sends no
+  key), plus proptest samples for the union arms and enum values. An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
@@ -505,6 +506,16 @@ checks on it:
   finds the verbs that send a body (their implementation reaches a POST,
   PATCH or PUT request; the parsing is in `tests/live_verbs/`) and fails
   when one is not called there or listed in `NO_JSON_BODY`.
+- **Query strings on the wire** (`tests/request_wire_oracle.rs`,
+  `every_query_key_a_verb_sends_is_a_binding_query_parameter`). Every verb
+  of every resource handle runs against the stub with every list builder
+  option set (`every_verb_is_called_by_the_query_test` fails on a verb not
+  called or an option not set on its verb's builder), and each request is
+  matched to its endpoint in `bindings.json`. A key the endpoint does not
+  take fails (a misspelling, a key the API dropped), and so does a binding
+  query parameter no verb sends (one a release adds) and a request to a
+  path no endpoint takes. A template that keeps a full resource name
+  (`{operationName}`) matches only the names `FULL_NAMES` gives it.
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each
@@ -516,14 +527,19 @@ checks on it:
   `Step`, `StepDelta`, `Content` and `Annotation` keeps an unmodeled key in
   its `extra` (a call's `arguments` keys in `arguments_extra`), as do the
   result items, places, review snippets, step errors and static video
-  segments in them (#491), so a new field there is reported as landing in
-  `extra` (`a_new_field_on_a_known_variant_is_reported`). A type with no
+  segments in them (#491), and the known variants of `Tool`,
+  `ResponseFormat` and `TranscriptionMode` and `ToolChoice`'s
+  `allowed_tools` object, which a stored interaction serves back (#504). So
+  a new field there is reported as landing in `extra`
+  (`a_new_field_on_a_known_variant_is_reported`). A type with no
   `extra` drops the key, which is reported too, including on an object that
   sits directly in a list (`a_dropped_field_on_a_list_element_is_reported`).
   Each finding is
   traced to its `Class.field` by removing keys until it goes away. It runs
-  against the bindings and the v1beta spec (whose `writeOnly` fields are
-  left out of responses), and not in strict mode.
+  against the bindings and both specs, v1beta and v1 (whose `writeOnly`
+  fields are left out of responses), and not in strict mode. v1 defines
+  only the interaction schemas, with a few values of its own, which
+  `v1_only_values_are_checked` shows its bodies carry.
 - **Sparse response bodies** (`src/coverage_oracle/response_minimal.rs`,
   `sparse_binding_bodies_deserialize` and `sparse_spec_bodies_deserialize`).
   The bodies above set every field, so a type that demands a field the
@@ -537,11 +553,15 @@ checks on it:
 - **Completeness** (`src/coverage_oracle/mod.rs`,
   `every_binding_class_is_mapped`). The checks above only see the classes
   their tables reach, so every class in `bindings.json` must be reached by a
-  request case or response target, or listed in `UNMAPPED` with its reason.
+  request case or response target, or listed in `UNMAPPED` with its reason;
+  its twin, `every_spec_schema_is_mapped`, holds every schema of both specs
+  to a response target or `SPEC_UNMAPPED`.
   `tests/ci_coverage.rs` (`every_api_endpoint_maps_to_a_handle_verb`) maps
   every endpoint in the bindings and the specs to the handle verbs that call
-  it. A baseline bump that adds a resource, a body or an endpoint fails one
-  of them.
+  it, and `api_revision_copies_match_the_bindings` holds the crate's
+  `API_REVISION` and every copy of it to the revision the bindings pin. A
+  baseline bump that adds a resource, a body or an endpoint, or moves the
+  revision, fails one of them.
 - **Live coverage per handle** (`tests/ci_coverage.rs`,
   `every_resource_verb_is_called_live_per_handle`; the parsing is in
   `tests/live_verbs/`). Every public verb on every resource handle must be
@@ -565,14 +585,18 @@ reason to the list that fits:
 | `GAPS` (response) | Served or specified but not modeled yet, the work list for the next modeling pass |
 | `SPARSE` (`response_minimal.rs`) | An optional field the crate cannot read its class without, with why that is safe |
 | `UNMAPPED` (`mod.rs`) | A binding class no table reaches: SDK plumbing, an empty body, a body checked at the wire, or a request not modeled yet |
+| `SPEC_UNMAPPED` (`mod.rs`) | A spec schema no response target reaches: a request body (checked against the bindings), the SSE frame, a raw media body |
 | `ENDPOINTS_WITHOUT_A_VERB`, `EXEMPT` (`tests/ci_coverage.rs`) | An endpoint no handle verb calls; a verb no live test can call |
 | `NO_JSON_BODY` (`tests/request_wire_oracle.rs`) | A verb whose POST, PATCH or PUT carries no JSON body (an upload's bytes) |
+| `QUERY_ALLOWED`, `NOT_SENT` (`tests/request_wire_oracle.rs`, by `METHOD /path?key`) | A query key the crate sends that its endpoint does not list (the `alt` system parameter); a binding query parameter no verb sends |
 
-Date every live fact in a reason (D-010). An entry that matches nothing
-fails the test, so the lists only shrink when the crate catches up. A
-`values()` override in `response.rs` replaces a synthesized value where the
-snapshot's type is looser than what the API sends (a function's
-`parameters`, a protobuf int64 sent as a string).
+Date every live fact in a reason (D-010): `live_claims_are_dated` fails on
+a reason in the in-crate lists that says what the API served, rejected or
+accepted, or quotes an error status, without a `YYYY-MM` date. An entry
+that matches nothing fails the test, so the lists only shrink when the
+crate catches up. A `values()` override in `response.rs` replaces a
+synthesized value where the snapshot's type is looser than what the API
+sends (a function's `parameters`, a protobuf int64 sent as a string).
 
 ### Refreshing the snapshot
 
@@ -589,7 +613,7 @@ cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | bi
 Then update the `docs/INTERACTIONS_API_GAP.md` header (CI checks it matches
 the baseline). With a newer copy of the OpenAPI spec, add
 `--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD` (and
-`--spec-source URL` once the spec has a public URL again; it defaults to
+`--spec-source URL`, the URL it was downloaded from; it defaults to
 `manual`). The baseline is written last, so a failed download or dump
 leaves it and the snapshot unchanged.
 
@@ -598,8 +622,8 @@ release, so a dump-script change needs a refresh too (run the script
 without `--version`), and the file is never edited by hand.
 `refresh_api_snapshot.sh --check` checks it without writing. Its offline
 half fails when the snapshot's `sdk_version` is not exactly the baseline
-(a bump made without the script) or the snapshot has no classes or
-endpoints; `--check --offline` stops there, and `make test-scripts` runs it
+(a bump made without the script) or the snapshot has no classes,
+endpoints or `api_revision`; `--check --offline` stops there, and `make test-scripts` runs it
 on every push. The full check then compares the file with a fresh dump,
 which catches a hand edit; it runs as the sweep's last step every day, and
 in the `shell-scripts` job on a PR that touches the dump script, the

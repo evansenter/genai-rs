@@ -648,8 +648,11 @@ fn test_interaction_response_complex_roundtrip() {
             ..Default::default()
         }),
         tools: Some(vec![
-            crate::Tool::GoogleSearch { search_types: None },
-            crate::Tool::CodeExecution,
+            crate::Tool::GoogleSearch {
+                search_types: None,
+                extra: Default::default(),
+            },
+            crate::Tool::code_execution(),
         ]),
         previous_interaction_id: Some("previous-interaction-abc".to_string()),
         ..Default::default()
@@ -763,7 +766,7 @@ fn test_interaction_response_complex_roundtrip() {
     let tools = deserialized.tools.expect("Should have tools");
     assert_eq!(tools.len(), 2);
     assert!(matches!(tools[0], crate::Tool::GoogleSearch { .. }));
-    assert!(matches!(tools[1], crate::Tool::CodeExecution));
+    assert!(matches!(tools[1], crate::Tool::CodeExecution { .. }));
 }
 
 // --- File Search Result Helper Tests ---

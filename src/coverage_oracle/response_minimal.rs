@@ -18,10 +18,10 @@ use serde_json::Value;
 use super::api_surface::{Finding, Surface, SynthOptions, Ty};
 use super::response::{analyze, values};
 use super::response_targets::{Target, targets};
-use super::{Allowed, assert_clean};
+use super::{Allowed, assert_clean, spec_class};
 
 /// Optional fields the crate cannot read a class without.
-const SPARSE: &[Allowed] = &[
+pub(super) const SPARSE: &[Allowed] = &[
     (
         "legacy.File.name",
         "`FileMetadata` requires `name`, the file's resource name, which every \
@@ -136,16 +136,26 @@ fn sparse_binding_bodies_deserialize() {
     );
 }
 
+/// Both spec snapshots ([`super::SPECS`]), with one set of exceptions.
 #[test]
 fn sparse_spec_bodies_deserialize() {
-    let surface = Surface::openapi("openapi-v1beta.json");
+    let mut all = Vec::new();
+    let mut fetched = Vec::new();
+    for file in super::SPECS {
+        let surface = Surface::openapi(file);
+        for mut finding in findings(&surface, targets(), |t| spec_class(&surface, t)) {
+            finding.path = format!("{} {}", surface.name, finding.path);
+            all.push(finding);
+        }
+        fetched.push(format!("{} {}", surface.name, surface.version));
+    }
     assert_clean(
         &format!(
-            "Response classes read with only their required fields, vs the v1beta OpenAPI spec ({})",
-            surface.version
+            "Response classes read with only their required fields, vs the OpenAPI specs ({})",
+            fetched.join(", ")
         ),
-        &surface,
-        findings(&surface, targets(), |t| t.spec),
+        &Surface::openapi(super::SPECS[0]),
+        all,
         &[("SPARSE", SPARSE)],
     );
 }

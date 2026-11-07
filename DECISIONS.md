@@ -1191,9 +1191,42 @@ merely a field named `extra`.
 request configs and the Antigravity types (D-007): add
 `..Default::default()`. `SafetySetting::new` loses `const`. A caller can
 now also send a field of these configs the crate does not model yet, as
-`GenerationConfig::extra` allowed. Not covered: the `Tool` enum's known
-variants, which keep no `extra` (enums are outside the guard, as `Step`'s
-were before #491).
+`GenerationConfig::extra` allowed.
+
+*Amended 2026-11-07 (#504, WP13).* The request-side unions a stored
+interaction serves back keep theirs too: every known variant of `Tool`,
+`ResponseFormat` and `TranscriptionMode` has an `extra` map, and
+`ToolChoice::AllowedTools` keeps the keys beside `allowed_tools`
+(D-037). The guard gained an enum arm: a public enum without
+`#[non_exhaustive]`, a deserializable one without an `Unknown` variant, and
+a known variant of such a union without an `extra` map each fail it unless
+an exemption names them with a reason. A newtype variant always needs one:
+its inner type keeps its own fields, but the syntax does not show whether
+keys sit beside that value, as they did beside the old
+`ToolChoice::AllowedTools(AllowedTools)`. What stays uncovered, each with
+its reason in the guard:
+
+- The retrieval tool's configs (`SENT_ONLY` above). The retrieval tool
+  itself keeps its `extra`.
+- Bare-string forms, which have no fields: `VideoProcessing::Static` and
+  `Agentic`, `NetworkConfig::Disabled`, `ToolChoice::Mode` and
+  `EnvironmentSpec::Id`. `EnvironmentSpec::Remote` reads the whole object
+  into `RemoteEnvironment`, which keeps its `extra`; nothing wraps it.
+  `NetworkConfig::AllowlistDisabled`
+  is read only when `allowlist` is the object's one key; with another key
+  beside it the object is kept whole as `NetworkConfig::Unknown`.
+- The untagged unions with no `Unknown` variant, whose arms keep what they
+  do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
+  `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
+  `FunctionResultPayload`.
+- The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
+  stream events that nothing sends back, serialized only in the crate's own
+  `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
+  a key the API adds to an SSE event's envelope itself is dropped.
+- The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
+  crate only sends to the harness. A payload struct keeps its own `extra`;
+  a bool or string payload has no fields.
+- `DecodeError`, which is exhaustive but crate-internal.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1244,6 +1277,134 @@ fixtures every example copy is checked against.
 **Consequences.** The example and the live test make one TTS request
 before transcribing. A silent clip still serves the acceptance tests, which
 read the stored config back rather than the transcript.
+
+## D-037 — Known request-side union variants keep `extra`; the unit tools become struct variants (2026-11-07)
+
+**Context.** C1 of the 2026-11-07 grading: `Tool`, `ResponseFormat` and
+`TranscriptionMode` read their known variants with derived or field-picking
+serde, and `ToolChoice` kept only `allowed_tools`, so a stored
+interaction's echoed `tools`, `response_format` and `generation_config`
+lost a field the API adds. D-034 had named `Tool` as not covered, and no
+guard looked at enums. `Tool::CodeExecution` and `Tool::UrlContext` were
+unit variants, with nowhere to keep a field.
+
+**Decision.** Every known variant gets `extra: Map<String, Value>`, read
+and written through `src/wire_fields.rs` as `Step`'s is (#491), so an
+`extra` entry never shadows a modeled field or `type`. The two unit tools
+become `{ extra }` struct variants, built with `Tool::code_execution()` and
+`Tool::url_context()`. Rejected: reading a unit tool that carries an extra
+key as `Tool::Unknown`, which keeps the data but makes the tool stop
+matching `Tool::CodeExecution`. `ToolChoice::AllowedTools(AllowedTools)`
+becomes `AllowedTools { allowed_tools, extra }`, as
+`NetworkConfig::Allowlist { entries, extra }` is, with
+`From<AllowedTools> for ToolChoice`. `TranscriptionMode` gains `smart()`
+and `verbatim()`, since a variant literal now needs `extra`. A known variant
+with a malformed field is kept whole as `Unknown`; `TranscriptionMode` used
+to read its fields leniently instead. Strict mode still does not apply to
+these unions (D-001).
+
+**Consequences.** Breaking (D-007) for struct literals of these variants
+(add `extra: Default::default()` or use a constructor), for patterns that
+list every field (add `..`), for `Tool::CodeExecution` and
+`Tool::UrlContext` as values (`Tool::code_execution()`) and patterns
+(`{ .. }`), and for `ToolChoice::AllowedTools(x)` (`ToolChoice::from(x)`;
+the pattern is `AllowedTools { allowed_tools, .. }`). `ResponseFormat`
+grew past clippy's `large_enum_variant` bar inside `ResponseFormatSpec`;
+the lint is allowed there, since a request holds one.
+
+## D-038 — The Antigravity enums share `wire_enum!`'s non-string rule but keep their own macro (2026-11-07)
+
+**Context.** C2 of the 2026-11-07 grading: `wire_string_enum!`
+(`src/antigravity/protocol/enums.rs`, 17 enums) duplicated `wire_enum!`
+and still had the bug `wire_enum!` had fixed: a non-string value read into
+`Unknown` was written back as a string, `7` as `"7"`.
+
+**Decision.** Port the fix rather than merge the macros. The rule lives in
+two crate-private helpers in `src/wire_enum.rs`, `unknown_type` and
+`serialize_wire`, which both macros call, so it cannot drift again: a
+non-string value is typed `<non-string: ...>` and written back as its JSON.
+The harness enums keep their own macro because they differ on purpose:
+strict mode does not apply to the harness protocol, which is internal and
+unstable; an unrecognized value is recorded for `drift_report`; and
+`as_wire_str` is public, and `all_wire_values` feeds the protocol-drift
+guard. Generating them from `wire_enum!` would take three switches on it,
+one of them turning strict mode off.
+
+**Consequences.** `unknown_<context>_type()` on a harness enum read from a
+non-string value now returns `<non-string: 7>`, not `7`, and
+`drift_report` keys it the same way. The enum guard checks both macros'
+templates for `#[non_exhaustive]` and an `Unknown` variant.
+
+## D-039 — A chosen Files API upload name stays unmodeled (2026-11-07)
+
+**Context.** google-genai's `files.upload(config={"name": ...})` sends a
+chosen `files/<id>` in the upload's start request. Probed live on
+2026-11-07: the API accepts it and serves the file under that name, and a
+second upload under the same name fails at finalize, after the bytes are
+sent, with `409 <id> already exists. (ALREADY_EXISTS)`. So a chosen name
+makes an upload idempotent: a retry of one that landed gets the 409
+instead of a duplicate file. `UploadFileConfig` is a hand-written class in
+`types.py`; D-040 brings it into the bindings snapshot. `FileUpload`, the value `Files::upload` takes, is shared with
+`FileSearchStores::upload`, whose documents have no name to choose.
+
+**Decision.** Not modeled for now, and recorded in `docs/RESOURCES.md` and
+`docs/INTERACTIONS_API_GAP.md` with the probe's date. Modeling it is an API
+shape choice, not a field: a `with_name` on the shared `FileUpload` would
+need store uploads to reject it at runtime, so it needs a files-only shape,
+either an `impl Into<...>` wrapper like the store's `DocumentUpload` or a
+separate verb (which the live-per-handle guard would hold to a live test of
+its own). That choice is the owner's; nothing in the crate needs the name
+today.
+
+**Consequences.** A caller who wants an idempotent upload has no way to
+choose the name; a retry after a lost upload response can leave a duplicate
+file, which expires after 48 hours. `legacy.UploadFileConfig` is in the
+coverage oracle's `UNMAPPED` list with this reason, so modeling the name
+means removing that entry.
+
+## D-040 — The bindings snapshot carries query parameters, the legacy endpoints and the Api-Revision (2026-11-07)
+
+**Context.** `bindings.json` recorded each `_gaos` endpoint's method and
+path only, so a query key the crate misspelled, or one a release added,
+was invisible to the sweep and the oracle. The Files, File Search Store,
+Document and Operation surface (google-genai's hand-written modules) had
+no endpoints in it, and its classes came from a hand-picked
+`LEGACY_ROOTS` that left out `Operation`, so a new verb there went
+unseen. The `Api-Revision` the crate sends was a hand-kept constant with
+two script copies. The published OpenAPI URLs stopped serving around
+2026-11-03, and nothing watched them (#511; the URLs' state is recorded
+in docs/INTERACTIONS_API_GAP.md, "How to verify API surface").
+
+**Decision.** `dump_bindings_schema.py` records `endpoints` as an object,
+each `METHOD /path` with its `query` parameters (the `_gaos/models/`
+request class's `QueryParamMetadata` fields, or the `_query` keys the
+legacy converters set), and `api_revision` (the bindings'
+`*API_REVISION` constant). The legacy modules' endpoints come from the
+methods that reach the Gemini Developer API; a full resource name in a
+path (`{name}`, `{parent}`) is spelled out from the class's `_list` path
+(`fileSearchStores/{}/documents/{}`), and one it cannot place keeps its
+name (`{operationName}`), since `{}` would collide. The legacy classes
+are the ones those methods' signatures name (return type, `config`,
+`*OrDict` arguments, a TypeVar's bound), with inherited fields, without
+the fields a converter routes into the URL or query string, and without
+a root that has no wire field left. `tests/request_wire_oracle.rs` calls
+every handle verb with every list builder option (both checked) and
+checks each query key against its endpoint, with `QUERY_ALLOWED` and
+`NOT_SENT` holding the reasoned exceptions; a template that keeps a full
+resource name matches only the resource names `FULL_NAMES` gives it, so
+it cannot take every GET. `tests/ci_coverage.rs` maps the legacy
+endpoints and holds every `API_REVISION` copy to the bindings'. The
+sweep probes the spec URLs daily and comments on #511 once per URL that
+serves again.
+
+**Consequences.** Conservative choices, left for the owner: the crate
+keeps sending `page_size`/`page_token` to the store and document
+listings, which take them as well as the bindings' camelCase pair (live
+2026-09-27), so both spellings are reasoned entries rather than a wire
+change; and the watch comments rather than refreshing the spec snapshot
+itself, since a refresh feeds the response-side spec pass. A new
+legacy class appears in `bindings.json` as soon as a signature names it,
+so `every_binding_class_is_mapped` lists it until it is mapped.
 
 ---
 

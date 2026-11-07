@@ -9,6 +9,15 @@ use serde_json::Value;
 /// Generates a proto-JSON string enum with an `Unknown` variant that
 /// preserves unrecognized wire values, plus the crate-standard helper
 /// methods (`is_unknown`, `unknown_<context>_type`, `unknown_data`).
+///
+/// The Evergreen rules are `wire_enum!`'s, through its shared helpers
+/// ([`crate::wire_enum::unknown_type`], [`crate::wire_enum::serialize_wire`]):
+/// a non-string value lands in `Unknown` typed `<non-string: …>` and goes
+/// back out as the original JSON. What differs is the harness's: strict mode
+/// does not apply (the protocol is internal and unstable, so soft typing is
+/// always on), an unrecognized value is recorded for
+/// [`drift_report`](super::drift_report), the wire string is public
+/// (`as_wire_str`), and `all_wire_values` feeds the protocol-drift guard.
 macro_rules! wire_string_enum {
     (
         $(#[$meta:meta])*
@@ -81,7 +90,7 @@ macro_rules! wire_string_enum {
 
         impl Serialize for $name {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.serialize_str(self.as_wire_str())
+                crate::wire_enum::serialize_wire(self.as_wire_str(), self.unknown_data(), serializer)
             }
         }
 
@@ -97,10 +106,7 @@ macro_rules! wire_string_enum {
                         _ => {}
                     }
                 }
-                let $ctx = match &value {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
+                let $ctx = crate::wire_enum::unknown_type(&value);
                 tracing::warn!(
                     concat!("Unknown ", stringify!($name), " wire value: '{}'. \
                      Preserving in Unknown variant."),
@@ -397,3 +403,7 @@ wire_string_enum!(
         CreateOnly => "CREATE_ONLY",
     }
 );
+
+#[cfg(test)]
+#[path = "enums_tests.rs"]
+mod tests;

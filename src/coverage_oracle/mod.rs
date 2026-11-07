@@ -114,6 +114,13 @@ fn assert_clean(
     );
 }
 
+/// Why the file search operations are not response targets.
+#[cfg(not(genai_strict_unknown))]
+const OPERATION: &str = "A store upload's or import's operation: the crate reads only its \
+     `done`, `error` and `response.documentName` (`Operation` in \
+     src/http/file_search_stores.rs) to find the document, then returns the document \
+     read back, whose legacy.Document is a response target.";
+
 /// Binding classes no request case or response target reaches, each with
 /// its reason. (Like the response side, checked in the default build only.)
 #[cfg(not(genai_strict_unknown))]
@@ -128,6 +135,29 @@ const UNMAPPED: &[Allowed] = &[
          `data:` line itself (src/http/sse_parser.rs), and the response side \
          checks InteractionSSEEvent.",
     ),
+    (
+        "legacy.DeleteFileResponse",
+        "`Files::delete` returns `()` and reads no body.",
+    ),
+    ("legacy.ImportFileOperation", OPERATION),
+    ("legacy.ImportFileResponse", OPERATION),
+    ("legacy.Operation", OPERATION),
+    (
+        "legacy.RegisterFilesResponse",
+        "files.register_files has no verb: it wants OAuth credentials, and an API \
+         key gets `401 API keys are not supported` (live 2026-11-05, \
+         docs/INTERACTIONS_API_GAP.md \"Resource residue\").",
+    ),
+    (
+        "legacy.UploadFileConfig",
+        "files.upload's settings, which go out as the uploaded file's fields: \
+         tests/request_wire_oracle.rs checks that body against legacy.File, which \
+         covers displayName and mimeType. Its `name` (a chosen `files/<id>`) is not \
+         sent: `FileUpload` is shared with store uploads, which take no name \
+         (D-039; docs/RESOURCES.md, files.upload).",
+    ),
+    ("legacy.UploadToFileSearchStoreOperation", OPERATION),
+    ("legacy.UploadToFileSearchStoreResponse", OPERATION),
     (
         "types.Security",
         "The SDK's client credentials (api key, access token), not API surface.",
@@ -190,6 +220,217 @@ fn every_binding_class_is_mapped() {
         findings,
         &[("UNMAPPED", UNMAPPED)],
     );
+}
+
+/// The OpenAPI snapshots the response side checks. v1 defines a subset of
+/// v1beta's schemas (the interactions, none of the resources) with a few
+/// values of its own (`v1_only_values_are_checked`), and the crate speaks
+/// both (`ClientBuilder::with_api_version`). Each spec test runs over both
+/// and reads one set of exceptions: an entry is stale only when neither
+/// file matches it.
+#[cfg(not(genai_strict_unknown))]
+const SPECS: [&str; 2] = ["openapi-v1beta.json", "openapi-v1.json"];
+
+/// A schema or alias `surface` defines.
+#[cfg(not(genai_strict_unknown))]
+fn defines(surface: &Surface, name: &str) -> bool {
+    surface.classes.contains_key(name) || surface.aliases.contains_key(name)
+}
+
+/// A target's spec schema in `surface`. v1beta defines every target's, so a
+/// missing one fails there (in `Surface::ty`); v1 defines only the
+/// interactions' (`InteractionResponse`, `StreamEvent`), and its other
+/// targets are skipped.
+#[cfg(not(genai_strict_unknown))]
+fn spec_class(surface: &Surface, target: &response_targets::Target) -> Option<&'static str> {
+    target
+        .spec
+        .filter(|class| surface.name == "openapi-v1beta" || defines(surface, class))
+}
+
+/// Spec schemas no response target reaches, each with its reason. Requests
+/// are checked against the bindings only, which lead the spec there (see
+/// [`request`]), so the request bodies are here.
+#[cfg(not(genai_strict_unknown))]
+const SPEC_UNMAPPED: &[Allowed] = &[
+    ("CreateEnvironmentRequest", REQUEST_BODY),
+    ("CreateModelInteractionParams", REQUEST_BODY),
+    (
+        "CreateAgentInteractionParams",
+        "A request body (see REQUEST_BODY). v1beta reaches it from a \
+         response too, `Trigger.interaction`; v1 has no triggers.",
+    ),
+    ("CreateVoiceRequest", REQUEST_BODY),
+    ("CreateWebhookRequest", REQUEST_BODY),
+    ("EnvironmentVariableConfig", REQUEST_BODY),
+    ("EnvironmentVariableUpdateConfig", REQUEST_BODY),
+    ("HttpBearerConfig", REQUEST_BODY),
+    ("HttpBearerUpdateConfig", REQUEST_BODY),
+    ("OAuth2Config", REQUEST_BODY),
+    ("OAuth2UpdateConfig", REQUEST_BODY),
+    ("PingWebhookRequest", REQUEST_BODY),
+    ("RotateSigningSecretRequest", REQUEST_BODY),
+    ("RunTriggerRequest", REQUEST_BODY),
+    ("TriggerUpdate", REQUEST_BODY),
+    ("UpdateTriggerRequest", REQUEST_BODY),
+    ("UpdateWebhookRequest", REQUEST_BODY),
+    ("WebhookUpdate", REQUEST_BODY),
+    (
+        "UploadEnvironmentFileRequest",
+        "The upload's options, which `EnvironmentFiles::upload` sends as the \
+         `overwrite` and `extract` query parameters; the start request has no \
+         body.",
+    ),
+    (
+        "HttpBody",
+        "A raw media body: `environments.files.download` serves the file's \
+         bytes under its own content type (live 2026-11-05), which \
+         `EnvironmentFiles::download` returns as they come.",
+    ),
+    (
+        "InteractionSseStreamEvent",
+        "The SSE frame (`{data: InteractionSseEvent}`): the crate parses the \
+         `data:` line itself (src/http/sse_parser.rs), and the response side \
+         checks InteractionSseEvent.",
+    ),
+];
+
+#[cfg(not(genai_strict_unknown))]
+const REQUEST_BODY: &str = "A request body, or part of one: the request side \
+     checks what the crate sends against its binding class, which leads the \
+     spec on requests.";
+
+/// The spec twin of [`every_binding_class_is_mapped`]: every schema each
+/// spec snapshot defines is reached from a response target, or listed in
+/// [`SPEC_UNMAPPED`] with its reason. A spec-only response the crate parses
+/// (`UploadEnvironmentFileResponse`, which the bindings fold into
+/// `GetEnvironmentFilesResponse`) is a target of its own, so a schema a new
+/// spec adds fails here until it is mapped.
+#[cfg(not(genai_strict_unknown))]
+#[test]
+fn every_spec_schema_is_mapped() {
+    let mut findings = Vec::new();
+    let mut fetched = Vec::new();
+    for file in SPECS {
+        let surface = Surface::openapi(file);
+        let mut reached = BTreeSet::new();
+        for target in response_targets::targets() {
+            if let Some(class) = spec_class(&surface, &target) {
+                reached.extend(surface.reachable_classes(&surface.ty(class)));
+            }
+        }
+        findings.extend(
+            surface
+                .classes
+                .keys()
+                .filter(|class| !reached.contains(*class))
+                .map(|class| Finding {
+                    path: format!("{} {class}", surface.name),
+                    site: class.clone(),
+                    message: "no response target reaches it".into(),
+                }),
+        );
+        fetched.push(format!("{} {}", surface.name, surface.version));
+    }
+    assert_clean(
+        &format!(
+            "Spec schemas the oracle does not check ({})",
+            fetched.join(", ")
+        ),
+        &Surface::openapi(SPECS[0]),
+        findings,
+        &[("SPEC_UNMAPPED", SPEC_UNMAPPED)],
+    );
+}
+
+/// Every exception list's entries, as `(list, entry, reason)`.
+fn reasons() -> Vec<(&'static str, &'static str, &'static str)> {
+    let lists: &[(&str, &[Allowed])] = &[
+        ("request ALLOWED", request::ALLOWED),
+        ("request NOT_SENT", request::NOT_SENT),
+        #[cfg(not(genai_strict_unknown))]
+        ("UNMAPPED", UNMAPPED),
+        #[cfg(not(genai_strict_unknown))]
+        ("SPEC_UNMAPPED", SPEC_UNMAPPED),
+        #[cfg(not(genai_strict_unknown))]
+        ("response ALLOWED", response::ALLOWED),
+        #[cfg(not(genai_strict_unknown))]
+        ("response GAPS", response::GAPS),
+        #[cfg(not(genai_strict_unknown))]
+        ("SPARSE", response_minimal::SPARSE),
+    ];
+    lists
+        .iter()
+        .flat_map(|&(list, entries)| {
+            entries
+                .iter()
+                .map(move |(entry, reason)| (list, *entry, *reason))
+        })
+        .collect()
+}
+
+/// Whether a reason states what the API did, or does (a word like
+/// "served", "rejected", "accepted" or "live", or an HTTP error status),
+/// without the `YYYY-MM` date of the observation (D-010): a live fact goes
+/// stale, and the date says how stale.
+fn undated_live_claim(reason: &str) -> bool {
+    const STEMS: &[&str] = &[
+        "live", "serv", "reject", "accept", "ignor", "observ", "seen", "probe",
+    ];
+    let lower = reason.to_lowercase();
+    let claims = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| {
+            STEMS.iter().any(|stem| word.starts_with(stem))
+                || (word.len() == 3
+                    && word.starts_with(['4', '5'])
+                    && word.bytes().all(|b| b.is_ascii_digit()))
+        });
+    let dated = reason.as_bytes().windows(7).any(|w| {
+        w.starts_with(b"20")
+            && w[2..4].iter().all(u8::is_ascii_digit)
+            && w[4] == b'-'
+            && w[5..7].iter().all(u8::is_ascii_digit)
+    });
+    claims && !dated
+}
+
+/// Every reason that states a live fact dates it.
+#[test]
+fn live_claims_are_dated() {
+    let undated: Vec<String> = reasons()
+        .into_iter()
+        .filter(|(_, _, reason)| undated_live_claim(reason))
+        .map(|(list, entry, reason)| format!("{list}: {entry}: {reason}"))
+        .collect();
+    assert!(
+        undated.is_empty(),
+        "Reasons that state a live fact without its YYYY-MM date (D-010):\n  {}",
+        undated.join("\n  ")
+    );
+}
+
+/// The check rejects the undated reasons it was written for and passes
+/// their dated forms, and leaves a reason that claims nothing live alone.
+#[test]
+fn an_undated_live_claim_is_rejected() {
+    for undated in [
+        "The protobuf default; never served.",
+        "Deprecated; rejected live with 400 Unknown parameter (2.25.0 sweep, \
+         docs/INTERACTIONS_API_GAP.md, D-005).",
+        "A function tool sent with only a name is accepted.",
+        "Answered with a 404.",
+    ] {
+        assert!(undated_live_claim(undated), "{undated}");
+    }
+    for fine in [
+        "Deprecated; rejected live with 400 Unknown parameter (2026-09-24).",
+        "Served on function_call steps (live 2026-07).",
+        "Empty; `Voices::delete` reads no body.",
+        "The SDK's sentinel for an unset field, not API surface.",
+    ] {
+        assert!(!undated_live_claim(fine), "{fine}");
+    }
 }
 
 /// The types `document_from_file()` sends as documents are the bindings'

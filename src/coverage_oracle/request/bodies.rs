@@ -24,11 +24,10 @@ use crate::file_search_stores::{
 use crate::http::file_search_stores::{ImportFileBody, UploadDocumentBody};
 use crate::http::webhooks::WebhookInput;
 use crate::request::{
-    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
-    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
-    ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, ServiceTier,
-    SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TranscriptionMode,
-    VideoConfig, VideoTask, Visualization,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, DeepResearchConfig, DynamicConfig,
+    GenerationConfig, ImageAspectRatio, ImageConfig, ImageSize, InteractionInput,
+    InteractionRequest, ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries,
+    TranscriptionConfig, TranscriptionMode, VideoConfig, VideoTask,
 };
 use crate::response_format::{
     ResponseDelivery, ResponseFormat, ResponseFormatSpec, VideoResolution,
@@ -53,11 +52,14 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
         seed: Some(7),
         stop_sequences: Some(vec!["STOP".into()]),
         thinking_summaries: Some(ThinkingSummaries::Auto),
-        tool_choice: Some(ToolChoice::AllowedTools(AllowedTools {
-            mode: Some(FunctionCallingMode::Any),
-            tools: vec!["get_weather".into()],
-            ..Default::default()
-        })),
+        tool_choice: Some(ToolChoice::AllowedTools {
+            allowed_tools: AllowedTools {
+                mode: Some(FunctionCallingMode::Any),
+                tools: vec!["get_weather".into()],
+                ..Default::default()
+            },
+            extra: Default::default(),
+        }),
         speech_config: Some(vec![SpeechConfig {
             voice: Some("Kore".into()),
             language: Some("en-US".into()),
@@ -84,6 +86,7 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             mode: Some(TranscriptionMode::Verbatim {
                 diarization_mode: Some("speaker".into()),
                 timestamp_granularities: Some(vec!["word".into()]),
+                extra: Default::default(),
             }),
             ..Default::default()
         }),
@@ -93,6 +96,7 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
     modes.transcription_config = Some(TranscriptionConfig {
         mode: Some(TranscriptionMode::Smart {
             source_text: Some("Hello there.".into()),
+            extra: Default::default(),
         }),
         ..Default::default()
     });
@@ -108,38 +112,29 @@ pub(super) fn safety_settings() -> Vec<SafetySetting> {
     }]
 }
 
-pub(super) fn agent_configs() -> Vec<AgentConfig> {
+/// Every agent config, each built by its type's `fully_populated()`: a
+/// struct literal with every field set, which a new field fails to compile
+/// (the fields are private, so the literals live beside the types, in
+/// `src/request/agent_config.rs`). Paired with the `{:?}` of each, so
+/// `agent_configs_set_every_field` can see a field that sends no key.
+pub(super) fn agent_config_types() -> Vec<(String, AgentConfig)> {
+    let deep_research = DeepResearchConfig::fully_populated();
+    let antigravity = AntigravityConfig::fully_populated();
+    let dynamic = DynamicConfig::fully_populated();
+    let code_mender = CodeMenderConfig::fully_populated();
     vec![
-        DeepResearchConfig::new()
-            .with_thinking_summaries(ThinkingSummaries::Auto)
-            .with_visualization(Visualization::Auto)
-            .with_collaborative_planning(true)
-            .with_bigquery_tool(true)
-            .into(),
-        AntigravityConfig::new()
-            .with_model("m")
-            .with_max_total_tokens(1000)
-            .into(),
-        DynamicConfig::new().into(),
-        CodeMenderConfig::new()
-            .with_model("m")
-            .with_session_id("s")
-            .with_max_rounds(3)
-            .with_find_request(
-                CodeMenderFindRequest::new()
-                    .with_description("d")
-                    .with_finding_id("f")
-                    .with_mode(CodeMenderMode::Verify)
-                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
-            )
-            .with_fix_request(
-                CodeMenderFixRequest::new()
-                    .with_description("d")
-                    .with_finding_id("f")
-                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
-            )
-            .into(),
+        (format!("{deep_research:?}"), deep_research.into()),
+        (format!("{antigravity:?}"), antigravity.into()),
+        (format!("{dynamic:?}"), dynamic.into()),
+        (format!("{code_mender:?}"), code_mender.into()),
     ]
+}
+
+pub(super) fn agent_configs() -> Vec<AgentConfig> {
+    agent_config_types()
+        .into_iter()
+        .map(|(_, config)| config)
+        .collect()
 }
 
 pub(super) fn response_formats() -> Vec<ResponseFormat> {
@@ -147,18 +142,21 @@ pub(super) fn response_formats() -> Vec<ResponseFormat> {
         ResponseFormat::Text {
             mime_type: Some("application/json".into()),
             schema: Some(json!({"type": "object"})),
+            extra: Default::default(),
         },
         ResponseFormat::Audio {
             mime_type: Some("audio/wav".into()),
             delivery: Some(ResponseDelivery::Inline),
             sample_rate: Some(24_000),
             bit_rate: Some(64_000),
+            extra: Default::default(),
         },
         ResponseFormat::Image {
             mime_type: Some("image/jpeg".into()),
             delivery: Some(ResponseDelivery::Uri),
             aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
             image_size: Some(ImageSize::Hd2k),
+            extra: Default::default(),
         },
         ResponseFormat::Video {
             delivery: Some(ResponseDelivery::Uri),
@@ -166,6 +164,7 @@ pub(super) fn response_formats() -> Vec<ResponseFormat> {
             aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
             duration: Some("8s".into()),
             resolution: Some(VideoResolution::Hd720p),
+            extra: Default::default(),
         },
     ];
     for format in &all {
@@ -393,18 +392,13 @@ pub(super) fn agents() -> Vec<Value> {
             to_value(&Agent {
                 id: Some("my-agent".into()),
                 base_agent: Some(crate::DEFAULT_ANTIGRAVITY_AGENT.into()),
-                agent_config: Some(
-                    AntigravityConfig::new()
-                        .with_model("m")
-                        .with_max_total_tokens(1000)
-                        .into(),
-                ),
+                agent_config: Some(AntigravityConfig::fully_populated().into()),
                 system_instruction: Some("be brief".into()),
                 description: Some("d".into()),
                 tools: Some(vec![
                     tools().remove(0),
-                    Tool::CodeExecution,
-                    Tool::UrlContext,
+                    Tool::code_execution(),
+                    Tool::url_context(),
                     tools().remove(1),
                     tools().remove(6),
                 ]),

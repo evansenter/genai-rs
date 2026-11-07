@@ -48,10 +48,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_transcription_config(
             TranscriptionConfig::new()
                 .with_language_codes(["en-US"])
-                .with_mode(TranscriptionMode::Verbatim {
-                    diarization_mode: Some("speaker".to_string()),
-                    timestamp_granularities: Some(vec!["word".to_string()]),
-                }),
+                .with_mode(TranscriptionMode::verbatim(
+                    Some("speaker".to_string()),
+                    Some(vec!["word".to_string()]),
+                )),
         )
         .with_store_disabled()
         .create()
@@ -82,9 +82,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_model(genai_rs::DEFAULT_TRANSCRIPTION_MODEL)
         .with_content(vec![audio])
         .with_transcription_config(
-            TranscriptionConfig::new().with_mode(TranscriptionMode::Smart {
-                source_text: Some(SCRIPT.to_string()),
-            }),
+            TranscriptionConfig::new()
+                .with_mode(TranscriptionMode::smart(Some(SCRIPT.to_string()))),
         )
         .with_store_disabled()
         .create()
