@@ -388,7 +388,7 @@ pub(super) fn tools() -> Vec<Tool> {
             name: "get_weather".into(),
             description: Some("Gets the weather".into()),
             parameters: Some(FunctionParameters::new(
-                "object".into(),
+                "object",
                 json!({"city": {"type": "string"}}),
                 vec!["city".into()],
             )),

@@ -296,8 +296,8 @@ pub use function_calling::{CallableFunction, FunctionError, FunctionFuture, Tool
 /// guarantee, and nothing outside the generated code should name it (#490).
 ///
 /// The generated code registers each function with `inventory` through
-/// `submit!` and `CallableFunctionFactory`, and builds JSON with
-/// `serde_json`. Resolving `::serde_json` would look it up in the
+/// `submit!` and `CallableFunctionFactory`, builds its declaration with
+/// `function_declaration`, and builds JSON with `serde_json`. Resolving `::serde_json` would look it up in the
 /// *consumer's* dependency graph, which forced every downstream crate to add
 /// it as a direct dependency just to use the macro (#402). Routing through
 /// here resolves both in this crate's graph instead, so `genai-rs` +
@@ -318,6 +318,24 @@ pub mod __private {
         pub const fn new(factory_fn: fn() -> Box<dyn crate::CallableFunction>) -> Self {
             Self { factory_fn }
         }
+    }
+
+    /// A `#[tool]` function's declaration: its name and description, and an
+    /// object schema of `properties` with the `required` names. The
+    /// constructors it calls are crate-private, so the generated code
+    /// reaches them only through here.
+    #[must_use]
+    pub fn function_declaration(
+        name: &str,
+        description: &str,
+        properties: serde_json::Value,
+        required: Vec<String>,
+    ) -> crate::FunctionDeclaration {
+        crate::FunctionDeclaration::new(
+            name,
+            description,
+            crate::FunctionParameters::new("object", properties, required),
+        )
     }
 }
 

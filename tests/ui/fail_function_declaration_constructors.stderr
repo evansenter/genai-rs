@@ -1,0 +1,41 @@
+error[E0624]: associated function `new` is private
+  --> tests/ui/fail_function_declaration_constructors.rs:13:42
+   |
+13 |       let parameters = FunctionParameters::new("object", Default::default(), Vec::new());
+   |                                            ^^^ private associated function
+   |
+  ::: src/tools/function.rs
+   |
+   | /     pub(crate) fn new(
+   | |         type_: impl Into<String>,
+   | |         properties: serde_json::Value,
+   | |         required: Vec<String>,
+   | |     ) -> Self {
+   | |_____________- private associated function defined here
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `Paint` which provides `new` is implemented but not in scope; perhaps you want to import it
+   |
+10 + use yansi::paint::Paint;
+   |
+
+error[E0624]: associated function `new` is private
+  --> tests/ui/fail_function_declaration_constructors.rs:14:45
+   |
+14 |       let _declaration = FunctionDeclaration::new("name", "description", parameters);
+   |                                               ^^^ private associated function
+   |
+  ::: src/tools/function.rs
+   |
+   | /     pub(crate) fn new(
+   | |         name: impl Into<String>,
+   | |         description: impl Into<String>,
+   | |         parameters: FunctionParameters,
+   | |     ) -> Self {
+   | |_____________- private associated function defined here
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `Paint` which provides `new` is implemented but not in scope; perhaps you want to import it
+   |
+10 + use yansi::paint::Paint;
+   |

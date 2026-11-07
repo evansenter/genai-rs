@@ -752,6 +752,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still the retryable `StreamInterrupted`. Migration: match
   `MalformedResponse` where you matched `Utf8`; where `?` converted a
   `Utf8Error` into a `GenaiError`, map it into your own error.
+- **Breaking: `FunctionDeclaration::new` and `FunctionParameters::new` are
+  no longer public** (#504). They were `#[doc(hidden)]` plumbing for
+  `#[tool]`, which now builds its declaration through the doc-hidden
+  `genai_rs::__private`, with no semver guarantee. Migration: build a
+  declaration with
+  `FunctionDeclaration::builder(name).with_description(..).add_parameter(..).with_required(..).build()`,
+  or deserialize one with `serde_json`; bump `genai-rs` and
+  `genai-rs-macros` together.
 - `PollOptions` polls no faster than `PollOptions::MIN_POLL_INTERVAL`
   (10 ms): a shorter `with_poll_interval`, `Duration::ZERO` included, is
   raised to it. A zero interval re-polled the moment each status request
@@ -841,9 +849,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build()` used to refuse the pair, a rule left from when content went on
   the wire as a bare array; the API takes the composed form like any
   history (verified live 2026-11-06).
-- `detect_mime_type`, `FunctionDeclaration::new` and
-  `FunctionParameters::new` are `#[must_use]`, so a call that discards the
-  result warns.
+- `detect_mime_type` is `#[must_use]`, so a call that discards the result
+  warns.
 
 ### Fixed
 

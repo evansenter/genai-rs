@@ -30,16 +30,18 @@ pub struct FunctionParameters {
 }
 
 impl FunctionDeclaration {
-    /// Creates a new FunctionDeclaration with the given fields.
-    ///
-    /// This is primarily intended for internal use by the macro system.
-    /// For manual construction, prefer using `FunctionDeclaration::builder()`.
-    #[doc(hidden)]
+    /// Creates a FunctionDeclaration from its parts: what `#[tool]` builds
+    /// (through `__private::function_declaration`) and the crate's own
+    /// tools. Callers outside the crate use [`FunctionDeclaration::builder`].
     #[must_use]
-    pub fn new(name: String, description: String, parameters: FunctionParameters) -> Self {
+    pub(crate) fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: FunctionParameters,
+    ) -> Self {
         Self {
-            name,
-            description,
+            name: name.into(),
+            description: description.into(),
             parameters,
         }
     }
@@ -81,15 +83,17 @@ impl FunctionDeclaration {
 }
 
 impl FunctionParameters {
-    /// Creates a new FunctionParameters with the given fields.
-    ///
-    /// This is primarily intended for internal use by the macro system.
-    /// For manual construction, prefer using `FunctionDeclaration::builder()`.
-    #[doc(hidden)]
+    /// Creates a FunctionParameters schema from its parts, with no other
+    /// keywords. Callers outside the crate use
+    /// [`FunctionDeclaration::builder`], or deserialize a schema.
     #[must_use]
-    pub fn new(type_: String, properties: serde_json::Value, required: Vec<String>) -> Self {
+    pub(crate) fn new(
+        type_: impl Into<String>,
+        properties: serde_json::Value,
+        required: Vec<String>,
+    ) -> Self {
         Self {
-            type_,
+            type_: type_.into(),
             properties,
             required,
             extra: serde_json::Map::new(),
