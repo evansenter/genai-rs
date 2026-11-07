@@ -23,9 +23,11 @@ cargo +nightly fuzz run sse_parser corpus/sse_parser seeds/sse_parser -- -max_to
 ```
 
 `seeds/<target>/` is the committed seed corpus (small real shapes, including
-a live text stream captured 2026-11-04). Pass it after the scratch corpus
-directory so new finds land in `corpus/`, which is gitignored with
-`artifacts/`.
+a live text stream captured 2026-11-04, and inputs that once failed). Pass it
+after the scratch corpus directory so new finds land in `corpus/`, which is
+gitignored with `artifacts/`. The crate's own tests replay every seed
+through its target (`committed_seeds_replay_through_their_targets` in
+`src/fuzzing_tests.rs`), so each target needs a seed directory.
 
 ## When a target fails
 
@@ -43,3 +45,10 @@ the failing input as the `fuzz-<target>-crash` artifact. Each run starts
 from the corpus the last green scheduled or manual run grew (an Actions
 cache per target, `fuzz-corpus-<target>-*`), so the weekly runs go deeper
 over time; a pull request's run reads that corpus but does not save its own.
+
+The workflow starts on every pull request, and its `Fuzz Gate` job reports
+on each one: it passes at once when no fuzzed path changed, and otherwise
+only when every target ran clean. It is the check branch protection can
+require, since the per-target checks exist only on runs that fuzz. A new
+target goes in `Cargo.toml`'s `[[bin]]` list, the workflow's `target`
+matrix and `seeds/`; `tests/ci_coverage.rs` fails until all three agree.

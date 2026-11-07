@@ -85,7 +85,10 @@ and `status()` for the common checks.
   retryable; see [Cut-off streams](RELIABILITY.md#cut-off-streams).
 - **On an unknown event.** A body that ends right after an event this crate
   doesn't recognize ends cleanly, with a `warn!`: it may be a new terminal
-  event (Evergreen).
+  event (Evergreen). `create_stream_with_auto_functions()` needs each
+  round's `Completed` to go on, so a round that ends this way fails with the
+  retryable `StreamInterrupted`; see
+  [An unrecognized last event](RELIABILITY.md#an-unrecognized-last-event).
 
 ### Read to the end
 

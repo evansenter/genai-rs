@@ -437,6 +437,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry loop built on `is_retryable()` now also retries a clean early close.
   Discard the partial output first, because a foreground retry is a new
   generation.
+- **Breaking: an auto-function stream round that ends on an event this crate
+  doesn't recognize fails with the retryable `StreamInterrupted`, not
+  `MalformedResponse`.** The plain stream ends such a body cleanly, since
+  the event may be a new terminal one (Evergreen), but
+  `create_stream_with_auto_functions()` needs the round's `Completed` to go
+  on. It reported a permanent `MalformedResponse("Stream ended without
+  Complete event")`, so a retry loop treated the same end of a body two ways
+  depending on which stream read it. Migration: match
+  `StreamInterrupted { source: None, .. }` where you matched that
+  `MalformedResponse`; a retry loop built on `is_retryable()` now retries
+  it. See "An unrecognized last event" in `docs/RELIABILITY.md`.
 - **Breaking: `Client::new` and `ClientBuilder::build` set a 30 s connect
   timeout.** `DEFAULT_CONNECT_TIMEOUT` covers DNS, TCP and TLS. Before,
   there was none, so a black-holed route waited for the OS's timeout (about
@@ -669,6 +680,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[build]` in `.cargo/config.toml`; replace
   `#[cfg(feature = "strict-unknown")]` in your tests with
   `#[cfg(genai_strict_unknown)]`.
+- `PollOptions` polls no faster than `PollOptions::MIN_POLL_INTERVAL`
+  (10 ms): a shorter `with_poll_interval`, `Duration::ZERO` included, is
+  raised to it. A zero interval re-polled the moment each status request
+  answered, back to back until the deadline. 10 ms is far below a status
+  request's round trip, so an interval chosen on purpose is unaffected
+  (D-NEXT-WP20).
+- Every client sets TCP keepalive explicitly: a probe after 15 s idle, then
+  every 15 s, failing the connection after 3 unanswered (Windows can't set
+  the count and sends its own 10). These are reqwest 0.13's defaults, which
+  the crate relied on without setting, so a reqwest upgrade could have
+  changed the only thing that notices a dead peer on a connection with no
+  read timeout. A `Client`'s `Debug` output shows them; see
+  `docs/RELIABILITY.md`.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can
@@ -758,6 +782,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `backon` retry snippet in `docs/RELIABILITY.md` and
+  `examples/retry_with_backoff.rs` let a server's `Retry-After` bypass
+  `with_max_delay`: `adjust` replaces backon's delay after the cap, so a
+  429 asking for an hour slept for an hour. Both cap it at the backoff's
+  maximum now; copy the change into a loop built from either.
 - `#[tool]` documents everything it generates: the `<Name>Callable`
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that

@@ -24,6 +24,14 @@ pub struct PollOptions {
 }
 
 impl PollOptions {
+    /// The shortest interval a wait polls at: 10 ms. A shorter one, zero
+    /// included, is raised to it.
+    ///
+    /// A zero interval would send each status request as soon as the last
+    /// one answered, for as long as the timeout allows. 10 ms is far below
+    /// any status request's round trip, so it slows no real wait.
+    pub const MIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
     /// The waiting method's defaults for both values.
     #[must_use]
     pub const fn new() -> Self {
@@ -47,7 +55,9 @@ impl PollOptions {
     }
 
     /// Sleeps `poll_interval` between status requests, or longer when a
-    /// rate-limited (429) status request carries a `Retry-After`.
+    /// rate-limited (429) status request carries a `Retry-After`. An
+    /// interval under [`MIN_POLL_INTERVAL`](Self::MIN_POLL_INTERVAL)
+    /// (10 ms), such as `Duration::ZERO`, polls at that minimum instead.
     #[must_use]
     pub const fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
         self.poll_interval = Some(poll_interval);
@@ -59,9 +69,12 @@ impl PollOptions {
         self.timeout.unwrap_or(default)
     }
 
-    /// The poll interval, or `default` when unset.
+    /// The poll interval, or `default` when unset, raised to
+    /// [`MIN_POLL_INTERVAL`](Self::MIN_POLL_INTERVAL).
     pub(crate) fn poll_interval_or(self, default: Duration) -> Duration {
-        self.poll_interval.unwrap_or(default)
+        self.poll_interval
+            .unwrap_or(default)
+            .max(Self::MIN_POLL_INTERVAL)
     }
 
     /// Polls `get` until `check` reports the resource ready, `check` or the
