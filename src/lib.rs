@@ -42,6 +42,10 @@
 //!   [`CONTINUATION_MODEL`] answers resumed past `max_output_tokens`
 //! - **Local agents** (feature `antigravity`): a native client for the
 //!   Antigravity harness, with workspace containment, policies and hooks
+//! - **Wire inspection**: `LOUD_WIRE=1` prints every request, response and
+//!   SSE frame with no setup; a [`wire::WireInspector`] captures them as
+//!   structured events. Library logs go through `tracing`, so `RUST_LOG`
+//!   applies once your application installs a subscriber
 //!
 //! ## API Stability & Forward Compatibility
 //!
@@ -53,6 +57,9 @@
 //!
 //! When Google adds new features, your code continues to work. Unknown content types
 //! and tools are preserved for inspection via helper methods like `has_unknown()`.
+//! For tests that want to *find* unknowns, strict mode
+//! (`RUSTFLAGS="--cfg genai_strict_unknown"`, a cfg rather than a Cargo
+//! feature) makes unknown `Content`, `Step` and string-enum values errors.
 //!
 //! ## Module Organization
 //!
@@ -84,15 +91,15 @@ pub(crate) mod wire_fields;
 /// enforces it). It is a default, not a constraint:
 /// [`with_model`](InteractionBuilder::with_model) accepts any model id.
 ///
-/// Capability gap: this model rejects [`ThinkingLevel::Minimal`] with a 400
-/// (verified live 2026-10-01).
+/// Capability gap: this model rejects [`ThinkingLevel::Minimal`] with a
+/// 400.
 pub const DEFAULT_MODEL: &str = "gemini-3.8-flash";
 
 /// The model to use for image generation.
 ///
 /// Image output is a separate model family from [`DEFAULT_MODEL`], and there
 /// is no 3.8 image model: `gemini-3.8-flash` answers an image request with
-/// text only (verified live 2026-10-01).
+/// text only.
 pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 
 /// The model to use for text-to-speech.
@@ -103,8 +110,8 @@ pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 pub const DEFAULT_TTS_MODEL: &str = "gemini-3.8-flash-tts";
 
 /// The model to use for decoding continuation, the only one that supports
-/// it (verified live 2026-11-01; every other model answers `400 Decoding
-/// continuation is not enabled for this model`). See
+/// it (every other model answers `400 Decoding continuation is not enabled
+/// for this model`). See
 /// [`InteractionBuilder::with_continuation_token`].
 pub const CONTINUATION_MODEL: &str = "gemini-4-argon";
 
@@ -120,8 +127,8 @@ pub const DEFAULT_DEEP_RESEARCH_AGENT: &str = "deep-research-preview-04-2026";
 /// Unrelated to the `antigravity` cargo feature, which drives a *local*
 /// harness process instead.
 ///
-/// `antigravity-preview-09-2026` replaced `antigravity-preview-05-2026`,
-/// which shuts down on 2026-10-05. Its built-in tools are renamed and take
+/// `antigravity-preview-09-2026` replaced the retired
+/// `antigravity-preview-05-2026`. Its built-in tools are renamed and take
 /// PascalCase parameters, so code that parses its `function_call` steps by
 /// tool name must match the new names.
 pub const DEFAULT_ANTIGRAVITY_AGENT: &str = "antigravity-preview-09-2026";
@@ -350,11 +357,18 @@ mod streaming_tests;
 //
 // These include markdown documentation files for doctest verification.
 // Code blocks in markdown use annotations:
-// - `rust,ignore` - Not compiled (incomplete snippets)
-// - `rust,no_run` - Compiled but not executed (needs API key)
+// - `rust` - Compiled and run (needs no key or network)
+// - `rust,no_run` - Compiled but not executed (needs an API key, or the
+//   Antigravity harness)
+// - `rust,ignore` - Not compiled; each one carries a one-line
+//   `<!-- ignore: reason -->` comment above its fence
 // - `rust,compile_fail` - Should fail compilation
 //
-// Run with: cargo test --doc
+// Run with: cargo test --workspace --doc --all-features (CI also runs the
+// default feature set and strict mode). Not included: CLAUDE.md files,
+// CHANGELOG.md, and the maintainer notes docs/INTERACTIONS_API_GAP.md and
+// docs/ANTIGRAVITY_BRIDGE_DESIGN.md, which Cargo.toml's `include` leaves out
+// of the published crate.
 
 #[cfg(doctest)]
 mod doc_tests {
@@ -369,11 +383,9 @@ mod doc_tests {
 
     // Detailed guides in docs/
     doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
-    // ANTIGRAVITY.md uses `rust,ignore` code blocks: its snippets are
-    // fragments (undefined `agent`/`client` bindings) compile-checked via the
-    // feature-gated example and tests. The all-features doctest job could
-    // compile them if promoted to `no_run` and made self-contained — a
-    // possible future improvement.
+    // ANTIGRAVITY.md's blocks use `genai_rs::antigravity`, so they compile
+    // only with the feature: the all-features doctest job runs them.
+    #[cfg(feature = "antigravity")]
     doc_comment!(include_str!("../docs/ANTIGRAVITY.md"));
     doc_comment!(include_str!("../docs/BUILDER_API.md"));
     doc_comment!(include_str!("../docs/BUILT_IN_TOOLS.md"));

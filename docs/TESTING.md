@@ -41,7 +41,7 @@ build is not evicted. Tests that exercise an `Unknown` value carry
 | `GEMINI_API_KEY` | Required for live tests |
 | `TEST_TIMEOUT_SECS` | Per-test budget (default 60) |
 | `EXTENDED_TEST_TIMEOUT_SECS` | Budget for multi-turn tests (default 120) |
-| `LOUD_WIRE=1` | Wire logging (tests install no `tracing` subscriber, so `RUST_LOG` does nothing) |
+| `LOUD_WIRE=1` | Wire logging (no test installs a `tracing` subscriber that reads `RUST_LOG`, so it does nothing) |
 
 ## Offline HTTP tests
 
@@ -137,6 +137,7 @@ points the harness's model calls at `tests/common/fake_gemini.rs`, a
 `FakeGemini` built on the HTTP stub that answers request *n* with turn *n*
 of a script (the last one repeats):
 
+<!-- ignore: uses the test-only FakeGemini and ModelTurn from tests/common, which a doctest cannot reach -->
 ```rust,ignore
 let fake = FakeGemini::start(vec![
     ModelTurn::call("view_file", json!({"AbsolutePath": path,
@@ -252,6 +253,7 @@ in strict mode.
 
 ### Template
 
+<!-- ignore: an integration-test file; its `mod common` and helpers exist only under tests/ -->
 ```rust,ignore
 mod common;
 use common::*;
@@ -379,6 +381,7 @@ Is it checking LLM-generated text?
           └── No  (natural language)                  → assert_response_semantic
 ```
 
+<!-- ignore: fragments that use tests/common's assert_response_semantic and a test's bindings -->
 ```rust,ignore
 // Flaky: the model may rephrase
 assert!(text.contains("paris"));
@@ -445,7 +448,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved, plus the Files, File Search Store and Document classes from its `types.py` (camelCase on the wire), and its endpoints. The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, fetched 2026-11-01 (the published URL now 404s) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date is in the file, and the published URL no longer serves them (see the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -502,7 +505,7 @@ checks on it:
   The bodies above set every field, so a type that demands a field the
   snapshot makes optional passes there and fails on a served object without
   it: `Tool::Function` read a function tool with no `description` as
-  `Unknown`, and a stored interaction serves exactly that (2026-11-05). Here
+  `Unknown`, and a stored interaction serves exactly that. Here
   every class a response type reaches is cut, one at a time, to its required
   fields and its constant discriminators (`type`, `event_type`), and the
   body must pass the same checks. A finding is traced to the optional field

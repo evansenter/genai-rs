@@ -6,7 +6,7 @@
 //!
 //! One deviation: a line that starts with `{` is read as data. The API sends
 //! a mid-stream error as a bare JSON line with no `data:` prefix, then closes
-//! the connection (live 2026-11-01, a recitation block). Under the SSE rules
+//! the connection (a recitation block does). Under the SSE rules
 //! that line is a field named `{"error"` and is dropped, and no SSE field
 //! name can start with `{`.
 //!
@@ -35,10 +35,11 @@ use tracing::debug;
 /// The most bytes one SSE event may take before it ends: 64 MiB.
 ///
 /// Counts the event's data lines so far plus its unfinished line. The
-/// largest real events, measured live 2026-11-04 on `DEFAULT_IMAGE_MODEL`
-/// at `image_size: "4K"`, are one 16.0 MB `step.delta` of base64 JPEG and a
-/// 15.7 MB `thought_signature` delta in the same stream; TTS audio deltas
-/// are under 8 KB. 64 MiB leaves four times the largest of those, and still
+/// largest real events measured are a 16.0 MB `step.delta` of base64 JPEG
+/// and a 15.7 MB `thought_signature` delta, from `DEFAULT_IMAGE_MODEL` at
+/// `image_size: "4K"` (dated under Streaming in
+/// `docs/INTERACTIONS_API_GAP.md`). 64 MiB leaves four times the largest of
+/// those, and still
 /// stops a server that never sends a newline.
 pub(crate) const MAX_SSE_EVENT_BYTES: usize = 64 * 1024 * 1024;
 

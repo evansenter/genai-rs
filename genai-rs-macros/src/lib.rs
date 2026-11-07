@@ -25,6 +25,8 @@ use schema::{build_param_schema, get_type_info};
 /// Generates a function that returns a `FunctionDeclaration` for the annotated function.
 ///
 /// # Example
+///
+/// <!-- ignore: genai-rs-macros does not depend on genai-rs, which the expansion names; docs/FUNCTION_CALLING.md compiles the same code -->
 /// ```ignore
 /// use genai_rs_macros::tool;
 ///

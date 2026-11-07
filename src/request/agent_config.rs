@@ -27,8 +27,8 @@ impl ThinkingSummaries {
     /// Convert to the `agent_config` wire format (`"auto"` / `"none"`).
     ///
     /// This used to emit the SCREAMING_CASE `THINKING_SUMMARIES_*` form,
-    /// which the API accepted when `DeepResearchConfig` was written.
-    /// Verified live 2026-08-10, it no longer does:
+    /// which the API accepted when `DeepResearchConfig` was written. It no
+    /// longer does:
     ///
     /// ```text
     /// The value 'THINKING_SUMMARIES_AUTO' is not supported for
@@ -186,7 +186,7 @@ impl DeepResearchConfig {
 
     /// Enable (or disable) the BigQuery tool for the Deep Research agent.
     ///
-    /// Server-side constraint (verified live 2026-07): the Gemini API
+    /// Server-side constraint: the Gemini API
     /// rejects `agent_config.enable_bigquery_tool` — "not available on the
     /// Gemini API but it is available on the Gemini Enterprise Agent
     /// Platform" (Vertex-only).
@@ -270,14 +270,16 @@ impl From<DynamicConfig> for AgentConfig {
 /// machine. The bare `antigravity` string is only the `agent_config` *type*
 /// discriminant (which [`From`] sets), not an agent ID.
 ///
-/// Probe notes (standard API key): `agent_config: {"type": "antigravity"}`,
+/// On a standard API key, `agent_config: {"type": "antigravity"}`,
 /// `max_total_tokens` and `model` are **accepted** on
-/// `antigravity-preview-09-2026` (verified live 2026-10-01). The server's
-/// validation error enumerates the supported config types as `dynamic`,
-/// `deep-research`, `code-mender`, `antigravity`. The agent defaults to
-/// `gemini-3.8-flash`; Google's Antigravity Agent guide lists the
-/// 3.8/3.7/3.6/3.5 Flash models and `gemini-3.5-flash-lite` as the other
+/// [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT). The
+/// server's validation error enumerates the supported config types as
+/// `dynamic`, `deep-research`, `code-mender`, `antigravity`. The agent
+/// defaults to `gemini-3.8-flash`; Google's Antigravity Agent guide lists
+/// the 3.8/3.7/3.6/3.5 Flash models and `gemini-3.5-flash-lite` as the other
 /// `model` values. A value the agent doesn't offer returns 404 `not_found`.
+/// Which models were probed is under AntigravityConfig in
+/// `docs/ENUM_WIRE_FORMATS.md`.
 ///
 /// # Example
 ///
@@ -467,7 +469,7 @@ impl CodeMenderFixRequest {
 ///
 /// **Vertex-only.** The Gemini API answers `400 The value 'code-mender' is
 /// not supported for 'agent_config.type' on the Gemini API, it is allowed on
-/// the Gemini Enterprise Agent Platform` (live 2026-11-05), so it is kept
+/// the Gemini Enterprise Agent Platform`, so it is kept
 /// and documented (D-005) but cannot be exercised here.
 ///
 /// # Example

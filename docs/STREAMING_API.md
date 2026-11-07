@@ -60,7 +60,7 @@ Under API revision 2026-05-20 the server emits this lifecycle:
 | `interaction.created` | `Created { interaction }` | First event; carries the interaction id |
 | `interaction.status_update` | `StatusUpdate { interaction_id, status, usage, .. }` | Background/agent progress. `interaction_id` is `None` on a `store: false` stream; background streams carry `usage` mid-run |
 | `step.start` | `StepStart { index, step }` | A step begins; it may be partial (a `FunctionCall` with empty arguments) |
-| `step.delta` | `StepDelta { index, delta, total_usage }` | Incremental payload for that step. `total_usage` is the event's cumulative `metadata.total_usage`; in the bindings and the spec, but no text, TTS or agent stream sent it (live 2026-11-05) |
+| `step.delta` | `StepDelta { index, delta, total_usage }` | Incremental payload for that step. `total_usage` is the event's cumulative `metadata.total_usage`; in the bindings and the spec, but no text, TTS or agent stream has sent it |
 | `step.stop` | `StepStop { index, usage, step_usage }` | `usage` is cumulative; `step_usage` is this step's alone |
 | `interaction.completed` | `Completed(response)` | Terminal: the full response |
 | `error` | `Error { message, code }` | Terminal |
@@ -90,23 +90,23 @@ and `status()` for the common checks.
 ### Read to the end
 
 The stored interaction is readable once the stream has ended, not when
-`Completed` arrives, provided the stream read its tail to the end: the
-read gives up after 5 s, and a client-level timeout
-(`ClientBuilder::with_timeout`) can end it sooner, each with a `warn!`. After `interaction.completed` the API sends
+`Completed` arrives. After `interaction.completed` the API sends
 `event: done` / `data: [DONE]` and closes the connection about a second
 later, and finishes storing the interaction during that tail: a `GET` sent
-right after closing the connection at `interaction.completed` answered
-`500 Internal error encountered`, and the same `GET` ten seconds later
-`200`; after reading to the end, `200` at once (verified live 2026-11-05).
-Nothing is lost, it is late.
+right after closing the connection at `interaction.completed` has answered
+`500 Internal error encountered`, while one sent after reading to the end
+answers `200` at once (dated under Streaming in the
+[gap tracker](INTERACTIONS_API_GAP.md#streaming)). Nothing is lost, it is
+late.
 
 So to `get` the interaction or chain on it with `previous_interaction_id`
 right away, read the stream until `next()` returns `None`, as the loops on
 this page do, rather than `break` at `Completed`.
 `create_stream_with_auto_functions()` reads each round to its end before
-sending the next, and before it ends. The read is bounded: a body still
-open 5 s after the terminal event is closed with a `warn!`, and the stream
-ends cleanly. `with_timeout()`'s per-chunk limit doesn't apply to it.
+sending the next, and before it ends. The read of the tail is bounded at
+5 s, and a stream whose tail read is cut short still ends cleanly, with a
+`warn!`; how that read meets the client's timeouts is under
+[Read a stream to its end](RELIABILITY.md#read-a-stream-to-its-end).
 
 A successful response that is not `text/event-stream` (a captive portal's
 page) is `GenaiError::MalformedResponse`, not a cut-off: no stream started.
@@ -119,8 +119,8 @@ none.
 
 One SSE event may grow to 64 MiB before it ends; past that the stream fails
 with `GenaiError::MalformedResponse`, so a server that never sends a newline can't grow
-the buffer without bound. The largest events measured live (2026-11-04,
-`DEFAULT_IMAGE_MODEL` at `image_size: "4K"`) are a 16.0 MB `image` delta of
+the buffer without bound. The largest events measured
+(`DEFAULT_IMAGE_MODEL` at `image_size: "4K"`) are a 16.0 MB `image` delta of
 base64 JPEG and a 15.7 MB `thought_signature` delta in the same stream; TTS
 audio deltas are under 8 KB. The limit leaves four times the largest.
 
@@ -135,16 +135,15 @@ usage seen earlier in the stream, from a `step.stop` or a `step.delta`'s
 Accumulate deltas yourself only for live display.
 
 Each streamed image arrives whole in one `image` delta that names its
-`mime_type`, and each image came in its own `model_output` step, after a
-`thought` step and before any text in that step (verified 2026-11-04,
-`gemini-3.1-flash-image`, three streams, one with four images). An image
-delta that names a `mime_type` or `uri` starts a new `Content::Image` block,
-so two images in one step would also stay two blocks; that shape has not
-been observed. Streamed TTS is the opposite case: one recording arrives as
-many raw PCM `audio` deltas in one step, each naming the same `mime_type`,
-`sample_rate` and `channels` (verified 2026-11-05, `DEFAULT_TTS_MODEL`:
-`audio/l16`, 24000 Hz, mono, about 240 deltas for a sentence; the
-non-streamed answer is `audio/wav`). An audio delta continues the last
+`mime_type`, in its own `model_output` step, after a `thought` step and
+before any text in that step. An image delta that names a `mime_type` or
+`uri` starts a new `Content::Image` block, so two images in one step would
+also stay two blocks; that shape has not been observed. Streamed TTS is the
+opposite case: one recording arrives as many raw PCM `audio` deltas in one
+step, each naming the same `mime_type`, `sample_rate` and `channels`
+(`audio/l16`, 24000 Hz, mono, on `DEFAULT_TTS_MODEL`, whose non-streamed
+answer is `audio/wav`). Both are dated under StepDelta in
+[Enum Wire Formats](ENUM_WIRE_FORMATS.md#stepdelta). An audio delta continues the last
 audio block unless it names a `uri` or a different format, so the
 `Completed` response holds the one recording. Video and document deltas,
 which no model streams yet, follow the image rule. Fields a delta carries that the crate does not
@@ -162,7 +161,7 @@ fields (`delta.extra()`), and the call deltas an `arguments_extra`; match with
 | Variant | Wire `type` | Payload |
 |---------|-------------|---------|
 | `Text { text }` | `text` | Text fragment |
-| `ThoughtSummary { content }` | `thought_summary` | `Option<Content>` summary block |
+| `ThoughtSummary { content }` | `thought_summary` | `Option<Box<Content>>` summary block |
 | `ThoughtSignature { signature }` | `thought_signature` | Opaque signature fragment |
 | `TextAnnotation { annotations }` | `text_annotation_delta` | Citations for previously streamed text |
 | `ArgumentsDelta { arguments }` | `arguments_delta` | Raw JSON fragment of function-call arguments |
@@ -175,7 +174,7 @@ fields (`delta.extra()`), and the call deltas an `arguments_extra`; match with
 | `GoogleMapsCall` / `GoogleMapsResult` | `google_maps_*` | Google Maps |
 | `ProcessingCall` / `ProcessingResult` | `processing_*` | Media processing for agentic video. Carries the signature that `step.start` announces as `""`; the assembled `Completed` response keeps it |
 | `RetrievalCall` / `RetrievalResult` | `retrieval_*` | Retrieval tool (Vertex-only) |
-| `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | Spec-defined, never observed. MCP calls arrive as `function_call` / `function_result` steps named `<server>:<tool>` (since 2026-10-01; earlier as a generic `tool_call` step) |
+| `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | Not observed in a stream: the last streamed MCP calls seen arrived as `function_call` / `function_result` deltas named `<server>:<tool>`, while a stored response carries `mcp_server_tool_*` steps ([MCP identity](ENUM_WIRE_FORMATS.md#step)) |
 | `Unknown { delta_type, data }` | anything else | Preserved for forward compatibility |
 
 Helpers: `delta.as_text()`, `delta.as_arguments_delta()`, and the Evergreen
@@ -336,12 +335,14 @@ while let Some(event) = stream.next().await {
 
 ## Stream resume
 
-Only **background** interactions can be resumed (verified live 2026-11-01).
-A foreground stream from `create_stream()` carries no `event_id`s, and when
+Only **background** interactions can be resumed. A foreground stream from
+`create_stream()` carries no `event_id`s, and when
 its connection drops the server cancels the interaction: it keeps only the
 input step, reports `status: cancelled` with an `errors` entry, and
 `interactions().stream(id)` answers `400 Streaming retrieval of
-interactions is not supported`. Retrying means a new request.
+interactions is not supported` (dated under Streaming in the
+[gap tracker](INTERACTIONS_API_GAP.md#streaming)). Retrying means a new
+request.
 
 For a background interaction, follow or resume the *same* generation with
 `client.interactions().resume_stream(interaction_id, last_event_id)`. It

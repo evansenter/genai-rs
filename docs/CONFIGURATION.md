@@ -61,9 +61,9 @@ let response = client
 
 | Field | Type | Builder shortcut | Notes |
 |-------|------|------------------|-------|
-| `temperature` | `Option<f32>` | — | Sampling randomness. Deprecated upstream (google-genai 2.34.0), still accepted (2026-11-01) |
+| `temperature` | `Option<f32>` | — | Sampling randomness. Deprecated upstream (google-genai 2.34.0), still accepted |
 | `top_p` | `Option<f32>` | — | Nucleus sampling. Deprecated upstream like `temperature`, still accepted |
-| `max_output_tokens` | `Option<i32>` | — | Output cap. Per-model ceilings come from the Models API: `GET /v1beta/models/{model}` returns `outputTokenLimit` (65,536 for `gemini-3.8-flash`, checked 2026-09-24). Counts across decoding continuations; see [Decoding continuation](#decoding-continuation) |
+| `max_output_tokens` | `Option<i32>` | — | Output cap. Per-model ceilings come from the Models API: `GET /v1beta/models/{model}` returns `outputTokenLimit` (65,536 for `gemini-3.8-flash`). Counts across decoding continuations; see [Decoding continuation](#decoding-continuation) |
 | `seed` | `Option<i64>` | `with_seed()` | See [Seeds](#seeds) |
 | `stop_sequences` | `Option<Vec<String>>` | `with_stop_sequences()` | Generation halts on any of them |
 | `thinking_level` | `Option<ThinkingLevel>` | `with_thinking_level()` | See [Thinking Mode](THINKING_MODE.md) |
@@ -82,9 +82,9 @@ call `with_generation_config()` first if you mix them.
 
 ### Seeds
 
-`with_seed(n)` makes sampling repeatable for identical requests. In a live
-check (2026-09-24, `DEFAULT_MODEL`, `ThinkingLevel::Low`), three identical
-seeded requests returned identical text. The API doesn't document a
+`with_seed(n)` makes sampling repeatable for identical requests: identical
+seeded requests have returned identical text (see Models in the
+[gap tracker](INTERACTIONS_API_GAP.md#models)). The API doesn't document a
 guarantee, though, so tests should still assert on structure rather than
 exact text (see [Testing](TESTING.md)).
 
@@ -92,12 +92,12 @@ exact text (see [Testing](TESTING.md)).
 
 A response cut off by `max_output_tokens` can be continued instead of
 regenerated, on `CONTINUATION_MODEL` only (every other model answers `400
-Decoding continuation is not enabled for this model`, verified live
-2026-11-01). The cut-off response is `Incomplete` and carries a
-`continuation_token`.
+Decoding continuation is not enabled for this model`). The cut-off response
+is `Incomplete` and carries a `continuation_token`. The live record of
+these rules is in the [gap tracker](INTERACTIONS_API_GAP.md#interaction-residue-2026-11-05).
 
 A stored interaction (the default) continues from its id and the token
-alone, with no input (verified live 2026-11-05). `continue_decode` builds
+alone, with no input. `continue_decode` builds
 that request: the response's model, its id as the previous interaction,
 and its token. It sends no `max_output_tokens`, and the continuation runs
 on to the end; a cap you add counts across continuations, so it must
@@ -127,8 +127,7 @@ if first.continuation_token.is_some() {
 A `store: false` interaction has no id, so its continuation resends the
 same request with the token and a larger `max_output_tokens`. Reusing the
 first cap is a 400 ("has already been exhausted"), and any different input
-is a 400 too; without input the API answers `contents is not specified`
-(verified live 2026-11-05).
+is a 400 too; without input the API answers `contents is not specified`.
 
 ```rust,no_run
 # use genai_rs::{Client, GenerationConfig};
@@ -171,7 +170,7 @@ let client = Client::builder("api-key".to_string())
 | `with_connect_timeout(Duration)` | 30 s (`DEFAULT_CONNECT_TIMEOUT`) | Connection timeout: DNS, TCP and TLS. `Duration::MAX` turns it off, for tests on a paused tokio clock ([why](RELIABILITY.md#tests-on-a-paused-clock)) |
 | `with_read_timeout(Duration)` | None | Longest wait for the headers or the next chunk, reset by each one: bounds a stalled stream without capping a long one. Set it above the longest a call thinks before answering |
 | `with_base_url(String)` | The Gemini API host | Send requests to a proxy or mock server instead of `generativelanguage.googleapis.com` |
-| `with_api_version(String)` | `"v1beta"` | The version path segment. `"v1"` is the stable endpoint: it serves interactions in full (create, get, delete, cancel, streaming, continuation) and the Files and File Search Store APIs, and answers 404 for agents, environments, webhooks, credentials, voices and triggers (live 2026-11-05) |
+| `with_api_version(String)` | `"v1beta"` | The version path segment. `"v1"` is the stable endpoint: it serves interactions in full (create, get, delete, cancel, streaming, continuation) and the Files and File Search Store APIs, and answers 404 for agents, environments, webhooks, credentials, voices and triggers ([gap tracker](INTERACTIONS_API_GAP.md#interaction-residue-2026-11-05)) |
 | `add_wire_inspector(Arc<dyn WireInspector>)` | None (`LOUD_WIRE` adds a printer) | Observe raw API traffic; see [Logging Strategy](LOGGING_STRATEGY.md#wire-inspection-api) |
 
 `Client::new(api_key)` is `Client::builder(api_key).build()`, panicking
@@ -179,25 +178,26 @@ instead of returning an error, so both get the same defaults: a 30 s connect
 timeout and no read or total timeout. There is no default read or total
 timeout because a non-streaming response's headers arrive only after
 generation finishes, so any default short enough to catch a hung connection
-would cut off a long legitimate generation (decided 2026-11-04; the
-reasoning is in [Reliability](RELIABILITY.md#why-only-a-connect-timeout-by-default)).
+would cut off a long legitimate generation (the reasoning is in
+[Reliability](RELIABILITY.md#why-only-a-connect-timeout-by-default)).
 
 ## Request-level settings
 
 | Method | Notes |
 |--------|-------|
 | `with_timeout(Duration)` | `tokio::time::timeout` around the call; returns `GenaiError::Timeout`. How it interacts with the client timeout, and what it covers for streams and auto-functions: [Reliability](RELIABILITY.md#timeouts) |
-| `with_service_tier(ServiceTier)` | `Flex` / `Standard` / `Priority`, sent as `"flex"` / `"standard"` / `"priority"`; see [Reliability](RELIABILITY.md#service-tiers) |
+| `with_service_tier(ServiceTier)` | `Flex` / `Standard` / `Priority`, sent as `"flex"` / `"standard"` / `"priority"` (`Deferred` is Vertex-only); see [Reliability](RELIABILITY.md#service-tiers) |
 | `with_system_instruction(str)` | System prompt for this interaction |
 | `with_store_enabled()` / `with_store_disabled()` | Server-side storage (on by default); see [Builder API](BUILDER_API.md#validation-errors) |
 | `with_background(true)` | Return immediately and run in the background; see [Agents and Background Execution](AGENTS_AND_BACKGROUND.md) |
-| `add_extra(key, value)` | Adds a request field this crate does not model yet, sent flat beside the modeled ones (`InteractionRequest::extra`); a repeated key replaces its value. The server validates it like any field: an unknown name is `400 Unknown parameter`. A key naming a modeled field overrides it, since the API keeps the last of a repeated key (verified live 2026-11-04) |
+| `add_extra(key, value)` | Adds a request field this crate does not model yet, sent flat beside the modeled ones (`InteractionRequest::extra`); a repeated key replaces its value. The server validates it like any field: an unknown name is `400 Unknown parameter`. A key naming a modeled field overrides it, since the API keeps the last of a repeated key ([gap tracker](INTERACTIONS_API_GAP.md#requests)) |
 
 ## Cached content
 
 **Explicit context caching is not available on the Interactions API.** The
-request field was removed after live probing (2026-08-16) showed the API
-rejects it outright:
+request field was removed after live probing showed the API rejects it
+outright (D-005; the sweeps in the
+[gap tracker](INTERACTIONS_API_GAP.md) record it):
 
 ```text
 400 Unknown parameter 'cached_content'

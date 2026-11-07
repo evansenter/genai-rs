@@ -208,8 +208,8 @@ impl GenaiError {
     /// is [`Timeout`](Self::Timeout) instead, and retryable like any timeout.
     ///
     /// Retryable does not mean free. A foreground stream's generation is
-    /// cancelled server-side when its connection drops (verified live
-    /// 2026-11-01), so a retry is a new generation: discard the partial
+    /// cancelled server-side when its connection drops, so a retry is a new
+    /// generation: discard the partial
     /// output you showed, or the retry repeats it. Retrying an auto-function
     /// stream re-runs its functions, as any retry of that loop does.
     ///

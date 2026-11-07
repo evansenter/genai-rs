@@ -55,12 +55,17 @@ For `fn get_weather`, the macro generates:
 anything else to `object`. `Option<T>` parameters are optional; all others are
 required. Constrain values with `enum_values`:
 
-```rust,ignore
+```rust,no_run
+# use genai_rs_macros::tool;
+/// Gets the current weather for a city
 #[tool(
     city(description = "City name"),
     unit(description = "Temperature unit", enum_values = ["celsius", "fahrenheit"])
 )]
-fn get_weather(city: String, unit: Option<String>) -> serde_json::Value { /* ... */ }
+fn get_weather(city: String, unit: Option<String>) -> serde_json::Value {
+    serde_json::json!({"city": city, "unit": unit.unwrap_or_else(|| "celsius".into())})
+}
+# let _ = get_weather_declaration();
 ```
 
 `async fn` works too; the generated callable awaits it.
@@ -75,7 +80,8 @@ as `{"Ok": ...}` / `{"Err": ...}`. For structured data, return a
 
 ## Automatic execution: `create_with_auto_functions()`
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let result = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -87,6 +93,8 @@ for exec in &result.executions {
     println!("{}({}) -> {} in {:?}", exec.name, exec.args, exec.result, exec.duration);
 }
 println!("{}", result.response.as_text().unwrap_or_default());
+# Ok(())
+# }
 ```
 
 How the loop behaves:
@@ -249,10 +257,11 @@ println!("{}", response.as_text().unwrap());
 For a failed execution, `Step::function_result_error(name, call_id, result)`
 sets `is_error: true` on the step. A real loop should also cap its iterations.
 
-Since 2026-10-01 the API sometimes names a call `default_api:<name>` (on the
-second user turn of a non-streamed chain). Match your function on the part
-after `default_api:`, and send the result back under `call.name` as it
-arrived. The auto-function loops do both.
+The API sometimes names a call `default_api:<name>` (on the second user
+turn of a non-streamed chain; see
+[Server-side changes](INTERACTIONS_API_GAP.md#server-side-changes-live-2026-10-01)).
+Match your function on the part after `default_api:`, and send the result
+back under `call.name` as it arrived. The auto-function loops do both.
 
 - **Tools on result turns.** Tools are not inherited across turns (see
   [Conversations](CONVERSATIONS.md#what-carries-over-between-turns)). A turn

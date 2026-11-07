@@ -8,10 +8,12 @@ image generation), MCP, subagents, and trajectory persistence all run inside
 it. This module speaks its protocol directly — no Python in the loop — so
 your tools, hooks, and policies are ordinary Rust.
 
-> **Note**: The code blocks in this guide are `rust,ignore` fragments (they
-> use `agent` / `client` bindings they don't define), so doctests skip them.
-> `examples/antigravity/` and `tests/antigravity_harness.rs` exercise the
-> same APIs against a real harness.
+> **Note**: The code blocks in this guide compile as doctests under the
+> `antigravity` feature (`cargo test --doc --all-features`); hidden setup
+> lines supply the `agent` and builder they use. They are `no_run`, since
+> running one needs the harness binary and a key. `examples/antigravity/`
+> and `tests/antigravity_harness.rs` run the same APIs against a real
+> harness.
 
 ## Setup
 
@@ -83,13 +85,16 @@ timeout that now names the version), and because running a newer wheel on
 purpose is how a harness bump is tested. To refuse one, compare the two
 yourself:
 
-```rust,ignore
+```rust,no_run
 use genai_rs::antigravity::SUPPORTED_HARNESS_VERSION;
 
+# async fn run(mut agent: genai_rs::antigravity::AntigravityAgent) -> Result<(), Box<dyn std::error::Error>> {
 if agent.harness_version() != Some(SUPPORTED_HARNESS_VERSION) {
     agent.shutdown().await?;
     return Err("unsupported localharness version".into());
 }
+# Ok(())
+# }
 ```
 
 New releases are watched for you: the `antigravity-release-watch.yml`
@@ -112,9 +117,10 @@ searched.
 
 ## Quick start
 
-```rust,ignore
+```rust,no_run
 use genai_rs::antigravity::{AntigravityAgent, policy};
 
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
 let mut agent = AntigravityAgent::builder()
     .with_api_key(std::env::var("GEMINI_API_KEY")?)
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -129,6 +135,8 @@ let response = agent.chat("Summarize the layout of this repo.").await?;
 println!("{}", response.text());
 
 agent.shutdown().await?;   // graceful: the harness persists its trajectory
+# Ok(())
+# }
 ```
 
 `spawn()` launches the harness, performs the stdio handshake, connects to
@@ -156,14 +164,18 @@ shuts down gracefully.
 inline media and slash commands in order (the Python SDK's content
 primitives):
 
-```rust,ignore
+```rust,no_run
 use genai_rs::antigravity::{Media, Prompt, SlashCommand};
 
+# async fn run(mut agent: genai_rs::antigravity::AntigravityAgent) -> Result<(), Box<dyn std::error::Error>> {
 let prompt = Prompt::new()
     .add_slash_command(SlashCommand::Plan)
     .add_text("What does this chart show, and what should we change?")
     .add_media(Media::from_file("q3-revenue.png")?);
 let response = agent.chat(prompt).await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
 `Media` is one type for images, documents, audio and video: the MIME type
@@ -182,21 +194,24 @@ list and the built-in subagents. `with_system_instructions` **adds to** it,
 as the Python SDK does: a string becomes a `<user_system_instructions>`
 section at the end. `SystemInstructions` covers the other two forms:
 
-```rust,ignore
-use genai_rs::antigravity::SystemInstructions;
+```rust,no_run
+use genai_rs::antigravity::{AntigravityAgent, SystemInstructions};
 
 // Added to the harness's prompt (the default for a string).
-builder.with_system_instructions("Review for security issues only.");
+let appended = AntigravityAgent::builder()
+    .with_system_instructions("Review for security issues only.");
 
 // The harness's prompt with its identity line replaced and a section added.
-builder.with_system_instructions(
+let edited = AntigravityAgent::builder().with_system_instructions(
     SystemInstructions::harness_default()
         .with_identity("You are Tern, a release-notes writer.")
         .add_section("style", "Write in the past tense."),
 );
 
 // Replaced entirely: you write the whole prompt.
-builder.with_system_instructions(SystemInstructions::custom("You only answer `ok`."));
+let custom = AntigravityAgent::builder()
+    .with_system_instructions(SystemInstructions::custom("You only answer `ok`."));
+# let _ = (appended, edited, custom);
 ```
 
 Replacing the prompt drops the tool guidance and safety rules with it, and
@@ -230,8 +245,9 @@ short, clearly delimited note listing the configured root(s) at send time
 (your instructions are never mutated). Without this, agents guess paths
 (`/workdir`, `/workspace`, …) and wander.
 
-```rust,ignore
-let agent = AntigravityAgent::builder()
+```rust,no_run
+# use genai_rs::antigravity::{AntigravityAgent, SystemInstructions};
+let builder = AntigravityAgent::builder()
     .add_workspace("/path/to/repo")
     .with_system_instructions(SystemInstructions::custom("Audit this repo."))
     // workspace announcement is ON by default for custom instructions;
@@ -239,6 +255,7 @@ let agent = AntigravityAgent::builder()
     .with_workspace_announcement(false)
     // ...
     ;
+# let _ = builder;
 ```
 
 The same note goes to each subagent with custom instructions.
@@ -252,8 +269,8 @@ The harness executes its own tool suite; you choose which tools the agent
 sees. The default is the **read-only** set (`list_directory`,
 `search_directory`, `find_file`, `view_file`, `finish`):
 
-```rust,ignore
-use genai_rs::antigravity::{BuiltinTool, Capabilities};
+```rust,no_run
+use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities};
 
 // Read-only plus shell access:
 let caps = Capabilities::read_only().enable(BuiltinTool::RunCommand);
@@ -265,6 +282,7 @@ let caps = Capabilities::all();
 let caps = Capabilities::none();
 
 let builder = AntigravityAgent::builder().with_capabilities(caps);
+# let _ = builder;
 ```
 
 That set deliberately differs from the Python SDK's 0.1.18 `read_only()`
@@ -314,10 +332,10 @@ harness's pre-tool callback, which gates the agent's tool calls — builtin,
 custom, MCP, `invoke_subagent` — before they run (D-022). A subagent's own
 calls bypass it on 0.1.23 (see [Subagents](#subagents)):
 
-```rust,ignore
-use genai_rs::antigravity::policy;
+```rust,no_run
+use genai_rs::antigravity::{AntigravityAgent, policy};
 
-let agent = AntigravityAgent::builder()
+let builder = AntigravityAgent::builder()
     // deny everything, then allow specific tools:
     .add_policy(policy::deny_all())
     .add_policy(policy::allow("view_file"))
@@ -334,6 +352,7 @@ let agent = AntigravityAgent::builder()
     })
     // ...
     ;
+# let _ = builder;
 ```
 
 Rules:
@@ -366,7 +385,10 @@ Rules:
   `spawn()` warns about such pairs. `start_subagent`, the subagent
   builtin's pre-0.1.18 name, still targets `invoke_subagent`.
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::antigravity::{AntigravityAgent, policy};
+# let approved: Vec<serde_json::Value> = Vec::new();
+# let _builder = AntigravityAgent::builder()
 // Deny only the destructive commands; allow the rest.
 .add_policy(policy::allow("run_command"))
 .add_policy(
@@ -380,6 +402,7 @@ Rules:
 )
 // Ask a person about edits, from state the handler already has.
 .add_policy(policy::ask_user("edit_file", move |call, _reason| approved.contains(&call.args)))
+# ;
 ```
 
 ### The auto policy
@@ -390,12 +413,15 @@ Rules:
 it flags is **denied** unless the policy's handler approves it. The handler
 gets the harness's assessment as its reason:
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::antigravity::{AntigravityAgent, policy};
+# let _builder = AntigravityAgent::builder()
 .add_policy(policy::allow_all())
 .add_policy(policy::auto().with_handler(|call, assessment| {
     eprintln!("{} flagged: {}", call.name, assessment.unwrap_or_default());
     false // refuse
 }))
+# ;
 ```
 
 It runs harness-side, after this client's rules and hooks allowed the call,
@@ -405,9 +431,10 @@ ignores it.
 
 ### What a hook is handed
 
-On harness 0.1.18 every tool call — builtin, custom, MCP, subagent — is
-gated by the harness's **pre-tool hook callback**; no observed flow pauses
-for a tool confirmation any more. `ToolInvocation.args` on that path is
+Since harness 0.1.18 every tool call the agent itself makes — builtin,
+custom, MCP, `invoke_subagent` — is gated by the harness's **pre-tool hook
+callback**; no observed flow pauses for a tool confirmation any more. (A
+subagent's own calls are not gated; see [Subagents](#subagents).) `ToolInvocation.args` on that path is
 what the *model* passed, under the harness's own tool-schema names, which
 are **not** the `ToolAction::args()` spellings (those are the step's action
 record, `filePath`, `commandLine`, ...):
@@ -514,11 +541,13 @@ up for a question to reach you:
 Set an `on_questions` hook to answer the questions programmatically — route
 them to a CLI prompt, a chat message, or policy code:
 
-```rust,ignore
+```rust,no_run
 use genai_rs::antigravity::{
-    AgentBehavior, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy,
+    AgentBehavior, AntigravityAgent, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply,
+    policy,
 };
 
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
 let agent = AntigravityAgent::builder()
     // ...
     // read_only() does not include AskQuestion — enable it explicitly.
@@ -546,6 +575,9 @@ let agent = AntigravityAgent::builder()
     })
     .spawn()
     .await?;
+# let _ = agent;
+# Ok(())
+# }
 ```
 
 `QuestionReply::Cancel` sends the cancelled flag with no answers — "stop
@@ -590,7 +622,9 @@ by the turn deadline like the rest:
 | `on_compaction` | when the harness compacts the history | — |
 | `on_stop` | when a turn is about to end | `StopDecision::Continue { reason }` adds `reason` as an instruction and calls the model again, in the same turn |
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::antigravity::{AntigravityAgent, StopDecision};
+# let _builder = AntigravityAgent::builder()
 .on_tool_error(|failure| {
     (failure.name == "run_command")
         .then(|| "Commands fail in this sandbox; read the files instead.".to_string())
@@ -602,6 +636,7 @@ by the turn deadline like the rest:
         StopDecision::Stop
     }
 })
+# ;
 ```
 
 `on_stop` must stop eventually: check `continuation_count`, or the turn runs
@@ -620,8 +655,9 @@ turn going. Session hooks still run.
 Tool declarations are the crate's ordinary `FunctionDeclaration`; dispatch
 reuses the global `#[tool]` registry and `ToolService`:
 
-```rust,ignore
+```rust,no_run
 use genai_rs::CallableFunction;
+use genai_rs::antigravity::AntigravityAgent;
 use genai_rs_macros::tool;
 
 /// Returns the current weather for a city.
@@ -630,11 +666,13 @@ fn get_weather(city: String) -> String {
     format!("Sunny and 22C in {city}")
 }
 
-let agent = AntigravityAgent::builder()
+# let my_service: std::sync::Arc<dyn genai_rs::ToolService> = unimplemented!();
+let builder = AntigravityAgent::builder()
     .add_tool(GetWeatherCallable.declaration())     // #[tool] machinery
     .with_tool_service(my_service)                  // stateful ToolService
     // ...
     ;
+# let _ = builder;
 ```
 
 When the model calls a custom tool, the crate checks policies, executes your
@@ -644,16 +682,17 @@ deadlocked by a failing tool.
 
 ## MCP servers
 
-```rust,ignore
-use genai_rs::antigravity::McpServer;
+```rust,no_run
+use genai_rs::antigravity::{AntigravityAgent, McpServer, policy};
 
-let agent = AntigravityAgent::builder()
+let builder = AntigravityAgent::builder()
     .add_mcp_server(McpServer::stdio("uvx", ["mcp-server-git"]).with_name("git"))
     .add_mcp_server(McpServer::http("http://localhost:8931/mcp").with_name("tickets"))
     .add_policy(policy::deny_all())
     .add_policy(policy::allow("mcp_git_status"))    // per-tool policy target
     // ...
     ;
+# let _ = builder;
 ```
 
 The harness owns the MCP connections and tool execution; your policies see
@@ -674,11 +713,15 @@ builtin. That builtin is **off** in the default read-only capability set and
 is write-capable, so enabling it requires a policy or pre-tool hook (the
 spawn-time safety gate):
 
-```rust,ignore
+```rust,no_run
 use genai_rs::CallableFunction;
-use genai_rs::antigravity::{BuiltinTool, Capabilities, Subagent, policy};
+use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};
+# use genai_rs_macros::tool;
+# /// Classifies a finding's severity.
+# #[tool(category(description = "The finding's category"))]
+# fn severity_classifier(category: String) -> String { category }
 
-let agent = AntigravityAgent::builder()
+let builder = AntigravityAgent::builder()
     .add_tool(SeverityClassifierCallable.declaration())   // parent registration
     .add_subagent(
         Subagent::new("auditor")
@@ -691,6 +734,7 @@ let agent = AntigravityAgent::builder()
     .add_policy(policy::allow_all())
     // ...
     ;
+# let _ = builder;
 ```
 
 Rules (matching the reference SDK):
@@ -699,7 +743,8 @@ Rules (matching the reference SDK):
   reach neither the pre-tool callback (so no policy or `on_pre_tool` hook
   sees them) nor the harness's own policy evaluator, and workspace
   containment does not confine them: a read-only subagent can read any
-  file the process can (verified 2026-11-05; pinned by a scripted test).
+  file the process can (pinned by a scripted test; the probe is recorded in
+  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
   Only the subagent's capabilities limit it, so give a subagent only the
   builtins it may use ungated. Enabling `invoke_subagent` also offers the
   harness's built-in `research` subagent. `spawn()` warns whenever
@@ -740,10 +785,11 @@ Rules (matching the reference SDK):
 
 ## Streaming
 
-```rust,ignore
+```rust,no_run
 use futures_util::StreamExt;
 use genai_rs::antigravity::{AgentEvent, ErrorSeverity};
 
+# async fn run(mut agent: genai_rs::antigravity::AntigravityAgent) -> Result<(), Box<dyn std::error::Error>> {
 let mut stream = agent.send_streaming("Refactor src/lib.rs").await?;
 while let Some(event) = stream.next().await {
     match event? {
@@ -766,6 +812,8 @@ while let Some(event) = stream.next().await {
         _ => {} // non-exhaustive
     }
 }
+# Ok(())
+# }
 ```
 
 ### Event decisions, trajectory identity, and error severity
@@ -797,21 +845,26 @@ while let Some(event) = stream.next().await {
 The stream borrows the agent mutably for the turn. To cancel from another
 task, take a handle first:
 
-```rust,ignore
+```rust,no_run
+# async fn run(agent: genai_rs::antigravity::AntigravityAgent) -> Result<(), Box<dyn std::error::Error>> {
 let cancel = agent.cancel_handle();
 // ... later, from any task:
 cancel.cancel().await?;   // the in-flight turn ends early, keeping partial output
+# Ok(())
+# }
 ```
 
-**What a cancelled turn returns**: harness 0.1.10 (and 0.1.18, re-verified)
-answers a halt by taking the trajectory to `STATE_FULLY_IDLE` — the same
-terminal state as a natural completion, not `STATE_CANCELLED`. The turn therefore resolves *normally*
+**What a cancelled turn returns**: every harness from 0.1.10 through the
+pinned 0.1.23 answers a halt by taking the trajectory to `STATE_FULLY_IDLE`
+— the same terminal state as a natural completion, not `STATE_CANCELLED`. The turn therefore resolves *normally*
 with whatever partial output it had produced, rather than failing with
 `AntigravityError::Turn`. Treat `cancel()` as "stop early and keep what you
 have", and record the cancellation on your side if you need to distinguish
 a halted turn from a completed one. (`AntigravityError::Turn` is still the
-outcome when the harness cancels a turn of its own accord.) Verified live
-by `test_antigravity_cancel_handle_halts_an_in_flight_turn`.
+outcome when the harness cancels a turn of its own accord.) On the pinned
+harness the key-free `test_scripted_cancel_halts_a_turn_waiting_on_the_model`,
+which the required CI check runs, fails if a halted turn does anything but
+resolve normally.
 
 `with_turn_timeout(Duration)` bounds each turn's wall-clock time. When the
 budget is exceeded, the crate halts the harness's still-running turn and
@@ -865,15 +918,22 @@ Raise it for agents that legitimately run long (deep subagent trees, many
 tool calls), lower it for interactive use where a stall should surface fast,
 or remove it deliberately:
 
-```rust,ignore
-let mut agent = AntigravityAgent::builder()
+```rust,no_run
+# use genai_rs::antigravity::AntigravityAgent;
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let agent = AntigravityAgent::builder()
     .without_turn_timeout()  // runs until the harness ends the turn
     .spawn().await?;
+# let _ = agent;
+# Ok(())
+# }
 ```
 
 ## Structured output
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::antigravity::AntigravityAgent;
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
 let mut agent = AntigravityAgent::builder()
     .with_response_schema(serde_json::json!({
         "type": "object",
@@ -887,6 +947,8 @@ let response = agent.chat("Audit this repo.").await?;
 if let Some(value) = response.structured_output() {
     println!("severity = {}", value["severity"]);
 }
+# Ok(())
+# }
 ```
 
 ## Early stops
@@ -905,11 +967,16 @@ Every harness option the Python SDK has, and what this crate does with
 each, is in the parity table of `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`. The
 model options need `with_api_key`, since they travel in the model config:
 
-```rust,ignore
-use genai_rs::antigravity::{Budget, InlineSkill, RetryConfig, RunCommandOptions};
+```rust,no_run
+use genai_rs::antigravity::{
+    AntigravityAgent, Budget, BuiltinTool, Capabilities, InlineSkill, RetryConfig,
+    RunCommandOptions,
+};
 use genai_rs::{ServiceTier, ThinkingLevel};
+use std::time::Duration;
 
-let agent = AntigravityAgent::builder()
+# let key = String::new();
+let builder = AntigravityAgent::builder()
     .with_api_key(key)
     .with_thinking_level(ThinkingLevel::High)        // generationConfig.thinkingConfig
     .with_service_tier(ServiceTier::Flex)            // the request's serviceTier
@@ -928,6 +995,7 @@ let agent = AntigravityAgent::builder()
     )
     // ...
     ;
+# let _ = builder;
 ```
 
 - **Image model**: with `BuiltinTool::GenerateImage` enabled the bridge
@@ -952,7 +1020,7 @@ let agent = AntigravityAgent::builder()
   sandbox (`AntigravityAgent::sandbox_status()` says whether there is one,
   and `spawn()` warns when there is not). Where there is none, as on
   GitHub's Ubuntu 24.04 runners, a sandboxed command fails rather than
-  running unsandboxed (harness 0.1.23, CI 2026-11-05).
+  running unsandboxed (harness 0.1.23).
 - **`with_session_continuation`**: `SessionContinuation::Resume` makes
   `spawn()` fail when the conversation id is not saved; `CreateOnly` when
   it is.
@@ -966,11 +1034,13 @@ the protocol's `automated_trigger` event (mirroring the reference SDK's
 `TriggerRunner`). Three kinds: an interval, a file watch, and any async
 function of your own:
 
-```rust,ignore
-use genai_rs::antigravity::{TriggerConfig, triggers};
+```rust,no_run
+use genai_rs::antigravity::{AntigravityAgent, TriggerConfig, triggers};
 use std::time::Duration;
 
-let agent = AntigravityAgent::builder()
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+# let (_jobs, mut queue) = tokio::sync::mpsc::channel::<u32>(8);
+let mut agent = AntigravityAgent::builder()
     .add_trigger(TriggerConfig::new(
         "Check the queue for new items and summarize them.",
         Duration::from_secs(300),
@@ -992,6 +1062,8 @@ let agent = AntigravityAgent::builder()
 while let Some(response) = agent.next_trigger_turn(Duration::from_secs(60)).await? {
     println!("{}", response.text());
 }
+# Ok(())
+# }
 ```
 
 The file watch polls every `poll_interval`, comparing each file's size and
@@ -1028,7 +1100,9 @@ Delivery semantics (see `antigravity::triggers` for details):
 
 ## Session persistence and resume
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::antigravity::AntigravityAgent;
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
 // First run:
 let agent = AntigravityAgent::builder()
     .with_save_dir("/var/lib/myapp/agent-sessions")
@@ -1042,7 +1116,14 @@ let agent = AntigravityAgent::builder()
     .with_conversation_id(id)
     .spawn().await?;
 println!("restored {} steps", agent.initial_history().len());
+# Ok(())
+# }
 ```
+
+`with_save_dir` is where the harness keeps conversations;
+`with_app_data_dir(dir)` sets the harness's own application data
+directory. Unset, the field is left out of the handshake and the harness
+uses its default.
 
 ## Debugging
 
@@ -1062,7 +1143,7 @@ didn't do anything":
 
 Programmatic check, for anything long-running:
 
-```rust,ignore
+```rust,no_run
 let drift = genai_rs::antigravity::protocol::drift_report();
 if !drift.is_empty() {
     eprintln!("harness sent values this build does not model: {drift:?}");
@@ -1090,8 +1171,8 @@ Gemini API host — a gateway or recording proxy — instead of
 `{url}/v1beta/models/<model>:streamGenerateContent?alt=sse` with the key
 in `x-goog-api-key`. It needs a non-empty `with_api_key`: without a
 configured key, or with an empty one, the harness falls back to its own
-environment's `GEMINI_API_KEY` and sends that to the custom host (verified
-on 0.1.23, 2026-11-04), so `spawn()` refuses the combination. As a second
+environment's `GEMINI_API_KEY` and sends that to the custom host (harness
+0.1.23), so `spawn()` refuses the combination. As a second
 guard, while a base URL is set the harness starts with `GEMINI_API_KEY` and
 `GOOGLE_API_KEY` removed from its environment, so there is no key to fall
 back on; commands the agent runs (`run_command`) inherit that environment
@@ -1103,13 +1184,21 @@ triggers and cancellation against a "model" that does exactly what a test
 says, with no API key. That is how `tests/antigravity_scripted.rs` works
 (see `docs/TESTING.md`):
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::antigravity::AntigravityAgent;
+# struct FakeGemini;
+# impl FakeGemini { fn base_url(&self) -> String { String::new() } }
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+# let (fake, dir) = (FakeGemini, std::env::temp_dir().display().to_string());
 let agent = AntigravityAgent::builder()
     .with_api_key("placeholder")             // never a real key here
     .with_gemini_base_url(fake.base_url())   // tests/common/fake_gemini.rs
     .add_workspace(dir)
     .spawn()
     .await?;
+# let _ = agent;
+# Ok(())
+# }
 ```
 
 ### Wire inspection
@@ -1162,14 +1251,18 @@ For programmatic capture, register inspectors on the builder — the
 `WireEvent` variants are `HarnessSpawn`, `WsSend`, `WsReceive`, and
 `HarnessStderr`, sharing one correlation id per harness session:
 
-```rust,ignore
+```rust,no_run
+use genai_rs::antigravity::AntigravityAgent;
 use genai_rs::wire::TracingForwarder;
 use std::sync::Arc;
 
-let agent = AntigravityAgent::builder()
-    .add_wire_inspector(Arc::new(TracingForwarder::new()))  // RUST_LOG=genai_rs::wire=debug
+// Visible with RUST_LOG=genai_rs::wire=debug once your program installs a
+// tracing subscriber (docs/LOGGING_STRATEGY.md).
+let builder = AntigravityAgent::builder()
+    .add_wire_inspector(Arc::new(TracingForwarder::new()))
     // ...
     ;
+# let _ = builder;
 ```
 
 Spawn- and init-time errors (`HandshakeFailed`, `InitFailed`,

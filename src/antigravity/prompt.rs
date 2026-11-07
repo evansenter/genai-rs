@@ -252,7 +252,7 @@ impl Media {
 
     /// A description of the media, sent to the harness beside it (the
     /// Python SDK's `description`). Harness 0.1.23 does not pass it on to
-    /// the model (verified 2026-11-05), so put what the model must know in
+    /// the model, so put what the model must know in
     /// a text part.
     #[must_use]
     pub fn with_description(mut self, description: impl Into<String>) -> Self {

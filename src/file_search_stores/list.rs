@@ -42,7 +42,7 @@ paging::list_builder! {
     label: "file search stores";
 
     /// Sets the maximum number of stores per page, from 1 to 20 (a larger
-    /// value is a 400, verified live 2026-09-27). Sent with every page.
+    /// value is a 400). Sent with every page.
     fn with_page_size;
 
     /// Starts from this page token, from a previous page's
@@ -119,12 +119,12 @@ paging::list_builder! {
     label: "file search documents";
 
     /// Sets the maximum number of documents per page, from 1 to 20 (a larger
-    /// value is a 400, verified live 2026-09-27). Sent with every page.
+    /// value is a 400). Sent with every page.
     fn with_page_size;
 
     /// Starts from this page token, from a previous page's
     /// `next_page_token` for the same store (another store's token lists
-    /// nothing, verified live 2026-09-27).
+    /// nothing).
     fn with_page_token;
 
     /// Sends the request and returns one page.

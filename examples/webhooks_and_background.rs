@@ -6,9 +6,10 @@
 //!    events (`interaction.completed`, ...) are pushed to your endpoint
 //!    instead of polled for.
 //! 3. The environments resource: create, list, get, delete.
-//! 4. The triggers resource: listing. Creating a trigger requires a custom
-//!    agent, which standard API keys cannot create, so only the request body
-//!    is shown.
+//! 4. The triggers resource: listing, and a create body. Creating a
+//!    trigger needs a custom agent (`client.agents()`), which this example
+//!    does not make, so it prints the body rather than sending it;
+//!    `tests/webhooks_and_agents_tests.rs` runs the whole trigger lifecycle.
 //!
 //! Everything the example creates is deleted again, including when a later
 //! step fails. Without `GEMINI_API_KEY` it prints the request bodies instead.

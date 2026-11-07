@@ -15,10 +15,9 @@ order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
    releases to find new surface). The OpenAPI spec is the same surface in
-   machine-readable form. Its URL (`ai.google.dev/static/api/interactions.openapi.json`)
-   moved: by 2026-11-03 it redirected to an aistudio.google.com path that
-   returns 404, and no new public URL was found (2026-11-04). The
-   2026-11-01 copy is the latest.
+   machine-readable form. Its published URL no longer serves it, so the
+   committed snapshot is the latest copy; the record is in
+   `docs/INTERACTIONS_API_GAP.md` ("How to verify API surface").
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
@@ -27,6 +26,14 @@ order (D-004):
    (the old ai.google.dev URLs redirect there),
    and `docs/INTERACTIONS_API_GAP.md` (a dated snapshot; the
    `api-surface-sweep` workflow opens an issue when the SDK moves).
+
+A dated live fact is recorded in one place (D-032):
+`docs/ENUM_WIRE_FORMATS.md` for what a value or shape looks like on the
+wire, `docs/INTERACTIONS_API_GAP.md` for what the API accepts, rejects and
+does. Guides, the README, example headers and rustdoc state the current
+behavior without a date and link there; Antigravity harness facts name the
+harness version, with the dated record in
+`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and the spec as a snapshot, and the
@@ -63,13 +70,17 @@ make docs         # rustdoc -D warnings, all-features and docs.rs feature set
 cargo nextest run -E 'test(/name/)'            # one test
 cargo nextest run --test <file> --run-ignored all   # one live test file
 cargo test --workspace --doc --all-features    # doctests (CI runs these; make does not)
+cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_scripted)'
+                                               # scripted harness suite (localharness, no key)
 cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
-                                               # harness suite (needs localharness)
+                                               # harness suite (needs localharness and a key)
 ```
 
 Live tests take minutes and can flake on model variability. `LOUD_WIRE=1`
-prints the wire. `RUST_LOG` does nothing in tests or examples: neither
-installs a `tracing` subscriber.
+prints the wire, with no setup. `RUST_LOG` needs a `tracing` subscriber the
+application installs, and no test or example installs one that reads it
+(`src/test_subscriber.rs`'s scoped recorder ignores it), so it does nothing
+there (`docs/LOGGING_STRATEGY.md` has the snippet).
 
 ## Layout
 
@@ -79,15 +90,18 @@ installs a `tracing` subscriber.
 | `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
 | `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
 | `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types (theirs in `streaming/serde_impls.rs`) |
-| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`) |
+| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`). Submodules beside three of them: `triggers/list.rs` (the trigger and execution listings), `files/upload.rs` (`FileUpload`), and `file_search_stores/` (`types.rs`, `list.rs`, `document_input.rs`) |
 | `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
 | `src/paging.rs`, `src/poll.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()`, and the `list_builder!` macro that defines the builders; `PollOptions` and the wait behind every `wait_until_active` |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
 | `src/wire/` | `WireInspector`, `LOUD_WIRE` printer and `WireFilter` (`printer.rs`), `TracingForwarder` |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
+| `src/errors.rs`, `src/multimodal.rs`, `src/safety.rs`, `src/response_format.rs` | `GenaiError`; the `*_from_file` helpers and MIME detection; safety settings; the typed `response_format` union |
+| `src/wire_enum.rs`, `src/wire_fields.rs`, `src/serde_util.rs` | Crate-private serde machinery: the `wire_enum!` string enums, the `extra` maps of the known variants (#491), and the protobuf-JSON int64 and lenient-timestamp helpers |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
 | `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `request`, `tools`, `response`, `resources`, `unknown_fields`). Past failures replay from `proptest-regressions/<source file>.txt`, so a property's seeds move with it |
 | `fuzz/`, `src/fuzzing.rs` | cargo-fuzz targets (own workspace and lockfile, nightly; `fuzz/README.md`) and their entry points, the `#[doc(hidden)] __fuzz` module, compiled only under `cfg(fuzzing)` and in tests (`fuzzing_tests.rs` replays past crashes) |
+| `src/coverage_oracle/`, `tests/request_wire_oracle.rs`, `tests/ci_coverage.rs`, `tests/api_surface/`, `tests/live_verbs/` | The coverage oracle (test-only): request keys, response fields and binding classes against the committed snapshot, and live coverage per handle verb (see "Sources of truth" above and `docs/TESTING.md`) |
 
 Submodules are private; a directory's `mod.rs` re-exports its public items
 explicitly, so public paths do not depend on file layout. Keep implementation
@@ -106,7 +120,8 @@ and the limit. When a module or directory moves, record it in
 Unknown API data is preserved, never rejected. Enums that can grow are
 `#[non_exhaustive]` and carry an Unknown variant:
 
-```rust
+<!-- ignore: a pattern, not code: `<context>_type` stands for each enum's field name -->
+```rust,ignore
 Unknown {
     <context>_type: String,      // the unrecognized wire value
     data: serde_json::Value,     // full JSON, re-serialized unchanged
@@ -115,8 +130,11 @@ Unknown {
 
 with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 (reference: `Content` in `src/content/`). Response and resource structs are
-`#[non_exhaustive]` (D-002, guarded by `tests/non_exhaustive_responses.rs`)
-and keep unmodeled fields in a `#[serde(flatten)] extra` map; the known
+`#[non_exhaustive]` (D-002) and keep unmodeled fields in a
+`#[serde(flatten)] extra` map, as do request-side types the API echoes on a
+stored interaction and the types read from the Antigravity harness (D-034);
+`tests/non_exhaustive_responses.rs` guards both, with each exemption named
+and reasoned. The known
 variants of `Step`, `StepDelta`, `Content` and `Annotation` do the same with
 an `extra` field, through `src/wire_fields.rs` (#491). Polling
 continues on unknown statuses, bounded by timeouts. Strict mode, the
@@ -125,8 +143,8 @@ continues on unknown statuses, bounded by timeouts. Strict mode, the
 (`make test-strict`). New string enums use the crate-private `wire_enum!` macro
 (`src/wire_enum.rs`), which supplies all of the above.
 
-When adding or changing an enum, record its verified wire format in
-`docs/ENUM_WIRE_FORMATS.md`.
+When adding or changing an enum, record its verified wire format, with the
+date, in `docs/ENUM_WIRE_FORMATS.md` (D-032).
 
 ### Wire format
 
@@ -203,7 +221,12 @@ reaches the wire must use a real id.
   `src/fuzzing_tests.rs` (`fuzz/README.md`).
 - Live tests are `#[ignore = "Requires API key"]` (exact string) and must
   **fail**, not skip, when the request fails. Every live test file belongs to
-  a `test-integration` matrix group in `.github/workflows/rust.yml`.
+  a `test-integration` matrix group in `.github/workflows/rust.yml`. An
+  Antigravity test that needs the harness binary but no key is
+  `#[ignore = "Requires localharness binary"]`: all of
+  `tests/antigravity_scripted.rs`, which runs in the required
+  `Test Suite (antigravity)` job, and the key-free part of
+  `tests/antigravity_harness.rs`.
 - A live test names what it creates with `test_resource_name` /
   `test_source_content` (`tests/common/mod.rs`), the marker the daily
   test-resource janitor matches (it deletes only when `JANITOR_DELETE` is

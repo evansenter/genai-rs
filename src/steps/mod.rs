@@ -287,8 +287,8 @@ pub enum Step {
         /// Arguments to pass to the function (JSON object).
         arguments: serde_json::Value,
         /// Opaque signature for backend validation. Returned by the API and
-        /// required when replaying this step in stateless history (verified
-        /// live 2026-07; the generated SDK bindings omit it).
+        /// required when replaying this step in stateless history (the
+        /// generated SDK bindings omit it).
         signature: Option<String>,
         /// Unmodeled wire fields, kept for round trip ([`Step::extra`]).
         extra: serde_json::Map<String, serde_json::Value>,
@@ -397,14 +397,14 @@ pub enum Step {
     /// A server-side tool call the API does not further identify
     /// (`type: "tool_call"`).
     ///
-    /// This is what an MCP tool invocation looked like on the wire through
-    /// September 2026: only `{id, signature}`, with no server name, tool
-    /// name, or arguments (verified live 2026-08-16, `gemini-3.7-flash`,
-    /// `mcp.deepwiki.com`). Since 2026-10-01 MCP calls arrive instead as
+    /// This is what the oldest MCP tool invocations looked like on the wire:
+    /// only `{id, signature}`, with no server name, tool name, or arguments.
+    /// MCP calls now arrive as [`Step::McpServerToolCall`] (in between, as
     /// answered [`Step::FunctionCall`] / [`Step::FunctionResult`] pairs
-    /// named `<server>:<tool>` (re-verified 2026-11-04), which
+    /// named `<server>:<tool>`), which
     /// [`InteractionResponse::mcp_calls`](crate::InteractionResponse::mcp_calls)
-    /// reads back. Before it was modeled, this step landed in
+    /// reads back; the dates are under MCP identity in
+    /// `docs/ENUM_WIRE_FORMATS.md`. Before it was modeled, this step landed in
     /// [`Step::Unknown`], so a successful MCP interaction reported zero tool
     /// calls. See #433. Any key beyond `id` and `signature` (a `name` or
     /// `server_name`, should the API add one) is kept in `extra`.
@@ -418,14 +418,15 @@ pub enum Step {
     },
     /// MCP server tool call (`type: "mcp_server_tool_call"`).
     ///
-    /// **Spec-present, never observed.** Modeled field for field from the
-    /// google-genai 2.34.0 bindings. MCP calls arrived as [`Step::ToolCall`]
-    /// on 2026-08-16 and as `<server>:<tool>` [`Step::FunctionCall`] /
-    /// [`Step::FunctionResult`] pairs from 2026-10-01 (last verified live
-    /// 2026-11-04, `gemini-3.8-flash`), so a match on this variant never
-    /// fires today. Kept because nothing *rejects* it, so the API may begin
-    /// emitting it; [`InteractionResponse::mcp_calls`](crate::InteractionResponse::mcp_calls)
-    /// reads both shapes. Tracked in #459.
+    /// How the API returns an MCP call the server ran, modeled field for
+    /// field from the google-genai 2.34.0 bindings. The live `name` is
+    /// `<server>:<tool>`, and a `signature` comes with it (kept in
+    /// [`Step::extra`]). MCP calls arrived earlier as [`Step::ToolCall`] and
+    /// then as `<server>:<tool>` [`Step::FunctionCall`] /
+    /// [`Step::FunctionResult`] pairs;
+    /// [`InteractionResponse::mcp_calls`](crate::InteractionResponse::mcp_calls)
+    /// reads this shape and the function-call one, with the tool stripped
+    /// of its server prefix. Tracked in #459.
     McpServerToolCall {
         /// Unique ID for this call.
         id: String,
@@ -440,7 +441,8 @@ pub enum Step {
     },
     /// MCP server tool result (`type: "mcp_server_tool_result"`).
     ///
-    /// **Spec-present, never observed** — see [`Step::McpServerToolCall`].
+    /// The result of a [`Step::McpServerToolCall`], with the same `result`
+    /// object the earlier `function_result` shape carried.
     McpServerToolResult {
         /// The `id` of the corresponding call.
         call_id: String,
@@ -466,7 +468,7 @@ pub enum Step {
     ///
     /// Carries no results: the step has only `call_id` and `signature` in
     /// the google-genai 2.34.0 bindings and the spec, and that is all a
-    /// stored or streamed interaction serves (live 2026-11-05). The
+    /// stored or streamed interaction serves. The
     /// retrieved chunks are folded into the model's answer, cited by
     /// `file_citation` annotations.
     FileSearchResult {
@@ -505,7 +507,7 @@ pub enum Step {
     ///
     /// Emitted before the model answers when video uses
     /// [`VideoProcessing::Agentic`](crate::VideoProcessing::Agentic)
-    /// (verified live 2026-09-24, `gemini-3.8-flash`). The signature is large
+    /// (on `gemini-3.8-flash`). The signature is large
     /// (~36KB) and **required** for stateless replay: omitting it yields
     /// `400 Processing call step is missing signature`.
     ProcessingCall {

@@ -175,7 +175,7 @@ pub struct Webhook {
     ///
     /// Without this, a deserialize-then-serialize cycle silently drops any
     /// field the crate has not modeled yet — invisible to the caller, and
-    /// unrecoverable. The resource was live-verified 2026-07, but verification is a
+    /// unrecoverable. The shape was verified live, but that is a
     /// point-in-time snapshot, not a guarantee the shape stays fixed.
     ///
     /// **Also read on serialize into a request body.** [`Webhooks::create`]
@@ -279,9 +279,9 @@ pub struct WebhookUpdate {
     /// `update_mask` query parameter; it is never part of the body. `None`
     /// omits the parameter.
     ///
-    /// Live behavior note (2026-07): the mask is not required, and it was
-    /// observed to be ignored when supplied (fields outside it still
-    /// updated), so scope an update by the fields you set.
+    /// The mask is not required, and the API has ignored it when supplied
+    /// (fields outside it still updated), so scope an update by the fields
+    /// you set.
     #[serde(skip)]
     pub update_mask: Option<String>,
 }
@@ -541,10 +541,10 @@ impl<'a> Webhooks<'a> {
     /// its [`update_mask`](WebhookUpdate::update_mask), if any, as the
     /// `update_mask` query parameter.
     ///
-    /// Live behavior note (2026-07): `update_mask` is not required — PATCH
-    /// applies exactly the fields present in the body. The mask was also
-    /// observed to be ignored when supplied (fields outside the mask still
-    /// updated), so rely on the partial body, not the mask, to scope updates.
+    /// `update_mask` is not required: PATCH applies exactly the fields
+    /// present in the body. The API has also ignored the mask when supplied
+    /// (fields outside the mask still updated), so rely on the partial body,
+    /// not the mask, to scope updates.
     ///
     /// # Errors
     ///
@@ -599,9 +599,9 @@ impl<'a> Webhooks<'a> {
     /// Use this to verify your endpoint receives and validates deliveries
     /// before relying on it for real events.
     ///
-    /// Live behavior note (2026-07): the RPC accepts an empty JSON body
-    /// (`{}`, which this client sends) and returns `{}` on success even
-    /// when the destination URI is unreachable.
+    /// The RPC accepts an empty JSON body (`{}`, which this client sends)
+    /// and returns `{}` on success even when the destination URI is
+    /// unreachable.
     ///
     /// # Errors
     ///

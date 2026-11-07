@@ -10,8 +10,7 @@
 //! [`create`](Voices::create), [`get`](Voices::get), [`list`](Voices::list)
 //! and [`delete`](Voices::delete).
 //!
-//! Verified live 2026-09-24: list (all filters), get, prompted create, and
-//! delete. Prebuilt IDs are lowercase (`kore`, `ar-001-advisor-2`). Errors on
+//! Prebuilt IDs are lowercase (`kore`, `ar-001-advisor-2`). Errors on
 //! this resource use the standard Google envelope
 //! (`{"error": {"code": 400, "status": "INVALID_ARGUMENT", ...}}`).
 //!
@@ -22,7 +21,7 @@
 //! voices have `voice_...` IDs, matched case-sensitively, and
 //! [`get`](Voices::get) finds only those: a prebuilt catalog ID (`achernar`,
 //! `kore`), an upper-cased custom ID and a percent-encoded `voices/<id>`
-//! resource name all get a 404 (verified live 2026-09-27), though a prebuilt
+//! resource name all get a 404, though a prebuilt
 //! ID works as a voice name. An empty or dot-segment ID fails locally with
 //! [`GenaiError::InvalidInput`] before any request.
 
@@ -102,7 +101,7 @@ pub struct PromptedVoice {
     pub input: String,
     /// A prebuilt voice to start the design from, such as `"achird"`
     /// (google-genai 2.34.0). Accepted, validated (an unknown name is a
-    /// `400 INVALID_ARGUMENT`) and echoed back, live 2026-11-01.
+    /// `400 INVALID_ARGUMENT`) and echoed back.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_voice: Option<String>,
     /// Fields the crate does not model yet, preserved for roundtrip.
@@ -236,8 +235,8 @@ pub struct VoiceSpec {
     /// Summary of timbre, personality and tone.
     ///
     /// This and the discovery fields below are stored with the voice, served
-    /// back on create, get and list, and matched by [`ListVoices`]'s filters
-    /// (live 2026-11-05). They are free text, except
+    /// back on create, get and list, and matched by [`ListVoices`]'s
+    /// filters. They are free text, except
     /// [`pitch`](Self::pitch).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -265,8 +264,8 @@ pub struct VoiceSpec {
     /// Anything else to send that is not modeled here.
     ///
     /// The bindings' `sample_audio` is output only: a value sent on create
-    /// is ignored, and the response carries a sample the API generated
-    /// (live 2026-11-05), so it is read on [`Voice::sample_audio`] and not
+    /// is ignored, and the response carries a sample the API generated, so
+    /// it is read on [`Voice::sample_audio`] and not
     /// modeled here.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -559,8 +558,8 @@ paging::list_builder! {
     /// sent with every page.
     ///
     /// The API ties a page token to the filters of the request that returned
-    /// it: the same token with other filters, or with none, is a 400 (verified
-    /// live 2026-09-27). The streams take care of this; when resuming with
+    /// it: the same token with other filters, or with none, is a 400. The
+    /// streams take care of this; when resuming with
     /// [`with_page_token`](Self::with_page_token), set the same filters again.
     ///
     /// # Example

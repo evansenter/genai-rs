@@ -187,8 +187,8 @@ impl AutoFunctionStreamChunk {
 /// # Stream Resumption
 ///
 /// An auto-function stream is a series of foreground streams, which carry no
-/// `event_id` and which the server cancels when the connection drops
-/// (verified live 2026-11-01), so an interrupted loop is restarted, not
+/// `event_id` and which the server cancels when the connection drops, so
+/// an interrupted loop is restarted, not
 /// resumed. Only background interactions can be resumed, with
 /// [`Interactions::resume_stream`](crate::Interactions::resume_stream).
 ///
@@ -347,8 +347,10 @@ impl FunctionExecutionResult {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
     /// let result = client.interaction()
+    ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_text("What's the weather?")
     ///     .create_with_auto_functions()
     ///     .await?;
@@ -358,6 +360,8 @@ impl FunctionExecutionResult {
     ///         eprintln!("Function {} failed: {:?}", execution.name, execution.result);
     ///     }
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn is_error(&self) -> bool {
@@ -478,16 +482,20 @@ impl AutoFunctionResult {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # async fn run(client: genai_rs::Client, get_weather: genai_rs::FunctionDeclaration) -> Result<(), genai_rs::GenaiError> {
     /// let result = client.interaction()
+    ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_text("What's the weather?")
-    ///     .add_functions(vec![get_weather_function()])
+    ///     .add_functions(vec![get_weather])
     ///     .create_with_auto_functions()
     ///     .await?;
     ///
     /// assert!(result.all_executions_succeeded(),
     ///     "Function executions failed: {:?}",
     ///     result.failed_executions());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn all_executions_succeeded(&self) -> bool {

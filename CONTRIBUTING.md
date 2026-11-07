@@ -28,7 +28,11 @@ make test-all   # full suite including integration tests (needs GEMINI_API_KEY)
 ```
 
 Integration tests take 2-5 minutes and some flake on LLM variability. Doctests
-run in CI only, not in `make test` (see D-009).
+run in CI only, not in `make test` (see D-009). They include the guides in
+`docs/` and the README (`src/lib.rs`, `doc_tests`), so after changing a code
+block run `cargo test --workspace --doc --all-features`. A block that cannot
+compile is `rust,ignore` with an `<!-- ignore: reason -->` line above its
+fence; prefer `no_run` with hidden (`# `) setup lines.
 
 `make test-scripts` exercises `setup-dev.sh` against the checkout's real
 `.cargo/config.toml` and restores it on exit. If you kill the run outright, the
@@ -63,7 +67,11 @@ sources disagree, consistently in one direction — see D-004 in
 
    The version last swept against is in the `docs/INTERACTIONS_API_GAP.md`
    header (and in `.github/last-swept-sdk-version`); diff from there. The
-   `api-surface-sweep` workflow opens an issue when a newer SDK ships.
+   `api-surface-sweep` workflow opens an issue when a newer SDK ships. The
+   coverage oracle checks the crate against a committed dump of that
+   release's bindings and the OpenAPI spec (`docs/TESTING.md`, "Coverage
+   oracle"):
+   `cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'`.
 2. **Live probe** — `curl` against `generativelanguage.googleapis.com`, or a
    test with `LOUD_WIRE=1`
 3. **Prose docs** — `ai.google.dev` and this repo's own; both lag
@@ -86,7 +94,11 @@ When adding or changing an enum or request/response field:
       `src/proptest_content.rs`) and an
       ordinal in `src/proptest_unknown_fields.rs`
 - [ ] Update `docs/ENUM_WIRE_FORMATS.md` with the **verified** format and
-      the date it was verified
+      the date it was verified; a dated fact about what the API accepts or
+      does goes in `docs/INTERACTIONS_API_GAP.md`. Guides and rustdoc state
+      the current behavior without a date (D-032)
+- [ ] Run the coverage oracle (above); a new field, class or endpoint fails
+      it until it is modeled or listed with a dated reason
 - [ ] Use snake_case on the wire; if the API accepts both spellings, send
       snake_case
 

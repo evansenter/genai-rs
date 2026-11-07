@@ -24,8 +24,11 @@ impl<'a> InteractionBuilder<'a> {
     /// Configures the request to return image output.
     ///
     /// This is a convenience method equivalent to:
-    /// ```ignore
+    /// ```no_run
+    /// # let client = genai_rs::Client::new(String::new());
+    /// # let _ = client.interaction()
     /// .with_response_modalities(vec!["image".to_string()])
+    /// # ;
     /// ```
     ///
     /// Use this when you want the model to generate images. Requires a model
@@ -63,8 +66,11 @@ impl<'a> InteractionBuilder<'a> {
     /// Configures the request to return audio output.
     ///
     /// This is a convenience method equivalent to:
-    /// ```ignore
+    /// ```no_run
+    /// # let client = genai_rs::Client::new(String::new());
+    /// # let _ = client.interaction()
     /// .with_response_modalities(vec!["audio".to_string()])
+    /// # ;
     /// ```
     ///
     /// Use this when you want the model to generate speech audio. Requires a model
@@ -151,8 +157,8 @@ impl<'a> InteractionBuilder<'a> {
     /// Each entry's `speaker` names a speaker the input's turns refer to.
     /// On [`DEFAULT_TTS_MODEL`](crate::DEFAULT_TTS_MODEL) every text turn
     /// must carry that name via [`Content::speaker_text`](crate::Content::speaker_text); older TTS models
-    /// instead read an `Alice: ...` transcript and reject the annotation
-    /// (verified live 2026-09-24). Either way one combined audio stream is
+    /// instead read an `Alice: ...` transcript and reject the annotation.
+    /// Either way one combined audio stream is
     /// returned.
     ///
     /// # Example
@@ -245,12 +251,12 @@ impl<'a> InteractionBuilder<'a> {
     /// [`with_video_output()`](Self::with_video_output) and optionally a
     /// video [`ResponseFormat`] for delivery options.
     ///
-    /// Live availability note (2026-07): Veo models (e.g.
+    /// Availability: Veo models (e.g.
     /// `veo-3.1-generate-preview`) are listed by `/v1beta/models` with only
     /// the legacy `predictLongRunning` method and return
     /// `404 "Model ... not found"` from the Interactions API; no
-    /// Interactions-served model supported the `video` response modality at
-    /// verification time. The `video_config` field itself is schema-valid
+    /// Interactions-served model supports the `video` response modality.
+    /// The `video_config` field itself is schema-valid
     /// (its `task` enum is validated server-side).
     ///
     /// # Example
@@ -321,8 +327,11 @@ impl<'a> InteractionBuilder<'a> {
     /// Configures the request to return video output.
     ///
     /// This is a convenience method equivalent to:
-    /// ```ignore
+    /// ```no_run
+    /// # let client = genai_rs::Client::new(String::new());
+    /// # let _ = client.interaction()
     /// .with_response_modalities(vec!["video".to_string()])
+    /// # ;
     /// ```
     ///
     /// Requires a model that supports video generation. Video generation

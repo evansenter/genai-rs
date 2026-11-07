@@ -203,8 +203,8 @@ pub enum StepDelta {
     },
     /// MCP server tool call delta (`type: "mcp_server_tool_call"`).
     ///
-    /// Never observed: a streamed MCP call arrives as `function_call` and
-    /// `function_result` steps and deltas (verified live 2026-11-04). See
+    /// Not observed in a stream: the last streamed MCP calls seen arrived as
+    /// `function_call` and `function_result` steps and deltas. See
     /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall) for the verified wire behaviour
     /// and #459.
     McpServerToolCall {
@@ -219,8 +219,8 @@ pub enum StepDelta {
     },
     /// MCP server tool result delta (`type: "mcp_server_tool_result"`).
     ///
-    /// Never observed: a streamed MCP call arrives as `function_call` and
-    /// `function_result` steps and deltas (verified live 2026-11-04). See
+    /// Not observed in a stream: the last streamed MCP calls seen arrived as
+    /// `function_call` and `function_result` steps and deltas. See
     /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall) for the verified wire behaviour
     /// and #459.
     McpServerToolResult {
@@ -245,7 +245,7 @@ pub enum StepDelta {
         /// Retrieved results, as the JSON objects they arrive as: the spec
         /// and the google-genai 2.34.0 bindings type each as an object with
         /// no fields. Empty on every stream so far, where the delta carries
-        /// only its `signature` (live 2026-11-05). The stream accumulator
+        /// only its `signature`. The stream accumulator
         /// keeps any it receives in the step's [`extra`](crate::Step::extra)
         /// under `result`, since [`Step::FileSearchResult`](crate::Step)
         /// has no such field.

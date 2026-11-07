@@ -13,12 +13,23 @@
 > opens an issue when the bindings move past the baseline and closes it once
 > a sweep catches up, so an open issue means this file is behind.
 
+**Where dated live facts live (D-032).** A fact observed on the live API is
+recorded with its date here or in `docs/ENUM_WIRE_FORMATS.md`, and nowhere
+else. That file holds what a value or a shape looks like on the wire (enum
+values, steps and deltas, resource bodies, paging); this one holds what the
+API accepts, rejects and does, and what the crate models because of it. The
+guides, the README and the rustdoc state the current behavior without dates
+and link here. When a fact changes, update it here and in the one guide
+sentence that states it. Antigravity harness findings concern a local
+binary, not the API: they are keyed by harness version, and their dated
+record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
+
 ## How to verify API surface
 
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404 since about 2026-11-03, and no new public URL was found (2026-11-04), so the 2026-11-01 copies are the latest. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404 since about 2026-11-03, and no new public URL was found (2026-11-04), so the 2026-11-01 copies are the latest. This is the one record of the URL's state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
 
@@ -88,6 +99,197 @@ environments) in [Resource residue](#resource-residue-live-2026-11-05).
 - **Live coverage:** `FileSearchDocuments::get` and
   `Interactions::get_with_input` had no live test; both have one now.
   `include_input=true` now echoes the input as a `user_input` step.
+
+## Live behavior by area
+
+The behavior the guides and the rustdoc state as current, with the date it
+was last observed. A fact that a sweep turned up is in that sweep's section
+below, and a wire shape is in `docs/ENUM_WIRE_FORMATS.md`; both are linked
+from here rather than repeated.
+
+### Models
+
+- **`DEFAULT_MODEL` (`gemini-3.8-flash`)** rejects `thinking_level:
+  "minimal"` with a 400. On 2026-09-24 the message was `'minimal' is not a
+  supported thinking level for this model. Allowed values are: high, low,
+  medium.`; after the server changes of late September it read `Thinking
+  level THINKING_LEVEL_MINIMAL is not supported for this model.` (recorded
+  2026-09-30, #469), and the request was a 400 again on 2026-10-01. Omitting
+  the level does not turn thinking off. One short arithmetic puzzle
+  (2026-09-24) spent these thought tokens:
+
+  | Level sent | Thought tokens |
+  |------------|----------------|
+  | *(none)* | 103, then 222 on a second run |
+  | `low` | 56 |
+  | `medium` | 142 |
+  | `high` | 260 |
+
+  `thinking_summaries: "auto"` adds a `summary` to the thought steps;
+  `"none"`, or no setting, adds none (2026-09-24).
+- **Seeds:** three identical requests with the same `seed`
+  (`DEFAULT_MODEL`, `thinking_level: "low"`) returned identical text
+  (2026-09-24). The API documents no guarantee.
+- **Output ceiling:** `GET /v1beta/models/gemini-3.8-flash` reports an
+  `outputTokenLimit` of 65,536 (2026-09-24).
+- **Images:** there is no 3.8 image model, and `gemini-3.8-flash` answers an
+  image request with text only (2026-10-01), hence `DEFAULT_IMAGE_MODEL`.
+- **Decoding continuation** runs only on `CONTINUATION_MODEL` (2026-11-01);
+  the rules are under [Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)
+  and [Interaction residue](#interaction-residue-2026-11-05).
+- **TTS models:** the output format and the multi-speaker rules per model are
+  under Audio response and SpeechConfig in `docs/ENUM_WIRE_FORMATS.md`. A
+  custom voice worked on the 3.8 and 2.5-pro TTS models;
+  `gemini-3.1-flash-tts-preview` answered 500 (recorded without a date,
+  from the 2.25.0 sweep's Voices work of 2026-09-24).
+
+### Requests
+
+- **Unmodeled fields** (`InteractionRequest::extra`,
+  `CreateTriggerRequest::extra`): the server validates them like any field,
+  so an unknown name is `400 Unknown parameter '<name>'`, and a key that
+  names a modeled field overrides it, because the API keeps the last of a
+  repeated key (2026-11-04). The `object: "interaction"` a stored trigger's
+  interaction echoes, kept in `extra`, is accepted back on create
+  (2026-11-04).
+- **`response_mime_type`** is rejected even beside `response_format`: `400
+  responseFormat must be set when responseMimeType is set` (2026-07), so it
+  was removed.
+- **Inline document content** is accepted for `application/pdf`,
+  `text/csv` and the Office/OpenDocument types (`.docx`, `.xlsx`, `.pptx`,
+  `.odt`, `.ods`, `.odp`, and the legacy `.doc`, `.xls`, `.ppt`), each read
+  back from a real file (2026-11-05). The legacy three passed the MIME
+  check only with plain-text bytes, so parsing a real legacy file is
+  unverified. Since 2026-11-04 `text/plain` and `text/markdown` are a 400
+  (#514), as is every other type tried (`text/html`, `application/json`,
+  `application/xml`, `application/rtf`): `Unsupported mime_type '...' in
+  document content` (2026-11-05). A `.txt` or `.md` file uploaded to the
+  Files API still works as a document by URI (2026-11-05).
+- **Content after history** is accepted: see InteractionInput in
+  `docs/ENUM_WIRE_FORMATS.md` (D-031).
+
+### Streaming
+
+- **A dropped foreground stream cancels the interaction** (2026-11-01). It
+  keeps only the input step and reports `cancelled` with an `errors` entry,
+  and `interactions().stream(id)` answers `400 Streaming retrieval of
+  interactions is not supported`. A foreground stream carries no event ids;
+  only a background interaction's stream can be resumed.
+- **The tail after `interaction.completed`** (2026-11-05, `DEFAULT_MODEL`):
+  the API sends `event: done` / `data: [DONE]` and closes about a second
+  later, and stores the interaction during that tail. A `GET` sent right
+  after closing the connection at `interaction.completed` answered `500
+  Internal error encountered`, the same `GET` ten seconds later `200`, and
+  one sent after reading to the end `200` at once.
+- **Content type:** a stream answers `text/event-stream` (2026-11-04).
+- **Event sizes** (2026-11-04, `DEFAULT_IMAGE_MODEL` at `image_size:
+  "4K"`): a 16.0 MB `image` delta of base64 JPEG and a 15.7 MB
+  `thought_signature` delta in the same stream, which took 24 s; TTS audio
+  deltas are under 8 KB.
+- **A mid-stream error** arrives as a bare JSON line without `data:`, then
+  EOF (2026-11-01, a recitation block); see the 2.34.0 sweep.
+
+### Tools
+
+- **MCP:** the call and result shapes, and how they changed, are under MCP
+  identity in `docs/ENUM_WIRE_FORMATS.md`. An
+  interaction can end in `requires_action` after every MCP call was
+  answered (see [Server-side changes](#server-side-changes-live-2026-10-01)).
+- **File search** can't be combined with `google_search` or `url_context`
+  (2026-08-16: `400 '<other>' and 'file_search' cannot be combined in the
+  same request. Please choose one to continue.`); `code_execution` is
+  accepted. What its steps carry is under File Search in
+  `docs/ENUM_WIRE_FORMATS.md`.
+- **Structured output:** the `application/json` schema form is enforced on
+  the output (2026-07); see ResponseFormat in
+  `docs/ENUM_WIRE_FORMATS.md`.
+- **Tool-use tokens:** declaring a tool without using it costs none. An
+  interaction that declared an MCP server and answered from the model's own
+  knowledge reported `total_tool_use_tokens` 0, as the same prompt with no
+  tool did (2026-08-16).
+- **Code execution:** `gemini-3.8-flash` runs only Python, and
+  `gemini-4-argon` runs shell commands through Python's `subprocess`; the
+  spec's `bash` language was never observed (2026-11-01).
+
+### Agents and environments
+
+- **Custom agents** take a subset of the tool union: `code_execution`,
+  `function`, `google_search`, `mcp_server` and `url_context` (the
+  validation error, 2026-11-01; code execution, search and URL context only
+  in 2026-07). Creating custom agents was gated on standard API keys
+  through 2026-10-08 (every create was a generic `400 Request contains an
+  invalid argument.`) and works since 2026-10-30.
+- **Agent create** (2026-10-30): the one base agent accepted is
+  `DEFAULT_ANTIGRAVITY_AGENT`, bare or as `agents/<id>` (stored bare); a
+  Deep Research or model id is `400 Unsupported 'base_agent'.`, a missing
+  one `400 'base_agent' must be specified.`, a missing id `400 Invalid agent
+  id:`, and an existing id `409 Requested entity already exists`. Create
+  echoes the agent, and create, get and list serve the same shape. Managed
+  agent ids such as `DEFAULT_ANTIGRAVITY_AGENT` are not readable through
+  `GET /v1beta/agents/{id}` (404).
+- **Environments** do not expire in practice: on 2026-11-01 environments
+  created in July and August were still `active`, three months after last
+  use.
+- **Environment file download** of a path with nothing at it, the root
+  (`""`) included, is a `404 Directory not found or is empty` (2026-11-05).
+- **`cancel` on `DEFAULT_ANTIGRAVITY_AGENT`** fails; see
+  [Server-side changes](#server-side-changes-live-2026-10-01).
+- **The retired agent:** `antigravity-preview-09-2026` replaced
+  `antigravity-preview-05-2026`, which shut down on 2026-10-05; the new
+  agent's built-in tools are renamed and take PascalCase parameters.
+
+### Credentials
+
+- **Lifecycle** (2026-09-24): create (bearer token, environment variable),
+  get, list, patch with and without `update_mask`, and delete. The ID is
+  optional on create (a UUID is assigned). An OAuth2 create checks that
+  `token_url` is reachable.
+- **Since about 2026-10-30** an `environment_variable` create needs at least
+  one `trusted_domains` entry as well as an `injection_location`, although
+  the google-genai 2.34.0 bindings still mark the domains optional.
+- **Both references take effect at runtime** (2026-09-24, in a
+  `DEFAULT_ANTIGRAVITY_AGENT` sandbox; `tests/credentials_tests.rs`): an
+  `environment_variable` credential's variable holds a placeholder in the
+  sandbox, and the egress proxy substitutes the secret into requests to its
+  `trusted_domains`; a bearer credential on an allowlist entry is injected
+  into requests to that domain.
+
+### Triggers
+
+- **The whole lifecycle** (2026-11-01, against a custom agent built on
+  `DEFAULT_ANTIGRAVITY_AGENT`): create, get, list, update, run, list
+  executions and delete. Before custom agents could be created (above), only
+  `list` was verifiable.
+- **The nested interaction** must target a custom agent: a model-only
+  interaction gets `Agent '' is invalid or not found`, and `store` gets
+  `Field 'store' is not allowed in 'interaction'` (2026-11-01). A malformed
+  cron schedule gets only a generic `400 Request contains an invalid
+  argument`.
+- **Update** applies exactly the fields in the PATCH body, and only
+  `display_name` and `status` are updatable: `schedule` is `400 Unknown
+  parameter 'schedule'` (2026-11-01).
+- **Run** fires asynchronously and answers `{}` (2026-11-01), so the firing
+  is found through `list_executions`.
+- **What it stores** (2026-11-01): a text input comes back as one
+  `user_input` step, and the echo adds `store: true` and `object:
+  "interaction"`. Without an `environment_id` on create, the first firing
+  creates an environment and the trigger reports it from then on.
+- **Shape** (2026-11-01): the ID is a bare UUID; int64s are plain JSON
+  numbers; a paused trigger has no `next_run_time`, and `environment_id`,
+  `last_run_time` and `previous_interaction_id` appear once it has fired;
+  sending `status: "error"` is `400 Invalid status transition from active
+  to error`. The executions list's envelope key is `trigger_executions`; an
+  execution's `trigger_id` is bare, and a manual run's execution has no
+  `scheduled_time` or `environment_id`. Paging and empty lists are under
+  TriggerStatus in `docs/ENUM_WIRE_FORMATS.md`.
+
+### Files
+
+- **A file that doesn't exist** is a 403 whose message ends in "or it may not
+  exist", not a 404 (2026-09-24).
+- Uploads, paging and processing failures are under Files in
+  `docs/ENUM_WIRE_FORMATS.md`, and the unmodeled verbs under
+  [Resource residue](#resource-residue-live-2026-11-05).
 
 ## Interaction residue (2026-11-05)
 

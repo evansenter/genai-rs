@@ -23,7 +23,7 @@ pub(crate) const DEFAULT_MAX_FUNCTION_CALL_LOOPS: usize = 5;
 
 /// The prefix the API puts on a declared function's name on some turns:
 /// `default_api:get_weather` for `get_weather` on the second user turn of a
-/// non-streamed multi-turn chain (observed live 2026-10-01).
+/// non-streamed multi-turn chain.
 const DECLARED_FUNCTION_NAMESPACE: &str = "default_api:";
 
 /// What a round's response asks of the loop.

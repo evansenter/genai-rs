@@ -11,7 +11,7 @@ use crate::wire_fields::ModeledMap;
 ///
 /// Items carry only `search_suggestions`, an HTML rendering of the search
 /// suggestions (the google-genai 2.34.0 bindings' `GoogleSearchResult` has no
-/// other field; live 2026-11-05). The sources the answer drew on arrive as
+/// other field, and none other is served). The sources the answer drew on arrive as
 /// [`Annotation`](crate::Annotation)s on the model's text instead.
 ///
 /// # Example
@@ -56,8 +56,8 @@ impl GoogleSearchResultItem {
 
 /// Place data returned by the Google Maps tool.
 ///
-/// A place carries its `name`, `place_id` and a Maps `url` (live
-/// 2026-11-05), plus `review_snippets` in the google-genai 2.34.0 bindings.
+/// A place carries its `name`, `place_id` and a Maps `url`, plus
+/// `review_snippets` in the google-genai 2.34.0 bindings.
 /// Unknown fields from future API additions are preserved via the `extra`
 /// field for Evergreen forward compatibility.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]

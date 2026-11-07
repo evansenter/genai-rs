@@ -244,11 +244,11 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets a seed for deterministic output generation.
+    /// Sets a seed for repeatable sampling.
     ///
-    /// Using the same seed with identical inputs will produce the same output,
-    /// useful for testing and debugging. The exact same seed, model, and input
-    /// should produce reproducible results.
+    /// Identical seeded requests have returned identical text, but the API
+    /// documents no guarantee, so don't rely on it for exact-text assertions
+    /// (see `docs/CONFIGURATION.md`, "Seeds").
     ///
     /// # Example
     /// ```no_run
@@ -256,7 +256,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder("api-key".to_string()).build()?;
     ///
-    /// // Two requests with the same seed should produce the same output
+    /// // Two requests with the same seed usually return the same text
     /// let response1 = client
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_MODEL)
@@ -273,7 +273,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     .create()
     ///     .await?;
     ///
-    /// // response1.as_text() should equal response2.as_text()
+    /// // response1.as_text() usually equals response2.as_text(); no guarantee
     /// # Ok(())
     /// # }
     /// ```

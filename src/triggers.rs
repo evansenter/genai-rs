@@ -12,16 +12,16 @@
 //! [`update`](Triggers::update), [`delete`](Triggers::delete),
 //! [`run`](Triggers::run) and [`list_executions`](Triggers::list_executions).
 //!
-//! The whole lifecycle is verified live (2026-11-01) against a custom agent
-//! built on [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT):
-//! create, get, list, update, run, list executions and delete. The trigger's
+//! The whole lifecycle works against a custom agent built on
+//! [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT): create,
+//! get, list, update, run, list executions and delete (the live record is
+//! under Triggers in `docs/INTERACTIONS_API_GAP.md`). The trigger's
 //! `interaction` must target a custom `agent` (an [`agents`](crate::agents)
 //! resource ID): plain `model` interactions are rejected ("Agent '' is
 //! invalid or not found"), and `store` is not allowed in the nested request
 //! ("Field 'store' is not allowed in 'interaction'"). A malformed cron
 //! schedule gets only a generic 400 ("Request contains an invalid
-//! argument"). Before 2026-10-30 custom agents could not be created on a
-//! standard API key, so only `list` was verifiable.
+//! argument").
 //!
 //! This is distinct from
 //! `antigravity::TriggerConfig` (feature `antigravity`), which schedules
@@ -94,8 +94,8 @@ wire_enum! {
 /// All fields are optional with a struct-level serde default (the Evergreen
 /// preserve-don't-reject posture, mirroring [`Agent`](crate::agents::Agent)),
 /// so a field the API stops sending, or a projection that elides fields,
-/// degrades per-field rather than failing the whole list response. The
-/// shape is verified live (2026-11-01): a paused trigger has no
+/// degrades per-field rather than failing the whole list response. A
+/// paused trigger has no
 /// `next_run_time`, and `environment_id`, `last_run_time` and
 /// `previous_interaction_id` appear once it has fired.
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
@@ -104,8 +104,8 @@ wire_enum! {
 pub struct Trigger {
     /// Output only. The ID of the trigger — the value the ID-taking
     /// [`Triggers`] methods ([`get`](Triggers::get),
-    /// [`delete`](Triggers::delete), ...) expect. A bare UUID on the wire
-    /// (live 2026-11-01), not a `triggers/...` resource name.
+    /// [`delete`](Triggers::delete), ...) expect. A bare UUID on the wire,
+    /// not a `triggers/...` resource name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Cron expression the trigger fires on.
@@ -128,10 +128,10 @@ pub struct Trigger {
     /// asymmetry remains: a bare `[Content]` input re-serializes as a
     /// `user_input` step.
     ///
-    /// The server normalizes what it stores (live 2026-11-01): a text input
+    /// The server normalizes what it stores: a text input
     /// comes back as one `user_input` step, and the echo carries
     /// `store: true` plus `object: "interaction"` (kept in `extra`, and
-    /// accepted back on create, live 2026-11-04). To reuse a stored
+    /// accepted back on create). To reuse a stored
     /// trigger's interaction in a new [`CreateTriggerRequest`], clear
     /// [`store`](InteractionRequest::store) first: the API rejects it on
     /// create.
@@ -147,8 +147,7 @@ pub struct Trigger {
     /// ID of the environment fired interactions run against, as a bare ID
     /// for [`Environments::get`](crate::Environments::get). Without
     /// [`CreateTriggerRequest::with_environment_id`], the first firing
-    /// creates one and the trigger reports it from then on (live
-    /// 2026-11-01).
+    /// creates one and the trigger reports it from then on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. The current status of the trigger.
@@ -157,8 +156,8 @@ pub struct Trigger {
     /// Consecutive failures before the trigger is disabled (the server
     /// defaults it to 5).
     ///
-    /// The API sends the trigger's int64s as plain JSON numbers (live
-    /// 2026-11-01), and they re-serialize that way. The protobuf-JSON string
+    /// The API sends the trigger's int64s as plain JSON numbers, and they
+    /// re-serialize that way. The protobuf-JSON string
     /// form (`"5"`, which the environments resource uses) is also accepted
     /// on deserialize, so one string-encoded value can't fail the whole
     /// list response.
@@ -189,8 +188,8 @@ pub struct Trigger {
     pub previous_interaction_id: Option<String>,
     /// Output only. When the trigger was created.
     ///
-    /// The wire spells this `create_time`, as the SDK spec does (live
-    /// 2026-11-01). The environments resource next door uses `created`, so
+    /// The wire spells this `create_time`, as the SDK spec does. The
+    /// environments resource next door uses `created`, so
     /// that spelling is accepted too (deserialize-only; serialization keeps
     /// `create_time`). One arm still hard-fails: *both* spellings in one
     /// object is a serde duplicate-field error, raised before any
@@ -394,7 +393,7 @@ pub struct CreateTriggerRequest {
     /// A key that collides with a modeled field **wins**, so the escape
     /// hatch can also override a modeled field whose wire shape turns out
     /// wrong. The request body is written with both keys, the `extra` one
-    /// last, and the API keeps the last of a repeated key (live 2026-11-04);
+    /// last, and the API keeps the last of a repeated key;
     /// `serde_json::to_value` keeps only the `extra` one.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -521,7 +520,7 @@ impl CreateTriggerRequest {
 /// SDK spec exposes **no `update_mask` parameter** for trigger updates
 /// (google-genai 2.34.0: `triggers.update(id, display_name, status)` only),
 /// so field omission is the only scoping mechanism. It works: the PATCH
-/// applies exactly the fields present in the body (live 2026-11-01).
+/// applies exactly the fields present in the body.
 /// Nothing else is updatable; sending `schedule` gets
 /// `400 Unknown parameter 'schedule'`, so a new schedule means a new trigger.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -568,8 +567,8 @@ impl TriggerUpdate {
     /// [`Paused`](TriggerStatus::Paused) pauses it — the two values a
     /// caller can send. [`Error`](TriggerStatus::Error) is output-only (the
     /// server sets it after consecutive failures): sending it gets
-    /// `400 Invalid status transition from active to error` (live
-    /// 2026-11-01). The open enum accepts it here per the Evergreen posture.
+    /// `400 Invalid status transition from active to error`. The open enum
+    /// accepts it here per the Evergreen posture.
     ///
     /// In a read-modify-write flow an
     /// [`is_unknown()`](TriggerStatus::is_unknown) status read from the API
@@ -716,8 +715,8 @@ impl<'a> Triggers<'a> {
     /// is asynchronous, and works on a paused trigger too.
     ///
     /// **The returned execution is empty today.** The bindings type the
-    /// response as a `TriggerExecution`, but the API answers `{}` (live
-    /// 2026-11-01), so every field is `None`. Find the execution with
+    /// response as a `TriggerExecution`, but the API answers `{}`, so every
+    /// field is `None`. Find the execution with
     /// [`list_executions`](Self::list_executions), whose entries carry the
     /// ID, status and the fired interaction's ID. The return type keeps the
     /// spec's shape so that callers see the fields if the API starts
@@ -737,8 +736,8 @@ impl<'a> Triggers<'a> {
     /// [`items`](ListTriggerExecutions::items) to stream them all.
     ///
     /// Reads the same `executions` sub-collection [`run`](Self::run) posts
-    /// to. A trigger that does not exist lists as an empty page, not a 404
-    /// (live 2026-09-26). The execution shape is verified live (2026-11-01).
+    /// to. A trigger that does not exist lists as an empty page, not a
+    /// 404.
     pub fn list_executions(self, trigger_id: &str) -> ListTriggerExecutions<'a> {
         ListTriggerExecutions::new(self.client, trigger_id.to_owned())
     }

@@ -31,9 +31,8 @@ use crate::tools::Tool;
 /// An agent definition for the `/v1beta/agents` resource.
 ///
 /// Agent `tools` support a subset of the tool union: `code_execution`,
-/// `function`, `google_search`, `mcp_server` and `url_context` (the API's
-/// validation error, verified live 2026-11-01). Other tool types are
-/// rejected.
+/// `function`, `google_search`, `mcp_server` and `url_context`, the list
+/// the API's validation error gives. Other tool types are rejected.
 ///
 /// # Example
 ///
@@ -68,7 +67,7 @@ pub struct Agent {
     /// `max_total_tokens` as a string int64 (`"50000"`). The agent keeps only
     /// an Antigravity config: a config of another type is stored as
     /// `{"type": "antigravity"}`, its settings dropped, and an unknown field
-    /// is `400 Unknown parameter` (live 2026-11-05). The field is the open
+    /// is `400 Unknown parameter`. The field is the open
     /// [`AgentConfig`] so that what the API echoes reads back whole; setting
     /// it directly sends any JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -92,8 +91,8 @@ pub struct Agent {
     ///
     /// Without this, a deserialize-then-serialize cycle silently drops any
     /// field the crate has not modeled yet — invisible to the caller, and
-    /// unrecoverable. The create, get and list shapes were observed live on
-    /// 2026-10-30; create echoes the agent.
+    /// unrecoverable. Create, get and list serve the same shape, and create
+    /// echoes the agent.
     ///
     /// **Also read on serialize into a request body.** [`Agents::create`]
     /// sends this whole struct, so `extra` is an *outbound* escape hatch too —
@@ -115,7 +114,7 @@ impl Agent {
     /// arguments: `id` names the agent (an existing id is a 409), and
     /// `base_agent` is the managed agent it extends.
     ///
-    /// As of 2026-10-30 the only accepted base agent is
+    /// The only accepted base agent is
     /// [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT), bare or
     /// as `agents/<id>` (stored bare). Deep Research and model ids are
     /// rejected with `400 Unsupported 'base_agent'.`, and an empty one with
@@ -134,7 +133,7 @@ impl Agent {
     ///
     /// It takes an [`AntigravityConfig`], the only config the resource keeps:
     /// another type is stored as a bare `{"type": "antigravity"}` and its
-    /// settings lost (live 2026-11-05).
+    /// settings lost.
     ///
     /// ```
     /// use genai_rs::{Agent, AntigravityConfig};
@@ -176,8 +175,7 @@ impl Agent {
     /// Adds a tool to the agent's tool list.
     ///
     /// The API accepts the subset `code_execution`, `function`,
-    /// `google_search`, `mcp_server` and `url_context` for agents (verified
-    /// live 2026-11-01).
+    /// `google_search`, `mcp_server` and `url_context` for agents.
     #[must_use]
     pub fn add_tool(mut self, tool: impl Into<Tool>) -> Self {
         self.tools.get_or_insert_with(Vec::new).push(tool.into());
@@ -250,23 +248,19 @@ impl<'a> Agents<'a> {
     /// [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent)
     /// using its ID.
     ///
-    /// Live behavior notes (2026-10-30):
+    /// Live behavior (dated in `docs/INTERACTIONS_API_GAP.md`):
     /// - Works on a standard Gemini API key. `id` and `base_agent` are
     ///   required (`400 Invalid agent id: ` /
     ///   `400 'base_agent' must be specified.`), and
     ///   [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT) is
     ///   the only accepted base agent (`400 Unsupported 'base_agent'.`
     ///   otherwise). The response echoes the agent; an existing `id` is
-    ///   `409 Requested entity already exists`. Through at least 2026-10-08,
-    ///   every create on a standard key was refused with a generic
-    ///   `400 "Request contains an invalid argument."`.
+    ///   `409 Requested entity already exists`.
     /// - `tools` on an agent accepts `code_execution`, `function`,
     ///   `google_search`, `mcp_server` and `url_context` (the API's own
-    ///   validation error, 2026-11-01; it listed only the first, third and
-    ///   last in 2026-07).
+    ///   validation error).
     /// - Managed agent IDs (e.g. `antigravity-preview-09-2026`) are not
-    ///   retrievable through `GET /v1beta/agents/{id}` (404, re-verified
-    ///   2026-10-30).
+    ///   retrievable through `GET /v1beta/agents/{id}` (404).
     ///
     /// # Errors
     ///

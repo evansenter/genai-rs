@@ -28,12 +28,18 @@ impl AgentBuilder {
     /// The hook is a plain closure; async work inside it can block on the
     /// runtime, which the hook's thread has entered:
     ///
-    /// ```rust,ignore
-    /// .on_pre_tool(|call| {
+    /// ```rust,no_run
+    /// # use genai_rs::antigravity::{AntigravityAgent, PreToolDecision};
+    /// # struct Audit;
+    /// # impl Audit { async fn check(&self, _tool: &str) -> bool { true } }
+    /// # let audit_service = std::sync::Arc::new(Audit);
+    /// # let _builder = AntigravityAgent::builder()
+    /// .on_pre_tool(move |call| {
     ///     let allowed = tokio::runtime::Handle::current()
     ///         .block_on(audit_service.check(&call.name));
     ///     if allowed { PreToolDecision::Allow } else { PreToolDecision::deny("audit") }
     /// })
+    /// # ;
     /// ```
     #[must_use]
     pub fn on_pre_tool(

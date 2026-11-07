@@ -18,8 +18,7 @@ pub struct TriggerExecution {
     /// Output only. The ID of the execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// Output only. The ID of the trigger that fired (a bare ID, live
-    /// 2026-11-01).
+    /// Output only. The ID of the trigger that fired (a bare ID).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_id: Option<String>,
     /// Output only. The interaction created by this firing, a bare ID for
@@ -27,7 +26,7 @@ pub struct TriggerExecution {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interaction_id: Option<String>,
     /// Output only. The environment the firing ran against. In the spec;
-    /// not sent on a completed manual run (live 2026-11-01), where
+    /// not sent on a completed manual run, where
     /// [`Trigger::environment_id`] carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
@@ -38,7 +37,7 @@ pub struct TriggerExecution {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Output only. When the firing was scheduled for. Absent on a manual
-    /// [`run`](super::Triggers::run) (live 2026-11-01).
+    /// [`run`](super::Triggers::run).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -76,7 +75,7 @@ pub struct TriggerExecution {
 
 /// Response from listing triggers.
 ///
-/// The API returns `{}` when no triggers exist (verified live 2026-08-08),
+/// The API returns `{}` when no triggers exist,
 /// so both fields default.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -105,7 +104,7 @@ paging::impl_list_page!(TriggerListResponse, triggers: Trigger);
 pub struct TriggerExecutionListResponse {
     /// The executions in this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually. The envelope key is
-    /// `trigger_executions`, as in the SDK spec (live 2026-11-01);
+    /// `trigger_executions`, as in the SDK spec;
     /// `executions` (the path-segment spelling) is accepted on deserialize
     /// as a hedge.
     /// Both keys in one envelope is a serde duplicate-field error raised

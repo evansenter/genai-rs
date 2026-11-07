@@ -133,9 +133,14 @@ impl<'a> InteractionBuilder<'a> {
     /// Configures the Deep Research agent with thinking summaries.
     ///
     /// This is a convenience method equivalent to:
-    /// ```ignore
+    /// ```no_run
+    /// # use genai_rs::{DeepResearchConfig, ThinkingSummaries};
+    /// # let client = genai_rs::Client::new(String::new());
+    /// # let summaries = ThinkingSummaries::Auto;
+    /// # let _ = client.interaction()
     /// .with_agent_config(DeepResearchConfig::new()
     ///     .with_thinking_summaries(summaries))
+    /// # ;
     /// ```
     ///
     /// Only applicable to Deep Research agents (e.g. [`DEFAULT_DEEP_RESEARCH_AGENT`](crate::DEFAULT_DEEP_RESEARCH_AGENT)).

@@ -83,9 +83,10 @@ point-in-time claim, not a completeness guarantee — see
 sweep found and what is still open. A few knobs are **modeled but
 gated to Vertex AI** and rejected by the Gemini API today: the Retrieval
 tool, `DeepResearchConfig::with_bigquery_tool()`, a few `safety_settings`
-values, and video `gcs_uri` delivery. Details and per-feature
-live-verification notes are in
-[docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md).
+values, and video `gcs_uri` delivery. The dated live-verification record
+is in two places: [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md)
+for what the API accepts and does, and
+[docs/ENUM_WIRE_FORMATS.md](docs/ENUM_WIRE_FORMATS.md) for the wire shapes.
 
 ## Installation
 
@@ -146,9 +147,10 @@ See [Examples Index](docs/EXAMPLES_INDEX.md) for the complete categorized list.
 
 ### Streaming
 
-```rust,ignore
+```rust,no_run
 use futures_util::StreamExt;
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let mut stream = client.interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Write a haiku about Rust.")
@@ -160,29 +162,37 @@ while let Some(event) = stream.next().await {
         print!("{text}");
     }
 }
+# Ok(())
+# }
 ```
 
 ### Function Calling with `#[tool]`
 
-```rust,ignore
+```rust,no_run
 use genai_rs_macros::tool;
 
+/// Gets the weather for a city.
 #[tool(location(description = "City name, e.g. Tokyo"))]
 fn get_weather(location: String) -> String {
-    format!(r#"{{"temp": 72, "conditions": "sunny"}}"#)
+    format!(r#"{{"location": "{location}", "temp": 72, "conditions": "sunny"}}"#)
 }
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let result = client.interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .add_function(get_weather_declaration())
     .create_with_auto_functions()
     .await?;
+# let _ = result;
+# Ok(())
+# }
 ```
 
 ### Stateful Conversations
 
-```rust,ignore
+```rust,no_run
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 // First turn (enable storage for multi-turn)
 let r1 = client.interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -197,14 +207,18 @@ let r2 = client.interaction()
     .with_previous_interaction(r1.id.as_ref().expect("stored interactions have IDs"))
     .with_text("What's my name?")  // Remembers: Alice
     .create().await?;
+# let _ = r2;
+# Ok(())
+# }
 ```
 
 For stateless deployments, replay history as steps — `output_steps()`
 preserves the `signature` fields the API requires on replay:
 
-```rust,ignore
+```rust,no_run
 use genai_rs::Step;
 
+# async fn run(client: genai_rs::Client, r1: genai_rs::InteractionResponse) -> Result<(), genai_rs::GenaiError> {
 let mut history = vec![Step::user_text("My name is Alice.")];
 history.extend(r1.output_steps());  // replay model output verbatim
 
@@ -213,13 +227,17 @@ let r2 = client.interaction()
     .with_history(history)
     .with_text("What's my name?")
     .create().await?;
+# let _ = r2;
+# Ok(())
+# }
 ```
 
 ### Thinking Mode
 
-```rust,ignore
+```rust,no_run
 use genai_rs::ThinkingLevel;
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client.interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_thinking_level(ThinkingLevel::High)
@@ -229,13 +247,16 @@ let response = client.interaction()
 if response.has_thoughts() {
     println!("Model used {} thought blocks", response.step_summary().thought_count);
 }
+# Ok(())
+# }
 ```
 
 ### Background Execution + Webhook Routing
 
-```rust,ignore
+```rust,no_run
 use genai_rs::{Webhook, WebhookConfig, WebhookEvent};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 // Register a managed webhook once...
 let webhook = client.webhooks().create(&Webhook::new(
     "https://example.com/hooks/genai",
@@ -249,13 +270,17 @@ let response = client.interaction()
     .with_background(true)
     .with_webhook_config(WebhookConfig::new().with_uris(vec![webhook.uri.clone()]))
     .create().await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
 ### Build & Execute (for Retries)
 
-```rust,ignore
+```rust,no_run
 use genai_rs::InteractionRequest;
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 // Build request without executing (Clone + Serialize)
 let request: InteractionRequest = client.interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -266,6 +291,9 @@ let request: InteractionRequest = client.interaction()
 let response = client.execute(request.clone()).await?;
 
 // On error, check if retryable: error.is_retryable()
+# let _ = response;
+# Ok(())
+# }
 ```
 
 See [`retry_with_backoff`](examples/retry_with_backoff.rs) for a complete retry example using the `backon` crate.
@@ -279,7 +307,9 @@ workspaces, your tools, and Rust-side policy enforcement. The harness binary
 executes the agent loop (shell, file edits, search, MCP, subagents); this
 crate speaks its protocol directly, with no Python in the loop:
 
-```rust,ignore
+```rust,no_run
+# #[cfg(feature = "antigravity")]
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
 use genai_rs::antigravity::{AntigravityAgent, policy};
 
 let mut agent = AntigravityAgent::builder()
@@ -295,6 +325,8 @@ let response = agent.chat("Summarize the layout of this repo.").await?;
 println!("{}", response.text());
 
 agent.shutdown().await?;
+# Ok(())
+# }
 ```
 
 The same `#[tool]` functions work in both modes, and `LOUD_WIRE=1` covers
@@ -302,7 +334,7 @@ harness sessions too. Setup (`pip install google-antigravity==0.1.23`),
 capabilities, policies/hooks, MCP servers, subagents, triggers, and session
 resume are covered in [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md).
 
-Seven runnable examples live in
+Ten runnable examples live in
 [`examples/antigravity/`](examples/antigravity/) — grouped there the way
 `src/antigravity/` is, since they all need the feature and the harness
 binary. Start with [`agent.rs`](examples/antigravity/agent.rs); see
@@ -336,8 +368,8 @@ agentic code-review application with subagents and a structured report.
 | [Error Handling](docs/ERROR_HANDLING.md) | Error types, recovery patterns |
 | [Reliability](docs/RELIABILITY.md) | Retries, timeouts, cancellation, service tiers |
 | [Logging Strategy](docs/LOGGING_STRATEGY.md) | Log levels, `LOUD_WIRE` debugging |
-| [Enum Wire Formats](docs/ENUM_WIRE_FORMATS.md) | Verified wire formats, Unknown variants |
-| [API Gap Analysis](docs/INTERACTIONS_API_GAP.md) | Coverage tracker, Vertex-only findings |
+| [Enum Wire Formats](docs/ENUM_WIRE_FORMATS.md) | Verified wire formats with their dates, Unknown variants |
+| [API Gap Analysis](docs/INTERACTIONS_API_GAP.md) | Coverage tracker, dated live behavior, Vertex-only findings |
 | [Testing Guide](docs/TESTING.md) | Test strategies, assertions |
 | [API Reference](https://docs.rs/genai-rs) | Generated API documentation |
 
@@ -382,12 +414,15 @@ See [Logging Strategy](docs/LOGGING_STRATEGY.md) for details.
 
 This library follows the [Evergreen philosophy](https://github.com/google-deepmind/evergreen-spec): unknown API types deserialize into `Unknown` variants instead of failing. Always include wildcard arms:
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::Step;
+# fn show(step: &Step) {
 match step {
     Step::ModelOutput { content, .. } => { /* text, images, ... */ }
     Step::FunctionCall { name, .. } => println!("call: {name}"),
     _ => {}  // Handles future variants gracefully
 }
+# }
 ```
 
 ## Testing

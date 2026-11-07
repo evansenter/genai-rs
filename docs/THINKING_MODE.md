@@ -15,24 +15,17 @@ revision, that reasoning appears in `response.steps` as
 
 | Level | Wire value | On `DEFAULT_MODEL` |
 |-------|-----------|--------------------|
-| `Minimal` | `"minimal"` | **Rejected**: `Thinking level THINKING_LEVEL_MINIMAL is not supported for this model.` Some older models accept it; pass one to `with_model()` |
+| `Minimal` | `"minimal"` | **Rejected** with a 400. Some older models accept it; pass one to `with_model()` |
 | `Low` | `"low"` | Accepted; the cheapest level this model allows |
 | `Medium` | `"medium"` | Accepted |
 | `High` | `"high"` | Accepted |
 
 **Omitting `with_thinking_level()` does not turn thinking off.** It sends no
 level, and the model's default applies. `DEFAULT_MODEL` (`gemini-3.8-flash`)
-still thinks. One live check, 2026-09-24, on a short arithmetic puzzle:
-
-| Level sent | Thought tokens |
-|------------|----------------|
-| *(none)* | 103, then 222 on a second run |
-| `low` | 56 |
-| `medium` | 142 |
-| `high` | 260 |
-
-Counts vary run to run and with the prompt. Treat these as the shape of the
-behavior, not a price list. To keep reasoning cost down, set
+still thinks, and with no level it has spent more thought tokens than
+`low` and nearly as many as `high`; a measured example is under Models in the
+[gap tracker](INTERACTIONS_API_GAP.md#models). Counts vary run to run and
+with the prompt. To keep reasoning cost down, set
 `ThinkingLevel::Low` explicitly, and read the actual cost from
 `response.thought_tokens()`.
 
@@ -71,7 +64,7 @@ Helpers on `InteractionResponse`:
 
 Summaries are returned only when requested:
 
-| `with_thinking_summaries(...)` | Result (live check, 2026-09-24) |
+| `with_thinking_summaries(...)` | Result |
 |-------------------------------|------------------------------|
 | `ThinkingSummaries::Auto` | `Thought` steps carry a `summary` |
 | `ThinkingSummaries::None`, or not set | No summary |
@@ -141,7 +134,7 @@ while let Some(event) = stream.next().await {
 
 Signatures live on `Step::Thought { signature, .. }`. `Step::FunctionCall`
 steps also carry a `signature`, which the API **requires** when a function
-call is replayed in stateless history (verified live 2026-07), and server-tool
+call is replayed in stateless history, and server-tool
 call and result steps carry an optional one.
 
 When you manage history yourself, replay the model's steps unchanged.

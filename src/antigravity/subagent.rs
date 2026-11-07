@@ -12,10 +12,14 @@ use super::{AgentBehavior, BuiltinTool, Capabilities, SubagentSkills, SystemInst
 /// write-capable, so the spawn-time safety gate requires a policy or
 /// pre-tool hook).
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};
+/// # use genai_rs_macros::tool;
+/// # /// Classifies a finding's severity.
+/// # #[tool(category(description = "The finding's category"))]
+/// # fn severity_classifier(category: String) -> String { category }
 ///
-/// let agent = AntigravityAgent::builder()
+/// let builder = AntigravityAgent::builder()
 ///     .add_tool(severity_classifier_declaration())   // parent registration
 ///     .add_subagent(
 ///         Subagent::new("auditor")
@@ -27,6 +31,7 @@ use super::{AgentBehavior, BuiltinTool, Capabilities, SubagentSkills, SystemInst
 ///     .add_policy(policy::allow_all())
 ///     // ...
 ///     ;
+/// # let _ = builder;
 /// ```
 ///
 /// Custom tools are referenced **by name** and must also be registered on

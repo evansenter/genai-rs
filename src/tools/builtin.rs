@@ -286,7 +286,7 @@ impl From<ComputerUseConfig> for Tool {
 /// pass the full name here too.
 ///
 /// Cannot be combined with `google_search` or `url_context` in one request;
-/// the API returns a 400 naming the pair (verified live 2026-08-16).
+/// the API returns a 400 naming the pair.
 ///
 /// # Example
 ///

@@ -66,20 +66,20 @@ pub enum ResponseFormat {
     },
     /// Audio output configuration.
     ///
-    /// Server-side constraints (verified live 2026-07 on the Gemini API):
+    /// Server-side constraints on the Gemini API:
     /// `mime_type` and `delivery` are schema-valid but rejected
     /// ("Audio mime_type is not supported in response_format." /
     /// "Audio delivery mode is not supported."); `sample_rate` is accepted.
     /// Output is returned inline: `audio/wav` from the 3.8 TTS models,
-    /// `audio/l16` from older ones (2026-09-24).
+    /// `audio/l16` from older ones.
     Audio {
         /// MIME type of the audio output. Known values: `audio/mp3`,
         /// `audio/ogg_opus`, `audio/l16`, `audio/wav`, `audio/alaw`,
-        /// `audio/mulaw`. Rejected by the Gemini API as of 2026-07.
+        /// `audio/mulaw`. Rejected by the Gemini API.
         #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Delivery mode for the audio output. Rejected by the Gemini API
-        /// as of 2026-07 (inline-only).
+        /// (inline-only).
         #[serde(skip_serializing_if = "Option::is_none")]
         delivery: Option<ResponseDelivery>,
         /// Sample rate in Hz.
@@ -92,17 +92,17 @@ pub enum ResponseFormat {
     },
     /// Image output configuration.
     ///
-    /// Server-side constraints (verified live 2026-07 on the Gemini API):
+    /// Server-side constraints on the Gemini API:
     /// `mime_type` is accepted but only `image/jpeg` is supported;
     /// `delivery` is rejected ("Image delivery mode is not supported.",
     /// inline-only).
     Image {
         /// MIME type of the image output. Known value: `image/jpeg`
-        /// (the only value the Gemini API accepts as of 2026-07).
+        /// (the only value the Gemini API accepts).
         #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Delivery mode for the image output. Rejected by the Gemini API
-        /// as of 2026-07 (inline-only).
+        /// (inline-only).
         #[serde(skip_serializing_if = "Option::is_none")]
         delivery: Option<ResponseDelivery>,
         /// Aspect ratio for the image output.
@@ -114,17 +114,17 @@ pub enum ResponseFormat {
     },
     /// Video output configuration.
     ///
-    /// No model reachable through the Interactions API produces video as of
-    /// 2026-09-24 (Veo models 404 there), so none of these fields is
-    /// live-verified beyond server-side validation.
+    /// No model reachable through the Interactions API produces video (Veo
+    /// models 404 there), so none of these fields is live-verified beyond
+    /// server-side validation.
     Video {
         /// Delivery mode for the video output.
         #[serde(skip_serializing_if = "Option::is_none")]
         delivery: Option<ResponseDelivery>,
         /// GCS URI to store the video output. Required on Vertex when
-        /// `delivery` is `uri`. Rejected on the Gemini API (2026-07:
-        /// "not available on the Gemini API but it is available on the
-        /// Gemini Enterprise Agent Platform").
+        /// `delivery` is `uri`. Rejected on the Gemini API ("not available
+        /// on the Gemini API but it is available on the Gemini Enterprise
+        /// Agent Platform").
         #[serde(skip_serializing_if = "Option::is_none")]
         gcs_uri: Option<String>,
         /// Aspect ratio for the video output. Known values: `16:9`, `9:16`.

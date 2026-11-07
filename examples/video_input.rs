@@ -5,8 +5,9 @@
 //! megabytes belong in the Files API (`files_api`), referenced by URI.
 //!
 //! `VideoProcessing::segment()` restricts the model to a time window and
-//! frame rate. The window is what reduces video input tokens (see the
-//! measurements on `VideoProcessing`), which matters on long videos. The API
+//! frame rate. The window is what reduces video input tokens (the
+//! measurements are in `docs/ENUM_WIRE_FORMATS.md`), which matters on long
+//! videos. The API
 //! accepts `processing` only on video inside a `user_input` step, which is
 //! how `with_content` sends its content.
 //!

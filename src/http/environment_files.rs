@@ -91,8 +91,8 @@ pub async fn list_files(
 }
 
 /// Downloads a file, or a directory as a tar archive
-/// (`GET /v1beta/environments/{id}/files/{path}?alt=media`, live
-/// 2026-11-05). The body is not JSON, so wire inspectors see the request and
+/// (`GET /v1beta/environments/{id}/files/{path}?alt=media`). The body is
+/// not JSON, so wire inspectors see the request and
 /// its status but no body.
 pub async fn download_file(
     ctx: &HttpContext,

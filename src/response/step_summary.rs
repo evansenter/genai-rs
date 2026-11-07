@@ -55,18 +55,24 @@ pub struct StepSummary {
     /// Number of generic `tool_call` steps — server-side tool invocations
     /// the API does not further identify.
     ///
-    /// MCP calls landed here through September 2026 (verified live
-    /// 2026-08-16). Since 2026-10-01 they arrive as answered
-    /// `function_call` steps named `<server>:<tool>`, counted in
-    /// [`function_call_count`](Self::function_call_count). See #433.
+    /// The oldest MCP shape landed here; MCP calls now arrive as
+    /// `mcp_server_tool_call` steps, counted in
+    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count)
+    /// (in between, as answered `function_call` steps counted in
+    /// [`function_call_count`](Self::function_call_count)). See #433, and
+    /// MCP identity in `docs/ENUM_WIRE_FORMATS.md` for the dates.
     pub tool_call_count: usize,
     /// Number of `mcp_server_tool_call` steps.
     ///
-    /// **Expect 0.** The API has never emitted it (last checked 2026-11-04):
-    /// MCP calls arrived as generic `tool_call` steps, and since 2026-10-01
-    /// as answered `function_call` steps. Retained because the step type is
-    /// spec-defined and may start arriving. Count MCP calls in either shape
-    /// with [`InteractionResponse::mcp_calls`].
+    /// The shape MCP calls arrive in now in a non-streamed or stored
+    /// response, one per call the server ran. A stream has not been seen to
+    /// carry it: the last streamed MCP calls arrived as `function_call` /
+    /// `function_result` deltas, so a response assembled from a stream may
+    /// count them in [`function_call_count`](Self::function_call_count)
+    /// instead. Earlier MCP calls arrived as generic `tool_call` steps and
+    /// then as answered `function_call` steps, which this does not count
+    /// either; count MCP calls in either recent shape with
+    /// [`InteractionResponse::mcp_calls`].
     ///
     /// [`InteractionResponse::tool_use_tokens`] is the other signal that
     /// MCP ran, with the caveat that it is a single aggregate across all
@@ -75,11 +81,10 @@ pub struct StepSummary {
     pub mcp_server_tool_call_count: usize,
     /// Number of `mcp_server_tool_result` steps.
     ///
-    /// **Expect 0**, for the same reason as
-    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count) —
-    /// the API emits neither of the pair today — and with the same
-    /// consequence, since 0 here reads as "the MCP call returned nothing"
-    /// rather than "we do not model what came back".
+    /// One per MCP result, paired with
+    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count).
+    /// An MCP call in an earlier shape has its result as a `function_result`
+    /// step instead, so 0 here does not mean the call returned nothing.
     pub mcp_server_tool_result_count: usize,
     /// Number of `file_search_call` steps
     pub file_search_call_count: usize,

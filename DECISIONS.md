@@ -53,7 +53,7 @@ flag a known delta holding a value strict mode rejects (an unknown
 `arguments.language`, an unknown content type in a `thought_summary`) fails
 and names the field, as the matching `Step` does.
 
-*Stated as a rule in CLAUDE.md ("Core Design Philosophy").*
+*Stated as a rule in CLAUDE.md ("Rules" → "Evergreen soft-typing").*
 
 ---
 
@@ -125,8 +125,9 @@ concluded "fully covered" could not have seen it. The widened
 
 Conversely, the bindings describe a Retrieval tool and an
 `enable_bigquery_tool` flag that the endpoint rejects as Vertex-only. The
-live-verification notes in `docs/INTERACTIONS_API_GAP.md` (its "Retrieval
-tool" and Deep Research config entries) record the rejections. They are
+live-verification notes in `docs/ENUM_WIRE_FORMATS.md` (its
+"Tool::Retrieval" and "Deep Research agent_config" sections) record the
+rejections. They are
 cited by section rather than line: that file is edited on every sweep (see
 D-011), and this entry's argument is that prose should not be taken at its
 word, including this paragraph.
@@ -222,7 +223,7 @@ compatibility.
 surface stays small and there is no long tail of half-supported spellings.
 CHANGELOG entries carry migration notes for anything user-facing.
 
-*Also stated as a rule in CLAUDE.md ("Versioning Philosophy").*
+*Also stated as a rule in CLAUDE.md ("Rules" → "API conventions").*
 
 ---
 
@@ -251,7 +252,8 @@ feature is in one place.
 Separately, docs.rs itself only fails on hard errors, not warnings.
 
 **Decision.** `make test` and `make test-all` exclude doctests; CI runs
-`cargo test --workspace --doc`. The local docs.rs verification uses
+`cargo test --workspace --doc`, with default features, with all features and
+in strict mode. The local docs.rs verification uses
 `-D warnings`, deliberately stricter than docs.rs. Not stricter than the CI
 gate, though — `rust.yml`'s docs.rs-feature-set step already sets
 `RUSTDOCFLAGS: --cfg docsrs -D warnings`, flag for flag, on stable. What the
@@ -264,7 +266,7 @@ motivates running it by hand first.
 Accepted: CI catches them, and the local loop stays fast. The `-D warnings`
 strictness is an early signal, not a prediction of what docs.rs will reject.
 
-*Also stated as a rule in CLAUDE.md (Testing / Release Steps).*
+*Also stated as a rule in CLAUDE.md ("Commands" and "Release").*
 
 ---
 
@@ -878,8 +880,8 @@ design call. Probed live on 2026-11-05:
   without a crate release.
 
 **Consequences.** A deserialized request without `input` reads as `None`
-instead of failing. `TriggerCreateParams` keeps the old strictness on its
-own deserialize path: a trigger fires a fresh interaction, never a
+instead of failing. `TriggerCreateParams` (`CreateTriggerRequest` since
+D-028) keeps the old strictness on its own deserialize path: a trigger fires a fresh interaction, never a
 continuation, so a missing or misspelled (`inputs`) input in a trigger
 config file is still a parse error. Code that matches `NetworkConfig::Disabled` misses the
 allowlist form; `is_disabled()` covers both.
@@ -1086,6 +1088,42 @@ content list is now refused in `build()` (#452), since with history it
 would otherwise be an empty final turn.
 
 ---
+
+## D-032 — Dated live facts have two homes; everything else states current behavior (2026-11-06)
+
+**Context.** #495: the 2026-11-01 docs audit graded the docs B-, and every
+contradiction it found had one cause: a dated live-API fact restated in
+several files, with only some copies updated (the 2026-10-01 MCP step shape
+in eight places, the `AntigravityConfig` model list in four, the
+custom-agent tool subset in four). By the end of #504's WP8 the guides, the
+README, the example headers and the rustdoc still restated dozens of them.
+
+**Decision.** A dated live fact is recorded once, in one of two files split
+by kind: `docs/ENUM_WIRE_FORMATS.md` for what a value or a shape looks like
+on the wire, and `docs/INTERACTIONS_API_GAP.md` for what the API accepts,
+rejects and does (its "Live behavior by area" section collects what the
+guides rely on). The guides, the README, `CLAUDE.md` and the example headers
+state the current behavior without a date and link there. Rustdoc keeps
+what a caller needs at the call site, without the date history.
+
+Left where they are: dated comments in tests and fixtures, which are each
+test's evidence; `//` comments in `src/` beside the code a dated
+observation justifies (why a stream event needs no id, why a key is
+scrubbed from the harness's environment), which are that code's evidence in
+the same way and change only with it; the reasons in the coverage oracle's
+exception lists, which
+D-010 asks to be dated; `CHANGELOG.md` and this file, which are history; and
+the API revision `2026-05-20`, which is a version name. Antigravity harness
+behavior is keyed by the harness version, not a date: the guide and the
+rustdoc name the version, and the dated probe record stays in
+`docs/ANTIGRAVITY_BRIDGE_DESIGN.md` beside its upgrade table. Where two
+recorded facts disagreed, the more recent one won.
+
+**Consequences.** A behavior change is one edit in a home and one in the
+sentence that states it, not a search. A guide's reader sees what is true
+now, with the evidence one link away. Nothing enforces the rule yet: #495's
+triage proposes a script that fails on a date outside the two homes, which
+would need an allowlist for every exception above.
 
 ## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
 

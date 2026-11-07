@@ -184,9 +184,9 @@ async fn run_example(
         .collect();
     println!("Steps: {step_types:?}");
 
-    // The `file_search_result` step carries only `call_id` and `signature`
-    // (live 2026-11-05): the retrieved chunks are folded into the answer,
-    // which cites what it used with `file_citation` annotations.
+    // The `file_search_result` step carries only `call_id` and `signature`:
+    // the retrieved chunks are folded into the answer, which cites what it
+    // used with `file_citation` annotations.
     if !response.has_file_search_results() {
         return Err("no file_search_result step: the search did not run".into());
     }
@@ -211,7 +211,7 @@ async fn run_example(
     }
 
     // 7. File Search cannot be combined with *either* web-retrieval tool.
-    //    The API rejects both pairs outright (verified live 2026-08-16):
+    //    The API rejects both pairs outright:
     //
     //      400 'google_search' and 'file_search' cannot be combined in the
     //          same request. Please choose one to continue.

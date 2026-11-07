@@ -1,8 +1,8 @@
 //! Shared serde helpers for protobuf-JSON wire conventions.
 //!
 //! The Interactions API family serializes int64 fields as JSON *strings*
-//! (protobuf JSON convention) — live-verified on the environments resource
-//! (`file_count`/`size_bytes`, 2026-08-08). These helpers absorb that on
+//! (protobuf JSON convention), as the environments resource does
+//! (`file_count`/`size_bytes`). These helpers absorb that on
 //! deserialize (accepting plain numbers too) and reproduce it on serialize
 //! where roundtrip fidelity to captured wire matters.
 //!
@@ -207,7 +207,7 @@ where
 /// string or unexpected JSON shape to `None` with a `warn!` instead of
 /// failing the enclosing struct (and hence an entire list response).
 ///
-/// Used on the trigger resource family (verified live 2026-11-01, but a
+/// Used on the trigger resource family (its shape is verified live, but a
 /// sparse projection or a future encoding must not fail a whole list); on
 /// `Environment` for uniformity with the int64 helpers next
 /// door even though its timestamp encoding was live-verified; and on

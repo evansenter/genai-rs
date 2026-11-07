@@ -5,6 +5,15 @@ Evergreen `Unknown` variant each one carries. The official docs are sometimes
 wrong, so this catalog records what the live API actually sent or accepted,
 and when.
 
+This file and `docs/INTERACTIONS_API_GAP.md` are the only places a dated
+live-API fact is recorded (D-032): this one for what a value or shape looks
+like on the wire, that one for what the API accepts, rejects and does. The
+guides and the rustdoc state the current behavior and link here. Antigravity
+harness facts concern a local binary rather than the API and are keyed by
+harness version: its wire shapes are under
+[Antigravity harness protocol](#antigravity-harness-protocol-feature-antigravity)
+below, and the dated probe record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
+
 **Revision.** Everything here is Interactions API revision **2026-05-20**.
 Every request sends `Api-Revision: 2026-05-20`, except the second request
 of a resumable upload, which goes to the session URL the first one returned
@@ -82,6 +91,7 @@ The Antigravity harness enums are listed in their
 
 ### The Unknown variant pattern
 
+<!-- ignore: a pattern, not code: `<context>_type` stands for each enum's field name -->
 ```rust,ignore
 Unknown {
     <context>_type: String,   // the unrecognized wire value
@@ -165,7 +175,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` pending live verification |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
-| `ThinkingLevel` | lowercase | `"low"`, `"medium"`, `"high"` | `DEFAULT_MODEL` rejects `"minimal"` (live 2026-09-24) |
+| `ThinkingLevel` | lowercase | `"minimal"`, `"low"`, `"medium"`, `"high"` | Which levels `DEFAULT_MODEL` accepts is under Models in `docs/INTERACTIONS_API_GAP.md` |
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Verified 2026-01-05 (pre-revision) |
 | `VideoProcessing` | string or object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | The window is the cost lever among the `static` forms. Only valid inside a `user_input` step. Measured live 2026-08-18 |
 | `Tool::Function` | object | `{"type": "function", "name": "get_time", "description": "...", "parameters": {...}}` | Only `name` is needed: a function tool sent with just a `name` is accepted and called, and a stored read serves it that way (live 2026-11-05). `description` and `parameters` are left out when `None`; `FunctionParameters` keeps schema keywords it doesn't model. A tool read without its optional fields is still `Tool::Function`, not `Unknown` |
@@ -228,6 +238,11 @@ The wrap applies only to `InteractionRequest::input`.
 request's `Content` input therefore deserializes back as
 `Steps(vec![Step::user_input(..)])`, since the two are identical on the wire.
 
+Content after history, `[...history, {"type": "user_input", "content":
+[...]}]`, is accepted, and the model answers from both (live 2026-11-06,
+`test_image_content_after_history`: a text history, then an image turn).
+That is what `with_history()` plus `with_content()` sends (D-031).
+
 ### Step
 
 Steps replace the launch-era `outputs: [Content]`. They are tagged by
@@ -247,7 +262,7 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `url_context_result` | `UrlContextResult` | `{"call_id", "result": [UrlContextResultItem], "is_error"?, "signature"?}` |
 | `google_search_call` | `GoogleSearchCall` | `{"id", "arguments": {"queries": [...]}, "search_type"?, "signature"?}` |
 | `google_search_result` | `GoogleSearchResult` | `{"call_id", "result": [GoogleSearchResultItem], "is_error"?, "signature"?}` |
-| `tool_call` | `ToolCall` | `{"id", "signature"?}`. What MCP calls arrived as on 2026-08-16; since 2026-10-01 they arrive as answered `function_call` pairs |
+| `tool_call` | `ToolCall` | `{"id", "signature"?}`. What MCP calls arrived as on 2026-08-16; from 2026-10-01 to 2026-11-04 they arrived as answered `function_call` pairs, and since 2026-11-05 as `mcp_server_tool_call` (see MCP identity below) |
 | `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`, as in the google-genai 2.34.0 bindings. Live since 2026-11-05: `name` is `<server>:<tool>`, and a `signature` (kept in `extra`) comes with it |
 | `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`, as in the 2.34.0 bindings. Live since 2026-11-05, with `name` and `server_name` set and the same `result` object as the earlier `function_result` shape |
 | `file_search_call` | `FileSearchCall` | `{"id", "signature"?}` |
@@ -509,9 +524,9 @@ there. On 2026-08-10, verified live, the reverse:
 ### ThinkingLevel
 
 `"minimal"`, `"low"`, `"medium"`, `"high"` in
-`generation_config.thinking_level`. Live 2026-09-24: `gemini-3.8-flash`
-rejects `"minimal"` (`Allowed values are: high, low, medium`), and omitting the
-field does not disable thinking (see [Thinking Mode](THINKING_MODE.md)).
+`generation_config.thinking_level`. Which levels `DEFAULT_MODEL` accepts,
+the error it answers `"minimal"` with, and what omitting the field does are
+under Models in `docs/INTERACTIONS_API_GAP.md`.
 
 ### InteractionStatus
 
@@ -593,7 +608,7 @@ Verified live 2026-09-27 (list paging, three text files at `pageSize=1`):
   too; the crate sends `pageSize`.
 - Files carry `updateTime` and `source` (`UPLOADED`), both modeled since
   0.14.0 (live 2026-11-05). `sizeBytes` is a JSON string (`"17"`);
-  `FileMetadata::size_bytes` is an `i64` that reads a string or a number.
+  `FileMetadata::size_bytes` is an `Option<i64>` that reads a string or a number.
 - A file that fails processing (an undecodable video) carries
   `{"error": {"code": 3, "message": "The file failed to be processed."}}`
   with no `details` (live 2026-11-05). `FileError` models `details` and
@@ -652,8 +667,8 @@ Behavior, all verified live 2026-08-16:
   keeps any it receives as JSON, and the accumulator puts them in the
   step's `extra` under `result`.
 - **`file_search` can't be combined with `google_search` or
-  `url_context`**: 400 `'<other>' and 'file_search' cannot be combined in the
-  same request. Please choose one to continue.` `code_execution` is accepted.
+  `url_context`**; the error and its date are under Tools in
+  `docs/INTERACTIONS_API_GAP.md`.
 
 Paging and uploads, verified live 2026-09-27 with three stores and three
 documents:
@@ -781,7 +796,13 @@ one entry for a single voice, one per `speaker` for multi-speaker TTS.
 - On `gemini-3.8-flash-tts` each text turn names its speaker with a
   `speech_metadata` annotation. The 2.5-pro and 3.1-flash TTS models take the
   `Alice: ...` transcript form instead, and reject the annotation (live
-  2026-09-24).
+  2026-09-24). The 400s that day: transcript text without annotations on a
+  3.8 TTS model, `Multi-speaker interactions must specify a speaker for each
+  text turn`; annotations on the 2.5-pro or 3.1-flash TTS models, `Speech
+  annotations are not supported for model ...`; a speaker missing from
+  `speech_config`, `... must specify a speaker matching a speaker defined in
+  speech_config`; spanned annotations with a gap, `... must cover the entire
+  text string without gaps`.
 - The nested `voiceConfig.prebuiltVoiceConfig.voiceName` form from Google's
   docs returns 400 (`no such field: 'voiceConfig'`, 2026-01-10).
 - A stored interaction read back serves `generation_config`, with
@@ -1071,8 +1092,11 @@ Verified live 2026-10-01 on `antigravity-preview-09-2026`, which requires an
 `environment`. The validation error lists the `agent_config.type` values
 `dynamic`, `deep-research`, `code-mender` and `antigravity`. `model` is
 validated per agent: `gemini-3.6-flash` and `gemini-3.5-flash-lite` were
-accepted, an unknown value returns 404. (On `antigravity-preview-05-2026`,
-`gemini-3.6-flash` returned 404.)
+accepted, an unknown value returns 404 `not_found`. (On
+`antigravity-preview-05-2026`, `gemini-3.6-flash` returned 404.) The agent
+defaults to `gemini-3.8-flash`, and Google's Antigravity Agent guide lists
+the 3.8, 3.7, 3.6 and 3.5 Flash models and `gemini-3.5-flash-lite`; only the
+two above were probed.
 
 ### Deep Research agent_config
 

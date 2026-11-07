@@ -17,7 +17,7 @@ wire_enum! {
         /// Minimal reasoning, fastest responses.
         ///
         /// Not supported by every model: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)
-        /// rejects it with a 400 (verified live 2026-10-01).
+        /// rejects it with a 400.
         Minimal = "minimal",
         /// Light reasoning for simple problems
         Low = "low",
@@ -33,7 +33,7 @@ wire_enum! {
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct GenerationConfig {
     /// Sampling temperature. Deprecated in the google-genai 2.34.0 bindings,
-    /// but still accepted (live 2026-11-01).
+    /// but still accepted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     /// Output cap. With decoding continuation it counts across
@@ -42,16 +42,17 @@ pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<i32>,
     /// Nucleus sampling. Deprecated in the google-genai 2.34.0 bindings, but
-    /// still accepted (live 2026-11-01).
+    /// still accepted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
     /// Thinking level for chain-of-thought reasoning
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
-    /// Seed for deterministic output generation.
+    /// Seed for repeatable sampling.
     ///
-    /// Using the same seed with identical inputs will produce the same output,
-    /// useful for testing and debugging.
+    /// Identical seeded requests have returned identical text, but the API
+    /// documents no guarantee, so don't rely on it for exact-text
+    /// assertions (see `docs/CONFIGURATION.md`, "Seeds").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
     /// Stop sequences that halt generation.
@@ -81,9 +82,8 @@ pub struct GenerationConfig {
     /// the list itself, a bare single object (legacy), and a
     /// `{"speakers": [...]}` wrapper (the spec's `SpeakerConfig`). Only the
     /// list is ever sent. A stored interaction read back serves the
-    /// `{"speakers": [...]}` form whichever was sent (live 2026-11-05), and
-    /// it serializes back as the list, which every TTS model accepts (live
-    /// 2026-09-24).
+    /// `{"speakers": [...]}` form whichever was sent, and it serializes back
+    /// as the list, which every TTS model accepts.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -114,8 +114,8 @@ pub struct GenerationConfig {
     ///
     /// The server checks these like any other key: a name it doesn't know
     /// is `400 Unknown parameter`. An entry named after a modeled field is
-    /// written after it, and the API keeps the last of a repeated key (live
-    /// 2026-11-04), so it overrides that field.
+    /// written after it, and the API keeps the last of a repeated key, so it
+    /// overrides that field.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -148,8 +148,7 @@ pub struct GenerationConfig {
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct TranscriptionConfig {
     /// Phrases to bias recognition toward (contextual adaptation).
-    /// Deprecated in the google-genai 2.34.0 bindings, but still accepted
-    /// (live 2026-11-01).
+    /// Deprecated in the google-genai 2.34.0 bindings, but still accepted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adaptation_phrases: Option<Vec<String>>,
     /// Domain-specific vocabulary to bias recognition toward.
@@ -171,8 +170,8 @@ pub struct TranscriptionConfig {
     /// [`TranscriptionMode::Verbatim`] in `mode`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_granularities: Option<Vec<String>>,
-    /// Transcription mode. Accepted and validated live (2026-09-24); no
-    /// output difference was observed on general models.
+    /// Transcription mode. Accepted and validated by the API; no output
+    /// difference was observed on general models.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<TranscriptionMode>,
     /// Fields this crate does not model, kept from a deserialized config (such
@@ -357,22 +356,25 @@ impl TranscriptionConfig {
 ///
 /// | Wire | Source |
 /// |------|--------|
-/// | `[{voice, language, speaker}, ...]` | the spec list form; the only one the Gemini API accepts |
+/// | `[{voice, language, speaker}, ...]` | the spec list form; the one the crate sends |
 /// | `{"speakers": [...]}` | `SpeakerConfig`, added to the union in `google-genai` 2.18.x |
 /// | `{voice, language, speaker}` | legacy single-object form |
 ///
-/// The Gemini API rejects both object forms on **send** — `400 The value is
-/// invalid for 'generation_config.speech_config'. Expected an array, got
-/// object.` (verified live 2026-08-16) — so this leniency is deserialize-only
-/// and the crate keeps emitting the list. It still matters: a
+/// The Gemini API rejects the single-object form on **send** and once
+/// rejected `{"speakers": [...]}` too (both forms' history is under
+/// speech_config wire forms in `docs/ENUM_WIRE_FORMATS.md`), so this
+/// leniency is deserialize-only and the crate keeps emitting the list,
+/// which every TTS model accepts. It still matters: a stored interaction
+/// read back serves the `{"speakers": [...]}` form, and a
 /// `GenerationConfig` also arrives nested inside a `Trigger`'s stored
 /// interaction, which may have been created by another SDK using the object
 /// form.
 ///
 /// Variant order is load-bearing. `SpeechConfig`'s fields are all optional
-/// and serde ignores unknown keys, so `{"speakers": [...]}` matches the
-/// `Single` arm perfectly well — yielding an all-`None` config and
-/// **silently discarding the speakers**. `Speakers` must therefore be tried
+/// and its `extra` map takes every key it does not model, so
+/// `{"speakers": [...]}` matches the `Single` arm perfectly well — yielding
+/// a config whose modeled fields are all `None`, with **the speakers left
+/// unparsed in `extra`**. `Speakers` must therefore be tried
 /// first, and its field must stay required so a genuine single object still
 /// falls through to `Single`.
 fn deserialize_speech_configs<'de, D>(
@@ -589,8 +591,8 @@ wire_enum! {
     ///
     /// Serializes as lowercase snake_case strings: `"text_to_video"`,
     /// `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"`.
-    /// The full value list was confirmed live (2026-07) via the API's own
-    /// validation error for `generation_config.video_config.task`.
+    /// The full value list is confirmed by the API's own validation error
+    /// for `generation_config.video_config.task`.
     pub enum VideoTask {
         /// Generate a video from a text prompt.
         TextToVideo = "text_to_video",
