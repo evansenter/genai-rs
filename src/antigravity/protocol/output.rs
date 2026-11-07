@@ -11,16 +11,22 @@ use serde_json::{Map, Value};
 
 /// `OutputEvent` — the harness-to-client message envelope.
 ///
-/// Carries envelope metadata (`seq_num`, `timestamp_micros`,
-/// `usage_metadata`) alongside the oneof payload.
+/// Carries envelope metadata (`seq_num`, `timestamp_micros`, the token
+/// usage) alongside the oneof payload.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OutputEvent {
     /// Monotonic sequence number.
     pub seq_num: Option<i64>,
     /// Event timestamp in microseconds since the Unix epoch.
     pub timestamp_micros: Option<i64>,
-    /// Token usage, attached to some step updates.
+    /// Token usage: harness 0.1.5's flat `usageMetadata`, or the `total` of
+    /// the `usageUpdate` that replaced it in 0.1.10.
     pub usage_metadata: Option<UsageMetadata>,
+    /// The rest of a `usageUpdate` beside its total (which is
+    /// [`usage_metadata`](Self::usage_metadata)): the usage of each
+    /// trajectory. `Some` exactly when the event carried a `usageUpdate`,
+    /// and then the event serializes back as one.
+    pub usage_update: Option<UsageUpdate>,
     /// The event payload (`None` if the oneof was empty).
     pub payload: Option<OutputPayload>,
     /// Envelope keys left over beside a recognized payload: a field a newer
@@ -101,7 +107,7 @@ impl Serialize for OutputEvent {
         let mut len = 0;
         len += usize::from(self.seq_num.is_some());
         len += usize::from(self.timestamp_micros.is_some());
-        len += usize::from(self.usage_metadata.is_some());
+        len += usize::from(self.usage_metadata.is_some() || self.usage_update.is_some());
         len += usize::from(self.payload.is_some());
         len += self.extra.len();
         let mut map = serializer.serialize_map(Some(len))?;
@@ -142,8 +148,19 @@ impl Serialize for OutputEvent {
             };
             map.serialize_entry(key, &value)?;
         }
-        if let Some(usage_metadata) = &self.usage_metadata {
-            map.serialize_entry("usageMetadata", usage_metadata)?;
+        match (&self.usage_update, &self.usage_metadata) {
+            (Some(update), total) => {
+                let mut update = serde_json::to_value(update).map_err(S::Error::custom)?;
+                if let (Some(total), Value::Object(fields)) = (total, &mut update) {
+                    fields.insert(
+                        "total".to_string(),
+                        serde_json::to_value(total).map_err(S::Error::custom)?,
+                    );
+                }
+                map.serialize_entry("usageUpdate", &update)?;
+            }
+            (None, Some(usage_metadata)) => map.serialize_entry("usageMetadata", usage_metadata)?,
+            (None, None) => {}
         }
         for (key, value) in &self.extra {
             map.serialize_entry(key, value)?;
@@ -177,29 +194,39 @@ impl<'de> Deserialize<'de> for OutputEvent {
         // Harness 0.1.10 replaced the flat `usageMetadata` with
         // `usageUpdate: {agents: [...], total: UsageMetadata}`. Read the
         // aggregate from either spelling so one build drives both
-        // revisions; the per-trajectory `agents` breakdown is not
-        // modeled yet, and either key must be consumed here or it falls
-        // through to the leftover-key arm below and is misreported as an
-        // unknown oneof variant.
+        // revisions, and keep the rest of a `usageUpdate` (the
+        // per-trajectory `agents`, and any key this crate does not model)
+        // in `usage_update`, so it survives a round trip (D-034). Either
+        // key must be consumed here or it falls through to the
+        // leftover-key arm below and is misreported as an unknown oneof
+        // variant.
         // Consume `usageUpdate` unconditionally, before choosing between
         // the two spellings: if a transitional harness ever sent *both*,
         // leaving it in `map` would hand it to the leftover-key arm below
         // and surface a bogus `Unknown` payload — the exact misreport this
         // branch exists to prevent, in the one shape a nested match
-        // wouldn't cover.
-        let usage_update = map.remove("usageUpdate");
-        let usage_metadata = match map.remove("usageMetadata") {
-            Some(Value::Null) | None => match usage_update {
-                None | Some(Value::Null) => None,
-                Some(Value::Object(mut update)) => match update.remove("total") {
+        // wouldn't cover. The flat spelling's usage wins then, as it
+        // always has, and the update's own total is dropped.
+        let (update_total, usage_update) = match map.remove("usageUpdate") {
+            None | Some(Value::Null) => (None, None),
+            Some(Value::Object(mut update)) => {
+                let total = match update.remove("total") {
                     None | Some(Value::Null) => None,
-                    Some(total) => Some(serde_json::from_value(total).map_err(D::Error::custom)?),
-                },
-                Some(other) => {
-                    tracing::warn!("Unexpected JSON type for usageUpdate, dropping usage: {other}");
-                    None
-                }
-            },
+                    Some(total) => Some(
+                        serde_json::from_value::<UsageMetadata>(total).map_err(D::Error::custom)?,
+                    ),
+                };
+                let rest = serde_json::from_value::<UsageUpdate>(Value::Object(update))
+                    .map_err(D::Error::custom)?;
+                (total, Some(rest))
+            }
+            Some(other) => {
+                tracing::warn!("Unexpected JSON type for usageUpdate, dropping usage: {other}");
+                (None, None)
+            }
+        };
+        let usage_metadata = match map.remove("usageMetadata") {
+            Some(Value::Null) | None => update_total,
             Some(v) => Some(serde_json::from_value(v).map_err(D::Error::custom)?),
         };
 
@@ -257,6 +284,7 @@ impl<'de> Deserialize<'de> for OutputEvent {
             seq_num,
             timestamp_micros,
             usage_metadata,
+            usage_update,
             payload,
             extra: map,
         })
@@ -299,6 +327,21 @@ pub struct TrajectoryUsageEntry {
     /// Its usage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<UsageMetadata>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `UsageUpdate` beside its `total` — how harness 0.1.10 and later report
+/// token usage. The total is [`OutputEvent::usage_metadata`]; this holds
+/// the rest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageUpdate {
+    /// The usage of each trajectory: the conversation's own and each
+    /// subagent's.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub agents: Vec<TrajectoryUsageEntry>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,

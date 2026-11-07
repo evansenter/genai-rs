@@ -181,13 +181,26 @@ fn output_event_reads_usage_from_both_harness_shapes() {
     assert_eq!(usage.prompt_token_count, Some(10));
     assert_eq!(usage.total_token_count, Some(20));
 
+    assert_eq!(event.usage_update, None, "the flat form has no update");
+
     // 0.1.10 nested form: the aggregate lives under `total`, with a
-    // per-trajectory breakdown alongside it that we do not model.
+    // per-trajectory breakdown alongside it.
     let nested = r#"{"seqNum": "1", "usageUpdate": {"agents": [{"trajectoryId": "t1", "usage": {"totalTokenCount": "5"}}], "total": {"promptTokenCount": "10", "totalTokenCount": "20"}}}"#;
     let event: OutputEvent = serde_json::from_str(nested).unwrap();
     let usage = event.usage_metadata.as_ref().expect("nested usage");
     assert_eq!(usage.prompt_token_count, Some(10));
     assert_eq!(usage.total_token_count, Some(20));
+    let agents = &event
+        .usage_update
+        .as_ref()
+        .expect("the rest of the update")
+        .agents;
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].trajectory_id.as_deref(), Some("t1"));
+    assert_eq!(
+        agents[0].usage.as_ref().and_then(|u| u.total_token_count),
+        Some(5)
+    );
     // Consumed as envelope metadata, not misreported as an unknown
     // oneof payload (the leftover-key arm would otherwise claim it).
     assert!(
@@ -276,6 +289,49 @@ fn test_0_1_18_usage_update_with_modality_details_golden() {
             ..Default::default()
         }]
     );
+}
+
+#[test]
+fn test_usage_update_round_trips_whole() {
+    // The per-trajectory breakdown and a key this crate does not model
+    // survive, and the event goes back out as a `usageUpdate`, not as the
+    // flat `usageMetadata` it used to be rewritten to.
+    let raw = json!({
+        "seqNum": 4,
+        "usageUpdate": {
+            "agents": [
+                {"trajectoryId": "root", "usage": {"totalTokenCount": 30}},
+                {"trajectoryId": "sub", "usage": {"totalTokenCount": 12}, "futureEntryField": 1}
+            ],
+            "total": {"promptTokenCount": 40, "totalTokenCount": 42},
+            "futureUpdateField": {"nested": [1, 2]}
+        }
+    });
+    let event: OutputEvent = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(
+        event
+            .usage_metadata
+            .as_ref()
+            .and_then(|u| u.total_token_count),
+        Some(42)
+    );
+    let update = event.usage_update.as_ref().expect("the rest of the update");
+    assert_eq!(update.agents.len(), 2);
+    assert_eq!(update.extra["futureUpdateField"], json!({"nested": [1, 2]}));
+    assert!(event.payload.is_none() && event.extra.is_empty());
+    assert_eq!(serde_json::to_value(&event).unwrap(), raw);
+
+    // An update with no total and no breakdown is still an update.
+    let bare = json!({"usageUpdate": {}});
+    let event: OutputEvent = serde_json::from_value(bare.clone()).unwrap();
+    assert_eq!(event.usage_metadata, None);
+    assert_eq!(event.usage_update, Some(UsageUpdate::default()));
+    assert_eq!(serde_json::to_value(&event).unwrap(), bare);
+
+    // The flat spelling round-trips as itself.
+    let flat = json!({"usageMetadata": {"totalTokenCount": 7}});
+    let event: OutputEvent = serde_json::from_value(flat.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&event).unwrap(), flat);
 }
 
 #[test]
