@@ -490,8 +490,9 @@ release follows 0.12.0 directly and includes everything written for 0.13.0.
   shape); `InputEvent::CallHookResponse` and
   `OutputPayload::CallHookRequest` hold a `Box`; `HookVerdict`,
   `GeminiModelOptions`, `McpServerConfig`, `CustomAgent`,
-  `SystemInstructionPart` and `HarnessConfig` gained fields
-  (build them with `..Default::default()`).
+  `SystemInstructionPart`, `HarnessConfig` and `HarnessSideTools` gained
+  fields, the last one `run_workflow`, harness 0.1.23's `runWorkflow`
+  toggle (build them with `..Default::default()`).
 - **Breaking: Antigravity hooks run on a dedicated thread, not on the
   thread driving the turn.** A hook that blocks (`on_pre_tool`,
   `on_post_tool`, `on_questions`) therefore no longer stalls the runtime,
@@ -598,11 +599,12 @@ release follows 0.12.0 directly and includes everything written for 0.13.0.
   what 0.12.0 sent.
 - **Breaking: a `wait_until_active` timeout shorter than one status
   request's round trip now always fails.** A status request had no bound,
-  so a zero timeout read the state once. Now every status request is cut
-  off at the wait's deadline, the first included, and the error says the
-  deadline cut it off rather than that it failed. The first request is
-  still always made, so an invalid name is reported even with a zero
-  timeout. Migration: to read the state once, call `files().get(name)` or
+  so a zero timeout read the state once and returned the file or document
+  if it was already active. Now every status request is cut off at the
+  wait's deadline, the first included, and the wait fails with
+  `PollTimeout`, whose message says the deadline cut the request off. The
+  first request is still always made, so an invalid name is reported even
+  with a zero timeout. Migration: to read the state once, call `files().get(name)` or
   `file_search_stores().documents().get(name)` instead.
 - **Breaking: a successful streaming response whose `Content-Type` is not
   `text/event-stream` fails at once with `MalformedResponse`** and a preview
@@ -755,11 +757,14 @@ release follows 0.12.0 directly and includes everything written for 0.13.0.
   compile against this release, nor a new one against 0.12. Migration:
   register functions with `#[tool]`, or return them from a `ToolService`;
   bump `genai-rs` and `genai-rs-macros` together.
-- **Breaking: `GenaiError::Json` and `GenaiError::Parse` are removed**
-  (#490, D-027). `Json` had no producer. A streamed SSE event that does not
-  parse, or one that grows past 64 MiB, is `MalformedResponse` now, as a
-  non-streamed body that does not parse already was. Migration: match
-  `MalformedResponse` where you matched `Parse`, and drop `Json` arms.
+- **Breaking: `GenaiError::Json`, with its `From<serde_json::Error>` impl,
+  and `GenaiError::Parse` are removed** (#490, D-027). `Json` had no
+  producer in the crate. A streamed SSE event that does not parse, or one
+  that grows past 64 MiB, is `MalformedResponse` now, as a non-streamed
+  body that does not parse already was. Migration: match
+  `MalformedResponse` where you matched `Parse`, and drop `Json` arms;
+  where `?` converted a `serde_json::Error` into a `GenaiError`, map it
+  into your own error.
 - **Breaking: a `wait_until_active` timeout is
   `GenaiError::PollTimeout { timeout, message }`, and a file, document or
   import that fails processing is `GenaiError::ProcessingFailed(String)`;
@@ -800,8 +805,9 @@ release follows 0.12.0 directly and includes everything written for 0.13.0.
   and `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
   `Complete` and `MaxLoopsReached` hold a `Box<InteractionResponse>`;
   `StreamChunk::StepStop`'s `usage` and `step_usage` are
-  `Option<Box<UsageMetadata>>`, as are the new `StatusUpdate::usage` and
-  `StepDelta::total_usage`; and `StepDelta::ThoughtSummary`'s `content` is
+  `Option<Box<UsageMetadata>>`, as are the new `StreamChunk::StatusUpdate`'s
+  `usage` and `StreamChunk::StepDelta`'s `total_usage`; and
+  `StepDelta::ThoughtSummary`'s `content` is
   an `Option<Box<Content>>`. An enum is as large as its largest variant, so
   every `StreamEvent`, a one-word text delta included, was as large as an
   `InteractionResponse`: 744 bytes in 0.12.0, and over 2 KB with the fields
@@ -932,9 +938,9 @@ release follows 0.12.0 directly and includes everything written for 0.13.0.
   `image` delta and a 15.7 MB `thought_signature` delta; TTS audio deltas are
   under 8 KB.
 - The published crate holds the library, its examples and the guides its
-  doctests include, and no longer the integration tests, their fixtures,
-  scripts or the library's unit-test sources: 208 files and 3.0 MiB
-  unpacked, down from 259 files and 3.8 MiB in 0.12.0.
+  doctests include, and no longer the integration tests, their fixtures, CI
+  files, scripts or the library's unit-test sources: 208 files and 3.0 MiB
+  unpacked, down from 293 files and 4.1 MiB in 0.12.0.
 - A `file_search` tool with no store names no longer writes
   `"file_search_store_names": []`; the key is left out, as for the other
   optional lists.
