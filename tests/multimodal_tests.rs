@@ -328,6 +328,48 @@ mod audio {
         }
     }
 
+    /// On `DEFAULT_TRANSCRIPTION_MODEL` a smart mode's `source_text` steers
+    /// the transcript's spelling. The speech says "Smith"; "Smyth" can only
+    /// come from `source_text` (without it the transcript read "Smith",
+    /// 2026-11-07).
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_transcription_source_text_steers_spelling() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let speech = synthesized_speech(
+            &client,
+            "My friend Caitlin Smith runs the bakery on Main Street.",
+        )
+        .await;
+        let config = TranscriptionConfig::new().with_mode(TranscriptionMode::Smart {
+            source_text: Some(
+                "My friend Kaytlinn Smyth runs the bakery on Main Street.".to_string(),
+            ),
+        });
+        let response = crate::retry_request!([client, speech, config] => {
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_TRANSCRIPTION_MODEL)
+                .with_content(vec![speech])
+                .with_transcription_config(config)
+                .with_store_disabled()
+                .create()
+                .await
+        })
+        .expect("transcription failed");
+
+        assert_eq!(response.status, InteractionStatus::Completed);
+        let transcript = response.as_text().expect("a transcript");
+        assert!(
+            transcript.contains("Smyth"),
+            "the transcript should follow source_text's spelling: {transcript:?}"
+        );
+    }
+
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_audio_input_from_base64() {

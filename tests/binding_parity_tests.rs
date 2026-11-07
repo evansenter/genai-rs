@@ -4,7 +4,8 @@
 //! Each test reads the stored interaction back and compares the field with
 //! what it sent (#492), rather than trusting the 200: the video name has no
 //! observable effect, and the transcription modes have one only on speech,
-//! which `multimodal_tests` checks.
+//! which `multimodal_tests` checks (the verbatim mode's word timings and the
+//! smart mode's `source_text`).
 //!
 //! ```bash
 //! cargo nextest run --test binding_parity_tests --run-ignored all
