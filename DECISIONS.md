@@ -1531,3 +1531,119 @@ WP17) took `src/antigravity/process.rs` to 821 lines, over D-014's 800.
 
 **Consequences.** Links to `src/antigravity/process.rs:<line>` for the
 stderr drain, written before 2026-11-07, point at the old layout.
+
+---
+
+## D-045 — A red push to main escalates under its own issue, and a PR runs Windows (2026-11-07)
+
+**Context.** main's Windows Cross Platform legs failed on eleven pushes in
+a row (#518 to #531) on one CRLF-sensitive test, the second such streak
+after #486, and nobody noticed: Cross Platform ran only on main pushes,
+it is not a required check, and only a scheduled run escalated a failure
+(`scheduled-run-status`). The failing step also kept the Windows doctests
+from running.
+
+**Decision.** `rust.yml` gets a `main-push-status` job that reuses the
+scheduled runs' scripts, `report_scheduled_failure.sh` and
+`resolve_scheduled_failure.sh`, with `ESCALATION_TRIGGER=push`: a red push
+to main opens or updates a `ci-health-escalation` issue titled "Push to
+main failing: Rust", and the next green push closes it. It is not the
+scheduled run's issue, because the two triggers run different jobs: a push
+skips the captured-fixtures refresh, so a green push must not close a
+scheduled failure, nor a green scheduled run a red push's. Cross Platform
+runs on the schedule too, and a PR runs its Windows stable leg (offline,
+like every leg) under the same check name, `Cross Platform
+(windows-latest, stable)`. `.gitattributes` checks text files out with
+LF, and the doctests run after a failed unit-test step.
+
+Rejected: the full six-leg matrix on every PR, which costs five more
+runners per push for platforms that have not broken; one shared issue per
+workflow, for the reason above.
+
+**Consequences.** A live job that still fails after its retries on a push
+to main now opens an issue, which the next green push closes. Runs that
+finish out of order can leave the issue in the older run's state until
+the next push. `scheduled-run-status` needs `main-push-status` (which
+always skips on a schedule) so that it still needs every other job, and
+`main-push-status` needs every job but those two. Making `Cross Platform
+(windows-latest, stable)` a required check is the owner's call. The PR
+leg holds a Windows runner for over 20 minutes per PR push (the leg took
+20 on 2026-11-07, before the doctests and the antigravity check ran),
+about as long as the live integration groups already take.
+
+---
+
+## D-046 — The flakiness report fails on a breached target, and weighs each flake against its own runs (2026-11-07)
+
+**Context.** The Tests/CI bar holds the week's flake rate under 1% (#504),
+and the report only printed a line when it was over. A week with no live
+test runs read showed a rate of "0.00%". The aggregate, about 0.2%, hid
+tests that needed a retry in one run of eight. Failed pull-request runs were
+categorized as flakes, so a change under review read as an API outage. The
+Windows CRLF break, which failed on every Windows run and nowhere else, was
+filed as a "panic". A test that nextest retried to a pass, inside a job that
+failed for another reason, was counted as failed. Example smoke runs, which
+retry by hand, were not counted at all.
+
+**Decision.** The report exits 3 when the week breaches a target. The
+workflow then publishes the report, fails the run, and so escalates like
+any red scheduled workflow. The targets:
+- the rate is 1% or more;
+- no live test runs were read;
+- a chronic flake: a test or example that passed only on a retry in more
+  than 5% of the runs it ran in, and in at least two of them. The minimum
+  of two keeps one unlucky retry of a test that ran a few times, such as
+  one added mid-week, from failing the report.
+
+The 1% rate counts live nextest tests only, as before. Examples are counted
+and shown with their own share, outside the rate, since an example run is a
+whole program and not one test; the chronic rule applies to them as to
+tests. A chronic share counts runs that passed on a retry. A run where the
+test failed every try is a failure, reported in the failure breakdown.
+
+Only main's failed runs (push, schedule, dispatch on `main`) are
+categorized; pull-request and branch runs are counted apart. Their flakes
+that passed on a retry still count, since every finished run's retry-job
+logs are read. A test is failed when its last try failed. One that failed
+every try, only in jobs named for one OS, and in every leg of that OS in
+the run (both Cross Platform toolchains), is labelled deterministic on that
+OS, per run. A failure on one leg while the other passes is a flake, and so
+is one whose legs cannot be listed.
+
+The Code Coverage job writes `cargo llvm-cov report --summary-only` to the
+job summary on every run. It uploads to Codecov only when the
+`CODECOV_TOKEN` secret is set, and then fails on a failed upload. The owner
+added no token.
+
+**Consequences.** The report goes red for as long as a chronic flake
+lasts. On its first run that is likely `test_google_search_multi_turn`,
+`test_structured_output_with_url_context` and the Antigravity
+`cancel_handle` test, from the grading's counts. The escalation issue stays
+open, with its streak, until each is fixed. A Windows-only timing flake
+that failed on both Windows legs in one run would also be labelled
+deterministic; its failure count tells a one-off from a break.
+
+---
+
+## D-047 — `PollOptions` raises a short interval to 10 ms rather than rejecting zero (2026-11-07)
+
+**Context.** `PollOptions::with_poll_interval(Duration::ZERO)` was taken
+as given, so every `wait_until_active` and file search store import wait
+sent each status request the moment the last one answered, until the
+deadline (120 s by default). On a paused test clock, with reads that answer
+at once, such a wait never reached its deadline at all. The fix could
+reject zero or raise it to a floor.
+
+**Decision.** Raise any interval under `PollOptions::MIN_POLL_INTERVAL`
+(10 ms), zero included, to it, in `poll_interval_or`, where every wait
+reads its interval. Rejecting needs an error path that `with_poll_interval`,
+a `const fn` returning `Self`, can't carry, so the wait itself would fail.
+For an import that is after the import request was sent, and a caller who
+retries the call imports a second document. A floor has no failure mode.
+10 ms is far below any status request's round trip, so it changes no real
+wait, and it is the shortest interval the crate's paused-clock tests use.
+
+**Consequences.** An interval of 1 to 9 ms now polls every 10 ms. The
+floor is public, so a caller can read it. It stops a zero interval, not
+fast polling in general; an interval just over 10 ms still polls about
+once per round trip.

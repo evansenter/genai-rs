@@ -676,23 +676,42 @@ mod tests {
         assert_eq!(known, written_chunk_types());
     }
 
-    #[test]
-    fn test_enum_wire_formats_doc_lists_the_serializers_names() {
-        // The StreamChunk table in docs/ENUM_WIRE_FORMATS.md is hand-kept.
-        let doc = include_str!("../../docs/ENUM_WIRE_FORMATS.md");
+    /// The `chunk_type` names in the doc's StreamChunk table. Line endings
+    /// are normalized first: a checkout can hold the doc with CRLF (a
+    /// Windows `core.autocrlf` without `.gitattributes`), and the section
+    /// header is matched with the newlines around it (#504).
+    fn documented_chunk_types(doc: &str) -> std::collections::BTreeSet<String> {
+        let doc = doc.replace("\r\n", "\n");
         let section = doc
             .split("\n### StreamChunk\n")
             .nth(1)
             .expect("a `### StreamChunk` section");
         let section = section.split("\n#").next().unwrap();
-        let documented: std::collections::BTreeSet<String> = section
+        section
             .lines()
             .filter_map(|line| line.strip_prefix("| `"))
             .filter_map(|rest| rest.split_once('`'))
             .map(|(name, _)| name.to_string())
             .filter(|name| name != "chunk_type")
-            .collect();
-        assert_eq!(documented, written_chunk_types());
+            .collect()
+    }
+
+    #[test]
+    fn test_enum_wire_formats_doc_lists_the_serializers_names() {
+        // The StreamChunk table in docs/ENUM_WIRE_FORMATS.md is hand-kept.
+        let doc = include_str!("../../docs/ENUM_WIRE_FORMATS.md");
+        assert_eq!(documented_chunk_types(doc), written_chunk_types());
+    }
+
+    #[test]
+    fn test_enum_wire_formats_doc_reads_the_same_with_crlf_line_endings() {
+        // main's Windows legs failed on the test above for eleven pushes: their
+        // checkout had the doc with CRLF, so the section was never found.
+        let doc = include_str!("../../docs/ENUM_WIRE_FORMATS.md").replace("\r\n", "\n");
+        let crlf = doc.replace('\n', "\r\n");
+        let documented = documented_chunk_types(&doc);
+        assert!(!documented.is_empty(), "the StreamChunk table parsed empty");
+        assert_eq!(documented_chunk_types(&crlf), documented);
     }
 
     #[test]

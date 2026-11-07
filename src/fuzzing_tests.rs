@@ -113,6 +113,89 @@ fn regression_typeless_input_is_tagged_missing_type() {
     assert_eq!(first, normalized);
 }
 
+/// `content`, 2026-11-05 (PR #521's smoke run, whose branch predated the
+/// fix in 31ee193): a non-string `resolution` read into
+/// `Resolution::Unknown` with a `<non-string: 333333>` type and was written
+/// back as that descriptor string, so it read back with string data. A
+/// non-string unknown `wire_enum!` value now writes the original JSON.
+#[test]
+fn regression_non_string_enum_value_round_trips() {
+    // The input exactly as the run saved it.
+    content(br#"{"type": "image", "datat": "image/png", "resolution": 333333}"#);
+    // The other non-string shapes, at the same field.
+    for value in ["0", "true", "null", "[1]", r#"{"x":1}"#] {
+        content(format!(r#"{{"type":"image","resolution":{value}}}"#).as_bytes());
+    }
+}
+
+/// Every committed seed in `fuzz/seeds/<target>/`, through its target's
+/// entry point. The fuzz workflow runs only on schedule and on pull
+/// requests that touch what the targets build; this runs in the required
+/// Test Suite, so a change that breaks a seed fails here first. A seed
+/// directory with no entry point here, or a target with no seeds, fails
+/// too.
+#[test]
+fn committed_seeds_replay_through_their_targets() {
+    /// A fuzz target's entry point.
+    type EntryPoint = fn(&[u8]);
+    let targets: [(&str, EntryPoint); 5] = [
+        ("content", content),
+        ("sse_parser", sse_parser),
+        ("step", step),
+        ("step_delta", step_delta),
+        ("stream_event", stream_event),
+    ];
+    let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds");
+    let dirs: Vec<String> = listing(&seeds)
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    let names: Vec<&str> = targets.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        dirs, names,
+        "fuzz/seeds/ must hold one directory per entry point listed here"
+    );
+
+    for (name, run) in targets {
+        let files = listing(&seeds.join(name));
+        assert!(!files.is_empty(), "fuzz/seeds/{name}/ has no seeds");
+        for file in files {
+            let input = std::fs::read(&file)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+            // The entry point's own panic is printed above this one.
+            if std::panic::catch_unwind(|| run(&input)).is_err() {
+                panic!("the {name} target failed on the seed {}", file.display());
+            }
+        }
+    }
+}
+
+/// The entries of `dir`, sorted, but for hidden ones such as the
+/// `.DS_Store` macOS's Finder leaves: git ignores them, so they are no seed.
+fn listing(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+        .map(|entry| entry.expect("dir entry").path())
+        .filter(|path| !path.file_name().unwrap().to_string_lossy().starts_with('.'))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn seed_listing_skips_hidden_files() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["b", ".DS_Store", "a"] {
+        std::fs::write(dir.path().join(name), b"{}").unwrap();
+    }
+    std::fs::create_dir(dir.path().join("content")).unwrap();
+    let names: Vec<_> = listing(dir.path())
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["a", "b", "content"]);
+}
+
 #[test]
 fn deserializers_round_trip_known_shapes() {
     step(br#"{"type":"model_output","content":[{"type":"text","text":"hi"}]}"#);

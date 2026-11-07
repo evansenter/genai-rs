@@ -317,28 +317,35 @@ wheel's protos with `python3`).
   replays the fresh copies, and fails once the committed ones are over 90
   days old), fmt, shell-scripts (the script harnesses,
   shellcheck, the workflow parse check and actionlint over every workflow),
-  clippy, doc, msrv, cross-platform (stable and beta; trybuild's `ui_tests`
-  are skipped on beta), coverage, build-metrics, scheduled-run-status. Live
+  clippy (also the library without default features, as `make clippy`
+  does), doc, msrv, cross-platform (offline; stable and beta on Linux, macOS
+  and Windows, but only Windows stable on a PR; checks the `antigravity`
+  feature off Linux; trybuild's `ui_tests` are skipped on beta), coverage,
+  build-metrics, main-push-status, scheduled-run-status. Live
   jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each
   integration group runs every binary and lists the failures;
   `.config/nextest.toml` turns fail-fast off for every run and kills a test
   hung past 10 minutes. A red scheduled run opens a `ci-health-escalation`
-  issue (`scheduled-run-status`); every scheduled workflow does the same,
-  which `tests/ci_workflows/` checks along with fail-fast and beta.
+  issue (`scheduled-run-status`), as every scheduled workflow's does, and a
+  red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
+  checks both, along with fail-fast, beta and the Windows PR leg.
+  `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the
   five Integration Tests groups. A live group skipped on a fork PR counts as
   passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
   `ci-flakiness-report.yml` (daily; counts failures and the tests nextest
-  retried to a pass, and the week's flake rate against a 1% target),
+  retried to a pass, and fails, escalating, on a week's flake rate of 1%
+  or more, no live runs read, or a test retried in over 5% of its runs),
   `release.yml`, `release-drafter.yml`, `claude.yml`,
   `claude-code-review.yml`, `antigravity-release-watch.yml` (daily; an
   `antigravity-release` issue when PyPI's `google-antigravity` differs from
   `SUPPORTED_HARNESS_VERSION`), `fuzz.yml` (the `fuzz/` cargo-fuzz targets,
   a minute each on nightly: weekly, and on PRs touching what the targets
-  build, keeping the grown corpus between scheduled runs; `fuzz/README.md`),
+  build, keeping the grown corpus between scheduled runs; its `Fuzz Gate`
+  job reports on every PR; `fuzz/README.md`),
   and `test-resource-janitor.yml` (daily; the marked resources live tests
   leaked, once six hours old. A scheduled run only lists them in the job
   summary unless the repository variable `JANITOR_DELETE` is `true`, the

@@ -54,10 +54,22 @@ date), parsed into a `Duration`. It is populated on `Api` errors, typically
 
 ## Recommended: `backon`
 
-```rust,no_run
+```rust
 use backon::{ExponentialBuilder, Retryable};
 use genai_rs::GenaiError;
 use std::time::Duration;
+
+/// The longest wait between attempts.
+const MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// The wait before the next attempt, or `None` once the attempts are used
+/// up: the server's `Retry-After` when it sent one, but never past
+/// `MAX_DELAY`. `adjust` replaces backon's delay after `with_max_delay`
+/// has capped it, so without the `min` a server asking for an hour gets
+/// one.
+fn next_delay(e: &GenaiError, backoff: Option<Duration>) -> Option<Duration> {
+    backoff.map(|d| e.retry_after().map_or(d, |asked| asked.min(MAX_DELAY)))
+}
 
 # async fn run(client: genai_rs::Client) -> Result<(), GenaiError> {
 let request = client
@@ -68,17 +80,29 @@ let request = client
 
 let backoff = ExponentialBuilder::default()
     .with_min_delay(Duration::from_millis(100))
-    .with_max_delay(Duration::from_secs(30))
+    .with_max_delay(MAX_DELAY)
     .with_max_times(3);
 
 let response = (|| async { client.execute(request.clone()).await })
     .retry(backoff)
     .when(|e: &GenaiError| e.is_retryable())
-    // Prefer the server's Retry-After over our own backoff step
-    .adjust(|e: &GenaiError, dur: Option<Duration>| dur.map(|d| e.retry_after().unwrap_or(d)))
+    .adjust(next_delay)
     .await?;
 # let _ = response;
 # Ok(())
+# }
+# fn main() {
+#     let asked = |secs| GenaiError::Api {
+#         status_code: 429,
+#         message: String::new(),
+#         request_id: None,
+#         retry_after: Some(Duration::from_secs(secs)),
+#     };
+#     let step = Some(Duration::from_millis(100));
+#     assert_eq!(next_delay(&asked(3600), step), Some(MAX_DELAY));
+#     assert_eq!(next_delay(&asked(2), step), Some(Duration::from_secs(2)));
+#     assert_eq!(next_delay(&GenaiError::InvalidInput(String::new()), step), step);
+#     assert_eq!(next_delay(&asked(2), None), None);
 # }
 ```
 
@@ -112,7 +136,8 @@ up the *same* generation from the last `event_id` with
 
 A stream whose body ends before `interaction.completed` or an `error` event
 ends with `GenaiError::StreamInterrupted`, however the connection cut it
-off:
+off (the one exception, an unrecognized last event, is
+[below](#an-unrecognized-last-event)):
 
 | How the body ended | `source` |
 |--------------------|----------|
@@ -126,6 +151,21 @@ request, so the same request succeeds when re-sent, just as a non-streaming
 of them as permanent would make a retry loop handle the same event two ways.
 Retrying a foreground stream is a new generation: discard the partial output
 you showed first. For a background interaction, resume instead.
+
+#### An unrecognized last event
+
+A body that ends right after an event this crate doesn't recognize
+(`StreamChunk::Unknown`) is not a cut-off for `create_stream()`,
+`execute_stream()`, `interactions().stream()` or `resume_stream()`: the
+stream ends cleanly, with a `warn!`. The event may be a terminal event the
+API added after this release (Evergreen), and an error there would fail
+every stream once it did. Check `is_unknown()` on the last event to tell
+this end from `Completed`.
+
+`create_stream_with_auto_functions()` can't do that: it needs the round's
+`Completed` response to run the round's calls and go on. A round that ends
+this way fails with `StreamInterrupted` (`source` is `None`), retryable as
+a cut-off is, since nothing says the request was at fault.
 
 A stream stopped by the request's own per-chunk limit
 (`InteractionBuilder::with_timeout()` on `create_stream()`) ends with
@@ -240,6 +280,20 @@ for work that may run for minutes.
 `tests/reliability_tests.rs` pins the decision: on a paused clock, the default
 client waits out an hour for the headers and an hour between stream events.
 
+A dead connection is still noticed without a read timeout, through TCP
+keepalive, which every client sets on its connections: a probe after 15 s
+idle, then every 15 s, failing the connection after 3 unanswered. A peer
+that stopped answering, such as a NAT or load balancer that dropped the
+connection or a host gone from the network, fails the request within about
+a minute: `Http` before the response headers, `StreamInterrupted`
+mid-stream, both retryable. Windows can't set the count and sends its own
+10 probes, so there it takes under three minutes (15 s + 10 x 15 s). A
+long generation is not cut off, since the server's kernel answers the
+probes. For the same reason keepalive can't catch a server that is up but
+stuck; only a read or request-level timeout does. The values are reqwest
+0.13's defaults, set explicitly so a reqwest upgrade can't change them, and
+they are not configurable. A `Client`'s `Debug` output shows them.
+
 Consequences:
 
 - **A request-level timeout cannot extend a client-level one.** Both
@@ -308,6 +362,9 @@ default, polling every 2 s and 500 ms):
   request is cut off at the deadline too, so a shorter timeout fails even
   for a resource that is already active. The error then says the request
   was cut off by the wait's deadline (no request failed).
+- **The interval has a floor of 10 ms** (`PollOptions::MIN_POLL_INTERVAL`).
+  A shorter one, `Duration::ZERO` included, polls every 10 ms rather than
+  sending each status request the moment the last one answered.
 - **Transient errors are polled through.** A retryable error (a 5xx, a 429,
   a dropped connection) is logged and the wait goes on; any other error
   ends it.

@@ -81,7 +81,8 @@ pub enum GenaiError {
     MalformedResponse(String),
     /// A stream's body ended before its terminal event
     /// (`interaction.completed` or an error event): the connection was cut
-    /// off.
+    /// off, or an auto-function round's body ended on an event this crate
+    /// doesn't recognize.
     ///
     /// Every way the connection can end a body early lands here, so a
     /// caller sees one error for one event:
@@ -92,6 +93,15 @@ pub enum GenaiError {
     ///   [read](crate::ClientBuilder::with_read_timeout) or
     ///   [total](crate::ClientBuilder::with_timeout) timeout between chunks,
     ///   a decode error (`source` is the [`reqwest::Error`]).
+    ///
+    /// A body that ends cleanly right after an event this crate doesn't
+    /// recognize is not a cut-off: the plain stream ends there without an
+    /// error, since the event may be a terminal one added to the API after
+    /// this release. A round of
+    /// [`create_stream_with_auto_functions`](crate::InteractionBuilder::create_stream_with_auto_functions)
+    /// can't go on without its `interaction.completed`, so it fails here
+    /// instead (`source` is `None`). See "An unrecognized last event" in
+    /// `docs/RELIABILITY.md`.
     ///
     /// A stream stopped by the request's own per-chunk limit
     /// ([`InteractionBuilder::with_timeout`](crate::InteractionBuilder::with_timeout)
@@ -297,21 +307,35 @@ impl GenaiError {
     /// - `Some(Duration)` if the error has a `retry_after` value
     /// - `None` for all other error types or if no `Retry-After` header was present
     ///
+    /// The server picks the value, so cap it: a 429 asking for an hour
+    /// would otherwise wait an hour.
+    ///
     /// # Example
     ///
     /// ```rust
     /// use genai_rs::GenaiError;
     /// use std::time::Duration;
     ///
-    /// async fn with_server_suggested_delay(error: &GenaiError) {
-    ///     if let Some(delay) = error.retry_after() {
-    ///         // Server told us how long to wait
-    ///         tokio::time::sleep(delay).await;
-    ///     } else {
-    ///         // Fall back to our own backoff strategy
-    ///         tokio::time::sleep(Duration::from_secs(1)).await;
+    /// /// The longest wait between attempts.
+    /// const MAX_DELAY: Duration = Duration::from_secs(30);
+    ///
+    /// /// How long to wait before retrying after `error`.
+    /// fn retry_delay(error: &GenaiError) -> Duration {
+    ///     match error.retry_after() {
+    ///         // The server's delay, up to our own maximum
+    ///         Some(asked) => asked.min(MAX_DELAY),
+    ///         // Fall back to our own backoff step
+    ///         None => Duration::from_secs(1),
     ///     }
     /// }
+    /// # let asked = |secs| GenaiError::Api {
+    /// #     status_code: 429,
+    /// #     message: String::new(),
+    /// #     request_id: None,
+    /// #     retry_after: Some(Duration::from_secs(secs)),
+    /// # };
+    /// # assert_eq!(retry_delay(&asked(3600)), MAX_DELAY);
+    /// # assert_eq!(retry_delay(&asked(2)), Duration::from_secs(2));
     /// ```
     #[must_use]
     pub fn retry_after(&self) -> Option<std::time::Duration> {
@@ -477,11 +501,12 @@ mod tests {
 
     #[test]
     fn test_genai_error_malformed_response_stream() {
-        let error =
-            GenaiError::MalformedResponse("Stream ended without Complete event".to_string());
+        let error = GenaiError::MalformedResponse(
+            "an SSE event passed 67108864 bytes without ending".to_string(),
+        );
         let display = format!("{error}");
         assert!(display.contains("Malformed API response"));
-        assert!(display.contains("Complete event"));
+        assert!(display.contains("SSE event"));
     }
 
     #[test]
