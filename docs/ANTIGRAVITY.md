@@ -163,10 +163,11 @@ terminal's Ctrl-C reaches only your process; when it exits, the harness
 sees stdin close and shuts down gracefully.
 
 On Windows the forced paths end the harness process only: there are no
-process groups to signal, so the `run_command` commands and stdio MCP
-servers it started keep running after a dropped agent, a failed `spawn()`
-or an escalated shutdown. Only the graceful exit stops them there, so call
-`shutdown()` and let it finish.
+process groups to signal, so the `run_command` commands it started keep
+running after a dropped agent, a failed `spawn()` or an escalated
+shutdown. Only the graceful exit stops them there, so call `shutdown()`
+and let it finish. Stdio MCP servers are not affected: they exit at the
+end of their stdin, which closes when the harness dies, on any platform.
 
 ### Images, documents and slash commands
 
@@ -1316,15 +1317,15 @@ The ones a user is likeliest to look for:
 - **Trigger turns are surfaced on request**: `next_trigger_turn` drives
   them; nothing reads them in the background, so call it between user
   turns, and a trigger turn nobody consumes is halted by the next `chat`.
-  A background consumer would read the harness while the agent is idle,
-  which means moving turn processing (hooks, policies,
+  A background consumer (#493 item 7) would read the harness while the
+  agent is idle, which means moving turn processing (hooks, policies,
   custom tools) out of `&mut self` into a task of its own: a redesign of
   `AntigravityAgent`, left for its own change. The `schedule` builtin
   waits on it.
 - **No `schedule` builtin**: a turn the agent schedules for itself could
   start while a `chat` turn does, and its events would land in that turn.
-- **On Windows a forced kill ends the harness only**: the commands and
-  MCP servers it started outlive a dropped agent there; call `shutdown()`
+- **On Windows a forced kill ends the harness only**: the `run_command`
+  commands it started outlive a dropped agent there; call `shutdown()`
   (see [Quick start](#quick-start)).
 - **Not modeled (product decisions)**: Vertex AI endpoints (wire types
   exist; the supported path is a Gemini API key), the OpenAI-compatible and
