@@ -1193,6 +1193,33 @@ request configs and the Antigravity types (D-007): add
 now also send a field of these configs the crate does not model yet, as
 `GenerationConfig::extra` allowed.
 
+*Amended 2026-11-07 (#504, WP13).* The request-side unions a stored
+interaction serves back keep theirs too: every known variant of `Tool`,
+`ResponseFormat` and `TranscriptionMode` has an `extra` map, and
+`ToolChoice::AllowedTools` keeps the keys beside `allowed_tools`
+(D-NEXT-WP13). The guard gained an enum arm: a public enum without
+`#[non_exhaustive]`, a deserializable one without an `Unknown` variant, and
+a known struct variant of such a union without an `extra` map each fail it
+unless an exemption names them with a reason. What stays uncovered, each
+with its reason in the guard:
+
+- The retrieval tool's configs (`SENT_ONLY` above). The retrieval tool
+  itself keeps its `extra`.
+- Bare-string forms, which have no fields: `VideoProcessing::Static` and
+  `Agentic`, and `NetworkConfig::Disabled`. `NetworkConfig::AllowlistDisabled`
+  is read only when `allowlist` is the object's one key; with another key
+  beside it the object is kept whole as `NetworkConfig::Unknown`.
+- The untagged unions with no `Unknown` variant, whose arms keep what they
+  do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
+  `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
+  `FunctionResultPayload`.
+- The known `StreamChunk` variants and
+  `AutoFunctionStreamChunk::ExecutingFunctions`: parsed stream events that
+  nothing sends back, serialized only in the crate's own `{chunk_type,
+  data}` log form. The payloads inside keep their own `extra`; a key the API
+  adds to an SSE event's envelope itself is dropped.
+- `DecodeError`, which is exhaustive but crate-internal.
+
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
 

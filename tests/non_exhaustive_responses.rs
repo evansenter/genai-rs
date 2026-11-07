@@ -1,5 +1,5 @@
-//! Guards the `#[non_exhaustive]` and `extra` conventions for response
-//! structs.
+//! Guards the `#[non_exhaustive]`, `Unknown` and `extra` conventions for
+//! response structs and enums.
 //!
 //! Every public, deserializable struct in `src/` outside test-only code must
 //! carry `#[non_exhaustive]`, so the crate can add fields the API grows
@@ -22,9 +22,16 @@
 //! literals cannot mislead it. "Deserializable" means a `Deserialize` derive
 //! or a hand-written `impl Deserialize for T` anywhere in non-test code.
 //!
-//! Not covered: types a macro generates (there is no source to parse), enums
-//! (they hand-write `Deserialize` under a different convention), and
-//! Serialize-only public views such as `FunctionCallInfo`.
+//! Enums are held to the same rules (`enums_are_evergreen`): every public
+//! enum is `#[non_exhaustive]`; every deserializable one has an `Unknown`
+//! variant; and every known struct variant of such a union keeps an `extra`
+//! map, as `Step`'s and `Tool`'s do (#491, D-034). Each exemption is named
+//! with its reason in `EXHAUSTIVE_ENUMS`, `WITHOUT_UNKNOWN` or
+//! `VARIANTS_WITHOUT_EXTRA`. The enums a macro generates have no source to
+//! parse, so the macros' templates are checked instead (`ENUM_MACROS`).
+//!
+//! Not covered: structs a macro generates, and Serialize-only public views
+//! such as `FunctionCallInfo`.
 //!
 //! `src/antigravity/` is skipped by the `#[non_exhaustive]` check only: its
 //! JSON-RPC types are sent as well as received and are built with
@@ -209,6 +216,107 @@ const SENT_ONLY: &[(&str, &str)] = &[
     ),
 ];
 
+/// Public enums without `#[non_exhaustive]`, each with its reason. Keyed by
+/// `path:Name`.
+const EXHAUSTIVE_ENUMS: &[(&str, &str)] = &[(
+    "src/antigravity/handshake.rs:DecodeError",
+    "crate-internal: `handshake` is a private module and nothing re-exports it",
+)];
+
+/// Deserializable enums with no `Unknown` variant, each with the reason a
+/// value the crate does not model still has somewhere to go. Keyed by
+/// `path:Name`.
+const WITHOUT_UNKNOWN: &[(&str, &str)] = &[
+    (
+        "src/request/mod.rs:InteractionInput",
+        "a string, content blocks or steps, the bindings' union: an \
+         unrecognized block or step is kept by `Content::Unknown` or \
+         `Step::Unknown`, and a value of another JSON type is not an input",
+    ),
+    (
+        "src/request/mod.rs:TurnContent",
+        "an untagged string or content-block list, with no tag to know a new \
+         shape by; an unrecognized block is kept by `Content::Unknown`",
+    ),
+    (
+        "src/response_format.rs:ResponseFormatSpec",
+        "an untagged list or single format; `ResponseFormat::Unknown` keeps \
+         any value the list arm does not take",
+    ),
+    (
+        "src/steps/code_execution.rs:CodeExecutionOutput",
+        "a string or content blocks, the bindings' union (D-035): an \
+         unrecognized block is kept by `Content::Unknown`, and any other \
+         value sends the whole step to `Step::Unknown`",
+    ),
+    (
+        "src/steps/mod.rs:FunctionResultPayload",
+        "its `Json` arm is the catch-all, keeping whole any value that is not \
+         a string or a content-block list",
+    ),
+];
+
+/// Known variants of an Evergreen union (a deserializable enum with an
+/// `Unknown` variant) with no `extra` map, each with its reason. Keyed by
+/// `path:Enum::Variant`.
+const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
+    (
+        "src/content/video_processing.rs:VideoProcessing::Static",
+        "the bare string `\"static\"`, which has no fields; the object form \
+         is `StaticSegment`, which keeps its `extra`",
+    ),
+    (
+        "src/content/video_processing.rs:VideoProcessing::Agentic",
+        "the bare string `\"agentic\"`, which has no fields",
+    ),
+    (
+        "src/environments/spec.rs:NetworkConfig::Disabled",
+        "the bare string `\"disabled\"`, which has no fields",
+    ),
+    (
+        "src/environments/spec.rs:NetworkConfig::AllowlistDisabled",
+        "read only when `allowlist` is the object's one key: with another key \
+         beside it, the object is kept whole as `NetworkConfig::Unknown`",
+    ),
+    (
+        "src/streaming.rs:AutoFunctionStreamChunk::ExecutingFunctions",
+        "the crate's own `{chunk_type, data}` log form, which only the crate \
+         writes; the response inside keeps its own `extra`",
+    ),
+    (
+        "src/wire_streaming/mod.rs:StreamChunk::Created",
+        STREAM_CHUNK,
+    ),
+    (
+        "src/wire_streaming/mod.rs:StreamChunk::StatusUpdate",
+        STREAM_CHUNK,
+    ),
+    (
+        "src/wire_streaming/mod.rs:StreamChunk::StepStart",
+        STREAM_CHUNK,
+    ),
+    (
+        "src/wire_streaming/mod.rs:StreamChunk::StepDelta",
+        STREAM_CHUNK,
+    ),
+    (
+        "src/wire_streaming/mod.rs:StreamChunk::StepStop",
+        STREAM_CHUNK,
+    ),
+    ("src/wire_streaming/mod.rs:StreamChunk::Error", STREAM_CHUNK),
+];
+
+/// Why a known `StreamChunk` keeps no `extra`.
+const STREAM_CHUNK: &str = "a parsed SSE event, serialized only in the crate's own \
+     `{chunk_type, data}` log form; nothing sends one back to the API, and the \
+     payloads inside (`InteractionResponse`, `Step`, `StepDelta`, \
+     `UsageMetadata`) keep their own `extra`. A key the API adds to the event \
+     envelope itself is not kept (D-034)";
+
+/// The `macro_rules!` that generate a public enum. syn cannot see the enums
+/// they expand to, so the guard checks their templates instead.
+const ENUM_MACROS: &[&str] = &["wire_enum", "wire_string_enum"];
+
 /// Test-only modules declared out of line; finding them proves the gate
 /// detection works, since otherwise test files would be scanned as API.
 const EXPECTED_TEST_MODULES: &[&str] = &[
@@ -370,7 +478,9 @@ struct Report {
     test_modules: BTreeSet<String>,
 }
 
-fn analyze(sources: &[(String, String)], exemptions: &[&str], without_extra: &[&str]) -> Report {
+/// Parses every source and keeps the files no test-only module declares,
+/// with the test-only modules found.
+fn parse_in_scope(sources: &[(String, String)]) -> (Vec<(&str, syn::File)>, BTreeSet<String>) {
     let parsed: Vec<(&str, syn::File)> = sources
         .iter()
         .map(|(rel, text)| {
@@ -380,7 +490,7 @@ fn analyze(sources: &[(String, String)], exemptions: &[&str], without_extra: &[&
         })
         .collect();
 
-    let mut report = Report::default();
+    let mut test_modules = BTreeSet::new();
     for (rel, file) in &parsed {
         let mut finder = GatedModules {
             dir: child_module_dir(rel),
@@ -389,21 +499,35 @@ fn analyze(sources: &[(String, String)], exemptions: &[&str], without_extra: &[&
                 .unwrap()
                 .to_string_lossy()
                 .into_owned(),
-            found: &mut report.test_modules,
+            found: &mut test_modules,
         };
         finder.visit_file(file);
     }
 
-    let in_scope: Vec<&(&str, syn::File)> = parsed
-        .iter()
-        .filter(|(rel, _)| !is_test_only_path(rel, &report.test_modules))
+    let in_scope = parsed
+        .into_iter()
+        .filter(|(rel, _)| !is_test_only_path(rel, &test_modules))
         .collect();
+    (in_scope, test_modules)
+}
 
-    // Unioned across files: a hand-written impl need not live beside its type.
+/// The self types of every hand-written `impl Deserialize`, unioned across
+/// files: a hand-written impl need not live beside its type.
+fn hand_written_deserialize(in_scope: &[(&str, syn::File)]) -> BTreeSet<String> {
     let mut manual = BTreeSet::new();
-    for (_, file) in &in_scope {
+    for (_, file) in in_scope {
         ManualDeserialize(&mut manual).visit_file(file);
     }
+    manual
+}
+
+fn analyze(sources: &[(String, String)], exemptions: &[&str], without_extra: &[&str]) -> Report {
+    let (in_scope, test_modules) = parse_in_scope(sources);
+    let mut report = Report {
+        test_modules,
+        ..Report::default()
+    };
+    let manual = hand_written_deserialize(&in_scope);
 
     for (rel, file) in &in_scope {
         let mut check = StructCheck {
@@ -642,6 +766,202 @@ impl<'ast> Visit<'ast> for StructCheck<'_> {
             }
         }
         visit::visit_item_struct(self, item);
+    }
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+/// The Evergreen enum rules (D-001), checked like the struct rules above:
+/// every public enum is `#[non_exhaustive]`; every deserializable one has an
+/// `Unknown` variant for a value it does not model; and every known variant
+/// of such a union keeps the fields it does not model in an `extra` map, as
+/// `Step`'s do since #491. `Tool`, `ResponseFormat`, `TranscriptionMode` and
+/// `ToolChoice` lacked that last one until #504's WP13, and nothing noticed.
+/// Each exemption is named, with its reason.
+#[test]
+fn enums_are_evergreen() {
+    let report = analyze_enums(&sources(), &enum_exemptions());
+
+    let exemptions = enum_exemptions();
+    let stale: Vec<&str> = exemptions
+        .iter()
+        .copied()
+        .filter(|key| !report.exempted.contains(*key))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "These EXHAUSTIVE_ENUMS, WITHOUT_UNKNOWN or VARIANTS_WITHOUT_EXTRA \
+         exemptions no longer match anything:\n  {}\n\nRemove them, or update \
+         the path if the type moved.",
+        stale.join("\n  ")
+    );
+
+    let found: BTreeSet<&str> = report.enum_macros.iter().map(String::as_str).collect();
+    assert_eq!(
+        found,
+        ENUM_MACROS.iter().copied().collect(),
+        "the macros that generate a public enum changed; update ENUM_MACROS"
+    );
+
+    let mut problems = Vec::new();
+    for (list, why) in [
+        (
+            &report.exhaustive,
+            "public enums missing `#[non_exhaustive]` (add it, or add the enum \
+             to EXHAUSTIVE_ENUMS with the reason it can never grow)",
+        ),
+        (
+            &report.without_unknown,
+            "deserializable enums with no `Unknown` variant, so a value they \
+             do not model fails to parse (add one, as `Content::Unknown` is \
+             built, or add the enum to WITHOUT_UNKNOWN with the reason)",
+        ),
+        (
+            &report.variants_without_extra,
+            "known variants of a union with no `extra` map, so a field the API \
+             adds is dropped on a round trip (add one, read through \
+             src/wire_fields.rs as `Tool`'s are, or add the variant to \
+             VARIANTS_WITHOUT_EXTRA with the reason)",
+        ),
+        (
+            &report.macros_without_evergreen,
+            "enum-generating macros whose template lacks `#[non_exhaustive]` \
+             or an `Unknown` variant",
+        ),
+    ] {
+        if !list.is_empty() {
+            problems.push(format!(
+                "{why}:\n  {}",
+                list.iter().cloned().collect::<Vec<_>>().join("\n  ")
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n\n"));
+}
+
+/// The keys of every enum exemption.
+fn enum_exemptions() -> Vec<&'static str> {
+    EXHAUSTIVE_ENUMS
+        .iter()
+        .chain(WITHOUT_UNKNOWN)
+        .chain(VARIANTS_WITHOUT_EXTRA)
+        .map(|(key, _)| *key)
+        .collect()
+}
+
+#[derive(Debug, Default)]
+struct EnumReport {
+    /// `path:Name` of each public enum without `#[non_exhaustive]`.
+    exhaustive: BTreeSet<String>,
+    /// `path:Name` of each deserializable enum without an `Unknown` variant.
+    without_unknown: BTreeSet<String>,
+    /// `path:Enum::Variant` of each known variant of an Evergreen union that
+    /// keeps no `extra` map.
+    variants_without_extra: BTreeSet<String>,
+    /// Each exemption key that matched.
+    exempted: BTreeSet<String>,
+    /// The `macro_rules!` whose template declares a `pub enum`.
+    enum_macros: BTreeSet<String>,
+    /// Of those, the ones whose template lacks `#[non_exhaustive]` or an
+    /// `Unknown` variant.
+    macros_without_evergreen: BTreeSet<String>,
+}
+
+fn analyze_enums(sources: &[(String, String)], exemptions: &[&str]) -> EnumReport {
+    let (in_scope, _) = parse_in_scope(sources);
+    let manual = hand_written_deserialize(&in_scope);
+    let mut report = EnumReport::default();
+    for (rel, file) in &in_scope {
+        let mut check = EnumCheck {
+            path: rel,
+            manual: &manual,
+            exemptions,
+            report: &mut report,
+        };
+        check.visit_file(file);
+    }
+    report
+}
+
+/// Checks each public enum outside test-gated items, and each
+/// `macro_rules!` that generates one.
+struct EnumCheck<'a> {
+    path: &'a str,
+    manual: &'a BTreeSet<String>,
+    exemptions: &'a [&'a str],
+    report: &'a mut EnumReport,
+}
+
+impl EnumCheck<'_> {
+    /// Records `key` as exempt if an exemption names it, else in `list`.
+    fn flag(&mut self, key: String, list: fn(&mut EnumReport) -> &mut BTreeSet<String>) {
+        if self.exemptions.contains(&key.as_str()) {
+            self.report.exempted.insert(key);
+        } else {
+            list(self.report).insert(key);
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for EnumCheck<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !is_test_gated(item_attrs(item)) {
+            visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+        if !matches!(item.vis, syn::Visibility::Public(_)) {
+            return;
+        }
+        let name = item.ident.to_string();
+        let key = format!("{}:{name}", self.path);
+        if !has_non_exhaustive(&item.attrs) {
+            self.flag(key.clone(), |r| &mut r.exhaustive);
+        }
+        let derived = derives_deserialize(&item.attrs);
+        let hand_written = self.manual.contains(&name);
+        if !(derived || hand_written) {
+            return;
+        }
+        if !item.variants.iter().any(|v| v.ident == "Unknown") {
+            self.flag(key, |r| &mut r.without_unknown);
+            return;
+        }
+        for variant in &item.variants {
+            // A newtype variant's inner type keeps its own fields (the
+            // struct check covers a struct); `Unknown` keeps everything.
+            if variant.ident == "Unknown" || matches!(variant.fields, syn::Fields::Unnamed(_)) {
+                continue;
+            }
+            if !has_extra(&variant.fields, hand_written && !derived) {
+                self.flag(format!("{key}::{}", variant.ident), |r| {
+                    &mut r.variants_without_extra
+                });
+            }
+        }
+    }
+
+    fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+        let Some(name) = &item.ident else { return };
+        if !item.mac.path.is_ident("macro_rules") {
+            return;
+        }
+        // The template's tokens with the spacing taken out, so `pub enum
+        // $name` reads `pubenum$name` however it was printed. Doc comments
+        // are string literals here, and their words run together too, so
+        // `Unknown{` matches only the variant.
+        let template: String = item.mac.tokens.to_string().split_whitespace().collect();
+        if template.contains("pubenum$name") {
+            self.report.enum_macros.insert(name.to_string());
+            if !template.contains("#[non_exhaustive]") || !template.contains("Unknown{") {
+                self.report
+                    .macros_without_evergreen
+                    .insert(name.to_string());
+            }
+        }
     }
 }
 
@@ -925,6 +1245,133 @@ fn the_extra_scan_detects_what_it_claims_to() {
     assert!(!exemption_matches("src/a.rs/", "src/a.rs.bak:T"));
     assert!(!exemption_matches("src/a.rs/", "src/b.rs:T"));
     assert!(!exemption_matches("src/a.rs:T", "src/a.rs:U"));
+}
+
+#[test]
+fn the_enum_scan_detects_what_it_claims_to() {
+    let types = r#"
+        // The pre-0.14 `Tool`: an Unknown arm, but known variants that
+        // drop what they do not model.
+        #[non_exhaustive]
+        pub enum Tool {
+            CodeExecution,
+            Function { name: String },
+            Search(SearchConfig),
+            Unknown { tool_type: String, data: serde_json::Value },
+        }
+        impl<'de> Deserialize<'de> for Tool {}
+
+        #[non_exhaustive]
+        pub enum Kept {
+            Function {
+                name: String,
+                extra: serde_json::Map<String, serde_json::Value>,
+            },
+            Unknown { kept_type: String, data: serde_json::Value },
+        }
+        impl<'de> serde::Deserialize<'de> for Kept {}
+
+        // Derived: only a flattened map is filled.
+        #[derive(Deserialize)]
+        #[serde(tag = "type")]
+        #[non_exhaustive]
+        pub enum Derived {
+            Flattened {
+                #[serde(flatten)]
+                extra: serde_json::Map<String, serde_json::Value>,
+            },
+            NamedOnly { extra: serde_json::Map<String, serde_json::Value> },
+            #[serde(untagged)]
+            Unknown { derived_type: String, data: serde_json::Value },
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        #[non_exhaustive]
+        pub enum UntaggedNoUnknown { Text(String) }
+
+        #[non_exhaustive]
+        pub enum ManualNoUnknown { Text(String) }
+        impl<'de> Deserialize<'de> for ManualNoUnknown {}
+
+        pub enum Exhaustive { A, B }
+
+        #[derive(Serialize)]
+        #[non_exhaustive]
+        pub enum SerializeOnly { A { name: String } }
+
+        pub(crate) enum CrateVisible { A }
+
+        #[cfg(test)]
+        mod tests {
+            pub enum TestOnly { A }
+        }
+
+        macro_rules! evergreen_enum {
+            ($name:ident) => {
+                #[non_exhaustive]
+                pub enum $name {
+                    /// Unknown variant docs.
+                    Unknown { data: serde_json::Value },
+                }
+            };
+        }
+
+        macro_rules! bare_enum {
+            ($name:ident) => {
+                /// Unknown values are not kept.
+                pub enum $name { A }
+            };
+        }
+
+        macro_rules! not_an_enum {
+            ($name:ident) => { pub struct $name; };
+        }
+    "#;
+    let sources = vec![("src/types.rs".to_string(), types.to_string())];
+    let report = analyze_enums(&sources, &["src/types.rs:Exhaustive"]);
+    let set =
+        |items: &[&str]| -> BTreeSet<String> { items.iter().copied().map(String::from).collect() };
+    assert!(
+        report.exhaustive.is_empty(),
+        "every public enum here but `Exhaustive` (exempt) is non_exhaustive: {:?}",
+        report.exhaustive
+    );
+    assert_eq!(report.exempted, set(&["src/types.rs:Exhaustive"]));
+    assert_eq!(
+        report.without_unknown,
+        set(&[
+            "src/types.rs:ManualNoUnknown",
+            "src/types.rs:UntaggedNoUnknown"
+        ])
+    );
+    assert_eq!(
+        report.variants_without_extra,
+        set(&[
+            "src/types.rs:Derived::NamedOnly",
+            "src/types.rs:Tool::CodeExecution",
+            "src/types.rs:Tool::Function",
+        ])
+    );
+    assert_eq!(report.enum_macros, set(&["bare_enum", "evergreen_enum"]));
+    assert_eq!(report.macros_without_evergreen, set(&["bare_enum"]));
+
+    // A variant exemption silences just that variant.
+    let report = analyze_enums(
+        &sources,
+        &[
+            "src/types.rs:Exhaustive",
+            "src/types.rs:Tool::CodeExecution",
+        ],
+    );
+    assert_eq!(
+        report.variants_without_extra,
+        set(&[
+            "src/types.rs:Derived::NamedOnly",
+            "src/types.rs:Tool::Function"
+        ])
+    );
+    assert!(report.exempted.contains("src/types.rs:Tool::CodeExecution"));
 }
 
 #[test]
