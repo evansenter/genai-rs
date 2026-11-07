@@ -195,12 +195,12 @@ content, and `.txt` / `.md` files as text content with the file's UTF-8
 contents, because the API rejects `text/plain` and `text/markdown`
 document content with a 400 (#514).
 
-It also sends CSV (`.csv`) and Office/OpenDocument files (`.docx`, `.xlsx`,
-`.pptx`, `.odt`, `.ods`, `.odp`, and the legacy `.doc`, `.xls`, `.ppt`) as
-document content: with PDF, these are the types the API accepts inline (for
-the legacy `.doc`, `.xls` and `.ppt` only the MIME type was checked, not
-that a real legacy file parses). Their MIME types are in the
-[table below](#mime-types-the-file-helpers-detect).
+It also sends CSV (`.csv`) and Office/OpenDocument files (`.docx`, the
+Word template `.dotx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, and the
+legacy `.doc`, `.xls`, `.ppt`) as document content: with PDF, these are the
+types the API accepts inline (for the legacy `.xls` and `.ppt` only the MIME
+type was checked, not that a real legacy file parses). Their MIME types are
+in the [table below](#mime-types-the-file-helpers-detect).
 
 The API rejects every other inline document type with a 400
 (`Unsupported mime_type '...' in document content`), `text/html`,

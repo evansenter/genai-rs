@@ -172,13 +172,17 @@ from here rather than repeated.
 - **`response_mime_type`** is rejected even beside `response_format`: `400
   responseFormat must be set when responseMimeType is set` (2026-07), so it
   was removed.
-- **Inline document content** is accepted for `application/pdf`,
-  `text/csv` and the Office/OpenDocument types (`.docx`, `.xlsx`, `.pptx`,
-  `.odt`, `.ods`, `.odp`, and the legacy `.doc`, `.xls`, `.ppt`), each read
-  back from a real file (2026-11-05). The legacy three passed the MIME
-  check only with plain-text bytes, so parsing a real legacy file is
-  unverified. Since 2026-11-04 `text/plain` and `text/markdown` are a 400
-  (#514), as is every other type tried (`text/html`, `application/json`,
+- **Inline document content** is accepted for the twelve types of the
+  bindings' `DocumentContentMimeType` (google-genai 3.0.0):
+  `application/pdf`, `text/csv` and the Office/OpenDocument types (`.docx`,
+  the Word template `.dotx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, and
+  the legacy `.doc`, `.xls`, `.ppt`). Each was read back from a real file on
+  2026-11-05 except `.dotx` and the legacy three. A real `.dotx` (new in
+  3.0.0's list) and a real legacy `.doc` (an OLE2 Word file) were read back
+  on 2026-11-07. `.xls` and `.ppt` passed the MIME check only with
+  plain-text bytes (2026-11-05), so parsing a real one is unverified.
+  Since 2026-11-04 `text/plain` and `text/markdown` are a 400 (#514), as
+  is every other type tried (`text/html`, `application/json`,
   `application/xml`, `application/rtf`): `Unsupported mime_type '...' in
   document content` (2026-11-05). A `.txt` or `.md` file uploaded to the
   Files API still works as a document by URI (2026-11-05).
@@ -493,6 +497,7 @@ two Files entries below listed in its `ALLOWED`.
 | `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files, on create, stored `GET` and stream; generated files come in the next `model_output` step. The list form is accepted back in history. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
 | `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text }` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
 | `gemini-3.5-transcribe` in the `Model` literal | `DEFAULT_TRANSCRIPTION_MODEL` | The model on which `transcription_config` takes effect, and on which `word_info` annotations were first seen. See Models above |
+| `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); a unit test holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back. See Requests above |
 
 ### Deliberately not modeled
 

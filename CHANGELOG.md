@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beside the audio and rejects function tools. `examples/audio_input.rs`
   now transcribes speech it synthesizes with `DEFAULT_TTS_MODEL`, showing
   both modes.
+- `document_from_file()` sends Word templates (`.dotx`,
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.template`)
+  as document content, and `detect_mime_type()` maps the extension. The type
+  is new in google-genai 3.0.0's document MIME list, which the crate's
+  document types now match exactly; a real template was read back live
+  (2026-11-07), as was a real legacy `.doc` file, which until then had only
+  passed the API's MIME check.
 - `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
   ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
   It reads both shapes the API has used: since 2026-11-05 an
