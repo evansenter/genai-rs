@@ -22,9 +22,10 @@
 #    dates: a timestamp (`2026-01-01T10:30:45Z`, example data), a link's
 #    target (a home's heading anchor), and the API revision `2026-05-20`, a
 #    version name.
-# 2. A code block fenced `ignore` (`rust,ignore`) in any Markdown file, or in
-#    a doc comment of that non-test code, has a `<!-- ignore: reason -->`
-#    line directly above its fence.
+# 2. A code block fenced `ignore` (`rust,ignore`, or `rust ignore`: rustdoc
+#    splits the info string on commas, spaces and tabs) in any Markdown file,
+#    or in a doc comment of that non-test code, has a
+#    `<!-- ignore: reason -->` line directly above its fence.
 #
 # Exit status: 0 when the tree follows both rules, 1 with each finding
 # listed as `path:line: ...`, 2 on bad usage or when ROOT is not a git work
@@ -73,7 +74,9 @@ LINK_TARGET = re.compile(r"\]\([^)\s]*\)")
 AUTOLINK = re.compile(r"<https?://[^>\s]*>")
 BARE_URL = re.compile(r"https?://\S+")
 LINK_DEFINITION = re.compile(r"^(\s*\[[^\]]+\]:\s*)\S+")
-FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*([^\s`]*)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*([^`]*)")
+# Rustdoc splits a fence's info string on commas, spaces and tabs.
+INFO_SEP = re.compile(r"[,\s]+")
 REASON = re.compile(r"^\s*<!--\s*ignore:\s*\S.*-->\s*$")
 # A whole-line comment; group 1 is `/` or `!` for a doc comment.
 COMMENT = re.compile(r"^\s*//(/(?!/)|!)? ?(.*)$")
@@ -106,7 +109,7 @@ class Fences:
         if not m:
             return False
         self.open = m.group(1)
-        return "ignore" in m.group(2).split(",")
+        return "ignore" in INFO_SEP.split(m.group(2).strip())
 
 
 def check_markdown(path, text):

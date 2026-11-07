@@ -173,6 +173,17 @@ printf '%s\n' '' '```rust,ignore' 'let x = y;' '```' >>"$T/docs/GUIDE.md"
 run_check "$T"
 expect "an ignore fence without a reason fails" 1 "docs/GUIDE.md:15: an ignore fence needs"
 
+# Rustdoc splits the info string on spaces and tabs as well as commas.
+base_tree "$T"
+printf '%s\n' '' '```rust ignore' 'let x = y;' '```' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "an ignore after a space, as rustdoc reads it, fails" 1 "docs/GUIDE.md:15: an ignore fence needs"
+
+base_tree "$T"
+printf '%s\n' '' '/// ```rust,	ignore' '/// x' '/// ```' 'pub fn tabbed() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "an ignore after a comma and a tab, in rustdoc, fails" 1 "src/lib.rs:14: an ignore fence needs a"
+
 base_tree "$T"
 printf '%s\n' '<!-- ignore: a fragment -->' '' '```ignore' 'x' '```' >>"$T/docs/ENUM_WIRE_FORMATS.md"
 run_check "$T"
