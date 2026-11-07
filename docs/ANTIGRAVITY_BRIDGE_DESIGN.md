@@ -503,11 +503,16 @@ bare `Class` for a class with nothing of its own);
 `test_python_sdk_options_are_all_in_the_parity_table`
 (`tests/antigravity_scripted/parity.rs`, in the required key-free CI step)
 fails when the installed wheel has a key this table lacks, or this table
-has one the wheel lacks. The script also fails on any public class in the
-modules it reads that it neither reads nor skips with a reason (outputs,
-errors, the hook base classes, transport plumbing; its `CLASS_SKIP`), so a
-new config model or content type cannot go unlisted. A harness bump
-updates the table with the wheel.
+has one the wheel lacks. The script also fails when anything the SDK
+exposes goes unplaced: a module under `google/antigravity/` it neither
+reads nor skips with a reason (transport plumbing, the runners; its
+`MODULE_SKIP`), a public class in a module it reads that it neither reads
+nor skips (outputs, errors, the hook base classes; its `CLASS_SKIP`), or a
+name the SDK exports (a module's `__all__`, a package's re-exports, an
+`@beta` export) that it does not place. So a new config model, content
+type, helper module or exported function cannot go unlisted. A harness
+bump updates the table with the wheel; the release watch's issue shows
+the new wheel's keys against the pin's.
 
 "Not modeled" rows give the reason. Each modeled option is shown changing
 the harness's behavior by a test in `tests/antigravity_scripted/` (D-010):
@@ -522,7 +527,7 @@ turn's outcome.
 | `Agent.conversation` | Not modeled as an object | Its methods map onto the agent and `ChatResponse` (see Conversation and response). |
 | `Agent.conversation_id`, `AgentConfig.conversation_id` | `conversation_id()`, `with_conversation_id` | Python also checks the id's shape (32+ characters); the harness checks existence. |
 | `Agent.is_started` | Not modeled | A value of `AntigravityAgent` exists only once `spawn()` succeeded. |
-| `Agent.run_workflow`, `BuiltinTools.RUN_WORKFLOW` | Not modeled (product decision) | Beta. Workflows are Python scripts against the SDK's `workflows` module, run by the harness's `run_workflow` builtin; a Rust client has no way to author them. The toggle is written disabled (#493 item 9). |
+| `Agent.run_workflow`, `BuiltinTools.RUN_WORKFLOW`, `workflows.agent`, `workflows.call_tool`, `workflows.define`, `workflows.extract_workflow_source`, `workflows.log`, `workflows.parallel`, `workflows.phase`, `workflows.pipeline`, `workflows.validate_workflow_source` | Not modeled (product decision, D-NEXT-WP17) | Beta. A workflow is a Python script written against the SDK's `workflows` module (the `workflows.*` keys). `Agent.run_workflow` turns the `run_workflow` builtin on and asks the model, in a chat turn, to run the script with it. Nothing in a workflow can be written in Rust, and running one needs the Python SDK installed beside the harness, the dependency this crate exists to avoid. The toggle is written disabled. |
 | `Agent.sandbox_status` | `AntigravityAgent::sandbox_status` | `spawn()` warns when a requested sandbox is unavailable, as Python does. |
 | `AgentConfig.save_dir` | `with_save_dir` | Python makes a temporary one when unset; the harness then keeps nothing. |
 | `AgentConfig.app_data_dir` | `with_app_data_dir` | |
@@ -568,6 +573,7 @@ turn's outcome.
 | `Image`, `Document`, `Audio`, `Video`, `_BaseMedia.data`, `_BaseMedia.mime_type` | `Media::new(bytes, mime_type)`, `Prompt::add_media` | One type; the MIME type says which. The harness hands it to the model as inline data after the text. A MIME type the Python SDK does not list is sent with a `warn!`, not refused. |
 | `_BaseMedia.description` | `Media::with_description` | Harness 0.1.23 does not pass it to the model (verified 2026-11-05). |
 | `_BaseMedia.from_file` | `Media::from_file` | The MIME type comes from the extension (`detect_mime_type`). |
+| `types.from_file`, `types.from_bytes` | `Media::from_file`, `Media::new(bytes, mime_type)` | Python picks the media class from the MIME type; genai-rs has the one `Media` type. A description goes on with `with_description`. |
 | `SlashCommand.name`, `BuiltinSlashCommandName.PLAN` | `SlashCommand::Plan`, `Prompt::add_slash_command` | The harness puts `/plan` before the prompt's text. |
 
 ### Conversation and response
@@ -597,6 +603,7 @@ turn's outcome.
 | `CapabilitiesConfig.agent_behavior`, `SubagentCapabilities.agent_behavior`, `AgentBehavior.AUTONOMOUS`, `AgentBehavior.INTERACTIVE`, `AgentBehavior.MINIMAL` | `with_agent_behavior`, `Subagent::with_agent_behavior` | |
 | `BuiltinTools.LIST_DIR`, `BuiltinTools.SEARCH_DIR`, `BuiltinTools.FIND_FILE`, `BuiltinTools.VIEW_FILE`, `BuiltinTools.CREATE_FILE`, `BuiltinTools.EDIT_FILE`, `BuiltinTools.RUN_COMMAND`, `BuiltinTools.ASK_QUESTION`, `BuiltinTools.INVOKE_SUBAGENT`, `BuiltinTools.GENERATE_IMAGE`, `BuiltinTools.SEARCH_WEB`, `BuiltinTools.READ_URL_CONTENT`, `BuiltinTools.FINISH` | `BuiltinTool::*` | Same wire names. |
 | `BuiltinTools.START_SUBAGENT` | `policy::*("start_subagent")` | A policy alias for `invoke_subagent`, as Python keeps the enum alias. |
+| `types.normalize_builtin_tool_name` | Not modeled | Maps the deprecated `start_subagent` to `invoke_subagent`; genai-rs's policies take either name. |
 | `BuiltinTools.SCHEDULE` | Not modeled | A self-scheduled turn starts whenever the harness decides, and its events would land in a `chat` turn that starts meanwhile: the harness marks no turn boundary the client could tell apart. Trigger turns avoid this because the bridge serializes their delivery with `chat`; `next_trigger_turn` consumes those. Written disabled. |
 | `BuiltinTools.read_only`, `BuiltinTools.none`, `BuiltinTools.all_tools` | `Capabilities::read_only`, `none`, `all` | genai-rs's read-only set keeps the three finders and leaves out `read_url_content` (egress) and `schedule`. |
 | `BuiltinTools.default`, `BuiltinTools.deprecated`, `BuiltinTools.file_tools`, `BuiltinTools.minimal`, `BuiltinTools.nondestructive` | Not modeled (presets) | Tool lists; build them with `Capabilities::none().enable(..)`. |
@@ -605,6 +612,7 @@ turn's outcome.
 | `CapabilitiesConfig.mcp_max_output_bytes` | `with_mcp_max_output_bytes` | |
 | `CapabilitiesConfig.compaction_threshold`, `AgentConfig.compaction_config`, `CompactionConfig.token_threshold` | `with_compaction_threshold` | Both spellings written, as Python does. |
 | `AgentConfig.tools` | `add_tool`, `with_tool_service` | |
+| `ToolContext.conversation_id`, `StateStore.get_state`, `StateStore.set_state`, `StateStore.update_state`, `StateStore.lock` | Not modeled | Python hands a `ToolContext` to a tool with a parameter of that type: the conversation id and a per-session state store (`StateStore`, also behind `HookContext`). A genai-rs tool's state lives on its `ToolService`, shared by the tools it returns, and `conversation_id()` gives the id once `spawn()` returns. |
 
 ### Subagents
 
@@ -673,10 +681,17 @@ turn's outcome.
 
 | Python SDK option | genai-rs | Notes |
 |---|---|---|
-| `AgentConfig.triggers`, `triggers.every` | `add_trigger(TriggerConfig::new(message, interval))` | A trigger's turn is driven by `next_trigger_turn`, on request; Python consumes it in the background. A background consumer needs turn processing moved off `&mut self` into a task of its own, deferred (#493 item 7). |
+| `AgentConfig.triggers`, `triggers.every` | `add_trigger(TriggerConfig::new(message, interval))` | A trigger's turn is driven by `next_trigger_turn`, on request; Python consumes it in the background. A background consumer needs turn processing moved off `&mut self` into a task of its own, deferred. |
 | `triggers.trigger`, `TriggerContext.send` | `add_custom_trigger(\|ctx\| async move { ctx.send(..).await })` | Sends wait while a turn runs. |
 | `triggers.on_file_change` | `triggers::on_file_change(path, poll_interval, callback)` | Polls size and modification time (no OS watcher dependency); skips the directories `watchfiles` skips. Changes made during a turn reach the callback as one batch once the agent is idle. |
 | `FileChange.kind`, `FileChange.path`, `FileChangeKind.ADDED`, `FileChangeKind.MODIFIED`, `FileChangeKind.DELETED` | `triggers::FileChange`, `FileChangeKind` | What the callback is handed. |
+
+### Utilities
+
+| Python SDK option | genai-rs | Notes |
+|---|---|---|
+| `otel.get_otel_hooks` | Not modeled | OpenTelemetry spans for sessions, turns, steps and tool calls, made by a set of hooks (the SDK's `otel` extra). genai-rs logs through `tracing` (`docs/LOGGING_STRATEGY.md`) and wire inspectors (`add_wire_inspector`); an application that wants spans records them from its own `on_*` hooks. |
+| `interactive.run_interactive_loop`, `interactive.async_input`, `interactive.ask_user_handler` | Not modeled | A terminal chat loop with a spinner, a yes/no prompt for `ask_user` policies, and answers to `ask_question`. In Rust: call `chat` per line read, answer questions with `on_questions`, and confirm calls with `policy::ask_user(tool, handler)`. |
 
 ## Harness config beyond the Python SDK
 

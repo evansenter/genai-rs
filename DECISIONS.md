@@ -1195,3 +1195,26 @@ now also send a field of these configs the crate does not model yet, as
 variants, which keep no `extra` (enums are outside the guard, as `Step`'s
 were before #491).
 
+
+---
+
+## D-NEXT-WP17 — Antigravity's `run_workflow` stays unmodeled (2026-11-07)
+
+**Context.** #493 item 9. Harness 0.1.23 has a beta `run_workflow` builtin,
+and the Python SDK a beta `Agent.run_workflow`: it turns the builtin on
+(it needs subagents too), asks the model in a chat turn to run a workflow
+script at a given path, and reads the result off the `run_workflow` step.
+The script is Python written against the SDK's `workflows` module
+(`phase`, `agent`, `call_tool`, `parallel`, `pipeline`, `define`), and the
+harness runs it with Python. This crate writes the toggle disabled.
+
+**Decision.** Not modeled. A Rust caller could flip the toggle and send
+the prompt, but every workflow it ran would be a Python script needing the
+Python SDK installed beside the harness, the dependency this crate exists
+to remove, and the feature is beta on both sides. The parity table lists
+the builtin, `Agent.run_workflow` and each `workflows` function with this
+reason, so a wheel that changes them shows in its diff.
+
+**Consequences.** `BuiltinTool` has no `RunWorkflow`, and the toggle stays
+off. Revisit if the harness runs workflows written some other way, or the
+feature leaves beta and users ask for Python workflows driven from Rust.
