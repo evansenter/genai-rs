@@ -19,8 +19,10 @@ fn observable_trigger_with_sync(
     let handle = spawn_trigger_task(config, idle, turn_sync, move |message| {
         let tx = tx.clone();
         async move {
-            tx.send(message)
-                .map_err(|e| AntigravityError::WebSocket(e.to_string()))
+            tx.send(message).map_err(|e| AntigravityError::WebSocket {
+                message: "send failed".to_string(),
+                source: Box::new(e),
+            })
         }
     });
     (handle, rx)
@@ -133,7 +135,12 @@ async fn test_trigger_task_exits_when_send_fails() {
         TriggerConfig::new("x", Duration::from_millis(1)),
         idle_rx,
         Arc::new(tokio::sync::Mutex::new(())),
-        |_message| async { Err(AntigravityError::WebSocket("closed".to_string())) },
+        |_message| async {
+            Err(AntigravityError::WebSocket {
+                message: "send failed".to_string(),
+                source: "closed".into(),
+            })
+        },
     );
     handle.await.expect("task exits cleanly after send failure");
 }
@@ -165,8 +172,10 @@ fn observable_context(
         Arc::new(move |message| {
             let tx = tx.clone();
             Box::pin(async move {
-                tx.send(message)
-                    .map_err(|e| AntigravityError::WebSocket(e.to_string()))
+                tx.send(message).map_err(|e| AntigravityError::WebSocket {
+                    message: "send failed".to_string(),
+                    source: Box::new(e),
+                })
             })
         }),
     );

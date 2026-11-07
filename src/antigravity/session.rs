@@ -106,13 +106,17 @@ impl Session {
         api_key: &str,
         wire: WireContext,
     ) -> Result<Self, AntigravityError> {
-        let uri: Uri = format!("ws://localhost:{port}/")
-            .parse()
-            .map_err(|e| AntigravityError::WebSocket(format!("invalid harness URL: {e}")))?;
+        let uri: Uri =
+            format!("ws://localhost:{port}/")
+                .parse()
+                .map_err(|e| AntigravityError::WebSocket {
+                    message: format!("invalid harness URL for port {port}"),
+                    source: Box::new(e),
+                })?;
         let request = ClientRequestBuilder::new(uri).with_header("x-goog-api-key", api_key);
 
-        let mut last_error = None;
-        for attempt in 0..CONNECT_ATTEMPTS {
+        let mut attempt = 0;
+        loop {
             match tokio_tungstenite::connect_async(request.clone()).await {
                 Ok((ws, _response)) => {
                     let (sink, stream) = ws.split();
@@ -122,19 +126,25 @@ impl Session {
                         wire,
                     });
                 }
+                Err(e) if attempt + 1 < CONNECT_ATTEMPTS => {
+                    tracing::debug!(
+                        "harness WebSocket connect attempt {} failed: {e}",
+                        attempt + 1
+                    );
+                    tokio::time::sleep(CONNECT_BASE_DELAY * 2u32.pow(attempt)).await;
+                    attempt += 1;
+                }
                 Err(e) => {
-                    last_error = Some(e);
-                    if attempt + 1 < CONNECT_ATTEMPTS {
-                        tokio::time::sleep(CONNECT_BASE_DELAY * 2u32.pow(attempt)).await;
-                    }
+                    return Err(AntigravityError::WebSocket {
+                        message: format!(
+                            "failed to connect to harness WebSocket on port {port} after \
+                             {CONNECT_ATTEMPTS} attempts"
+                        ),
+                        source: Box::new(e),
+                    });
                 }
             }
         }
-        Err(AntigravityError::WebSocket(format!(
-            "failed to connect to harness WebSocket on port {port} after {CONNECT_ATTEMPTS} \
-             attempts: {}",
-            last_error.map_or_else(|| "unknown error".to_string(), |e| e.to_string())
-        )))
     }
 
     /// A cloneable handle to the sink half, for out-of-band sends
@@ -168,7 +178,10 @@ impl Session {
             let Some(message) = self.stream.next().await else {
                 return Ok(None);
             };
-            let message = message.map_err(|e| AntigravityError::WebSocket(e.to_string()))?;
+            let message = message.map_err(|e| AntigravityError::WebSocket {
+                message: "read failed".to_string(),
+                source: Box::new(e),
+            })?;
             match message {
                 Message::Text(text) => {
                     self.wire.emit(|| WireEvent::WsReceive {
@@ -209,7 +222,10 @@ async fn send_json(
         .await
         .send(Message::Text(text.into()))
         .await
-        .map_err(|e| AntigravityError::WebSocket(format!("send failed: {e}")))
+        .map_err(|e| AntigravityError::WebSocket {
+            message: "send failed".to_string(),
+            source: Box::new(e),
+        })
 }
 
 /// Redacts credential fields in the *inspection copy* of an outgoing
@@ -277,6 +293,31 @@ impl SinkHandle {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test(start_paused = true)]
+    async fn test_failed_connect_keeps_the_transport_error_as_its_source() {
+        // A port nothing listens on: bind one, then free it.
+        let listener = std::net::TcpListener::bind("localhost:0").expect("bind a local port");
+        let port = i32::from(listener.local_addr().expect("local address").port());
+        drop(listener);
+
+        let error = Session::connect(port, "token", WireContext::new(Vec::new()))
+            .await
+            .expect_err("nothing listens on the port");
+        let AntigravityError::WebSocket { message, source } = &error else {
+            panic!("expected a WebSocket error: {error:?}");
+        };
+        assert!(message.contains(&format!("port {port}")), "{message}");
+        assert!(
+            source
+                .downcast_ref::<tokio_tungstenite::tungstenite::Error>()
+                .is_some(),
+            "{source:?}"
+        );
+        let chained = std::error::Error::source(&error).expect("source() is the transport error");
+        assert_eq!(chained.to_string(), source.to_string());
+        assert!(error.to_string().ends_with(&source.to_string()), "{error}");
+    }
 
     #[test]
     fn test_redaction_masks_api_keys_everywhere() {

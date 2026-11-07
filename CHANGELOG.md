@@ -760,6 +760,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FunctionDeclaration::builder(name).with_description(..).add_parameter(..).with_required(..).build()`,
   or deserialize one with `serde_json`; bump `genai-rs` and
   `genai-rs-macros` together.
+- **Breaking: `AntigravityError::WebSocket` is a struct variant,
+  `WebSocket { message, source }`** (#504). `source` is the transport's
+  error, a `Box<dyn std::error::Error + Send + Sync>`, and `source()`
+  returns it; the variant used to hold only its text. `message` says what
+  failed: connecting (with the port and attempt count), a read, or a send.
+  The `Display` text is `websocket error: {message}: {source}`, as before
+  for a failed connect or send. Migration: match
+  `AntigravityError::WebSocket { message, source }` where you matched
+  `WebSocket(text)`, and `downcast_ref` the source for the transport's own
+  error type.
 - **Breaking: `Client::new` takes `impl Into<String>`**, so
   `Client::new("key")` compiles (#504). A `String` argument is unchanged;
   a call that converted with `.into()` no longer infers the target type.

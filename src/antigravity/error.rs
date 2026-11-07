@@ -83,9 +83,17 @@ pub enum AntigravityError {
     /// denial).
     #[error("agent turn failed: {0}")]
     Turn(String),
-    /// WebSocket transport error.
-    #[error("websocket error: {0}")]
-    WebSocket(String),
+    /// WebSocket transport error: the connection to the harness could not
+    /// be opened, or a read or send on it failed.
+    #[error("websocket error: {message}: {source}")]
+    WebSocket {
+        /// What was being done: connecting, reading or sending.
+        message: String,
+        /// The transport's error, also returned by
+        /// [`source()`](std::error::Error::source).
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
     /// The harness sent something this client could not parse.
     #[error("protocol error: {0}")]
     Protocol(String),

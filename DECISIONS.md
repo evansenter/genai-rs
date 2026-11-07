@@ -1702,3 +1702,28 @@ mutexes inside hook closures that cannot return an error.
 **Consequences.** A new test or example crate needs the crate-level allow
 if it unwraps outside a `#[test]` function. A new invariant panic in the
 library needs its reason written down.
+
+---
+
+## D-NEXT-WP18-a — `AntigravityError::WebSocket` keeps its cause as a boxed error (2026-11-07)
+
+**Context.** #504 (C5): `AntigravityError::WebSocket(String)` kept only
+the transport error's text, so a caller could not tell a refused
+connection from a reset, and an error reporter walking `source()` found
+nothing.
+
+**Decision.** `WebSocket { message, source }`, with `source` a
+`Box<dyn std::error::Error + Send + Sync>` marked `#[source]`. Every
+producer has a cause: a malformed harness URL (`InvalidUri`), the last
+failed connect attempt, a failed read or send (`tungstenite::Error`), so
+`source` is not an `Option`. The connect loop returns its last attempt's
+error directly rather than keeping an `Option` it would have to unwrap.
+Boxed rather than `tungstenite::Error`, because the URL case is another
+type, and naming `tokio-tungstenite`'s error in the public API would make
+its major version part of genai-rs's; a caller who needs it downcasts.
+`Display` keeps the cause's text after `message`, as `ClientBuild` and
+`StreamInterrupted` do, for callers that print only the top error.
+
+**Consequences.** A pattern on `WebSocket(text)` becomes
+`WebSocket { message, source }`. A `tokio-tungstenite` upgrade changes
+what a downcast finds, not genai-rs's API.
