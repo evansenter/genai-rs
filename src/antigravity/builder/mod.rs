@@ -106,6 +106,9 @@ pub struct AgentBuilder {
     /// Whether to confine file tools to the workspaces. `None` means the
     /// default (on); see [`Self::with_workspace_containment`].
     workspace_containment: Option<bool>,
+    /// Whether `spawn()` may start subagents alongside gates they bypass;
+    /// see [`Self::with_ungated_subagents`].
+    ungated_subagents: bool,
     /// Model, subagent and harness options (`options.rs`).
     options: HarnessOptions,
 }
@@ -127,6 +130,7 @@ impl std::fmt::Debug for AgentBuilder {
                 &(self.triggers.len() + self.custom_triggers.len()),
             )
             .field("subagents", &self.subagents.len())
+            .field("ungated_subagents", &self.ungated_subagents)
             .field("lifecycle", &self.lifecycle)
             .field("options", &self.options)
             .finish_non_exhaustive()
@@ -505,7 +509,9 @@ impl AgentBuilder {
     /// pre-tool hook). Nesting, the allow-list and `define_subagent` are set
     /// with [`Self::with_max_subagent_depth`],
     /// [`Self::with_allowed_subagents`] and
-    /// [`Self::with_define_subagent_tool`].
+    /// [`Self::with_define_subagent_tool`]. A subagent's own tool calls
+    /// bypass this agent's gates, so with any gate set `spawn()` needs
+    /// [`Self::with_ungated_subagents`].
     ///
     /// Custom tools listed on the subagent (by name) must also be
     /// registered on this builder (`add_tool` / `with_tool_service`);
@@ -517,6 +523,48 @@ impl AgentBuilder {
         self
     }
 
+    /// Lets `spawn()` start an agent whose subagents bypass its gates.
+    /// **Off by default.**
+    ///
+    /// On harness 0.1.23 a subagent's own tool calls reach neither the
+    /// pre-tool hook and this client's policies nor the harness's policy
+    /// evaluator (where [`policy::auto`](super::policy::auto) runs), and
+    /// workspace containment does not confine them; the agent's
+    /// `run_command` sandbox is its own, and a subagent's commands follow
+    /// the subagent's capabilities. Only the subagent's
+    /// [capabilities](Subagent::with_capabilities) limit it. That holds for
+    /// the harness's built-in `research` subagent too, which
+    /// `invoke_subagent` offers whether or not you add a subagent.
+    ///
+    /// So while any of those gates is set, `spawn()` refuses an agent that
+    /// enables [`BuiltinTool::InvokeSubagent`](super::BuiltinTool::InvokeSubagent)
+    /// or [`Self::with_define_subagent_tool`], with an
+    /// [`AntigravityError::Config`] naming the gates, unless this is
+    /// `true`. A policy set that only allows (such as
+    /// [`policy::allow_all`](super::policy::allow_all)) is not a gate: it
+    /// refuses nothing. Opt in once every subagent has only the builtins
+    /// it may use unchecked:
+    ///
+    /// ```rust,no_run
+    /// use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};
+    ///
+    /// let builder = AntigravityAgent::builder()
+    ///     .add_workspace("/repo")                         // containment: a gate
+    ///     .add_policy(policy::deny("run_command"))        // a gate
+    ///     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
+    ///     .add_subagent(Subagent::new("reader").with_description("Reads files."))
+    ///     // The subagents may read files outside /repo; accept that.
+    ///     .with_ungated_subagents(true)
+    ///     // ...
+    ///     ;
+    /// # let _ = builder;
+    /// ```
+    #[must_use]
+    pub fn with_ungated_subagents(mut self, allow: bool) -> Self {
+        self.ungated_subagents = allow;
+        self
+    }
+
     /// Launches the harness, performs the handshake, connects the
     /// WebSocket, and initializes the conversation.
     ///
@@ -524,7 +572,9 @@ impl AgentBuilder {
     ///
     /// - [`AntigravityError::Config`] when write-capable built-ins or MCP
     ///   servers are enabled without any policy or pre-tool hook (safety
-    ///   parity with the reference SDK), or when a model or a Gemini base
+    ///   parity with the reference SDK), when subagents are enabled
+    ///   alongside a gate they bypass without
+    ///   [`Self::with_ungated_subagents`], or when a model or a Gemini base
     ///   URL is configured without a non-blank API key.
     /// - [`AntigravityError::HarnessNotFound`] when discovery fails.
     /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
@@ -663,6 +713,13 @@ impl AgentBuilder {
     /// Whether workspace announcement is enabled (default on).
     fn announce_workspaces(&self) -> bool {
         self.workspace_announcement.unwrap_or(true)
+    }
+
+    /// Whether the harness confines file tools to the workspaces: on by
+    /// default, and only with a workspace to confine to (`spawn()` rejects
+    /// an explicit opt-in without one).
+    fn contains_workspaces(&self) -> bool {
+        self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty()
     }
 }
 

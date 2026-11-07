@@ -62,9 +62,10 @@ async fn test_spawn_write_tools_allowed_with_policy() {
 #[tokio::test]
 async fn test_spawn_write_tools_allowed_with_pre_tool_hook() {
     let (_dir, path) = unexecutable_harness();
+    // Without subagents: a hook beside them needs with_ungated_subagents.
     let err = AntigravityAgent::builder()
         .with_harness_path(&path)
-        .with_capabilities(Capabilities::all())
+        .with_capabilities(Capabilities::all().disable(BuiltinTool::InvokeSubagent))
         .on_pre_tool(|_| PreToolDecision::Allow)
         .spawn()
         .await
@@ -506,4 +507,165 @@ fn test_overlapping_mcp_server_names_are_found() {
         ]
     );
     assert!(super::validate::overlapping_mcp_servers(["git", "github"].into_iter()).is_empty());
+}
+
+// =============================================================================
+// Subagents beside the gates they bypass (#520, D-NEXT-WP22)
+// =============================================================================
+
+/// An agent offering subagents, past the write-tool safety gate with a
+/// policy that refuses nothing.
+fn subagent_agent(harness: &std::path::Path) -> AgentBuilder {
+    AntigravityAgent::builder()
+        .with_harness_path(harness)
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
+        .add_policy(policy::allow_all())
+}
+
+/// A gate a subagent's own calls bypass, as the words the refusal names it
+/// by and a function that sets it on a builder.
+type Gate = (&'static str, fn(AgentBuilder) -> AgentBuilder);
+
+/// Each gate a subagent's own calls bypass.
+fn each_gate() -> Vec<Gate> {
+    vec![
+        ("pre-tool hook", |b| {
+            b.on_pre_tool(|_| PreToolDecision::Allow)
+        }),
+        ("deny or confirm policy", |b| {
+            b.add_policy(policy::deny("run_command"))
+        }),
+        ("deny or confirm policy", |b| {
+            b.add_policy(policy::confirm("run_command"))
+        }),
+        ("deny or confirm policy", |b| {
+            b.add_policy(policy::ask_user("run_command", |_, _| true))
+        }),
+        ("auto policy", |b| b.add_policy(policy::auto())),
+        ("workspace containment", |b| b.add_workspace("/repo")),
+        ("run_command sandbox", |b| {
+            b.with_capabilities(
+                Capabilities::read_only()
+                    .enable(BuiltinTool::InvokeSubagent)
+                    .with_run_command(
+                        crate::antigravity::RunCommandOptions::new().with_sandbox(true),
+                    ),
+            )
+        }),
+    ]
+}
+
+#[tokio::test]
+async fn test_spawn_refuses_subagents_beside_each_gate_without_the_opt_in() {
+    let (_dir, path) = unexecutable_harness();
+    for (gate, apply) in each_gate() {
+        let err = apply(subagent_agent(&path)).spawn().await.unwrap_err();
+        let AntigravityError::Config(message) = &err else {
+            panic!("{gate}: expected a Config error, got {err:?}");
+        };
+        assert!(message.contains(gate), "{gate}: {message}");
+        assert!(message.contains("invoke_subagent"), "{gate}: {message}");
+        assert!(
+            message.contains("with_ungated_subagents(true)"),
+            "{gate}: {message}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_spawn_allows_subagents_beside_each_gate_with_the_opt_in() {
+    let (_dir, path) = unexecutable_harness();
+    for (gate, apply) in each_gate() {
+        let err = apply(subagent_agent(&path))
+            .with_ungated_subagents(true)
+            .spawn()
+            .await
+            .unwrap_err();
+        // Past validation: the spawn fails only at process launch.
+        assert!(
+            matches!(err, AntigravityError::HandshakeFailed { .. }),
+            "{gate}: {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_spawn_names_every_gate_subagents_would_bypass() {
+    let (_dir, path) = unexecutable_harness();
+    let err = each_gate()
+        .into_iter()
+        .fold(subagent_agent(&path), |builder, (_, apply)| apply(builder))
+        .with_define_subagent_tool(true)
+        .spawn()
+        .await
+        .unwrap_err();
+    let AntigravityError::Config(message) = &err else {
+        panic!("expected a Config error, got {err:?}");
+    };
+    for (gate, _) in each_gate() {
+        assert!(message.contains(gate), "{gate}: {message}");
+    }
+    assert!(
+        message.contains("invoke_subagent") && message.contains("define_subagent"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn test_spawn_allows_subagents_without_a_gate() {
+    let (_dir, path) = unexecutable_harness();
+    // Policies that only allow refuse nothing, and containment is off (no
+    // workspace, or opted out): there is nothing for a subagent to bypass.
+    let ungated = [
+        subagent_agent(&path),
+        subagent_agent(&path).add_policy(policy::allow("view_file")),
+        subagent_agent(&path)
+            .add_workspace("/repo")
+            .with_workspace_containment(false),
+    ];
+    for builder in ungated {
+        let err = builder.spawn().await.unwrap_err();
+        assert!(
+            matches!(err, AntigravityError::HandshakeFailed { .. }),
+            "{err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_spawn_refuses_define_subagent_beside_a_gate() {
+    let (_dir, path) = unexecutable_harness();
+    // define_subagent counts on its own, even with invoke_subagent off.
+    let err = AntigravityAgent::builder()
+        .with_harness_path(&path)
+        .with_define_subagent_tool(true)
+        .on_pre_tool(|_| PreToolDecision::Allow)
+        .spawn()
+        .await
+        .unwrap_err();
+    let AntigravityError::Config(message) = &err else {
+        panic!("expected a Config error, got {err:?}");
+    };
+    assert!(message.contains("define_subagent"), "{message}");
+    assert!(!message.contains("invoke_subagent"), "{message}");
+}
+
+#[tokio::test]
+async fn test_spawn_allows_gates_without_subagents() {
+    let (_dir, path) = unexecutable_harness();
+    // Every gate, no subagent tools: nothing is refused, opt-in or not.
+    let err = each_gate()
+        .into_iter()
+        .fold(
+            AntigravityAgent::builder().with_harness_path(&path),
+            |b, (_, apply)| apply(b),
+        )
+        .with_capabilities(Capabilities::read_only())
+        .spawn()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AntigravityError::HandshakeFailed { .. }),
+        "{err:?}"
+    );
 }

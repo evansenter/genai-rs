@@ -312,6 +312,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: enabling the subagent builtin no longer offers the model
   `define_subagent`**, with which it writes subagents of its own at runtime
   (D-023). Call `with_define_subagent_tool(true)` to keep it.
+- **Breaking: Antigravity's `spawn()` refuses subagents beside a gate they
+  bypass** (#520, D-NEXT-WP22). Harness 0.1.23 applies neither policies,
+  the pre-tool hook nor workspace containment to a subagent's own tool
+  calls, so a read-only subagent can read any file the process can
+  (verified 2026-11-05, with deny-all rules, a denying hook and containment
+  all set); the built-in `research` subagent, which `invoke_subagent`
+  always offers, is no different. The docs said the pre-tool callback gated
+  subagent calls. An agent that enables `BuiltinTool::InvokeSubagent` or
+  `with_define_subagent_tool(true)` now fails with
+  `AntigravityError::Config` naming the gates when any is set: a pre-tool
+  hook, a deny, confirm or `ask_user` policy, `policy::auto()`, workspace
+  containment (on by default with a workspace), or the `run_command`
+  sandbox. Policies that only allow, such as `allow_all()`, are not gates.
+  Migration: give each subagent only the builtins it may use unchecked and
+  add `.with_ungated_subagents(true)`, or drop the gates or the subagent
+  builtin.
 - **Breaking: Antigravity policy precedence follows the harness's
   evaluator.** A named tool still beats `mcp_<server>_*`, which beats `"*"`;
   within a tier, deny now beats confirm/ask, which beats allow, where the
@@ -629,13 +645,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[build]` in `.cargo/config.toml`; replace
   `#[cfg(feature = "strict-unknown")]` in your tests with
   `#[cfg(genai_strict_unknown)]`.
-- `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
-  harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
-  containment to a subagent's own tool calls, so a read-only subagent can
-  read any file the process can (verified 2026-11-05, with deny-all rules,
-  a denying hook and containment all set). The docs said the pre-tool
-  callback gated subagent calls. Give subagents only the builtins they may
-  use ungated.
 - Antigravity's pre-tool hook runs once per custom tool call; it ran twice,
   once when the harness asked and again on dispatch.
 - Harness discovery no longer starts `python3` when the explicit path or
