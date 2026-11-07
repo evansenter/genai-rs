@@ -207,10 +207,6 @@ impl InteractionResponse {
                                 summary.unknown_count += 1;
                                 unknown_types_set.insert(content_type.clone());
                             }
-                            // Content is #[non_exhaustive]; count future
-                            // variants as unknown-free content.
-                            #[allow(unreachable_patterns)]
-                            _ => {}
                         }
                     }
                 }

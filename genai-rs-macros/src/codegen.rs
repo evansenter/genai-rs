@@ -63,7 +63,6 @@ fn json_value_to_tokens(value: &serde_json::Value) -> TokenStream {
 /// - A `{func_name}_declaration()` function returning the `FunctionDeclaration`
 /// - A `{func_name}_callable_factory()` function for the registry
 /// - Automatic registration via `inventory::submit!`
-#[allow(clippy::too_many_lines)]
 pub fn generate_declaration_function(
     func: &ItemFn,
     func_name: &str,

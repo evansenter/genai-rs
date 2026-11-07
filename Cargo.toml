@@ -18,6 +18,11 @@ missing_docs = "warn"
 # `--cfg genai_strict_unknown` turns on strict mode for unknown API values
 # (D-030): a cfg rather than a Cargo feature, because it is not additive.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)", "cfg(genai_strict_unknown)"] }
+# A match on an enum this crate defines lists every variant: inside the
+# crate `#[non_exhaustive]` does not apply, so a wildcard arm there only
+# hides the variant a change adds. Forbid, not deny, so an
+# `#[allow(unreachable_patterns)]` cannot switch the check back off.
+unreachable_patterns = "forbid"
 
 # Pedantic lints chosen one by one, beyond clippy's defaults (#501).
 # `make clippy` and CI run with `-D warnings`, so each is enforced in src/,

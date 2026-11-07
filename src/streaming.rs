@@ -579,7 +579,6 @@ impl AutoFunctionResultAccumulator {
     /// The accumulator collects all `FunctionResults` chunks and combines them
     /// with the final response.
     #[must_use]
-    #[allow(unreachable_patterns)] // Handle future variants from #[non_exhaustive] enum
     pub fn push(&mut self, chunk: AutoFunctionStreamChunk) -> Option<AutoFunctionResult> {
         match chunk {
             AutoFunctionStreamChunk::FunctionResults(results) => {
@@ -597,9 +596,8 @@ impl AutoFunctionResultAccumulator {
                 reached_max_loops: true,
             }),
             AutoFunctionStreamChunk::Delta(_)
-            | AutoFunctionStreamChunk::ExecutingFunctions { .. } => None,
-            // Handle future variants gracefully
-            _ => None,
+            | AutoFunctionStreamChunk::ExecutingFunctions { .. }
+            | AutoFunctionStreamChunk::Unknown { .. } => None,
         }
     }
 
