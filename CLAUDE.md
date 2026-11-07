@@ -198,8 +198,10 @@ reaches the wire must use a real id.
   does not `unwrap()` or `expect()`: a panic that cannot happen carries
   `#[expect(clippy::expect_used, reason = "...")]`, and each test and
   example crate root allows both (D-NEXT-WP18). Every `unsafe` block has
-  a `// SAFETY:` comment. `unreachable_patterns` is forbidden, so a match
-  on an enum this crate defines lists its variants, with no wildcard.
+  a `// SAFETY:` comment. `unreachable_patterns` is forbidden: a wildcard
+  after every variant is listed is an error, and its allow cannot come
+  back. The lint does not catch a `_ =>` after a partial list, so on an
+  enum this crate defines, list the variants rather than add a wildcard.
 - Errors: `GenaiError` (`src/errors.rs`) for API/transport, `FunctionError`
   for tool execution.
 - Logging (`docs/LOGGING_STRATEGY.md`): `warn` for recoverable issues
