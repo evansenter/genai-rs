@@ -1211,10 +1211,11 @@ for the step's `result`, written back in the form it came in. Not
 (which wraps arrays) admit shapes this union does not have. Any other shape
 fails the field, so the step is kept whole as `Step::Unknown`, as for any
 malformed known step. The delta keeps `result: String`; the accumulator
-appends a fragment to the string, or as a text block after a list-form
-`step.start`. `CodeExecutionResultInfo::result` and
-`successful_code_output()` give the enum, with `text()` (a `Cow<str>` of
-the string or the joined text blocks) and `Display` for the common case.
+appends a fragment to the string, or, after a list-form `step.start`, to
+its trailing text block (a new one when the last block is not text).
+`CodeExecutionResultInfo::result` and `successful_code_output()` give the
+enum, with `text()` (a `Cow<str>` of the string or the joined text blocks)
+and `Display` for the common case.
 
 **Consequences.** Breaking for callers that read `result` as a `&str`
 (D-007); the migration is `.text()`, and `println!("{}", r.result)` is

@@ -92,12 +92,17 @@ impl CodeExecutionOutput {
         }
     }
 
-    /// Appends a streamed fragment: to the string, or as a text block after
-    /// the content blocks.
+    /// Appends a streamed fragment: to the string, or to the list's last
+    /// block when that is text, else as a new text block.
     pub(crate) fn push_str(&mut self, fragment: &str) {
         match self {
             Self::Text(text) => text.push_str(fragment),
-            Self::Contents(contents) => contents.push(Content::text(fragment)),
+            Self::Contents(contents) => match contents.last_mut() {
+                Some(Content::Text {
+                    text: Some(text), ..
+                }) => text.push_str(fragment),
+                _ => contents.push(Content::text(fragment)),
+            },
         }
     }
 }

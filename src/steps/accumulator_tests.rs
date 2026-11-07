@@ -703,7 +703,7 @@ fn code_execution_result_deltas_append_to_the_string_form() {
 }
 
 /// A `step.start` in the list form (not seen live) keeps its blocks, and a
-/// string delta becomes a text block after them.
+/// string delta becomes a text block after them, which later deltas extend.
 #[test]
 fn a_string_delta_after_a_list_form_start_becomes_a_text_block() {
     let mut acc = StepAccumulator::new();
@@ -717,15 +717,17 @@ fn a_string_delta_after_a_list_form_start_becomes_a_text_block() {
             extra: Default::default(),
         },
     );
-    acc.apply_delta(
-        0,
-        &StepDelta::CodeExecutionResult {
-            result: "done".into(),
-            is_error: None,
-            signature: None,
-            extra: Default::default(),
-        },
-    );
+    for fragment in ["do", "ne"] {
+        acc.apply_delta(
+            0,
+            &StepDelta::CodeExecutionResult {
+                result: fragment.into(),
+                is_error: None,
+                signature: None,
+                extra: Default::default(),
+            },
+        );
+    }
     acc.stop(0);
     match &acc.finish()[0] {
         Step::CodeExecutionResult { result, .. } => {

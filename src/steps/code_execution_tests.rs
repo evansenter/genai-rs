@@ -98,10 +98,12 @@ fn push_str_extends_either_form() {
     text.push_str("2");
     assert_eq!(text, CodeExecutionOutput::Text("42".into()));
 
-    let mut list = CodeExecutionOutput::from(vec![Content::text("a")]);
+    let image = Content::image_data("iVBORw0KGgo=", "image/png");
+    let mut list = CodeExecutionOutput::from(vec![image.clone()]);
+    list.push_str("a");
     list.push_str("b");
     assert_eq!(
         list,
-        CodeExecutionOutput::Contents(vec![Content::text("a"), Content::text("b")])
+        CodeExecutionOutput::Contents(vec![image, Content::text("ab")])
     );
 }
