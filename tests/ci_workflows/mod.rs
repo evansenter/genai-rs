@@ -1,5 +1,13 @@
 //! Guards on the CI workflows themselves, for `tests/ci_coverage.rs` (#501).
 //!
+//! `flakiness` ties the flakiness report to what it reads (#504):
+//! `RETRY_JOBS` names exactly the `rust.yml` jobs that retry, both example
+//! loops print `EXAMPLE_RETRIED`, the report publishes before it fails and
+//! escalates, and a stub test with a millisecond timeout runs on the paused
+//! clock. `coverage` checks that the Code Coverage job writes its summary,
+//! over the packages it measured, on every run, and that a Codecov upload
+//! fails the job on an error.
+//!
 //! The workflows are YAML that only runs in CI, so a regression in how they
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a
 //! beta toolchain rewords the diagnostics trybuild pins, and a scheduled
@@ -16,6 +24,9 @@ mod builds;
 mod escalation;
 
 use std::path::{Path, PathBuf};
+
+mod coverage;
+mod flakiness;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

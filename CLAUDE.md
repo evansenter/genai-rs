@@ -324,7 +324,8 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
   `ci-flakiness-report.yml` (daily; counts failures and the tests nextest
-  retried to a pass, and the week's flake rate against a 1% target),
+  retried to a pass, and fails, escalating, on a week's flake rate of 1%
+  or more, no live runs read, or a test retried in over 5% of its runs),
   `release.yml`, `release-drafter.yml`, `claude.yml`,
   `claude-code-review.yml`, `antigravity-release-watch.yml` (daily; an
   `antigravity-release` issue when PyPI's `google-antigravity` differs from

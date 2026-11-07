@@ -149,7 +149,9 @@ jobs:
           # declared turn timeouts (turns x ceiling, plus out-of-turn waits), so
           # a hang is attributed by name and a slow-but-legal run is still ended
           # by the example itself. Already compiled by the nextest step above,
-          # so no build runs under the timeout.
+          # so no build runs under the timeout. An example that passed only on
+          # a retry prints `EXAMPLE_RETRIED <name> <failed tries>`, which the
+          # flakiness report counts (count_retried_flakes.sh).
           for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn lifecycle_hooks file_watcher command_guard repo_auditor; do
             case "$ex" in
               # 1 turn x 600s.
@@ -183,6 +185,9 @@ jobs:
               sleep 5
             done
             echo "::endgroup::"
+            if [ "$attempt" -gt 1 ]; then
+              echo "EXAMPLE_RETRIED $ex $((attempt - 1))"
+            fi
           done
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -294,11 +299,14 @@ jobs:
             exit 1
           fi
           # A cheap subset, each exiting non-zero when its demo didn't happen.
-          # One retry absorbs a transient 429 or an unlucky model turn.
+          # One retry absorbs a transient 429 or an unlucky model turn; an
+          # example that passed only on it prints `EXAMPLE_RETRIED <name> 1`,
+          # which the flakiness report counts (count_retried_flakes.sh).
           for ex in simple_interaction streaming stateful_interaction explicit_turns \
                     auto_function_calling manual_function_calling structured_output \
                     pdf_input files_api multi_turn_agent_manual_stateless; do
             echo "::group::cargo run --example $ex"
+            retried=0
             if ! timeout --kill-after=30s 300s cargo run --example "$ex"; then
               echo "::warning::$ex failed, retrying once"
               sleep 5
@@ -307,8 +315,12 @@ jobs:
                 echo "::endgroup::"
                 exit 1
               fi
+              retried=1
             fi
             echo "::endgroup::"
+            if [ "$retried" -gt 0 ]; then
+              echo "EXAMPLE_RETRIED $ex $retried"
+            fi
           done
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -618,10 +630,39 @@ jobs:
         # nextest (process per test): several unit tests assume process
         # isolation and flake under plain `cargo test` threads (#418).
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
+      # Every run, token or not: with no Codecov upload, the job summary is
+      # where the coverage is read. `--workspace` as above: without it the
+      # report covers the root package only, not genai-rs-macros.
+      - name: Coverage summary
+        run: |
+          set -euo pipefail
+          cargo llvm-cov report --workspace --summary-only | tee coverage-summary.txt
+          {
+            echo "## Code coverage"
+            echo
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,
+      # and the summary above stands in; with one, a failed upload fails the
+      # job instead of passing with nothing uploaded.
+      - name: Check for a Codecov token
+        id: codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CODECOV_TOKEN secret, so nothing is uploaded to Codecov; the job summary has the coverage"
+          fi
       - uses: codecov/codecov-action@v4
+        if: steps.codecov.outputs.upload == 'true'
         with:
           files: lcov.info
-          fail_ci_if_error: false
+          fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
