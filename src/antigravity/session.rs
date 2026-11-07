@@ -106,13 +106,11 @@ impl Session {
         api_key: &str,
         wire: WireContext,
     ) -> Result<Self, AntigravityError> {
-        let uri: Uri =
-            format!("ws://localhost:{port}/")
-                .parse()
-                .map_err(|e| AntigravityError::WebSocket {
-                    message: format!("invalid harness URL for port {port}"),
-                    source: Box::new(e),
-                })?;
+        let url = format!("ws://localhost:{port}/");
+        let uri: Uri = url.parse().map_err(|e| AntigravityError::WebSocket {
+            message: format!("invalid harness URL {url}"),
+            source: Box::new(e),
+        })?;
         let request = ClientRequestBuilder::new(uri).with_header("x-goog-api-key", api_key);
 
         let mut attempt = 0;
