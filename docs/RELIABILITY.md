@@ -282,17 +282,17 @@ client waits out an hour for the headers and an hour between stream events.
 
 A dead connection is still noticed without a read timeout, through TCP
 keepalive, which every client sets on its connections: a probe after 15 s
-idle, then every 15 s, failing the connection after 3 unanswered (after the
-OS's own count on Windows, which can't set it). A peer that stopped
-answering, such as a NAT or load balancer that dropped the connection or a
-host gone from the network, fails the request within about a minute: `Http`
-before the response headers, `StreamInterrupted` mid-stream, both
-retryable. A long generation is not cut off, since the server's kernel
-answers the probes. For the same reason keepalive can't catch a server that
-is up but stuck; only a read or request-level timeout does. The values are
-reqwest 0.13's defaults, set explicitly so a reqwest upgrade can't change
-them, and they are not configurable. A `Client`'s `Debug` output shows
-them.
+idle, then every 15 s, failing the connection after 3 unanswered. A peer
+that stopped answering, such as a NAT or load balancer that dropped the
+connection or a host gone from the network, fails the request within about
+a minute: `Http` before the response headers, `StreamInterrupted`
+mid-stream, both retryable. Windows can't set the count and sends its own
+10 probes, so there it takes under three minutes (15 s + 10 x 15 s). A
+long generation is not cut off, since the server's kernel answers the
+probes. For the same reason keepalive can't catch a server that is up but
+stuck; only a read or request-level timeout does. The values are reqwest
+0.13's defaults, set explicitly so a reqwest upgrade can't change them, and
+they are not configurable. A `Client`'s `Debug` output shows them.
 
 Consequences:
 
