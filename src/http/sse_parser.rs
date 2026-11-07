@@ -113,7 +113,7 @@ where
                 let end = start + scanned + offset;
                 scanned = 0;
                 let line = str::from_utf8(&buffer[start..end])
-                    .map_err(GenaiError::from)
+                    .map_err(not_utf8)
                     .map_err(|e| cut_off_mid_event(open_tail, e))?
                     .trim_end_matches('\r');
                 start = end + 1;
@@ -169,6 +169,14 @@ where
             }
         }
     }
+}
+
+/// A complete line that is not UTF-8: the server sent bytes no SSE stream
+/// may carry, which a retry would get again. (A line cut off at the end of
+/// the body, inside a multi-byte character, is reclassified by
+/// [`cut_off_mid_event`].)
+fn not_utf8(error: str::Utf8Error) -> GenaiError {
+    GenaiError::MalformedResponse(format!("an SSE line is not valid UTF-8: {error}"))
 }
 
 /// A transport error while reading the body: the stream was cut off.
@@ -394,9 +402,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_utf8_is_an_error() {
+    async fn test_invalid_utf8_in_a_complete_line_is_malformed_and_permanent() {
+        // The line ended, so nothing was cut off: the server sent bytes that
+        // are not UTF-8, and a retry would get them again.
         let results = collect(b"data: \xff\n\n").await;
-        assert!(matches!(results.as_slice(), [Err(GenaiError::Utf8(_))]));
+        let [Err(err)] = results.as_slice() else {
+            panic!("expected one error: {results:?}");
+        };
+        assert!(
+            matches!(err, GenaiError::MalformedResponse(message)
+                if message.contains("not valid UTF-8")),
+            "{err:?}"
+        );
+        assert!(!err.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_utf8_in_the_cut_off_tail_is_interrupted() {
+        // The body ended inside a multi-byte character, mid-line: a cut-off,
+        // which a retry can fix.
+        let results = collect(b"data: {\"text\":\"a\"}\n\ndata: \xe6\x97").await;
+        let [Ok(first), Err(err)] = results.as_slice() else {
+            panic!("expected one event then the cut-off: {results:?}");
+        };
+        assert_eq!(first.text, "a");
+        assert!(
+            matches!(err, GenaiError::StreamInterrupted { source: None, message }
+                if message.contains("not valid UTF-8")),
+            "{err:?}"
+        );
+        assert!(err.is_retryable());
     }
 
     // Cut-offs: every early end is StreamInterrupted.

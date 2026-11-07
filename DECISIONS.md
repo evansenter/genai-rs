@@ -964,6 +964,13 @@ told apart only by message; `ClientBuild(String)` dropped the
   serialize, and an unexpected failure reading back a document an upload or
   import already made (the message names it).
 - `ClientBuild` holds the `reqwest::Error` as its `source()`.
+- Amended 2026-11-07 (#504): `Utf8` is removed with its
+  `From<Utf8Error>`. Its one producer was the SSE parser, so it was a parse
+  failure under another name. Each case goes where its retryability puts
+  it: a complete line that is not UTF-8 is `MalformedResponse`, since the
+  server sent those bytes and a retry gets them again, and a line the body
+  ended inside (a multi-byte character cut in two) is `StreamInterrupted`,
+  as any cut-off tail is.
 
 **Consequences.** Code that matched `Internal` and parsed its message for
 these cases needs the new arms. `GenaiError` was already

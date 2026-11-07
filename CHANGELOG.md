@@ -744,6 +744,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[build]` in `.cargo/config.toml`; replace
   `#[cfg(feature = "strict-unknown")]` in your tests with
   `#[cfg(genai_strict_unknown)]`.
+- **Breaking: `GenaiError::Utf8` and its `From<std::str::Utf8Error>` impl
+  are removed** (#504). The SSE parser was its only producer. A streamed
+  line that is not valid UTF-8 is `MalformedResponse` now, not retryable
+  as `Utf8` was: the server sent those bytes, and a retry gets them again.
+  A line cut off at the end of the body inside a multi-byte character is
+  still the retryable `StreamInterrupted`. Migration: match
+  `MalformedResponse` where you matched `Utf8`; where `?` converted a
+  `Utf8Error` into a `GenaiError`, map it into your own error.
 - `PollOptions` polls no faster than `PollOptions::MIN_POLL_INTERVAL`
   (10 ms): a shorter `with_poll_interval`, `Duration::ZERO` included, is
   raised to it. A zero interval re-polled the moment each status request

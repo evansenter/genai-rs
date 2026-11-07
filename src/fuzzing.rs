@@ -85,7 +85,6 @@ fn outcomes(
         .map(|result| match result {
             Ok(value) => Ok(value),
             Err(GenaiError::MalformedResponse(_)) => Err("parse"),
-            Err(GenaiError::Utf8(_)) => Err("utf8"),
             Err(GenaiError::StreamInterrupted { .. }) => Err("interrupted"),
             Err(other) => panic!("the SSE parser returned an unexpected error: {other:?}"),
         })
