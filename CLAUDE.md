@@ -135,8 +135,12 @@ with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 stored interaction and the types read from the Antigravity harness (D-034);
 `tests/non_exhaustive_responses.rs` guards both, with each exemption named
 and reasoned. The known
-variants of `Step`, `StepDelta`, `Content` and `Annotation` do the same with
-an `extra` field, through `src/wire_fields.rs` (#491). Polling
+variants of `Step`, `StepDelta`, `Content`, `Annotation`, `Tool`,
+`ResponseFormat` and `TranscriptionMode` (and `ToolChoice::AllowedTools`) do
+the same with an `extra` field, through `src/wire_fields.rs` (#491). The
+guard's enum arm checks every deserializable union for an `Unknown` arm and
+an `extra` field on each known variant; a newtype variant, whose wrapper
+keys it cannot see, needs a named reason. Polling
 continues on unknown statuses, bounded by timeouts. Strict mode, the
 `--cfg genai_strict_unknown` flag (a cfg, not a feature: D-030), makes
 `Content`, `Step` and every string enum fail on unknown values instead

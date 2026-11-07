@@ -7,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::agent_config::ThinkingSummaries;
 use crate::tools::ToolChoice;
 use crate::wire_enum::wire_enum;
+use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 
 wire_enum! {
     /// Thinking level for chain-of-thought reasoning.
@@ -187,13 +188,16 @@ pub struct TranscriptionConfig {
 ///
 /// Serializes as the tagged object (`{"type": "smart", ...}`,
 /// `{"type": "verbatim", ...}`); the bare strings `"smart"` / `"verbatim"`
-/// the API also accepts deserialize to the same variants.
+/// the API also accepts deserialize to the same variants. A known mode keeps
+/// the fields the crate does not model in its `extra` map
+/// ([`TranscriptionMode::extra`]); build one with
+/// [`TranscriptionMode::smart`] or [`TranscriptionMode::verbatim`], which
+/// leave it empty.
 ///
 /// A mode changes the output on a transcription model
 /// ([`DEFAULT_TRANSCRIPTION_MODEL`](crate::DEFAULT_TRANSCRIPTION_MODEL));
 /// general models accept it without effect.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum TranscriptionMode {
     /// Smart transcription.
@@ -201,23 +205,25 @@ pub enum TranscriptionMode {
         /// The text the audio is expected to say, such as the script a
         /// speaker read. The transcript follows its wording and spelling
         /// where the audio agrees with it.
-        #[serde(skip_serializing_if = "Option::is_none")]
         source_text: Option<String>,
+        /// Unmodeled wire fields, kept for round trip
+        /// ([`TranscriptionMode::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Verbatim transcription.
     Verbatim {
         /// Speaker diarization; `"speaker"` is the documented value.
-        #[serde(skip_serializing_if = "Option::is_none")]
         diarization_mode: Option<String>,
         /// Timestamp granularities; `"word"` is the documented value.
-        #[serde(skip_serializing_if = "Option::is_none")]
         timestamp_granularities: Option<Vec<String>>,
+        /// Unmodeled wire fields, kept for round trip
+        /// ([`TranscriptionMode::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Unknown variant for forward compatibility (Evergreen pattern).
     // Serializes as `data` exactly as captured; `mode_type` is ignored (see
     // `serialize_unknown_data`), so an unknown mode read as a bare string
     // goes back out as that string.
-    #[serde(untagged, serialize_with = "crate::serde_util::serialize_unknown_data")]
     Unknown {
         /// The unrecognized mode type from the API.
         mode_type: String,
@@ -227,6 +233,48 @@ pub enum TranscriptionMode {
 }
 
 impl TranscriptionMode {
+    /// A smart mode, guided by `source_text` when given.
+    #[must_use]
+    pub fn smart(source_text: Option<String>) -> Self {
+        Self::Smart {
+            source_text,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// A verbatim mode with the given diarization and timestamp
+    /// granularities (`Some("speaker")` and `Some(vec!["word"])` are the
+    /// documented values).
+    #[must_use]
+    pub fn verbatim(
+        diarization_mode: Option<String>,
+        timestamp_granularities: Option<Vec<String>>,
+    ) -> Self {
+        Self::Verbatim {
+            diarization_mode,
+            timestamp_granularities,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// The fields of this mode that the crate does not model, kept so they
+    /// round-trip (#491). `None` for [`TranscriptionMode::Unknown`].
+    #[must_use]
+    pub fn extra(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        match self {
+            Self::Smart { extra, .. } | Self::Verbatim { extra, .. } => Some(extra),
+            Self::Unknown { .. } => None,
+        }
+    }
+
+    /// Mutable access to [`extra`](Self::extra).
+    pub fn extra_mut(&mut self) -> Option<&mut serde_json::Map<String, serde_json::Value>> {
+        match self {
+            Self::Smart { extra, .. } | Self::Verbatim { extra, .. } => Some(extra),
+            Self::Unknown { .. } => None,
+        }
+    }
+
     /// Returns true if this is an unknown mode.
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
@@ -252,33 +300,74 @@ impl TranscriptionMode {
     }
 }
 
+/// The modeled fields, then the extras that do not name one (#491).
+impl Serialize for TranscriptionMode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Smart { source_text, extra } => {
+                let mut map = ModeledMap::tagged(serializer, "smart")?;
+                map.opt("source_text", source_text.as_ref())?;
+                map.end(extra)
+            }
+            Self::Verbatim {
+                diarization_mode,
+                timestamp_granularities,
+                extra,
+            } => {
+                let mut map = ModeledMap::tagged(serializer, "verbatim")?;
+                map.opt("diarization_mode", diarization_mode.as_ref())?;
+                map.opt("timestamp_granularities", timestamp_granularities.as_ref())?;
+                map.end(extra)
+            }
+            Self::Unknown { mode_type, data } => {
+                crate::serde_util::serialize_unknown_data(mode_type, data, serializer)
+            }
+        }
+    }
+}
+
+/// Reads a known mode, in its string or object form; an error keeps it as
+/// [`TranscriptionMode::Unknown`].
+fn read_known_mode(value: &serde_json::Value) -> Result<TranscriptionMode, Fallback> {
+    let empty = serde_json::Map::new();
+    let (tag, object) = match value {
+        serde_json::Value::String(tag) => (tag.as_str(), &empty),
+        serde_json::Value::Object(object) => {
+            let tag = object.get("type").and_then(serde_json::Value::as_str);
+            (tag.ok_or(Fallback::UnknownType)?, object)
+        }
+        _ => return Err(Fallback::UnknownType),
+    };
+    let mut f = WireFields::tagged(object);
+    Ok(match tag {
+        "smart" => TranscriptionMode::Smart {
+            source_text: f.optional("source_text")?,
+            extra: f.extra(),
+        },
+        "verbatim" => TranscriptionMode::Verbatim {
+            diarization_mode: f.optional("diarization_mode")?,
+            timestamp_granularities: f.optional("timestamp_granularities")?,
+            extra: f.extra(),
+        },
+        _ => return Err(Fallback::UnknownType),
+    })
+}
+
 impl<'de> Deserialize<'de> for TranscriptionMode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
-        let tag = value
-            .as_str()
-            .or_else(|| value.get("type").and_then(|t| t.as_str()));
-        let strings = |key: &str| -> Option<Vec<String>> {
-            serde_json::from_value(value.get(key)?.clone()).ok()
-        };
-        match tag {
-            Some("smart") => Ok(Self::Smart {
-                source_text: value
-                    .get("source_text")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            }),
-            Some("verbatim") => Ok(Self::Verbatim {
-                diarization_mode: value
-                    .get("diarization_mode")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                timestamp_granularities: strings("timestamp_granularities"),
-            }),
-            other => {
-                let mode_type = other.unwrap_or("<missing type>").to_string();
+        match read_known_mode(&value) {
+            Ok(mode) => Ok(mode),
+            Err(fallback) => {
+                let mode_type = value
+                    .as_str()
+                    .or_else(|| value.get("type").and_then(serde_json::Value::as_str))
+                    .unwrap_or("<missing type>")
+                    .to_string();
                 tracing::warn!(
-                    "Encountered unknown TranscriptionMode '{mode_type}' - using Unknown variant (Evergreen)"
+                    "Keeping a transcription mode whole in TranscriptionMode::Unknown: {} \
+                     (Evergreen)",
+                    fallback.describe("TranscriptionMode", &mode_type)
                 );
                 Ok(Self::Unknown {
                     mode_type,

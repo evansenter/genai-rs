@@ -392,6 +392,7 @@ pub(super) fn tools() -> Vec<Tool> {
                 json!({"city": {"type": "string"}}),
                 vec!["city".into()],
             )),
+            extra: Default::default(),
         },
         Tool::GoogleSearch {
             search_types: Some(vec![
@@ -399,19 +400,22 @@ pub(super) fn tools() -> Vec<Tool> {
                 SearchType::ImageSearch,
                 SearchType::EnterpriseWebSearch,
             ]),
+            extra: Default::default(),
         },
         Tool::GoogleMaps {
             enable_widget: Some(true),
             latitude: Some(37.0),
             longitude: Some(-122.0),
+            extra: Default::default(),
         },
-        Tool::CodeExecution,
-        Tool::UrlContext,
+        Tool::code_execution(),
+        Tool::url_context(),
         Tool::ComputerUse {
             environment: "browser".into(),
             excluded_predefined_functions: vec!["drag_and_drop".into()],
             enable_prompt_injection_detection: Some(true),
             disabled_safety_policies: vec!["financial_transactions".into()],
+            extra: Default::default(),
         },
         Tool::McpServer {
             name: "server".into(),
@@ -422,11 +426,13 @@ pub(super) fn tools() -> Vec<Tool> {
                 ..Default::default()
             }]),
             headers: Some(HashMap::from([("Authorization".into(), "Bearer x".into())])),
+            extra: Default::default(),
         },
         Tool::FileSearch {
             store_names: vec!["fileSearchStores/s".into()],
             top_k: Some(3),
             metadata_filter: Some("a = 1".into()),
+            extra: Default::default(),
         },
         Tool::Retrieval {
             retrieval_types: Some(vec![
@@ -448,6 +454,7 @@ pub(super) fn tools() -> Vec<Tool> {
                 custom_config: Some(json!({"k": "v"})),
             }),
             rag_store_config: Some(Box::new(rag_store_config())),
+            extra: Default::default(),
         },
     ];
     for tool in &all {
@@ -455,8 +462,8 @@ pub(super) fn tools() -> Vec<Tool> {
             Tool::Function { .. }
             | Tool::GoogleSearch { .. }
             | Tool::GoogleMaps { .. }
-            | Tool::CodeExecution
-            | Tool::UrlContext
+            | Tool::CodeExecution { .. }
+            | Tool::UrlContext { .. }
             | Tool::ComputerUse { .. }
             | Tool::McpServer { .. }
             | Tool::FileSearch { .. }

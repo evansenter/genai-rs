@@ -4,7 +4,10 @@
 //! and keep every other key of a known variant in that variant's `extra` map,
 //! so a field the API adds survives a deserialize/re-serialize round trip
 //! (#491). The call steps that reshape a nested `arguments` object keep its
-//! unmodeled keys in `arguments_extra` the same way.
+//! unmodeled keys in `arguments_extra` the same way. So do the request-side
+//! unions a stored interaction serves back (D-034): `Tool`, `ResponseFormat`
+//! and `TranscriptionMode`, and `ToolChoice::AllowedTools`, an untagged
+//! object whose `extra` holds the keys beside `allowed_tools`.
 //!
 //! [`WireFields`] reads a wire object one field at a time and records each
 //! key it reads, so [`WireFields::extra`] is exactly what the variant did not
@@ -47,6 +50,16 @@ impl<'a> WireFields<'a> {
             object,
             prefix: String::new(),
             modeled: vec!["type"],
+        }
+    }
+
+    /// A plain object with no tag (such as `tool_choice`'s
+    /// `{"allowed_tools": ...}`), where a `type` key is ordinary data.
+    pub(crate) fn untagged(object: &'a Map<String, Value>) -> Self {
+        Self {
+            object,
+            prefix: String::new(),
+            modeled: Vec::new(),
         }
     }
 

@@ -124,19 +124,25 @@ result items (`GoogleSearchResultItem`, `UrlContextResultItem`,
 `StepError` and `VideoProcessing::StaticSegment` keep theirs in a flattened
 `extra` field. So a field the API adds survives stateless history replay
 before the crate models it, which is how `signature` once broke replay.
+The request-side unions a stored interaction serves back do the same: every
+known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
+`extra` map (with `extra()` / `extra_mut()`), and
+`ToolChoice::AllowedTools` keeps the keys beside `allowed_tools` in its
+`extra`, as `NetworkConfig::Allowlist` does beside `allowlist`.
 
 - Serializing writes the modeled fields first, then `extra`, for every type
   listed above. An `extra` entry named after one of the type's modeled
   fields, set or not, is never written, so a hand-built map cannot shadow a
-  field or write its key twice. On the tagged types (the four unions and
+  field or write its key twice. On the tagged types (the unions and
   `StaticSegment`) `type` counts as modeled, so it cannot retag a value
-  either; on the plain structs a `type` entry is ordinary data and is
-  written. An `arguments_extra` entry named after a modeled argument
+  either; on the plain structs and `ToolChoice::AllowedTools` a `type`
+  entry is ordinary data and is written. An `arguments_extra` entry named after a modeled argument
   (`urls`, `queries`, `language`, `code`) is never merged into `arguments`.
   Other types with a flattened `extra`, such as `InteractionResponse` and
   `UsageMetadata`, write it unfiltered.
 - A known type whose modeled field is malformed becomes `Unknown`, which
-  keeps the whole object. That was already so for a missing `id` or a
+  keeps the whole object (a `TranscriptionMode` used to read its fields
+  leniently, dropping a mistyped one). That was already so for a missing `id` or a
   mistyped `signature`. A non-object `arguments`, a non-string in `urls` or
   `queries`, and a mistyped `fps` on a static video segment used to be read
   leniently, dropping the bad value. For `Step` and `Content` under
@@ -148,7 +154,8 @@ before the crate models it, which is how `signature` once broke replay.
   `extra` in both configurations.
 - `src/proptest_unknown_fields.rs` injects an unknown key into every object,
   at every depth, of random values of every known variant (an exhaustive
-  ordinal match checks the strategies reach them all), and
+  ordinal match checks the strategies reach them all), the request-side
+  unions included, inside a whole `InteractionResponse`, and
   `tests/round_trip_fidelity_tests.rs` does the same over one wire fixture
   per step type.
 
@@ -420,7 +427,7 @@ API rejects a top-level array. Deserializing never wraps.
 | Variant | Wire shape |
 |---------|-----------|
 | `ToolChoice::Mode(FunctionCallingMode)` | `"auto"` / `"any"` / `"none"` / `"validated"` |
-| `ToolChoice::AllowedTools(AllowedTools)` | `{"allowed_tools": {"mode"?, "tools": [...]}}` |
+| `ToolChoice::AllowedTools { allowed_tools, extra }` | `{"allowed_tools": {"mode"?, "tools": [...]}}`, plus any `extra` keys |
 | `ToolChoice::Unknown { choice_type, data }` | Unrecognized shapes |
 
 An unknown mode **string** becomes `ToolChoice::Mode(FunctionCallingMode::Unknown)`;
@@ -1172,7 +1179,7 @@ Try lowercase (`"auto"`), SCREAMING_CASE (`"AUTO"`) and fully qualified
 (`"THINKING_SUMMARIES_AUTO"`) spellings. This revision is mostly
 lowercase/snake_case, but check with `LOUD_WIRE=1` before assuming.
 
-## Structs and `#[non_exhaustive]`
+## Structs, enums and `#[non_exhaustive]`
 
 Response and resource structs are `#[non_exhaustive]`, so the crate can add
 fields without a breaking change (D-002). `tests/non_exhaustive_responses.rs`
@@ -1200,6 +1207,17 @@ Types with neither `Default` nor a constructor need a JSON fixture:
 `FileUploadResponse` and `AutoFunctionResult`.
 (`ModalityTokens::new()`, `StreamEvent::new()` and
 `FunctionCallInfo::to_owned()` cover the others without `Default`.)
+
+The same file holds enums to the Evergreen rules (`enums_are_evergreen`,
+D-034): every public enum is `#[non_exhaustive]`, every deserializable one
+has an `Unknown` variant, and every known variant of such a union keeps an
+`extra` map. A newtype variant always needs a reason, since the guard cannot
+see whether keys sit beside its value on the wire, as they did beside the
+old `ToolChoice::AllowedTools(AllowedTools)`. Exemptions are named with
+their reasons in `EXHAUSTIVE_ENUMS`, `WITHOUT_UNKNOWN` and
+`VARIANTS_WITHOUT_EXTRA`. The enums `wire_enum!` and the Antigravity
+`wire_string_enum!` generate have no source to parse, so the guard checks
+the macros' templates for `#[non_exhaustive]` and an `Unknown` variant.
 
 ## Antigravity harness protocol (feature `antigravity`)
 
@@ -1231,6 +1249,11 @@ against 0.1.18, 0.1.10 and 0.1.5.
 | `LifecycleHook` | `hook_type` | `LIFECYCLE_HOOK_PRE_TOOL`, `LIFECYCLE_HOOK_POST_TOOL`, ..., `LIFECYCLE_HOOK_ON_COMPACTION`, `LIFECYCLE_HOOK_STOP` (0.1.18) |
 | `HookDecision` | `decision_type` | `ALLOW`, `DENY` |
 | `LineAction` | `action_type` | `LINE_ACTION_INSERT`, `LINE_ACTION_DELETE`, `LINE_ACTION_NONE` |
+
+An unrecognized value lands in `Unknown` and is written back as it came,
+under the same rule as `wire_enum!`'s: a non-string value (a number, an
+object, `null`) is typed `<non-string: ...>` and serializes as the original
+JSON, not as a string.
 
 The envelope oneofs have Unknown variants too (`InputEvent::Unknown` and
 `OutputPayload::Unknown`, with `event_type` + `data`). Harness-emitted

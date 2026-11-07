@@ -22,10 +22,10 @@ fn test_speech_config_with_voice_and_language() {
 
 #[test]
 fn test_transcription_mode_wire_forms() {
-    let config = TranscriptionConfig::new().with_mode(TranscriptionMode::Verbatim {
-        diarization_mode: Some("speaker".into()),
-        timestamp_granularities: Some(vec!["word".into()]),
-    });
+    let config = TranscriptionConfig::new().with_mode(TranscriptionMode::verbatim(
+        Some("speaker".into()),
+        Some(vec!["word".into()]),
+    ));
     assert_eq!(
         serde_json::to_value(&config).unwrap(),
         serde_json::json!({"mode": {
@@ -35,26 +35,18 @@ fn test_transcription_mode_wire_forms() {
         }})
     );
     for (wire, expected) in [
-        (
-            serde_json::json!("smart"),
-            TranscriptionMode::Smart { source_text: None },
-        ),
+        (serde_json::json!("smart"), TranscriptionMode::smart(None)),
         (
             serde_json::json!({"type": "smart"}),
-            TranscriptionMode::Smart { source_text: None },
+            TranscriptionMode::smart(None),
         ),
         (
             serde_json::json!({"type": "smart", "source_text": "Hello there."}),
-            TranscriptionMode::Smart {
-                source_text: Some("Hello there.".into()),
-            },
+            TranscriptionMode::smart(Some("Hello there.".into())),
         ),
         (
             serde_json::json!("verbatim"),
-            TranscriptionMode::Verbatim {
-                diarization_mode: None,
-                timestamp_granularities: None,
-            },
+            TranscriptionMode::verbatim(None, None),
         ),
     ] {
         assert_eq!(
@@ -76,21 +68,15 @@ fn test_transcription_mode_wire_forms() {
 #[test]
 fn test_transcription_mode_serialized_strings() {
     let verbatim = |diarization_mode: Option<&str>, granularities: Option<Vec<&str>>| {
-        TranscriptionMode::Verbatim {
-            diarization_mode: diarization_mode.map(String::from),
-            timestamp_granularities: granularities
-                .map(|g| g.into_iter().map(String::from).collect()),
-        }
+        TranscriptionMode::verbatim(
+            diarization_mode.map(String::from),
+            granularities.map(|g| g.into_iter().map(String::from).collect()),
+        )
     };
     for (mode, expected) in [
+        (TranscriptionMode::smart(None), r#"{"type":"smart"}"#),
         (
-            TranscriptionMode::Smart { source_text: None },
-            r#"{"type":"smart"}"#,
-        ),
-        (
-            TranscriptionMode::Smart {
-                source_text: Some("Hi.".into()),
-            },
+            TranscriptionMode::smart(Some("Hi.".into())),
             r#"{"type":"smart","source_text":"Hi."}"#,
         ),
         (verbatim(None, None), r#"{"type":"verbatim"}"#),
@@ -137,6 +123,57 @@ fn test_transcription_mode_unknown_serializes_data_verbatim() {
     let read: TranscriptionMode = serde_json::from_str(r#""future""#).unwrap();
     assert_eq!(read.unknown_mode_type(), Some("future"));
     assert_eq!(serde_json::to_string(&read).unwrap(), r#""future""#);
+}
+
+/// A known mode keeps the fields it does not model and writes them back
+/// after its own (D-001): a stored interaction's `mode` used to lose them.
+#[test]
+fn test_transcription_mode_keeps_unmodeled_fields() {
+    for wire in [
+        serde_json::json!({"type": "smart", "source_text": "Hi.", "future_knob": {"a": 1}}),
+        serde_json::json!({"type": "verbatim", "diarization_mode": "speaker", "future_knob": 2}),
+    ] {
+        let mode: TranscriptionMode = serde_json::from_value(wire.clone()).unwrap();
+        assert!(!mode.is_unknown(), "{mode:?}");
+        assert_eq!(mode.extra().unwrap()["future_knob"], wire["future_knob"]);
+        assert_eq!(serde_json::to_value(&mode).unwrap(), wire);
+    }
+
+    // The bare-string form has nothing to keep.
+    let smart: TranscriptionMode = serde_json::from_value(serde_json::json!("smart")).unwrap();
+    assert_eq!(smart.extra().map(serde_json::Map::len), Some(0));
+
+    // A hand-set entry is written after the modeled fields, unless it names
+    // one of them or `type`.
+    let mut mode = TranscriptionMode::smart(Some("Hi.".into()));
+    let extra = mode.extra_mut().unwrap();
+    extra.insert("source_text".into(), serde_json::json!("shadow"));
+    extra.insert("type".into(), serde_json::json!("verbatim"));
+    extra.insert("future_knob".into(), serde_json::json!(true));
+    assert_eq!(
+        serde_json::to_string(&mode).unwrap(),
+        r#"{"type":"smart","source_text":"Hi.","future_knob":true}"#
+    );
+
+    let unknown = TranscriptionMode::Unknown {
+        mode_type: "future".into(),
+        data: serde_json::json!("future"),
+    };
+    assert!(unknown.extra().is_none());
+}
+
+/// A known mode with a mistyped field is kept whole as `Unknown`, where it
+/// used to be read leniently, dropping the bad value.
+#[test]
+fn test_transcription_mode_with_a_malformed_field_is_kept_whole() {
+    for wire in [
+        serde_json::json!({"type": "smart", "source_text": 7}),
+        serde_json::json!({"type": "verbatim", "timestamp_granularities": "word"}),
+    ] {
+        let mode: TranscriptionMode = serde_json::from_value(wire.clone()).unwrap();
+        assert!(mode.is_unknown(), "{mode:?}");
+        assert_eq!(serde_json::to_value(&mode).unwrap(), wire);
+    }
 }
 
 #[test]

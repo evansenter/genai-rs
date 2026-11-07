@@ -267,7 +267,10 @@ mod tool_choice {
         }))
         .unwrap();
         match choice {
-            ToolChoice::AllowedTools(allowed) => {
+            ToolChoice::AllowedTools {
+                allowed_tools: allowed,
+                ..
+            } => {
                 assert!(matches!(allowed.mode, Some(FunctionCallingMode::Auto)));
                 assert_eq!(allowed.tools, vec!["a".to_string(), "b".to_string()]);
             }

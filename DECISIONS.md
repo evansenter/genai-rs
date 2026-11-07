@@ -1191,9 +1191,42 @@ merely a field named `extra`.
 request configs and the Antigravity types (D-007): add
 `..Default::default()`. `SafetySetting::new` loses `const`. A caller can
 now also send a field of these configs the crate does not model yet, as
-`GenerationConfig::extra` allowed. Not covered: the `Tool` enum's known
-variants, which keep no `extra` (enums are outside the guard, as `Step`'s
-were before #491).
+`GenerationConfig::extra` allowed.
+
+*Amended 2026-11-07 (#504, WP13).* The request-side unions a stored
+interaction serves back keep theirs too: every known variant of `Tool`,
+`ResponseFormat` and `TranscriptionMode` has an `extra` map, and
+`ToolChoice::AllowedTools` keeps the keys beside `allowed_tools`
+(D-NEXT-WP13). The guard gained an enum arm: a public enum without
+`#[non_exhaustive]`, a deserializable one without an `Unknown` variant, and
+a known variant of such a union without an `extra` map each fail it unless
+an exemption names them with a reason. A newtype variant always needs one:
+its inner type keeps its own fields, but the syntax does not show whether
+keys sit beside that value, as they did beside the old
+`ToolChoice::AllowedTools(AllowedTools)`. What stays uncovered, each with
+its reason in the guard:
+
+- The retrieval tool's configs (`SENT_ONLY` above). The retrieval tool
+  itself keeps its `extra`.
+- Bare-string forms, which have no fields: `VideoProcessing::Static` and
+  `Agentic`, `NetworkConfig::Disabled`, `ToolChoice::Mode` and
+  `EnvironmentSpec::Id`. `EnvironmentSpec::Remote` reads the whole object
+  into `RemoteEnvironment`, which keeps its `extra`; nothing wraps it.
+  `NetworkConfig::AllowlistDisabled`
+  is read only when `allowlist` is the object's one key; with another key
+  beside it the object is kept whole as `NetworkConfig::Unknown`.
+- The untagged unions with no `Unknown` variant, whose arms keep what they
+  do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
+  `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
+  `FunctionResultPayload`.
+- The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
+  stream events that nothing sends back, serialized only in the crate's own
+  `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
+  a key the API adds to an SSE event's envelope itself is dropped.
+- The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
+  crate only sends to the harness. A payload struct keeps its own `extra`;
+  a bool or string payload has no fields.
+- `DecodeError`, which is exhaustive but crate-internal.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1244,3 +1277,60 @@ fixtures every example copy is checked against.
 **Consequences.** The example and the live test make one TTS request
 before transcribing. A silent clip still serves the acceptance tests, which
 read the stored config back rather than the transcript.
+
+## D-NEXT-WP13 — Known request-side union variants keep `extra`; the unit tools become struct variants (2026-11-07)
+
+**Context.** C1 of the 2026-11-07 grading: `Tool`, `ResponseFormat` and
+`TranscriptionMode` read their known variants with derived or field-picking
+serde, and `ToolChoice` kept only `allowed_tools`, so a stored
+interaction's echoed `tools`, `response_format` and `generation_config`
+lost a field the API adds. D-034 had named `Tool` as not covered, and no
+guard looked at enums. `Tool::CodeExecution` and `Tool::UrlContext` were
+unit variants, with nowhere to keep a field.
+
+**Decision.** Every known variant gets `extra: Map<String, Value>`, read
+and written through `src/wire_fields.rs` as `Step`'s is (#491), so an
+`extra` entry never shadows a modeled field or `type`. The two unit tools
+become `{ extra }` struct variants, built with `Tool::code_execution()` and
+`Tool::url_context()`. Rejected: reading a unit tool that carries an extra
+key as `Tool::Unknown`, which keeps the data but makes the tool stop
+matching `Tool::CodeExecution`. `ToolChoice::AllowedTools(AllowedTools)`
+becomes `AllowedTools { allowed_tools, extra }`, as
+`NetworkConfig::Allowlist { entries, extra }` is, with
+`From<AllowedTools> for ToolChoice`. `TranscriptionMode` gains `smart()`
+and `verbatim()`, since a variant literal now needs `extra`. A known variant
+with a malformed field is kept whole as `Unknown`; `TranscriptionMode` used
+to read its fields leniently instead. Strict mode still does not apply to
+these unions (D-001).
+
+**Consequences.** Breaking (D-007) for struct literals of these variants
+(add `extra: Default::default()` or use a constructor), for patterns that
+list every field (add `..`), for `Tool::CodeExecution` and
+`Tool::UrlContext` as values (`Tool::code_execution()`) and patterns
+(`{ .. }`), and for `ToolChoice::AllowedTools(x)` (`ToolChoice::from(x)`;
+the pattern is `AllowedTools { allowed_tools, .. }`). `ResponseFormat`
+grew past clippy's `large_enum_variant` bar inside `ResponseFormatSpec`;
+the lint is allowed there, since a request holds one.
+
+## D-NEXT-WP13-a — The Antigravity enums share `wire_enum!`'s non-string rule but keep their own macro (2026-11-07)
+
+**Context.** C2 of the 2026-11-07 grading: `wire_string_enum!`
+(`src/antigravity/protocol/enums.rs`, 17 enums) duplicated `wire_enum!`
+and still had the bug `wire_enum!` had fixed: a non-string value read into
+`Unknown` was written back as a string, `7` as `"7"`.
+
+**Decision.** Port the fix rather than merge the macros. The rule lives in
+two crate-private helpers in `src/wire_enum.rs`, `unknown_type` and
+`serialize_wire`, which both macros call, so it cannot drift again: a
+non-string value is typed `<non-string: ...>` and written back as its JSON.
+The harness enums keep their own macro because they differ on purpose:
+strict mode does not apply to the harness protocol, which is internal and
+unstable; an unrecognized value is recorded for `drift_report`; and
+`as_wire_str` is public, and `all_wire_values` feeds the protocol-drift
+guard. Generating them from `wire_enum!` would take three switches on it,
+one of them turning strict mode off.
+
+**Consequences.** `unknown_<context>_type()` on a harness enum read from a
+non-string value now returns `<non-string: 7>`, not `7`, and
+`drift_report` keys it the same way. The enum guard checks both macros'
+templates for `#[non_exhaustive]` and an `Unknown` variant.
