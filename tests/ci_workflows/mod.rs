@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
+mod coverage;
 mod flakiness;
 
 fn root() -> PathBuf {

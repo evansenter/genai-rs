@@ -612,10 +612,38 @@ jobs:
         # nextest (process per test): several unit tests assume process
         # isolation and flake under plain `cargo test` threads (#418).
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
+      # Every run, token or not: with no Codecov upload, the job summary is
+      # where the coverage is read.
+      - name: Coverage summary
+        run: |
+          set -euo pipefail
+          cargo llvm-cov report --summary-only | tee coverage-summary.txt
+          {
+            echo "## Code coverage"
+            echo
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,
+      # and the summary above stands in; with one, a failed upload fails the
+      # job instead of passing with nothing uploaded.
+      - name: Check for a Codecov token
+        id: codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CODECOV_TOKEN secret, so nothing is uploaded to Codecov; the job summary has the coverage"
+          fi
       - uses: codecov/codecov-action@v4
+        if: steps.codecov.outputs.upload == 'true'
         with:
           files: lcov.info
-          fail_ci_if_error: false
+          fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
