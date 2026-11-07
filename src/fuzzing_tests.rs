@@ -136,7 +136,9 @@ fn regression_non_string_enum_value_round_trips() {
 /// too.
 #[test]
 fn committed_seeds_replay_through_their_targets() {
-    let targets: [(&str, fn(&[u8])); 5] = [
+    /// A fuzz target's entry point.
+    type EntryPoint = fn(&[u8]);
+    let targets: [(&str, EntryPoint); 5] = [
         ("content", content),
         ("sse_parser", sse_parser),
         ("step", step),
