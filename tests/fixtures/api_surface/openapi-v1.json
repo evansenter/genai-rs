@@ -5,7 +5,7 @@
   "POST /{api_version}/interactions",
   "POST /{api_version}/interactions/{id}/cancel"
  ],
- "fetched": "2026-11-01",
+ "fetched": "2026-11-07",
  "schemas": {
   "AgentOption": {
    "enum": [
@@ -331,7 +331,17 @@
      "type": "boolean"
     },
     "result": {
-     "type": "string"
+     "oneOf": [
+      {
+       "items": {
+        "$ref": "#/components/schemas/Content"
+       },
+       "type": "array"
+      },
+      {
+       "type": "string"
+      }
+     ]
     },
     "signature": {
      "format": "byte",
@@ -618,7 +628,17 @@
     "mime_type": {
      "enum": [
       "application/pdf",
-      "text/csv"
+      "text/csv",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.oasis.opendocument.presentation",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "application/vnd.oasis.opendocument.text",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+      "application/vnd.oasis.opendocument.spreadsheet"
      ],
      "type": "string"
     },
@@ -645,7 +665,17 @@
     "mime_type": {
      "enum": [
       "application/pdf",
-      "text/csv"
+      "text/csv",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.oasis.opendocument.presentation",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "application/vnd.oasis.opendocument.text",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+      "application/vnd.oasis.opendocument.spreadsheet"
      ],
      "type": "string"
     },
@@ -3170,6 +3200,6 @@
    "x-speakeasy-model-namespace": "interactions"
   }
  },
- "source": "https://ai.google.dev/static/api/interactions-v1.openapi.json",
+ "source": "https://aistudio.google.com/api-reference/interactions-v1.openapi.json",
  "version": "v1"
 }

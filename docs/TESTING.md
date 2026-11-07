@@ -474,7 +474,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL and comments on #511 once it serves the spec again (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -614,11 +614,13 @@ cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | bi
 ```
 
 Then update the `docs/INTERACTIONS_API_GAP.md` header (CI checks it matches
-the baseline). With a newer copy of the OpenAPI spec, add
-`--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD` (and
-`--spec-source URL`, the URL it was downloaded from; it defaults to
-`manual`). The baseline is written last, so a failed download or dump
-leaves it and the snapshot unchanged.
+the baseline). With a newer copy of an OpenAPI spec, add `--spec-v1beta
+FILE` or `--spec-v1 FILE`, with `--spec-source URL`, the URL it was
+downloaded from (it defaults to `manual`), and `--spec-fetched
+YYYY-MM-DD` (it defaults to today). One `--spec-source` is recorded for
+every spec in the run, and the two specs have their own URLs, so refresh
+them in two runs. The baseline is written last, so a failed download or
+dump leaves it and the snapshot unchanged.
 
 The committed `bindings.json` must match a fresh dump of the baseline
 release, so a dump-script change needs a refresh too (run the script

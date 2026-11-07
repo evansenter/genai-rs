@@ -14,11 +14,11 @@ Prose docs lag the API; absence from them is not evidence of absence. In
 order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
-   releases to find new surface). The OpenAPI spec is the same surface in
-   machine-readable form. The oracle reads the committed snapshot, and
-   the daily sweep watches the published URL (#511); the URL's state is
-   recorded in `docs/INTERACTIONS_API_GAP.md` ("How to verify API
-   surface").
+   releases to find new surface). The OpenAPI specs (v1beta and v1) are
+   the same surface in machine-readable form. The oracle reads their
+   committed snapshots, and the daily sweep probes the published URLs
+   (`watch_spec_urls.sh`); their state is recorded in
+   `docs/INTERACTIONS_API_GAP.md` ("How to verify API surface").
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
@@ -37,7 +37,7 @@ harness version, with the dated record in
 `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
-`.github/last-swept-sdk-version`) and the spec as a snapshot, and the
+`.github/last-swept-sdk-version`) and both specs as snapshots, and the
 coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
 checks the crate against it offline: request keys against the binding
 classes, query keys against each endpoint's parameters, every response
