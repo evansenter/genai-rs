@@ -1768,3 +1768,34 @@ Windows) is not part of this; `docs/ANTIGRAVITY.md` states that scope.
 
 **Consequences.** A Windows search that misses lists both names for each
 site-packages directory.
+
+---
+
+## D-NEXT-WP21 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
+
+**Context.** WP15 removed every "See #N" and "Tracked in #N" that sent a
+reader to a closed issue for current behavior. About fifteen `(#491)` tags
+and `src/response/mcp.rs`'s `(#459)` remained, on rules and code those
+issues introduced. Both issues are closed, and #504 asked whether such
+tags stay.
+
+**Decision.** They stay. A provenance tag, `(#N)` beside a rule or a
+behavior, names where it came from, as a decision number does; a closed
+issue still holds the discussion behind it, and the rule has not changed
+because the issue closed. A pointer ("see #N", "tracked in #N", "until #N
+lands", "#493 item 7") sends the reader to the issue for what is still
+open, so it names an open issue only: when the issue closes, the outcome
+is stated in place and the pointer goes. `CLAUDE.md` states the rule
+beside D-032's.
+
+Rejected: removing every reference to a closed issue. It would delete the
+only link from the `extra` maps to the reasoning behind them, and the
+reader of a provenance tag is looking for history, which a closed issue
+is. Rejected for now: a check in `check_dated_facts.sh`. Telling an open
+issue from a closed one needs the network, which `make test-scripts` does
+not use, and a pointer is phrasing, not a pattern the script could find
+without guessing.
+
+**Consequences.** A reviewer, not a script, catches a pointer left on a
+closed issue. Closing an issue that a pointer names means editing that
+sentence in the same change.
