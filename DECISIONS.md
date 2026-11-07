@@ -1195,3 +1195,52 @@ now also send a field of these configs the crate does not model yet, as
 variants, which keep no `extra` (enums are outside the guard, as `Step`'s
 were before #491).
 
+---
+
+## D-NEXT-WP19 — The flakiness report fails on a breached target, and weighs each flake against its own runs (2026-11-07)
+
+**Context.** The Tests/CI bar holds the week's flake rate under 1% (#504),
+and the report only printed a line when it was over. A week with no live
+test runs read showed a rate of "0.00%". The aggregate, about 0.2%, hid
+tests that needed a retry in one run of eight. Failed pull-request runs were
+categorized as flakes, so a change under review read as an API outage. The
+Windows CRLF break, which failed on every Windows run and nowhere else, was
+filed as a "panic". A test that nextest retried to a pass, inside a job that
+failed for another reason, was counted as failed. Example smoke runs, which
+retry by hand, were not counted at all.
+
+**Decision.** The report exits 3 when the week breaches a target. The
+workflow then publishes the report, fails the run, and so escalates like
+any red scheduled workflow. The targets:
+- the rate is 1% or more;
+- no live test runs were read;
+- a chronic flake: a test or example that passed only on a retry in more
+  than 5% of the runs it ran in, and in at least two of them. The minimum
+  of two keeps one unlucky retry of a test that ran a few times, such as
+  one added mid-week, from failing the report.
+
+The 1% rate counts live nextest tests only, as before. Examples are counted
+and shown with their own share, outside the rate, since an example run is a
+whole program and not one test; the chronic rule applies to them as to
+tests. A chronic share counts runs that passed on a retry. A run where the
+test failed every try is a failure, reported in the failure breakdown.
+
+Only main's failed runs (push, schedule, dispatch on `main`) are
+categorized; pull-request and branch runs are counted apart. Their flakes
+that passed on a retry still count, since every finished run's retry-job
+logs are read. A test is failed when its last try failed. One that failed
+every try, only in jobs named for one OS, is labelled deterministic on that
+OS, per run.
+
+The Code Coverage job writes `cargo llvm-cov report --summary-only` to the
+job summary on every run. It uploads to Codecov only when the
+`CODECOV_TOKEN` secret is set, and then fails on a failed upload. The owner
+added no token.
+
+**Consequences.** The report goes red for as long as a chronic flake
+lasts. On its first run that is likely `test_google_search_multi_turn`,
+`test_structured_output_with_url_context` and the Antigravity
+`cancel_handle` test, from the grading's counts. The escalation issue stays
+open, with its streak, until each is fixed. A Windows-only timing flake
+that failed once would also be labelled deterministic; its failure count
+tells a one-off from a break.

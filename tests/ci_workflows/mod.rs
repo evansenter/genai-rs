@@ -12,6 +12,8 @@
 
 use std::path::{Path, PathBuf};
 
+mod flakiness;
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }

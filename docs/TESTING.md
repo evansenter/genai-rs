@@ -315,17 +315,39 @@ implementation is answered with an error result, not a failure, so a
 
 Every live nextest step sets `NEXTEST_RETRIES: 2` in its env, never a
 `--retries` flag (`tests/ci_workflows/` checks both), so a test that fails
-and then passes leaves its job green. The daily `ci-flakiness-report.yml` reads the
-retry jobs' logs from every finished run of the week, green ones included,
-and counts each test nextest marked `FLAKY` (`.github/scripts/count_retried_flakes.sh`).
-The rolling report lists retried tests beside failed ones and gives the
-week's rate: tests that passed only on a retry, over live test runs. Only
-the steps that retry count, read from the `NEXTEST_RETRIES` in the env
-GitHub echoes into the log, so the antigravity job's offline suite, which
-shares its log, stays out of the rate. The target is
-under 1%; the report calls out a week at or over it. No CI run
-stops at its first failure: `.config/nextest.toml` turns fail-fast off for
-the default profile, which every job uses.
+and then passes leaves its job green. The example smoke loops retry by
+hand, since `cargo run` has none, and print `EXAMPLE_RETRIED <name> <failed
+tries>` when an example passed only on a retry. The daily
+`ci-flakiness-report.yml` reads the retry jobs' logs from every finished run
+of the week, green ones included, and counts each test nextest marked
+`FLAKY` and each retried example (`.github/scripts/count_retried_flakes.sh`).
+It finds those jobs by name (`RETRY_JOBS`), which `tests/ci_workflows/`
+ties to the `rust.yml` jobs that retry. Only the steps that retry count
+toward the rate, read from the `NEXTEST_RETRIES` in the env GitHub echoes
+into the log, so the antigravity job's offline suite, which shares its
+log, stays out of it.
+
+The rolling report lists retried tests and examples beside failed ones,
+with the week's rate: tests that passed only on a retry, over live test
+runs. The report fails, and so escalates like any red scheduled workflow,
+when the week breaches a target (D-NEXT-WP19):
+
+- the rate is 1% or more;
+- no live test runs were read, so there is no rate (shown as `n/a`, not
+  `0.00%`);
+- a chronic flake: a test or example that passed only on a retry in more
+  than 5% of the runs it ran in, and in at least two. The report lists
+  each with its share. A low rate across the suite can hide one test that
+  needs a retry every few runs.
+
+Failed runs are split by event. Only main's (push, schedule, dispatch) are
+categorized; a pull request's red run is usually the change under review,
+so it is counted, not called a flake. A test counts as failed only when its
+last try failed, and one that failed every try in jobs named for one OS
+alone (`Cross Platform (windows-latest, ...)`) is labelled deterministic:
+a break on that OS, not a flake (`.github/scripts/categorize_failures.sh`).
+No CI run stops at its first failure: `.config/nextest.toml` turns
+fail-fast off for the default profile, which every job uses.
 
 ### Leaked test resources
 
