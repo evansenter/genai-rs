@@ -1,0 +1,42 @@
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8151081Z ^[[32;1m        PASS^[[0m [   0.009s] (1204/1670) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_interaction_stream_event_step_stop_usage^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8236479Z ^[[32;1m        PASS^[[0m [   0.008s] (1205/1670) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_known_chunk_types_are_the_serializers_names^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8299933Z ^[[31;1m        FAIL^[[0m [   0.037s] (1206/1670) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_enum_wire_formats_doc_lists_the_serializers_names^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8306491Z ^[[31;1m ^[[0m ^[[31;1mstdout^[[0m ^[[31;1m───^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8306966Z 
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8307109Z     running 1 test
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8307515Z     test wire_streaming::tests::test_enum_wire_formats_doc_lists_the_serializers_names ... FAILED
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8307883Z 
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8307994Z     failures:
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8308128Z 
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8308229Z     failures:
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8308520Z         wire_streaming::tests::test_enum_wire_formats_doc_lists_the_serializers_names
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8308828Z 
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8309108Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1220 filtered out; finished in 0.03s
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8309595Z     ^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8309983Z ^[[31;1m ^[[0m ^[[31;1mstderr^[[0m ^[[31;1m───^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8310188Z 
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8310814Z     ^[[0m^[[31;1mthread 'wire_streaming::tests::test_enum_wire_formats_doc_lists_the_serializers_names' (8312) panicked at src\wire_streaming\mod.rs:686:14:^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8311469Z     ^[[31;1ma `### StreamChunk` section^[[0m
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:34:58.8311737Z     stack backtrace:
+Cross Platform (windows-latest, beta)	Run tests	2026-11-07T00:35:07.0861690Z ^[[31;1m        FAIL^[[0m [   0.037s] (1206/1670) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_enum_wire_formats_doc_lists_the_serializers_names^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9276689Z ^[[32;1m        PASS^[[0m [   0.015s] (1204/1671) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_interaction_stream_event_step_stop_usage^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9391023Z ^[[32;1m        PASS^[[0m [   0.012s] (1205/1671) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_known_chunk_types_are_the_serializers_names^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9411883Z ^[[31;1m        FAIL^[[0m [   0.052s] (1206/1671) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_enum_wire_formats_doc_lists_the_serializers_names^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9422848Z ^[[31;1m ^[[0m ^[[31;1mstdout^[[0m ^[[31;1m───^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9445587Z 
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9462113Z     running 1 test
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9462643Z     test wire_streaming::tests::test_enum_wire_formats_doc_lists_the_serializers_names ... FAILED
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9463849Z 
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9472098Z     failures:
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9473855Z 
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9481209Z     failures:
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9482322Z         wire_streaming::tests::test_enum_wire_formats_doc_lists_the_serializers_names
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9484805Z 
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9487534Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1220 filtered out; finished in 0.04s
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9491151Z     ^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9502681Z ^[[31;1m ^[[0m ^[[31;1mstderr^[[0m ^[[31;1m───^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9509686Z 
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9511553Z     ^[[0m^[[31;1mthread 'wire_streaming::tests::test_enum_wire_formats_doc_lists_the_serializers_names' (3532) panicked at src\wire_streaming\mod.rs:686:14:^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9525065Z     ^[[31;1ma `### StreamChunk` section^[[0m
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:39:49.9539516Z     stack backtrace:
+Cross Platform (windows-latest, stable)	Run tests	2026-11-07T00:42:00.2067636Z ^[[31;1m        FAIL^[[0m [   0.052s] (1206/1671) ^[[35;1mgenai-rs^[[0m ^[[36mwire_streaming::tests^[[0m^[[36m::^[[0m^[[34;1mtest_enum_wire_formats_doc_lists_the_serializers_names^[[0m
