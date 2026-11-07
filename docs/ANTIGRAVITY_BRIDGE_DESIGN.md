@@ -494,6 +494,17 @@ so `chat` resolves normally, as on 0.1.10 and 0.1.18, and the next turn
 runs. The live `test_antigravity_cancel_handle_halts_an_in_flight_turn`
 accepts a `Turn` error as well, so it is not the evidence for this.
 
+Subagent tools and model errors (0.1.23, 2026-11-07, scripted model):
+
+- The harness offers `define_subagent` only beside `invoke_subagent`;
+  `with_define_subagent_tool(true)` alone adds no tool. `spawn()`'s
+  subagent refusal (D-042) still counts it, in case a release separates
+  them.
+- A fatal model-backend error (an HTTP 400 from the model endpoint) ends
+  the session: the harness reports `Agent execution terminated due to
+  error` and closes the WebSocket, so the agent's next call fails with a
+  WebSocket error. Respawn the agent after one.
+
 ## Python SDK parity (google-antigravity 0.1.23)
 
 Every option the 0.1.23 Python SDK exposes for the harness, and what this
