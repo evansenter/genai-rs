@@ -194,7 +194,12 @@ reaches the wire must use a real id.
   doc comment, a public fallible function an `# Errors` section, and
   clippy's `uninlined_format_args`, `assigning_clones`,
   `redundant_closure_for_method_calls` and `must_use_candidate` hold in
-  src/, tests/ and examples/; `make clippy` denies warnings.
+  src/, tests/ and examples/; `make clippy` denies warnings. Library code
+  does not `unwrap()` or `expect()`: a panic that cannot happen carries
+  `#[expect(clippy::expect_used, reason = "...")]`, and each test and
+  example crate root allows both (D-NEXT-WP18). Every `unsafe` block has
+  a `// SAFETY:` comment. `unreachable_patterns` is forbidden, so a match
+  on an enum this crate defines lists its variants, with no wildcard.
 - Errors: `GenaiError` (`src/errors.rs`) for API/transport, `FunctionError`
   for tool execution.
 - Logging (`docs/LOGGING_STRATEGY.md`): `warn` for recoverable issues
