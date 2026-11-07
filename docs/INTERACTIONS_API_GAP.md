@@ -543,8 +543,10 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   in back-to-back batches (1 of 255 looped) but not in single requests
   spread over the day (5 of 38). Without the schema, 4 of 4 answered after
   one fetch (6 of 6 on 2026-11-01), as did 4 of 4 with `application/json`
-  output and no schema, and 24 of 24 two-turn chains that fetched first and
-  asked for the schema on the next turn.
+  output and no schema, and 24 of 24 two-turn chains at `low` that fetched
+  first and asked for the schema on the next turn: 12 sent that turn
+  without url_context, and 12 with it, where the model fetched the page
+  again every time (12 is too few to tell from the single request's rate).
   `test_structured_output_with_url_context` sends `low`, once, and fails on
   a loop. Until 2026-11-07 it retried the loop up to 4 times at the default
   level instead: 41 of its 69 CI runs from 2026-11-01 needed a second

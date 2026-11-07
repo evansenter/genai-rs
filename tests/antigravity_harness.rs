@@ -600,11 +600,16 @@ async fn test_antigravity_structured_output_follows_response_schema() {
 /// The prompt is long on purpose: it has to still be running when the
 /// cancel lands, or the test proves nothing.
 ///
-/// Its CI retries (7 of 97 runs, all on 2026-11-01) came from halting on
-/// streamed output alone, which on harness 0.1.23 sometimes never streamed
-/// before the turn ended; the `HALT_AFTER` deadline below (#502) fixed
-/// that. Each of the 55 CI runs since passed on its first try, in 8 to
-/// 11 s: the halt came at the deadline, and the turn ended soon after.
+/// Its CI retries (7 of 97 runs, all on 2026-11-01) came from the old
+/// trigger and bound: it halted only after 200 streamed characters, and
+/// timed the turn from its start. On harness 0.1.23 a turn sometimes
+/// streamed nothing before it ended, so no halt was sent (5 failed
+/// attempts in that day's logs), or streamed only after a stall of
+/// seconds to minutes, so the halt went out late and the turn overran the
+/// 30 s bound counted from its start (6). The `HALT_AFTER` deadline and
+/// timing from the halt (#502) fixed both. Each of the 55 CI runs since
+/// passed on its first try, in 8 to 11 s: the halt came at the deadline,
+/// and the turn ended soon after.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
