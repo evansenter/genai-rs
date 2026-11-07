@@ -54,7 +54,7 @@ The handles follow the resource groups of the Python SDK (`google-genai`).
 Required arguments are positional, as in Python; optional list arguments
 become `with_*` setters.
 
-| Python (`google-genai` 2.34.0) | genai-rs |
+| Python (`google-genai` 3.0.0) | genai-rs |
 |------------------------------|----------|
 | `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id, base_agent)...)` |
 | `client.agents.create(..., agent_config={"type": "antigravity", "model": m, "max_total_tokens": n})` | `Agent::new(id, base_agent).with_agent_config(AntigravityConfig::new().with_model(m).with_max_total_tokens(n))` |
