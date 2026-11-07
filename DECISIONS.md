@@ -1195,3 +1195,42 @@ now also send a field of these configs the crate does not model yet, as
 variants, which keep no `extra` (enums are outside the guard, as `Step`'s
 were before #491).
 
+
+---
+
+## D-NEXT-WP14 — A red push to main escalates under its own issue, and a PR runs Windows (2026-11-07)
+
+**Context.** main's Windows Cross Platform legs failed on ten pushes in a
+row (#518 to #529) on one CRLF-sensitive test, the second such streak
+after #486, and nobody noticed: Cross Platform ran only on main pushes,
+it is not a required check, and only a scheduled run escalated a failure
+(`scheduled-run-status`). The failing step also kept the Windows doctests
+from running.
+
+**Decision.** `rust.yml` gets a `main-push-status` job that reuses the
+scheduled runs' scripts, `report_scheduled_failure.sh` and
+`resolve_scheduled_failure.sh`, with `ESCALATION_TRIGGER=push`: a red push
+to main opens or updates a `ci-health-escalation` issue titled "Push to
+main failing: Rust", and the next green push closes it. It is not the
+scheduled run's issue, because the two triggers run different jobs: a push
+skips the captured-fixtures refresh, so a green push must not close a
+scheduled failure, nor a green scheduled run a red push's. Cross Platform
+runs on the schedule too, and a PR runs its Windows stable leg (offline,
+like every leg) under the same check name, `Cross Platform
+(windows-latest, stable)`. `.gitattributes` checks text files out with
+LF, and the doctests run after a failed unit-test step.
+
+Rejected: the full six-leg matrix on every PR, which costs five more
+runners per push for platforms that have not broken; one shared issue per
+workflow, for the reason above.
+
+**Consequences.** A live job that still fails after its retries on a push
+to main now opens an issue, which the next green push closes. Runs that
+finish out of order can leave the issue in the older run's state until
+the next push. `scheduled-run-status` needs `main-push-status` (which
+always skips on a schedule) so that it still needs every other job, and
+`main-push-status` needs every job but those two. Making `Cross Platform
+(windows-latest, stable)` a required check is the owner's call. The PR
+leg holds a Windows runner for over 20 minutes per PR push (the leg took
+20 on 2026-11-07, before the doctests and the antigravity check ran),
+about as long as the live integration groups already take.

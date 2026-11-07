@@ -14,8 +14,9 @@
 //!
 //! The workflows themselves are guarded in `tests/ci_workflows/`: no nextest
 //! run fails fast, retries are set in `NEXTEST_RETRIES` where the flakiness
-//! report sees them, trybuild's `ui_tests` stay off beta, and every
-//! scheduled workflow escalates its failures.
+//! report sees them, trybuild's `ui_tests` stay off beta, every scheduled
+//! workflow and every push to main escalates its failures, and a PR runs
+//! the Windows leg.
 
 mod ci_workflows;
 mod live_verbs;
