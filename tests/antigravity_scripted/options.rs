@@ -591,6 +591,7 @@ async fn test_scripted_every_option_together_is_accepted_and_runs_a_turn() {
         )
         .with_max_subagent_depth(2)
         .with_allowed_subagents(["helper"])
+        .with_ungated_subagents(true)
         .with_budget(Budget::new().with_max_model_calls(10))
         .with_retry(RetryConfig::new().with_max_api_retries(1))
         .with_compaction_threshold(100_000)

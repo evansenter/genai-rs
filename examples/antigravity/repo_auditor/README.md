@@ -42,8 +42,10 @@ These layers gate the **parent agent's** calls. On harness 0.1.23 a
 subagent's own tool calls reach neither the policies nor the hook, and
 workspace containment does not confine them: in the run below the
 `file_auditor` subagent read `fixture/.env` right after the parent was
-denied it. The subagent's read-only capabilities are its only bound
-(see Subagents in `docs/ANTIGRAVITY.md`).
+denied it. The subagent's read-only capabilities are its only bound, which
+is why the agent opts in with `with_ungated_subagents(true)`: without it,
+`spawn()` refuses subagents beside these gates (see Subagents in
+`docs/ANTIGRAVITY.md`).
 
 ## Running
 

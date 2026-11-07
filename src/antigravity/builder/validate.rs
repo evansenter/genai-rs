@@ -6,7 +6,8 @@ use super::AgentBuilder;
 use crate::antigravity::process::API_KEY_ENV_VARS;
 use crate::antigravity::tools::ToolDispatcher;
 use crate::antigravity::{
-    AgentBehavior, AntigravityError, Budget, BuiltinTool, McpServer, SessionContinuation,
+    AgentBehavior, AntigravityError, Budget, BuiltinTool, McpServer, Policy, PolicyDecision,
+    SessionContinuation,
 };
 
 /// A configuration error.
@@ -154,16 +155,7 @@ impl AgentBuilder {
                  with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))."
             );
         }
-        if invokes {
-            // Verified on 0.1.23 (2026-11-05), pinned by
-            // test_scripted_harness_does_not_gate_a_subagents_tool_calls.
-            tracing::warn!(
-                "invoke_subagent is enabled: harness 0.1.23 applies neither policies, the \
-                 pre-tool hook nor workspace containment to a subagent's own tool calls \
-                 (the built-in research subagent's included); only each subagent's \
-                 capabilities limit them. Give subagents only builtins they may use ungated."
-            );
-        }
+        self.refuse_ungated_subagents(invokes)?;
         if !invokes
             && let Some(setter) = [
                 (
@@ -205,6 +197,71 @@ impl AgentBuilder {
             }
         }
         Ok(())
+    }
+
+    /// Refuses an agent that offers subagents while a gate is set, unless
+    /// the caller opted in with `with_ungated_subagents(true)` (#520,
+    /// D-042): a subagent's own tool calls bypass every gate (harness
+    /// 0.1.23, pinned by
+    /// `test_scripted_harness_does_not_gate_a_subagents_tool_calls`).
+    ///
+    /// `define_subagent` counts on its own: the harness offers it only
+    /// beside `invoke_subagent` (0.1.23), which a later release may change.
+    fn refuse_ungated_subagents(&self, invokes: bool) -> Result<(), AntigravityError> {
+        let offered: Vec<&str> = [
+            (invokes, "invoke_subagent (BuiltinTool::InvokeSubagent)"),
+            (
+                self.options.define_subagent_tool,
+                "define_subagent (with_define_subagent_tool)",
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(on, tool)| on.then_some(tool))
+        .collect();
+        if offered.is_empty() || self.ungated_subagents {
+            return Ok(());
+        }
+        let gates = self.subagent_bypassed_gates();
+        if gates.is_empty() {
+            return Ok(());
+        }
+        Err(config(format!(
+            "{} would let subagents bypass this agent's gates: {}. A subagent's own tool \
+             calls, the harness's built-in research subagent's included, reach none of \
+             them; only the subagent's capabilities limit it. Call \
+             with_ungated_subagents(true) to run subagents anyway, or remove the gates or \
+             the subagent tools",
+            offered.join(" and "),
+            gates.join(", ")
+        )))
+    }
+
+    /// The gates set on this agent that a subagent's own tool calls bypass.
+    /// A policy set that only allows is not one: it refuses nothing, so
+    /// there is nothing for a subagent to get around. Nor is a sandbox on a
+    /// `run_command` the agent does not have: it confines nothing.
+    fn subagent_bypassed_gates(&self) -> Vec<&'static str> {
+        let refusing_policy = self
+            .policies
+            .iter()
+            .any(|p| !p.is_auto() && p.decision() != PolicyDecision::Allow);
+        let auto_policy = self.policies.iter().any(Policy::is_auto);
+        [
+            (self.pre_tool.is_some(), "a pre-tool hook (on_pre_tool)"),
+            (refusing_policy, "a deny or confirm policy (add_policy)"),
+            (auto_policy, "the auto policy (policy::auto)"),
+            (
+                self.contains_workspaces(),
+                "workspace containment (on by default with a workspace)",
+            ),
+            (
+                self.sandboxes_commands(),
+                "the run_command sandbox (RunCommandOptions::with_sandbox)",
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(set, gate)| set.then_some(gate))
+        .collect()
     }
 
     /// Range and combination checks on the harness options (the Python

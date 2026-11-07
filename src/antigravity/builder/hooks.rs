@@ -14,9 +14,14 @@ use crate::antigravity::{
 };
 
 impl AgentBuilder {
-    /// Sets a pre-tool hook, consulted before every tool call (builtin,
-    /// custom, MCP, subagent) and for `confirm(...)` policies. It may allow,
-    /// deny, or [modify](PreToolDecision::modify) the call's arguments.
+    /// Sets a pre-tool hook, consulted before every tool call the agent
+    /// itself makes (builtin, custom, MCP, `invoke_subagent`) and for
+    /// `confirm(...)` policies. It may allow, deny, or
+    /// [modify](PreToolDecision::modify) the call's arguments.
+    ///
+    /// A subagent's own tool calls never reach it (harness 0.1.23), so
+    /// `spawn()` refuses an agent with this hook and subagents unless
+    /// [`with_ungated_subagents`](Self::with_ungated_subagents) opts in.
     ///
     /// Like every hook, it runs on a thread of its own and is bounded by the
     /// turn deadline. A hook still running at the deadline is abandoned,

@@ -331,9 +331,12 @@ impl ToolAction {
 /// A stream of [`AgentEvent`]s for one turn, returned by
 /// [`AntigravityAgent::send_streaming`](super::AntigravityAgent::send_streaming).
 ///
-/// The stream mutably borrows the agent for the duration of the turn; drive
-/// it to completion (until [`AgentEvent::Finished`] or `None`) before
-/// sending the next message. To cancel mid-turn, grab a
+/// The stream mutably borrows the agent for the duration of the turn. Drive
+/// it to completion (until [`AgentEvent::Finished`] or `None`) to get the
+/// whole turn. Dropping it earlier abandons the turn, and the next message
+/// halts what is left of it first (see "Cancellation" on
+/// [`send_streaming`](super::AntigravityAgent::send_streaming)). To stop a
+/// turn mid-way and keep reading its partial output, grab a
 /// [`CancelHandle`](super::CancelHandle) before starting the stream.
 pub struct AgentEventStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<AgentEvent, AntigravityError>> + Send + 'a>>,

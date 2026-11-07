@@ -41,6 +41,7 @@ mod builder;
 mod config;
 mod error;
 mod handshake;
+mod harness_stderr;
 mod hook_mapping;
 mod hooks;
 mod instructions;

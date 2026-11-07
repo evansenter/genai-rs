@@ -6,8 +6,8 @@ name: Antigravity Release Watch
 # every harness test in CI runs against that pin, so a new release changes
 # nothing CI can see until someone bumps it. This compares PyPI's latest with
 # the pin daily; when they differ it diffs the two wheels' protobuf
-# descriptors and opens or updates one rolling `antigravity-release` issue,
-# then closes it once the pin catches up. See
+# descriptors and Python SDK options and opens or updates one rolling
+# `antigravity-release` issue, then closes it once the pin catches up. See
 # .github/scripts/antigravity_release_watch.sh.
 
 on:
@@ -54,8 +54,9 @@ jobs:
             "**This is not a release notice.** A new google-antigravity release is
           reported on its own \`antigravity-release\` issue and leaves this run
           green. A red run means the watch could not complete: PyPI or the wheel
-          download failed, or the descriptor dump could not read a wheel (the
-          \`_pb2\` layout moved). Check the run log."
+          download failed, the descriptor dump could not read a wheel (the
+          \`_pb2\` layout moved), or the option dump refused the pinned wheel.
+          Check the run log."
 
       - name: Clear the failure issue once the run recovers
         if: success() && github.event_name == 'schedule'

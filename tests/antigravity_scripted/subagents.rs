@@ -3,7 +3,7 @@
 //! invoke, its skills and its model.
 
 use super::*;
-use genai_rs::antigravity::{Subagent, SubagentSkills};
+use genai_rs::antigravity::{RunCommandOptions, Subagent, SubagentSkills};
 
 /// The model the `helper` subagent runs on, so its requests are told apart
 /// from the root agent's.
@@ -260,13 +260,15 @@ async fn test_scripted_subagent_skills_choose_the_skills_a_subagent_sees() {
     }
 }
 
-/// Pins a harness 0.1.23 gap: a subagent's own tool calls reach neither the
-/// pre-tool callback (so neither policies nor the pre-tool hook judge them)
-/// nor the harness's policy evaluator, and workspace containment does not
-/// confine them. The probe that found it also sent a harness-side deny rule:
-/// it denied the root agent's call and not the subagent's. When this test
-/// fails, a harness release started gating subagent calls: update
-/// `docs/ANTIGRAVITY.md` (Subagents) and the `spawn()` warning.
+/// Pins a harness 0.1.23 gap (#520): a subagent's own tool calls reach
+/// neither the pre-tool callback (so neither policies nor the pre-tool hook
+/// judge them) nor the harness's policy evaluator, and workspace containment
+/// does not confine them. The probe that found it also sent a harness-side
+/// deny rule: it denied the root agent's call and not the subagent's. So
+/// `spawn()` refuses this agent unless it opts in with
+/// `with_ungated_subagents(true)`. When this test fails, a harness release
+/// started gating subagent calls: revisit the refusal (D-042) and
+/// `docs/ANTIGRAVITY.md` (Subagents).
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
 async fn test_scripted_harness_does_not_gate_a_subagents_tool_calls() {
@@ -295,21 +297,35 @@ async fn test_scripted_harness_does_not_gate_a_subagents_tool_calls() {
     })
     .await;
     let judged: Arc<Mutex<Vec<String>>> = Arc::default();
-    let seen = Arc::clone(&judged);
     // Every gate this client has: deny-by-default rules, a hook that denies
     // the read, and containment to a workspace the file is outside.
-    let mut agent = delegating_agent(&fake, vec![helper()])
-        .add_workspace(workspace.path().to_string_lossy())
-        .add_policy(policy::deny_all())
-        .add_policy(policy::allow("invoke_subagent"))
-        .on_pre_tool(move |call| {
-            seen.lock().unwrap().push(call.name.clone());
-            if call.name == "view_file" {
-                PreToolDecision::deny("no reads")
-            } else {
-                PreToolDecision::Allow
-            }
-        })
+    let gated = || {
+        let seen = Arc::clone(&judged);
+        delegating_agent(&fake, vec![helper()])
+            .add_workspace(workspace.path().to_string_lossy())
+            .add_policy(policy::deny_all())
+            .add_policy(policy::allow("invoke_subagent"))
+            .on_pre_tool(move |call| {
+                seen.lock().unwrap().push(call.name.clone());
+                if call.name == "view_file" {
+                    PreToolDecision::deny("no reads")
+                } else {
+                    PreToolDecision::Allow
+                }
+            })
+    };
+    // Without the opt-in the agent never starts, so no subagent can read.
+    let err = gated()
+        .spawn()
+        .await
+        .expect_err("a gated agent with subagents must not spawn");
+    assert!(
+        matches!(&err, AntigravityError::Config(m) if m.contains("with_ungated_subagents(true)")),
+        "{err:?}"
+    );
+    assert!(fake.requests().is_empty(), "nothing may reach the model");
+    let mut agent = gated()
+        .with_ungated_subagents(true)
         .spawn()
         .await
         .expect("spawn");
@@ -322,7 +338,7 @@ async fn test_scripted_harness_does_not_gate_a_subagents_tool_calls() {
     let told = function_response_text(&fake, n);
     assert!(
         told.contains("SUBAGENT-READ-9913"),
-        "the harness now gates a subagent's calls; update the docs and the spawn() warning: \
+        "the harness now gates a subagent's calls; revisit the spawn() refusal and the docs: \
          {told}"
     );
     assert_eq!(
@@ -331,4 +347,75 @@ async fn test_scripted_harness_does_not_gate_a_subagents_tool_calls() {
         "only the root agent's call reached the pre-tool callback"
     );
     agent.shutdown().await.expect("shutdown");
+}
+
+/// Each gate a subagent's own tool calls bypass (#520), applied to a
+/// builder, with the words `spawn()`'s refusal names it by.
+type Gate = (&'static str, Box<dyn Fn(AgentBuilder) -> AgentBuilder>);
+
+fn gates(workspace: &str) -> Vec<Gate> {
+    let workspace = workspace.to_string();
+    vec![
+        (
+            "pre-tool hook",
+            Box::new(|b: AgentBuilder| b.on_pre_tool(|_| PreToolDecision::Allow)),
+        ),
+        (
+            "deny or confirm policy",
+            Box::new(|b: AgentBuilder| b.add_policy(policy::deny("run_command"))),
+        ),
+        (
+            "deny or confirm policy",
+            Box::new(|b: AgentBuilder| b.add_policy(policy::confirm("run_command"))),
+        ),
+        (
+            "auto policy",
+            Box::new(|b: AgentBuilder| b.add_policy(policy::auto())),
+        ),
+        (
+            "workspace containment",
+            Box::new(move |b: AgentBuilder| b.add_workspace(workspace.clone())),
+        ),
+        (
+            "run_command sandbox",
+            Box::new(|b: AgentBuilder| {
+                b.with_capabilities(
+                    Capabilities::read_only()
+                        .enable(BuiltinTool::InvokeSubagent)
+                        .enable(BuiltinTool::RunCommand)
+                        .with_run_command(RunCommandOptions::new().with_sandbox(true)),
+                )
+            }),
+        ),
+    ]
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_gated_agent_runs_subagents_only_with_the_opt_in() {
+    let workspace = scratch_dir("agy-scripted-subopt");
+    for (gate, apply) in gates(&workspace.path().to_string_lossy()) {
+        // Without the opt-in, spawn() refuses before the harness starts:
+        // nothing reaches the model, a subagent least of all.
+        let fake = delegating_model().await;
+        let err = apply(delegating_agent(&fake, vec![helper()]))
+            .spawn()
+            .await
+            .expect_err("a gated agent with subagents must not spawn");
+        assert!(
+            matches!(&err, AntigravityError::Config(m)
+                if m.contains(gate) && m.contains("with_ungated_subagents(true)")),
+            "{gate}: {err:?}"
+        );
+        assert!(fake.requests().is_empty(), "{gate}");
+        // With it, the same agent spawns and delegates to its subagent.
+        let mut agent = apply(delegating_agent(&fake, vec![helper()]))
+            .with_ungated_subagents(true)
+            .spawn()
+            .await
+            .unwrap_or_else(|e| panic!("{gate}: {e:?}"));
+        agent.chat("delegate").await.expect("turn");
+        helper_request(&fake).await;
+        agent.shutdown().await.expect("shutdown");
+    }
 }
