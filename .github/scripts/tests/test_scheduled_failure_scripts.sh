@@ -287,29 +287,74 @@ else
   echo "ok   - context: the override replaces the default rather than adding to it"
 fi
 
-# --- The lookups must agree. Drift lands updates on one issue and closes on
-#     another.
-#
-#     `|| true` on every grep is not decoration: under `set -euo pipefail` a
-#     non-matching `grep` exits 1, `pipefail` carries that past the
-#     successful `head`, and the assignment takes `set -e` — so the script
-#     would die here and the FAIL branch below could never print. The one
-#     scenario these checks exist for is the one where they would have gone
-#     silent about themselves.
-report_title=$(grep -o 'Scheduled workflow failing: \$WORKFLOW' "$SCRIPTS/report_scheduled_failure.sh" | head -1 || true)
-resolve_title=$(grep -o 'Scheduled workflow failing: \$WORKFLOW' "$SCRIPTS/resolve_scheduled_failure.sh" | head -1 || true)
-if [ -n "$report_title" ] && [ "$report_title" = "$resolve_title" ]; then
-  echo "ok   - both scripts build the same issue title"
-else
-  echo "FAIL - the two scripts' issue titles have drifted"
-  failures=$((failures + 1))
-fi
+# --- Pushes to main (ESCALATION_TRIGGER=push, rust.yml's main-push-status)
+#     keep an issue of their own: a green push does not run the scheduled-only
+#     jobs, so it must not close a scheduled failure, nor a green scheduled
+#     run a red push's. Both stubs below list the other trigger's issue too.
+export ESCALATION_TRIGGER=push
+TITLE_PUSH="Push to main failing: Rust"
+TITLE_RUST_SCHEDULED="Scheduled workflow failing: Rust"
+make_gh_stub "[{\"title\":\"$TITLE_RUST_SCHEDULED\",\"number\":77},{\"title\":\"$TITLE_PUSH\",\"number\":88}]" \
+  '{"createdAt":"2026-05-01T00:00:00Z","comments":[
+      {"body":"Still failing: x","createdAt":"2026-05-02T00:00:00Z"}]}'
+run_script "report_scheduled_failure.sh (push)" "$SCRIPTS/report_scheduled_failure.sh" \
+  "Rust" "https://example/run/1" "PUSH CONTEXT"
+check "push: updates the push issue, not the scheduled one" "Updated issue #88" "$out"
+check "push: names the trigger in the body" 'failed on a push to `main`.' "$out"
+check "push: counts pushes, not scheduled runs" \
+  "Failing since 2026-05-01 — 3 consecutive pushes to main" "$out"
 
-# The label is the half that actually differs when it drifts: both title
-# greps echo the same literal back, so that check only proves "the string is
-# present in both files". A typo in one ESCALATION_LABEL passes every
-# stubbed assertion above — the stub answers `issue list` from its fixture
-# regardless of `--label` — and in production the resolver would search a
+make_gh_stub "[{\"title\":\"$TITLE_RUST_SCHEDULED\",\"number\":77}]"
+run_script "report_scheduled_failure.sh (push, new)" "$SCRIPTS/report_scheduled_failure.sh" \
+  "Rust" "https://example/run/1" "PUSH CONTEXT"
+check "push: files its own issue beside a scheduled one" \
+  "issue create --title $TITLE_PUSH" "$out"
+
+make_gh_stub "[{\"title\":\"$TITLE_RUST_SCHEDULED\",\"number\":77},{\"title\":\"$TITLE_PUSH\",\"number\":88}]"
+run_script "resolve_scheduled_failure.sh (push)" "$SCRIPTS/resolve_scheduled_failure.sh" "Rust"
+check "push: a green push closes the push issue" "issue close 88" "$out"
+if grep -q "issue close 77" <<<"$out"; then
+  echo "FAIL - push: a green push closed the scheduled run's issue"
+  failures=$((failures + 1))
+else
+  echo "ok   - push: a green push leaves the scheduled run's issue open"
+fi
+unset ESCALATION_TRIGGER
+
+make_gh_stub "[{\"title\":\"$TITLE_PUSH\",\"number\":88}]"
+run_script "resolve_scheduled_failure.sh (schedule)" "$SCRIPTS/resolve_scheduled_failure.sh" "Rust"
+check "schedule: a green scheduled run leaves a push issue open" "No open failure issue" "$out"
+
+# --- A misspelt trigger is an error, not a silent fall back to the
+#     schedule's issue.
+for script in report_scheduled_failure.sh resolve_scheduled_failure.sh; do
+  rc=0
+  out=$(PATH="$WORK:$PATH" ESCALATION_TRIGGER=pushed bash "$SCRIPTS/$script" "Rust" "https://example/run/1" 2>&1) || rc=$?
+  if [ "$rc" -eq 2 ] && grep -q "ESCALATION_TRIGGER must be" <<<"$out"; then
+    echo "ok   - $script: rejects an unknown ESCALATION_TRIGGER"
+  else
+    echo "FAIL - $script: ESCALATION_TRIGGER=pushed exited $rc"
+    sed 's/^/         /' <<<"$out"
+    failures=$((failures + 1))
+  fi
+done
+
+# --- The lookups must agree, or updates land on one issue and the close on
+#     another. The titles are pinned by behavior above: each script finds
+#     its fixture issue by exact title, for both triggers. (A grep for the
+#     title literal in both files only proved the string was present.)
+#
+#     `|| true` on every grep below is not decoration: under
+#     `set -euo pipefail` a non-matching `grep` exits 1, `pipefail` carries
+#     that past the successful `head`, and the assignment takes `set -e` — so
+#     the script would die here and the FAIL branch could never print. The
+#     one scenario these checks exist for is the one where they would have
+#     gone silent about themselves.
+
+# The label is the half the behavioral checks cannot see. A typo in one
+# ESCALATION_LABEL passes every stubbed assertion above — the stub answers
+# `issue list` from its fixture regardless of `--label` — and in production
+# the resolver would search a
 # label nothing is filed under, find nothing, print its clean no-op, and
 # leave the issue open forever. That is the always-on-signal failure
 # `resolve_scheduled_failure.sh` exists to prevent.

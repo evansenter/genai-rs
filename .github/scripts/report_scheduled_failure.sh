@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Opens or updates a `ci-health` issue when a scheduled workflow fails: one
 # rolling issue per workflow, closed by `resolve_scheduled_failure.sh` on the
-# next success (#431).
+# next success (#431). With ESCALATION_TRIGGER=push, the same for a failed
+# push to main, under an issue of its own (#504).
 #
 # Runs from the checkout, so a run that dies before checkout still fails
 # silently.
 # Usage: report_scheduled_failure.sh <workflow-name> <run-url> [context]
+# Env: ESCALATION_TRIGGER, `schedule` (the default) or `push`; it must match
+#   the resolver's.
 # Requires: GH_TOKEN with issues:write.
 
 set -euo pipefail
@@ -19,16 +22,40 @@ CONTEXT="${3:-Scheduled workflows fail quietly — the only other signal is an e
 to whoever last committed the workflow file, which does not survive a
 change of maintainer. See #431 for the history that motivated this.}"
 
+# Each trigger keeps its own issue: a green push to main does not run what
+# only the schedule runs (rust.yml's captured fixtures), so it must not close
+# a scheduled failure, and a green scheduled run must not close a red push's.
+# The titles are the join key with `resolve_scheduled_failure.sh`; the
+# harness pins both scripts to them.
+case "${ESCALATION_TRIGGER:-schedule}" in
+  schedule)
+    TITLE_PREFIX="Scheduled workflow failing"
+    FAILED_ON="its scheduled run"
+    ONE_RUN="scheduled run"
+    RUNS="consecutive scheduled runs"
+    ;;
+  push)
+    TITLE_PREFIX="Push to main failing"
+    FAILED_ON="a push to \`main\`"
+    ONE_RUN="push to main"
+    RUNS="consecutive pushes to main"
+    ;;
+  *)
+    echo "ESCALATION_TRIGGER must be 'schedule' or 'push', not '$ESCALATION_TRIGGER'" >&2
+    exit 2
+    ;;
+esac
+
 # Exported: `$ENV.TITLE` in the `--jq` filter reads the `gh` process
 # environment.
-export TITLE="Scheduled workflow failing: $WORKFLOW"
+export TITLE="$TITLE_PREFIX: $WORKFLOW"
 
 # A dedicated label, not the shared `ci-health`: this rarely-bumped issue would
 # sink past `--limit` there and then be duplicated.
 ESCALATION_LABEL="ci-health-escalation"
 
 gh label create "$ESCALATION_LABEL" \
-  --description "A scheduled workflow is failing (opened by the workflow itself)" \
+  --description "A scheduled run or a push to main is failing (opened by the workflow itself)" \
   --color "b60205" \
   2>/dev/null || true
 gh label create "ci-health" \
@@ -76,8 +103,8 @@ streak_line() {
   since=${since:0:10}
   [ -n "$since" ] || since=$(date -u +%Y-%m-%d)
 
-  local runs="consecutive scheduled runs"
-  [ "$count" = "1" ] && runs="scheduled run"
+  local runs="$RUNS"
+  [ "$count" = "1" ] && runs="$ONE_RUN"
 
   # `--json comments` returns only the oldest 100, so past that no count is
   # trustworthy, not even as a floor.
@@ -107,7 +134,7 @@ if [ -n "$EXISTING" ]; then
 fi
 
 {
-  echo "\`$WORKFLOW\` failed on its scheduled run."
+  echo "\`$WORKFLOW\` failed on $FAILED_ON."
   echo
   echo "- Most recent failing run: $RUN_URL"
   [ -n "$EXISTING" ] && streak_line "$EXISTING"

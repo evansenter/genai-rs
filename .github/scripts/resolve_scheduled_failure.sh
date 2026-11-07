@@ -5,14 +5,27 @@
 # fix is no signal.
 #
 # Usage: resolve_scheduled_failure.sh <workflow-name>
+# Env: ESCALATION_TRIGGER, `schedule` (the default) or `push` (a push to
+#   main); it must match the reporter's.
 # Requires: GH_TOKEN with issues:write.
 
 set -euo pipefail
 
 WORKFLOW="${1:?usage: resolve_scheduled_failure.sh <workflow-name>}"
 
+# Must match the reporter's titles: each trigger has its own issue, and a
+# success closes only its own trigger's.
+case "${ESCALATION_TRIGGER:-schedule}" in
+  schedule) TITLE_PREFIX="Scheduled workflow failing" ;;
+  push) TITLE_PREFIX="Push to main failing" ;;
+  *)
+    echo "ESCALATION_TRIGGER must be 'schedule' or 'push', not '$ESCALATION_TRIGGER'" >&2
+    exit 2
+    ;;
+esac
+
 # Exported so the `--jq` filter's `$ENV.TITLE` sees it.
-export TITLE="Scheduled workflow failing: $WORKFLOW"
+export TITLE="$TITLE_PREFIX: $WORKFLOW"
 
 # Must match the reporter's label, or updates and closes target different
 # issues.
