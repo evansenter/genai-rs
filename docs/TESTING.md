@@ -330,7 +330,7 @@ log, stays out of it.
 The rolling report lists retried tests and examples beside failed ones,
 with the week's rate: tests that passed only on a retry, over live test
 runs. The report fails, and so escalates like any red scheduled workflow,
-when the week breaches a target (D-NEXT-WP19):
+when the week breaches a target (D-046):
 
 - the rate is 1% or more;
 - no live test runs were read, so there is no rate (shown as `n/a`, not

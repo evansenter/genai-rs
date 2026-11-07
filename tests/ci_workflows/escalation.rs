@@ -6,7 +6,7 @@
 //! a job that opens a `ci-health-escalation` issue when a push to main goes
 //! red and closes it on the next green one, through the scripts the
 //! scheduled runs use, with `ESCALATION_TRIGGER: push` so the push keeps an
-//! issue of its own (D-NEXT-WP14).
+//! issue of its own (D-045).
 
 use std::collections::BTreeSet;
 

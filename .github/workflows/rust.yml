@@ -791,7 +791,7 @@ jobs:
   # A red push to main blocks nothing and tells no one: main's Windows legs
   # failed on eleven pushes in a row before anyone looked (#504). So a red push
   # opens or updates a `ci-health-escalation` issue of its own ("Push to main
-  # failing: Rust"), and the next green push closes it (D-NEXT-WP14). Not the
+  # failing: Rust"), and the next green push closes it (D-045). Not the
   # scheduled run's issue: a push skips the captured-fixtures refresh, so a
   # green one must not close a scheduled failure. A live job that fails after
   # its retries escalates too; the next green push closes the issue.

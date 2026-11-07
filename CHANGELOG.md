@@ -685,7 +685,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raised to it. A zero interval re-polled the moment each status request
   answered, back to back until the deadline. 10 ms is far below a status
   request's round trip, so an interval chosen on purpose is unaffected
-  (D-NEXT-WP20).
+  (D-047).
 - Every client sets TCP keepalive explicitly: a probe after 15 s idle, then
   every 15 s, failing the connection after 3 unanswered (Windows can't set
   the count and sends its own 10). These are reqwest 0.13's defaults, which

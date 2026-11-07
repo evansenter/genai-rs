@@ -1247,7 +1247,7 @@ read the stored config back rather than the transcript.
 
 ---
 
-## D-NEXT-WP14 — A red push to main escalates under its own issue, and a PR runs Windows (2026-11-07)
+## D-045 — A red push to main escalates under its own issue, and a PR runs Windows (2026-11-07)
 
 **Context.** main's Windows Cross Platform legs failed on eleven pushes in
 a row (#518 to #531) on one CRLF-sensitive test, the second such streak
@@ -1286,7 +1286,7 @@ about as long as the live integration groups already take.
 
 ---
 
-## D-NEXT-WP19 — The flakiness report fails on a breached target, and weighs each flake against its own runs (2026-11-07)
+## D-046 — The flakiness report fails on a breached target, and weighs each flake against its own runs (2026-11-07)
 
 **Context.** The Tests/CI bar holds the week's flake rate under 1% (#504),
 and the report only printed a line when it was over. A week with no live
@@ -1338,7 +1338,7 @@ deterministic; its failure count tells a one-off from a break.
 
 ---
 
-## D-NEXT-WP20 — `PollOptions` raises a short interval to 10 ms rather than rejecting zero (2026-11-07)
+## D-047 — `PollOptions` raises a short interval to 10 ms rather than rejecting zero (2026-11-07)
 
 **Context.** `PollOptions::with_poll_interval(Duration::ZERO)` was taken
 as given, so every `wait_until_active` and file search store import wait
