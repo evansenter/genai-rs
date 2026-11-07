@@ -125,6 +125,13 @@ pub struct FileMetadata {
     #[serde(default)]
     pub uri: String,
 
+    /// Where to download the file's bytes from. The API serves it only on a
+    /// file it generated ([`FileSource::Generated`], such as a generated
+    /// video): an uploaded file has none, and asking to download one is a
+    /// `400 Only GENERATED files can be downloaded`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_uri: Option<String>,
+
     /// Processing state of the file
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<FileState>,

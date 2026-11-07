@@ -135,17 +135,9 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
      `InteractionRequest::extra` and be sent back when the interaction is \
      reused (before #500 it was dropped).";
 
-/// Fields and values the crate does not model yet.
-pub(super) const GAPS: &[Allowed] = &[
-    // Files.
-    (
-        "legacy.File.downloadUri",
-        "Not served on an uploaded file, nor on one that failed processing (live \
-         2026-11-05). The bindings' `files.download` reads it on a generated \
-         file (`source` GENERATED), which only a video generation makes, so it \
-         is unprobed; it lands in `FileMetadata::extra` until it is seen.",
-    ),
-];
+/// Fields and values the crate does not model yet: the next modeling
+/// pass's work list, empty when the crate has caught up with the snapshot.
+pub(super) const GAPS: &[Allowed] = &[];
 
 /// Values for sites whose snapshot type is looser than what the API sends,
 /// so a synthesized value would test the synthesizer rather than the crate.

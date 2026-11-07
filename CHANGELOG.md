@@ -224,6 +224,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FileSource` enum: `Uploaded`, `Generated`, `Registered`), served on
   every file (verified live 2026-11-05). `FileError::details` and
   `FileError::extra` keep a failed file's `google.rpc.Status` whole.
+- `FileMetadata::download_uri`, the bindings' `downloadUri`: where to
+  download a file the API generated (`FileSource::Generated`). It was the
+  last field the coverage oracle listed as not modeled; an uploaded file
+  carries none (live 2026-11-07), so it is `None` there.
 - `Agent::agent_config` and `Agent::with_agent_config(AntigravityConfig)`
   set the base agent's configuration. It is stored and echoed,
   `max_total_tokens` as a string; a config of another type is stored as a
