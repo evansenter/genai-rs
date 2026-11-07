@@ -205,8 +205,9 @@ pub enum StepDelta {
     ///
     /// Not observed in a stream: the last streamed MCP calls seen arrived as
     /// `function_call` and `function_result` steps and deltas. See
-    /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall) for the verified wire behaviour
-    /// and #459.
+    /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall), and MCP
+    /// identity in `docs/ENUM_WIRE_FORMATS.md` for the verified wire
+    /// behaviour.
     McpServerToolCall {
         /// Tool name.
         name: String,
@@ -221,8 +222,9 @@ pub enum StepDelta {
     ///
     /// Not observed in a stream: the last streamed MCP calls seen arrived as
     /// `function_call` and `function_result` steps and deltas. See
-    /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall) for the verified wire behaviour
-    /// and #459.
+    /// [`Step::McpServerToolCall`](crate::Step::McpServerToolCall), and MCP
+    /// identity in `docs/ENUM_WIRE_FORMATS.md` for the verified wire
+    /// behaviour.
     McpServerToolResult {
         /// Tool name.
         name: Option<String>,
