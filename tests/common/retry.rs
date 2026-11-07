@@ -27,7 +27,7 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 ///
 /// `too_many_tool_calls` is never retried, whatever its message says: it is
 /// the url_context loop under a response schema, a known server bug, and a
-/// live test does not retry a known flake inside itself (D-NEXT-WP23). Its
+/// live test does not retry a known flake inside itself (D-052). Its
 /// message asked to be retried on 2026-11-01 and did not on 2026-11-07, so
 /// the match is on the code the crate puts at the front of the message.
 /// Transport transience (network, timeouts, 429, 5xx) is

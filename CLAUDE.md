@@ -42,7 +42,7 @@ else, and on a code fence marked `ignore` without an
 `<!-- ignore: reason -->` line directly above it.
 
 An issue number in a doc or a comment is one of two things
-(D-NEXT-WP21). A provenance tag, `(#491)`, names the issue a rule or
+(D-051). A provenance tag, `(#491)`, names the issue a rule or
 behavior came from, and stays when the issue closes, as a decision number
 does. A pointer ("see #N", "tracked in #N", "until #N lands", "#493 item
 7") sends the reader to the issue for what is still open, so it names an
@@ -211,7 +211,7 @@ reaches the wire must use a real id.
   src/, tests/ and examples/; `make clippy` denies warnings. Library code
   does not `unwrap()` or `expect()`: a panic that cannot happen carries
   `#[expect(clippy::expect_used, reason = "...")]`, and each test and
-  example crate root allows both (D-NEXT-WP18). Every `unsafe` block has
+  example crate root allows both (D-048). Every `unsafe` block has
   a `// SAFETY:` comment. `unreachable_patterns` is forbidden: a wildcard
   after every variant is listed is an error, and its allow cannot come
   back. The lint does not catch a `_ =>` after a partial list, so on an

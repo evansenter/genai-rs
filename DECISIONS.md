@@ -1683,7 +1683,7 @@ once per round trip.
 
 ---
 
-## D-NEXT-WP18 — Library code panics only where it says why; tests and examples are exempt per crate (2026-11-07)
+## D-048 — Library code panics only where it says why; tests and examples are exempt per crate (2026-11-07)
 
 **Context.** #504 (C7, C9): nothing stopped a new `unwrap()` or `expect()`
 in library code, or an `unsafe` block without a SAFETY comment, and a
@@ -1731,7 +1731,7 @@ library needs its reason written down.
 
 ---
 
-## D-NEXT-WP18-a — `AntigravityError::WebSocket` keeps its cause as a boxed error (2026-11-07)
+## D-049 — `AntigravityError::WebSocket` keeps its cause as a boxed error (2026-11-07)
 
 **Context.** #504 (C5): `AntigravityError::WebSocket(String)` kept only
 the transport error's text, so a caller could not tell a refused
@@ -1756,7 +1756,7 @@ what a downcast finds, not genai-rs's API.
 
 ---
 
-## D-NEXT-WP18-b — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
+## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
 
 **Context.** The Python SDK finds the harness at
 `google/antigravity/bin/localharness.exe` on win32, and `shutil.which`
@@ -1778,7 +1778,7 @@ site-packages directory.
 
 ---
 
-## D-NEXT-WP21 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
+## D-051 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
 
 **Context.** WP15 removed every "See #N" and "Tracked in #N" that sent a
 reader to a closed issue for current behavior. Thirty-four `(#491)` tags
@@ -1808,7 +1808,7 @@ without guessing.
 closed issue. Closing an issue that a pointer names means editing that
 sentence in the same change.
 
-## D-NEXT-WP23 — A live test does not retry a known flake inside itself (2026-11-07)
+## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
 **Context.** D-046 made the flakiness report fail on any test that needs a
 retry in more than 5% of its runs, counting the retries nextest makes.

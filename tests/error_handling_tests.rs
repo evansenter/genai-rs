@@ -317,7 +317,7 @@ fn test_is_transient_error_never_retries_a_tool_call_loop() {
     };
     assert!(is_transient_error(&malformed));
 
-    // ...but not on a tool-call loop, a known server bug (D-NEXT-WP23), in
+    // ...but not on a tool-call loop, a known server bug (D-052), in
     // either wording the API has used for it.
     for wording in [
         "Model generated too many tool calls. Please retry the request. If the issue \

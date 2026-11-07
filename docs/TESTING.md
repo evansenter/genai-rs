@@ -336,7 +336,7 @@ into the log, so the antigravity job's offline suite, which shares its
 log, stays out of it.
 
 So a live test makes no retries of its own beyond `retry_request!`'s
-transport and transient errors (D-NEXT-WP23): the report counts a retry
+transport and transient errors (D-052): the report counts a retry
 nextest makes, and never sees one inside the test. When a known model or
 server failure has a cause the test controls, remove it: send the tools a
 follow-up turn needs, since they are not carried over, or a request shape
