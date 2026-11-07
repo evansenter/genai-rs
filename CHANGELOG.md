@@ -868,6 +868,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Windows, Antigravity harness discovery finds the wheel's
+  `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
+  Python SDK does; it looked only for `localharness`, so a pip-installed
+  harness was not found without `ANTIGRAVITY_HARNESS_PATH`.
 - The `backon` retry snippet in `docs/RELIABILITY.md` and
   `examples/retry_with_backoff.rs` let a server's `Retry-After` bypass
   `with_max_delay`: `adjust` replaces backon's delay after the cap, so a

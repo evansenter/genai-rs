@@ -113,6 +113,9 @@ expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 3. `google/antigravity/bin/localharness` inside `python3`'s site-packages.
 4. `localharness` on `PATH`.
 
+On Windows steps 3 and 4 look for `localharness.exe` first, the name the
+Windows wheel ships, as the Python SDK does.
+
 A miss returns `AntigravityError::HarnessNotFound` listing every location
 searched. The search runs on tokio's blocking pool, not on your runtime's
 threads, and `python3` gets 10 seconds to list its site-packages before

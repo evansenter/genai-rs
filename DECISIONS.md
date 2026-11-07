@@ -1727,3 +1727,25 @@ its major version part of genai-rs's; a caller who needs it downcasts.
 **Consequences.** A pattern on `WebSocket(text)` becomes
 `WebSocket { message, source }`. A `tokio-tungstenite` upgrade changes
 what a downcast finds, not genai-rs's API.
+
+---
+
+## D-NEXT-WP18-b — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
+
+**Context.** The Python SDK finds the harness at
+`google/antigravity/bin/localharness.exe` on win32, and `shutil.which`
+finds `localharness.exe` on `PATH`; genai-rs looked only for
+`localharness`, so a pip-installed harness on Windows was not found.
+
+**Decision.** On Windows the site-packages and `PATH` steps try
+`localharness.exe`, then `localharness` (`harness_file_names(true)`);
+elsewhere only `localharness`. The bare name stays on Windows because
+discovery always accepted it there and the SDK's metadata step accepts
+either; dropping it could only lose a harness someone placed by hand. The
+names are chosen by a function of `windows: bool`, so a test on every OS
+checks both lists, and the version read beside the binary checks the same
+names. The Windows Job Object (killing the harness's child processes on
+Windows) is not part of this; `docs/ANTIGRAVITY.md` states that scope.
+
+**Consequences.** A Windows search that misses lists both names for each
+site-packages directory.

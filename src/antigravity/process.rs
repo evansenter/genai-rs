@@ -21,9 +21,24 @@ use crate::wire::WireEvent;
 /// reference Python SDK honors).
 pub(crate) const HARNESS_PATH_ENV: &str = "ANTIGRAVITY_HARNESS_PATH";
 
-/// Relative location of the harness binary inside a Python site-packages
+/// The directory of the harness binary inside a Python site-packages
 /// directory (from the `google-antigravity` wheel).
-const SITE_PACKAGES_SUFFIX: &str = "google/antigravity/bin/localharness";
+const SITE_PACKAGES_BIN_DIR: &str = "google/antigravity/bin";
+
+/// The harness binary's file names on this platform, in the order discovery
+/// tries them in each directory.
+const HARNESS_FILE_NAMES: &[&str] = harness_file_names(cfg!(windows));
+
+/// The harness binary's file names, on Windows or elsewhere. The Windows
+/// wheel ships `localharness.exe`, which the Python SDK looks for on win32;
+/// the bare name is still tried after it there, as discovery always has.
+const fn harness_file_names(windows: bool) -> &'static [&'static str] {
+    if windows {
+        &["localharness.exe", "localharness"]
+    } else {
+        &["localharness"]
+    }
+}
 
 /// The interpreter discovery asks for its site-packages directories.
 const PYTHON: &str = "python3";
@@ -64,6 +79,9 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 ///    site-packages directories.
 /// 4. `localharness` on `PATH`.
 ///
+/// On Windows steps 3 and 4 look for `localharness.exe` first
+/// ([`HARNESS_FILE_NAMES`]).
+///
 /// `python3` is asked for its site-packages only when the first two steps
 /// find nothing, so an explicit path costs no interpreter start-up.
 ///
@@ -92,6 +110,7 @@ async fn discover(
 ) -> Result<PathBuf, AntigravityError> {
     off_runtime(move || {
         discover_in(
+            HARNESS_FILE_NAMES,
             explicit.as_deref(),
             env_path.as_deref(),
             || python_site_dirs(&interpreter, interpreter_timeout),
@@ -116,9 +135,11 @@ async fn off_runtime<T: Send + 'static>(
         })
 }
 
-/// Pure discovery core, separated for unit testing. `site_dirs` is called
-/// only when the explicit path and the environment variable miss.
+/// Pure discovery core, separated for unit testing. `names` are the binary's
+/// file names to look for in site-packages and on `PATH`. `site_dirs` is
+/// called only when the explicit path and the environment variable miss.
 fn discover_in(
+    names: &[&str],
     explicit: Option<&Path>,
     env_path: Option<&Path>,
     site_dirs: impl FnOnce() -> Vec<PathBuf>,
@@ -144,11 +165,13 @@ fn discover_in(
 
     let site_dirs = site_dirs();
     for dir in &site_dirs {
-        let candidate = dir.join(SITE_PACKAGES_SUFFIX);
-        if candidate.is_file() {
-            return Ok(candidate);
+        for name in names {
+            let candidate = dir.join(format!("{SITE_PACKAGES_BIN_DIR}/{name}"));
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+            searched.push(candidate.display().to_string());
         }
-        searched.push(candidate.display().to_string());
     }
     if site_dirs.is_empty() {
         searched.push("python3 site-packages (python3 not found or no site dirs)".to_string());
@@ -159,12 +182,14 @@ fn discover_in(
             if dir.as_os_str().is_empty() {
                 continue;
             }
-            let candidate = dir.join("localharness");
-            if candidate.is_file() {
-                return Ok(candidate);
+            for name in names {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
             }
         }
-        searched.push("localharness on PATH".to_string());
+        searched.push(format!("{} on PATH", names.join(" or ")));
     }
 
     Err(AntigravityError::HarnessNotFound { searched })
@@ -590,7 +615,12 @@ pub(crate) fn harness_version(binary: &Path) -> Option<String> {
         .canonicalize()
         .unwrap_or_else(|_| binary.to_path_buf());
     let site_packages = binary.ancestors().nth(4)?;
-    if !site_packages.join(SITE_PACKAGES_SUFFIX).is_file() {
+    let in_wheel = HARNESS_FILE_NAMES.iter().any(|name| {
+        site_packages
+            .join(format!("{SITE_PACKAGES_BIN_DIR}/{name}"))
+            .is_file()
+    });
+    if !in_wheel {
         return None;
     }
     let mut versions: Vec<String> = std::fs::read_dir(site_packages)
