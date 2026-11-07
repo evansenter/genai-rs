@@ -308,39 +308,47 @@ mod code_execution {
             summary.code_execution_call_count > 0 && summary.code_execution_result_count > 0,
             "the accumulated response should carry both steps: {summary:?}"
         );
+        // The output arrives in the deltas, not in `step.start`, so this
+        // checks the accumulator rebuilt it (a computed value, so the
+        // substring check is deterministic).
+        let results = response.code_execution_results();
+        assert!(
+            results.iter().any(|r| r
+                .result
+                .text()
+                .replace([',', '_'], "")
+                .contains("1307674368000")),
+            "15! = 1307674368000 should be in an accumulated result: {results:?}"
+        );
     }
 
-    /// The list form of a code execution result (google-genai 3.0.0) is
-    /// accepted in stateless history, and the model reads it, though the API
-    /// itself answers in the string form (`docs/ENUM_WIRE_FORMATS.md`, Code
-    /// execution).
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_code_execution_result_list_form_in_history() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
+    /// Replays a code execution result in stateless history and returns the
+    /// model's answer to "what did it print?". The code draws a random
+    /// number, so the model can only name the value by reading the result.
+    async fn answer_from_replayed_result(
+        client: &genai_rs::Client,
+        result: genai_rs::CodeExecutionOutput,
+    ) -> String {
         let history = vec![
-            Step::user_input(vec![Content::text("Compute 6*7 with code.")]),
+            Step::user_input(vec![Content::text("Draw a random number with code.")]),
             Step::CodeExecutionCall {
                 id: "call_1".into(),
                 language: CodeExecutionLanguage::Python,
-                code: "print(6 * 7)".into(),
+                code: "import secrets; print(secrets.randbelow(10**6))".into(),
                 signature: None,
                 arguments_extra: Default::default(),
                 extra: Default::default(),
             },
             Step::CodeExecutionResult {
                 call_id: "call_1".into(),
-                result: vec![Content::text("42\n")].into(),
+                result,
                 is_error: false,
                 signature: None,
                 extra: Default::default(),
             },
             Step::user_input(vec![Content::text(
-                "What number did the code print? Answer with just the number.",
+                "Do not run any code. Exactly what number did the program above print? \
+                 Answer with just the number, or NONE if no output is visible.",
             )]),
         ];
         let response = retry_request!([client, history] => {
@@ -351,12 +359,44 @@ mod code_execution {
                 .create()
                 .await
         })
-        .expect("a list-form code execution result in history should be accepted");
-
+        .expect("a code execution result in history should be accepted");
         assert_eq!(response.status, InteractionStatus::Completed);
-        // The value is in the history, so the answer is exact.
-        let answer = response.as_text().expect("an answer");
-        assert!(answer.contains("42"), "expected 42, got: {answer}");
+        response.as_text().unwrap_or_default().to_string()
+    }
+
+    /// The list form of a code execution result (google-genai 3.0.0) is
+    /// accepted in stateless history, but the model does not see its content,
+    /// while the string form is read (2026-11-07; Tools in
+    /// `docs/INTERACTIONS_API_GAP.md`). If the list-form assertion fails, the
+    /// API now shows that content: update the gap tracker and
+    /// `CodeExecutionOutput`'s rustdoc.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_code_execution_result_list_form_in_history() {
+        const PRINTED: &str = "736152";
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        // The control: the string form reaches the model.
+        let answer = answer_from_replayed_result(&client, format!("{PRINTED}\n").into()).await;
+        assert!(
+            answer.contains(PRINTED),
+            "the string form should be read: expected {PRINTED}, got: {answer}"
+        );
+
+        // The list form is accepted, and its content is dropped.
+        let answer = answer_from_replayed_result(
+            &client,
+            vec![Content::text(format!("{PRINTED}\n"))].into(),
+        )
+        .await;
+        assert!(
+            !answer.contains(PRINTED),
+            "the model read a list-form result in history ({answer}); the API now shows \
+             this form, so update INTERACTIONS_API_GAP.md and CodeExecutionOutput's rustdoc"
+        );
     }
 }
 

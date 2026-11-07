@@ -1,7 +1,9 @@
 //! Canaries for API drift: each exercises one response surface and fails if
 //! the API returns a step, delta or status type the crate does not model.
 //! `Unknown` keeps the library working when that happens; these make sure
-//! someone finds out.
+//! someone finds out. The code execution canary also fails when the result
+//! arrives in the list form, which the crate reads but the records say the
+//! API does not send.
 //!
 //! Skipped under `genai_strict_unknown`, where an unknown type is a deserialization
 //! error rather than an `Unknown` to report.
@@ -200,11 +202,20 @@ async fn canary_code_execution_interaction() {
     })
     .expect("API call should succeed");
 
+    let results = response.code_execution_results();
     assert!(
-        !response.code_execution_results().is_empty(),
+        !results.is_empty(),
         "canary needs a code execution result to check"
     );
     assert_no_unknown_steps(&response, "code execution interaction");
+    // `CodeExecutionOutput` reads both forms the bindings allow, but the
+    // record and guides say the API sends the string (2026-11-07).
+    assert!(
+        results.iter().all(|r| r.result.as_text().is_some()),
+        "the API returned a code execution result in the list form: {results:?}\n\
+         Action required: update Code execution in docs/ENUM_WIRE_FORMATS.md, \
+         Tools in docs/INTERACTIONS_API_GAP.md and docs/BUILT_IN_TOOLS.md"
+    );
 }
 
 /// Google Search returns its own call and result step types.

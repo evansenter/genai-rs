@@ -235,7 +235,11 @@ from here rather than repeated.
   allow, and a plot or file the code makes arrives in the next
   `model_output` step (2026-11-07; the shapes are under Code execution in
   `docs/ENUM_WIRE_FORMATS.md`). A list-form result sent back in stateless
-  history is accepted, and the model reads it (2026-11-07).
+  history is accepted (`200`), but the model does not see its content:
+  asked what a random-number program printed, `gemini-3.8-flash` and
+  `gemini-3.5-flash` (served as `gemini-3.6-flash`) answered that no output
+  was visible, while on `gemini-3.8-flash` the same value in the string form
+  was read back exactly (2026-11-07).
 
 ### Agents and environments
 
@@ -494,7 +498,7 @@ two Files entries below listed in its `ALLOWED`.
 
 | Surface | Where | Live result |
 |---|---|---|
-| `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files, on create, stored `GET` and stream; generated files come in the next `model_output` step. The list form is accepted back in history. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
+| `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files; a non-empty output read the same through the stored `GET` and arrived whole in one stream delta. Generated files come in the next `model_output` step. The list form is accepted back in history, but its content does not reach the model. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
 | `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text }` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
 | `gemini-3.5-transcribe` in the `Model` literal | `DEFAULT_TRANSCRIPTION_MODEL` | The model on which `transcription_config` takes effect, and on which `word_info` annotations were first seen. See Models above |
 | `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); a unit test holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back. See Requests above |

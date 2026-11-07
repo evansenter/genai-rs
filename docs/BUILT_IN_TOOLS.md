@@ -159,6 +159,8 @@ Code execution appears in `response.steps` as `Step::CodeExecutionCall { id, lan
 `result` is a `CodeExecutionOutput`: the program's output as a string, which
 is what the Gemini API sends, or as content blocks, which the bindings also
 allow. `result.text()` reads either form as text, and `Display` prints it.
+To replay a result in stateless history, use the string form: the API
+accepts the list form there but does not show its content to the model.
 A plot or file the code makes is not in `result`: it arrives as an image or
 text block in the `model_output` step that follows (see Code execution in
 [ENUM_WIRE_FORMATS.md](ENUM_WIRE_FORMATS.md#code-execution)).

@@ -670,7 +670,9 @@ fn test_accumulator_concatenates_undecodable_base64_as_text() {
 }
 
 /// The live stream (2026-11-07): `step.start` carries `call_id` and an empty
-/// `signature`, and one delta carries the whole output as a string.
+/// `signature`, and one delta carries the whole output as a string (up to
+/// the 31,559 characters probed). Two fragments here check that the
+/// accumulator appends rather than replaces, should the API split one.
 #[test]
 fn code_execution_result_deltas_append_to_the_string_form() {
     let start: Step = serde_json::from_value(json!({

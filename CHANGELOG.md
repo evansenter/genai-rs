@@ -264,8 +264,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a list-form result no longer turns the step into `Step::Unknown`.
   `CodeExecutionResultInfo::result` and
   `InteractionResponse::successful_code_output()` now give a
-  `&CodeExecutionOutput`. The Gemini API still sends the string (verified
-  live 2026-11-07). Migration: `result.text()` reads either form as text (a
+  `&CodeExecutionOutput`. The Gemini API still sends the string, and it
+  accepts the list form in replayed history without showing its content to
+  the model, so replay the string form (verified live 2026-11-07). Migration: `result.text()` reads either form as text (a
   `Cow<str>`), `as_text()` returns the string form, and `Display` prints the
   text, so `println!("{}", r.result)` is unchanged; build one with
   `"...".into()` or `vec![Content::text("...")].into()`.

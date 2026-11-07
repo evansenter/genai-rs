@@ -1201,9 +1201,10 @@ were before #491).
 **Context.** google-genai 3.0.0 types `CodeExecutionResultStep.result` as
 `Union[List[Content], str]`; the delta's `result` stays a string. The
 Gemini API sent the string on every run probed on 2026-11-07, plots and
-files included (those arrive in the next `model_output` step), and accepts
-the list form back in history. With `result: String`, a list-form result
-would have turned the whole step into `Step::Unknown`.
+files included (those arrive in the next `model_output` step). It accepts
+the list form back in history, but the model does not see that content.
+With `result: String`, a list-form result would have turned the whole step
+into `Step::Unknown`.
 
 **Decision.** A new two-arm enum, `CodeExecutionOutput { Text, Contents }`,
 for the step's `result`, written back in the form it came in. Not

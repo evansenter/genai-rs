@@ -866,17 +866,25 @@ verification.
 `result` is a union in the google-genai 3.0.0 bindings: the output as a
 string, or a list of content blocks. `CodeExecutionOutput` reads both and
 writes each back in the form it came in. The Gemini API sent the string on
-every run on 2026-11-07 (`gemini-3.8-flash` and `gemini-3.5-flash`: a plain
-run, a matplotlib plot, and a run that wrote a CSV and saved a chart), in
-the create response, the stored `GET` and the stream alike. What a run
-makes is not in `result`: the plot arrived as an `image` block
-(`image/png`) in the next `model_output` step with `result` empty, and the
-CSV run's step held the saved chart's image and the CSV as a `text` block.
-Streamed, `step.start` carries `call_id` and `signature: ""`, then one
-`code_execution_result` delta carries `result` as a string and `is_error`;
-the delta's `result` is a string in the bindings too. Whether the API takes
-the list form back in history is under Tools in
-`docs/INTERACTIONS_API_GAP.md`.
+every run probed on 2026-11-07 (`gemini-3.8-flash`; the plot also on
+`gemini-3.5-flash`, which the response names `gemini-3.6-flash`):
+
+| Run | Read through | `result` |
+|---|---|---|
+| A plain run (stdout) | create | the stdout |
+| A matplotlib plot | create, stored `GET`, stream | `""` |
+| A run that printed a CSV and saved a chart | create | the printed CSV |
+| A run printing 2**200 and 40 Fibonacci numbers (272 chars) | stream, stored `GET` | the stdout |
+| A run printing 1,500 lines (31,559 chars) | stream | the stdout |
+
+What a run makes is not in `result`: the plot arrived as an `image` block
+(`image/png`) in the next `model_output` step, and the CSV run's next step
+held the saved chart's image and the CSV as a `text` block. Streamed,
+`step.start` carries `call_id` and `signature: ""`, then a single
+`code_execution_result` delta carries the whole `result` as a string, with
+`is_error`; the 31,559-character output was not split. The delta's `result`
+is a string in the bindings too. What the API does with the list form sent
+back in history is under Tools in `docs/INTERACTIONS_API_GAP.md`.
 
 `CodeExecutionLanguage` is lowercase `"python"` in
 `code_execution_call.arguments.language`. `"PYTHON"` (pre-revision) now

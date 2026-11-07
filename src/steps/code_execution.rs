@@ -12,8 +12,11 @@ use crate::content::Content;
 /// The wire format is a union (google-genai 3.0.0): the program's output as
 /// a plain string, or a list of content blocks. Both forms serialize back
 /// exactly as they arrived, so replayed history keeps the form the API sent.
-/// The Gemini API's current form is recorded under Code execution in
-/// `docs/ENUM_WIRE_FORMATS.md`.
+///
+/// The Gemini API sends the string form (recorded under Code execution in
+/// `docs/ENUM_WIRE_FORMATS.md`). It accepts the list form in replayed
+/// history but does not show that content to the model, so a result built
+/// for history should use the string form (`"...".into()`).
 ///
 /// [`text`](Self::text) reads either form as text, and `Display` prints it.
 ///
@@ -39,7 +42,8 @@ pub enum CodeExecutionOutput {
     /// The output as a string: stdout on success, the error on failure.
     Text(String),
     /// The output as content blocks. An unrecognized block is kept as
-    /// [`Content::Unknown`].
+    /// [`Content::Unknown`]. Replayed in history, this form's content does
+    /// not reach the model on the Gemini API.
     Contents(Vec<Content>),
 }
 
@@ -127,6 +131,8 @@ impl From<&str> for CodeExecutionOutput {
 }
 
 impl From<Vec<Content>> for CodeExecutionOutput {
+    /// The list form. The Gemini API does not show it to the model when it
+    /// is replayed in history; see the [type docs](CodeExecutionOutput).
     fn from(contents: Vec<Content>) -> Self {
         Self::Contents(contents)
     }
