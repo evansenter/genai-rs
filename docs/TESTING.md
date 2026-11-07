@@ -336,8 +336,9 @@ nextest makes, and never sees one inside the test. When a known model or
 server failure has a cause the test controls, remove it: send the tools a
 follow-up turn needs, since they are not carried over, or a request shape
 the server handles, found by live probes and recorded with its numbers in
-the [gap tracker](INTERACTIONS_API_GAP.md) (the url_context test's
-`thinking_level: "low"`). Otherwise let the test fail and nextest retry it.
+the [gap tracker](INTERACTIONS_API_GAP.md) (the url_context test's low
+thinking and temperature 0). Otherwise let the test fail and nextest
+retry it.
 
 The rolling report lists retried tests and examples beside failed ones,
 with the week's rate: tests that passed only on a retry, over live test

@@ -1174,16 +1174,17 @@ mod structured_output {
         );
     }
 
-    /// url_context and a response schema in one request, at
-    /// `ThinkingLevel::Low`.
+    /// url_context and a response schema in one request, at low thinking
+    /// and temperature 0.
     ///
     /// This pair hits a server bug: the model fetches the page again and
     /// again until the API stops it with `400 too_many_tool_calls` (60 URL
-    /// context calls, after about two minutes). It looped in 31 of 69
-    /// requests at the default thinking level and 15 of 20 at `high`, but
-    /// in 6 of 169 at `low` (2026-11-07; docs/INTERACTIONS_API_GAP.md,
+    /// context calls, after about two minutes). On 2026-11-07 it looped in
+    /// 69 of 129 requests at the default settings, 10 of 243 at `low`
+    /// thinking, and 1 of 215 at `low` with temperature 0; in one batch
+    /// that alternated them, 38, 4 and 1 of 60 (docs/INTERACTIONS_API_GAP.md,
     /// "url_context loops under a response schema"). So the request sets
-    /// `low` and is sent once: a loop fails the test, naming the bug, and
+    /// both and is sent once: a loop fails the test, naming the bug, and
     /// the retry nextest gives it is counted by the flakiness report.
     #[tokio::test]
     #[ignore = "Requires API key"]
@@ -1207,8 +1208,14 @@ mod structured_output {
             "required": ["title", "description"]
         });
 
+        // `temperature` is deprecated in the bindings but still accepted.
+        let config = GenerationConfig {
+            thinking_level: Some(ThinkingLevel::Low),
+            temperature: Some(0.0),
+            ..Default::default()
+        };
         let request = async {
-            retry_request!([client, schema] => {
+            retry_request!([client, schema, config] => {
                 interaction_builder(&client)
                     .with_text(format!(
                         "Analyze the page at {} and extract metadata.",
@@ -1216,7 +1223,8 @@ mod structured_output {
                     ))
                     .with_url_context()
                     .with_response_format(schema)
-                    .with_thinking_level(ThinkingLevel::Low)
+                    .with_generation_config(config)
+                    .with_store_disabled()
                     .create()
                     .await
             })
@@ -1226,7 +1234,7 @@ mod structured_output {
             .unwrap_or_else(|_| {
                 panic!(
                     "no answer within {LOOP_BOUND:?}: the server's url_context loop under a \
-                     response schema (docs/INTERACTIONS_API_GAP.md), rare at low thinking"
+                     response schema (docs/INTERACTIONS_API_GAP.md), rare at these settings"
                 )
             });
         let Some(response) = tool_response(result, "URL context with structured output") else {
