@@ -452,4 +452,21 @@ mod doc_tests {
     mod testing {}
     #[doc = include_str!("../docs/THINKING_MODE.md")]
     mod thinking_mode {}
+
+    /// `FunctionDeclaration::new` and `FunctionParameters::new` are
+    /// crate-private: `#[tool]` reaches them through `__private`, and a
+    /// caller builds a declaration with `FunctionDeclaration::builder`.
+    /// A doctest rather than a trybuild fixture, which would pin rustc's
+    /// text for a note that points into this crate's source and a help
+    /// line that names a trait from the dependency graph.
+    ///
+    /// ```compile_fail,E0624
+    /// let _ = genai_rs::FunctionParameters::new("object", Default::default(), Vec::new());
+    /// ```
+    ///
+    /// ```compile_fail,E0624
+    /// let built = genai_rs::FunctionDeclaration::builder("name").build();
+    /// let _ = genai_rs::FunctionDeclaration::new("name", "", built.parameters().clone());
+    /// ```
+    mod private_function_constructors {}
 }
