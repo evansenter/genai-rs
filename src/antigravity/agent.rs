@@ -72,6 +72,13 @@ pub struct AntigravityAgent {
     /// idle check could deliver *after* the new turn consumed the flag,
     /// injecting its message into the user's turn (see [`triggers`]).
     pub(super) turn_sync: Arc<tokio::sync::Mutex<()>>,
+    /// `true` from the moment a turn starts until this client sees the
+    /// harness end it (its `Finished`, or a timeout's halt-and-drain). A
+    /// turn abandoned before that, by a dropped `chat` future or
+    /// `send_streaming` stream, leaves it set, and the next
+    /// [`begin_turn`](Self::begin_turn) halts and drains the harness's
+    /// still-running turn before sending its own input.
+    pub(super) turn_unfinished: bool,
     /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
     /// aborted on shutdown and on drop.
     pub(super) trigger_tasks: triggers::TriggerTasks,
@@ -203,6 +210,23 @@ impl AntigravityAgent {
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
     ///
+    /// # Cancellation
+    ///
+    /// Dropping the future before it resolves (an outer
+    /// `tokio::time::timeout`, a losing `select!` branch) abandons the turn.
+    /// A custom tool it was running is aborted, as at the turn timeout, and
+    /// a hook it was waiting on runs to completion with its answer
+    /// discarded. The harness is still inside the turn, waiting on an answer
+    /// that will not come or still working. The agent records that the turn
+    /// never ended, and the next `chat` or
+    /// [`send_streaming`](Self::send_streaming) halts it and discards its
+    /// events before sending its own message (half a second when nothing is
+    /// left running, five seconds at most), so that call gets its own
+    /// reply. A turn that failed is halted the same way. To stop the
+    /// harness at once instead, or to keep the turn's partial output,
+    /// cancel through [`cancel_handle`](Self::cancel_handle) rather than
+    /// dropping the future.
+    ///
     /// # Errors
     ///
     /// [`AntigravityError::Config`] for an empty [`Prompt`];
@@ -244,6 +268,16 @@ impl AntigravityAgent {
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
+    ///
+    /// # Cancellation
+    ///
+    /// Dropping the stream before [`AgentEvent::Finished`] abandons the
+    /// turn, as dropping a [`chat`](Self::chat) future does: the next `chat`
+    /// or `send_streaming` halts the harness's still-running turn and
+    /// discards its events before sending its own message. To end the turn
+    /// early and keep reading its partial output, use
+    /// [`cancel_handle`](Self::cancel_handle) and read the stream to its
+    /// end instead.
     ///
     /// # Errors
     ///
@@ -363,6 +397,7 @@ impl AntigravityAgent {
             let _sync = self.turn_sync.lock().await;
             TurnGuard::begin(&self.idle)
         };
+        self.turn_unfinished = true;
         let mut turn = TurnState::new(self.turn_timeout, Some(guard));
         self.process_event(first, &mut turn).await?;
         loop {
@@ -558,15 +593,18 @@ impl AntigravityAgent {
             // hung one would otherwise hold the turn past its budget.
             let deadline = turn.deadline;
             let step = self.receive_and_process(turn);
-            match deadline {
+            let result = match deadline {
                 Some(deadline) => match tokio::time::timeout_at(deadline, step).await {
-                    Ok(result) => result?,
+                    Ok(result) => result,
                     Err(_) => {
                         // The harness is still driving this turn. Without a
                         // halt, its remaining events (including its terminal
                         // trajectory-idle) would be consumed by the *next*
-                        // turn and desync every turn after it.
-                        self.halt_and_drain("recovering from a turn timeout").await;
+                        // turn and desync every turn after it. A drain that
+                        // ran out of budget leaves the turn unfinished, so
+                        // the next turn halts and drains again.
+                        let drained = self.halt_and_drain("recovering from a turn timeout").await;
+                        self.turn_unfinished = !drained;
                         let stderr = self.harness.stderr_tail().await;
                         return Err(AntigravityError::Timeout {
                             operation: turn.stall_diagnosis(&stderr, self.harness.version()),
@@ -574,8 +612,16 @@ impl AntigravityAgent {
                         });
                     }
                 },
-                None => step.await?,
+                None => step.await,
+            };
+            // Only a completed turn counts as ended. An error leaves the
+            // flag set even when the harness did end the turn: the next
+            // turn's halt is then a no-op, and an error that left the
+            // harness mid-turn is drained.
+            if turn.finished {
+                self.turn_unfinished = false;
             }
+            result?;
         }
     }
 
@@ -592,8 +638,10 @@ impl AntigravityAgent {
     }
 
     /// Marks the agent busy and, when a trigger delivered since the last
-    /// client-driven turn, halts and drains the trigger-initiated harness
-    /// turn. Returns the guard that flips the agent back to idle on drop.
+    /// client-driven turn or the last turn never ended (it was abandoned
+    /// mid-flight, or failed), halts and drains the harness's turn. Returns
+    /// the guard that flips the agent back to idle on drop, with the new
+    /// turn marked unfinished until its end is seen.
     ///
     /// Invariant (shared with [`triggers::spawn_trigger_task`]): flipping
     /// the idle flag and consuming `trigger_fired` happen under
@@ -614,16 +662,23 @@ impl AntigravityAgent {
         };
         // Drain outside the critical section: the agent is already marked
         // busy, so trigger tasks defer and nothing new can fire meanwhile.
-        if trigger_fired {
+        // The unfinished flag stays set across the drain, so a turn
+        // abandoned while draining is drained again by the next one.
+        if self.turn_unfinished {
+            self.halt_and_drain("discarding an abandoned or failed turn")
+                .await;
+        } else if trigger_fired {
             self.halt_and_drain("discarding a trigger-initiated turn")
                 .await;
         }
+        self.turn_unfinished = true;
         guard
     }
 
     /// Best-effort recovery when the harness may be driving (or have
     /// finished) a turn whose events nobody will consume — a turn that hit
-    /// its per-turn timeout, or one started by an automated trigger.
+    /// its per-turn timeout, one its caller abandoned, or one started by an
+    /// automated trigger.
     ///
     /// Sends a halt, then drains events into a throwaway state — answering
     /// protocol-required requests (confirmations, hooks) so the harness
@@ -631,11 +686,14 @@ impl AntigravityAgent {
     /// stays silent for [`HALT_DRAIN_SILENCE`] or [`HALT_DRAIN_BUDGET`]
     /// runs out. Stale-turn errors (including the halt's own cancellation)
     /// are logged and swallowed; only transport health matters here.
-    async fn halt_and_drain(&mut self, why: &str) {
+    ///
+    /// Returns whether the stream went silent: `false` when the budget ran
+    /// out or the transport failed first.
+    async fn halt_and_drain(&mut self, why: &str) -> bool {
         tracing::debug!("Halting and draining the harness turn ({why}).");
         if let Err(e) = self.session.send(&InputEvent::HaltRequest(true)).await {
             tracing::warn!("Failed to send halt request while {why}: {e}");
-            return;
+            return false;
         }
         let mut state = TurnState::draining();
         let deadline = tokio::time::Instant::now() + HALT_DRAIN_BUDGET;
@@ -651,8 +709,9 @@ impl AntigravityAgent {
                             "Drain budget exhausted while {why}; the next turn may still \
                              observe stale events."
                         );
+                        return false;
                     }
-                    return;
+                    return true;
                 }
                 Ok(Ok(Some(event))) => {
                     // Bounded like the wait: answering a request can run a
@@ -665,7 +724,7 @@ impl AntigravityAgent {
                             "Drain budget exhausted while answering a harness request ({why}); \
                              the next turn may still observe stale events."
                         );
-                        return;
+                        return false;
                     };
                     match processed {
                         Ok(()) => state.queue.clear(),
@@ -678,17 +737,17 @@ impl AntigravityAgent {
                         }
                         Err(e) => {
                             tracing::warn!("Error while draining stale turn ({why}): {e}");
-                            return;
+                            return false;
                         }
                     }
                 }
                 Ok(Ok(None)) => {
                     tracing::warn!("Harness closed the connection while {why}.");
-                    return;
+                    return false;
                 }
                 Ok(Err(e)) => {
                     tracing::warn!("Transport error while draining stale turn ({why}): {e}");
-                    return;
+                    return false;
                 }
             }
         }
@@ -697,8 +756,10 @@ impl AntigravityAgent {
 
 /// RAII marker for "a turn is being driven": construction flips the
 /// agent's idle flag to busy, drop (turn completion, error, timeout, or a
-/// dropped mid-turn stream) flips it back to idle, releasing any deferred
-/// trigger deliveries.
+/// dropped mid-turn `chat` future or stream) flips it back to idle,
+/// releasing any deferred trigger deliveries. An abandoned turn may still
+/// be running on the harness: `turn_unfinished` tells the next
+/// [`begin_turn`](AntigravityAgent::begin_turn) to halt it.
 pub(super) struct TurnGuard {
     idle: Arc<tokio::sync::watch::Sender<bool>>,
 }

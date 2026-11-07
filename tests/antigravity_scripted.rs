@@ -105,6 +105,8 @@ fn function_response_text(fake: &FakeGemini, n: usize) -> String {
 }
 
 // Option, hook, policy and trigger tests, by feature (#493).
+#[path = "antigravity_scripted/cancel.rs"]
+mod cancel;
 #[path = "antigravity_scripted/hooks.rs"]
 mod hooks;
 #[path = "antigravity_scripted/options.rs"]
