@@ -424,3 +424,53 @@ async fn test_on_file_change_skips_a_poll_whose_snapshot_failed() {
     assert!(FLAKY_SNAPSHOTS.load(std::sync::atomic::Ordering::SeqCst) >= 5);
     handle.abort();
 }
+
+/// Calls to [`late_snapshot`].
+static LATE_SNAPSHOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A watched tree as a script: unreadable when the baseline is taken, then
+/// `a.txt`, with `b.txt` added from the third call.
+fn late_snapshot(_: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
+    let call = LATE_SNAPSHOTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut files = BTreeMap::from([(PathBuf::from("a.txt"), (None, 1))]);
+    match call {
+        0 => return None,
+        1 => {}
+        _ => {
+            files.insert(PathBuf::from("b.txt"), (None, 1));
+        }
+    }
+    Some(files)
+}
+
+#[tokio::test]
+async fn test_on_file_change_takes_its_baseline_once_the_path_reads() {
+    // An unreadable baseline used to read as an empty tree, so the first
+    // poll that could read the path reported every file in it added.
+    let (_idle_tx, idle_rx) = watch::channel(true);
+    let (context, mut rx) = observable_context(idle_rx);
+    let trigger = watch_files(
+        PathBuf::from("/watched"),
+        Duration::from_millis(10),
+        |changes| {
+            Some(
+                changes
+                    .iter()
+                    .map(|c| format!("{:?} {}", c.kind, c.path.display()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        },
+        late_snapshot,
+    );
+    let handle = tokio::spawn(trigger(context));
+    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("a message within 5s");
+    assert_eq!(
+        message.as_deref(),
+        Some("Added b.txt"),
+        "the first readable snapshot is the baseline, not a batch of additions"
+    );
+    handle.abort();
+}

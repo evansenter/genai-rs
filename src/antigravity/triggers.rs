@@ -341,7 +341,9 @@ const IGNORED_DIRS: &[&str] = &[
 /// The baseline is the state of `path` when `on_file_change` is called, so
 /// a change made during `spawn()` or just after it is reported, with no
 /// wait for the watch to start. Taking it reads the tree once, on the
-/// calling thread.
+/// calling thread. If `path` exists but cannot be read then, the first
+/// snapshot that reads it becomes the baseline instead, and is not
+/// reported.
 pub fn on_file_change(
     path: impl Into<PathBuf>,
     poll_interval: Duration,
@@ -360,9 +362,11 @@ fn watch_files(
     on_change: impl Fn(&[FileChange]) -> Option<String> + Send + Sync + 'static,
     take_snapshot: Snapshotter,
 ) -> impl FnOnce(TriggerContext) -> BoxFuture<Result<(), AntigravityError>> + Send + 'static {
-    // An unreadable path starts empty: once it reads again, its files are
-    // reported added.
-    let baseline = take_snapshot(&path).unwrap_or_default();
+    // `None` when the path exists but could not be read: the first
+    // snapshot that reads it becomes the baseline, unreported, rather than
+    // every file in it reading as added. (A missing path is an empty
+    // baseline, so files created in it are reported.)
+    let baseline = take_snapshot(&path);
     move |context: TriggerContext| {
         Box::pin(async move {
             // The state the last batch was reported against.
@@ -380,8 +384,12 @@ fn watch_files(
                 let Some(now) = snapshot_of(&path, take_snapshot).await else {
                     continue;
                 };
-                let changes = diff_snapshots(&reported, &now);
-                reported = now;
+                // With no baseline yet, this snapshot becomes it.
+                let changes = match &reported {
+                    Some(before) => diff_snapshots(before, &now),
+                    None => Vec::new(),
+                };
+                reported = Some(now);
                 if changes.is_empty() {
                     continue;
                 }
