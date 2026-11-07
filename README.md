@@ -64,7 +64,7 @@ pool), rather than building one per request.
 | URL Context | `with_url_context()` | Web page analysis |
 | Google Maps | `with_google_maps()` | Places and geographic grounding |
 | File Search | `add_tool(FileSearchConfig::new(stores))` | Semantic retrieval over your file search stores (`client.file_search_stores()`) |
-| Computer Use | `add_tool(ComputerUseConfig::new())` | Browser/desktop actions your code executes (allowlisted keys) |
+| Computer Use | `add_tool(ComputerUseConfig::new())` | Browser/desktop actions your code executes |
 | MCP Servers | `add_tool(McpServerConfig::new(name, url))` | Model Context Protocol tools |
 | Retrieval | `add_tool(RetrievalConfig::new()...)` | Vertex AI Search / RAG stores (Vertex-only, see below) |
 
