@@ -104,6 +104,21 @@ printf '\ndef new_helper():\n    pass\n' >> "$PKG/models.py"
 run_dump "$WORK/unexported"
 check_passed "unexported function: not an option"
 
+# --- A name a package __init__ binds itself (an alias or a constant) and
+#     exports. The __init__ defines no function or class, so it sits in
+#     neither SPEC nor MODULE_SKIP; the name it binds is still SDK surface.
+fresh init_alias
+printf '\nDEFAULT_POLICY = int\n' >> "$PKG/__init__.py"
+python3 -I - "$PKG/__init__.py" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+path.write_text(text.replace("'beta']", "'beta', 'DEFAULT_POLICY']", 1))
+PY
+run_dump "$WORK/init_alias"
+check_refused "alias bound in a package __init__: refused" \
+  "exported name bound in a module neither SPEC nor MODULE_SKIP reads: DEFAULT_POLICY (__init__.py, exported by __init__.py)"
+
 # --- A name a package re-exports (no __all__) from a module MODULE_SKIP skips.
 fresh reexported
 printf '\nclass NewResult:\n    pass\n' >> "$PKG/connections/local/types.py"

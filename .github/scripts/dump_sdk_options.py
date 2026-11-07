@@ -23,7 +23,9 @@ Nothing the SDK exposes may go unplaced. The dump fails on:
   nor CLASS_SKIP (outputs, errors, SDK plumbing);
 - a name the SDK exports (a module's `__all__`, a package `__init__`'s
   re-exports, or an `@beta` export) that is in neither SPEC nor CLASS_SKIP,
-  or, for a module MODULE_SKIP skips, EXPORT_SKIP.
+  or, for a module MODULE_SKIP skips, EXPORT_SKIP; a package `__init__`
+  that only re-exports may sit in neither table, but a name it binds itself
+  and exports (an alias, a constant) fails.
 
 The wheel is untrusted input, so nothing from it is imported or executed:
 the sources are read with `ast`, as `dump_harness_descriptor.py` reads the
@@ -547,6 +549,14 @@ def main():
                 if source not in EXPORT_SKIP.get(home, set()):
                     problems.append("exported name in neither SPEC nor EXPORT_SKIP: "
                                     "%s (%s, exported by %s)" % (source, home, exporter))
+            else:
+                # Bound in a module neither table reads: a package
+                # `__init__` that defines no function or class, so the
+                # module check above let it through, but that binds this
+                # name itself (an alias or a constant) and exports it.
+                problems.append("exported name bound in a module neither SPEC nor "
+                                "MODULE_SKIP reads: %s (%s, exported by %s)"
+                                % (source, home, exporter))
 
     keys -= SKIP
     if len(keys) < 50:
