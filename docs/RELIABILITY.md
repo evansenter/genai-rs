@@ -112,7 +112,8 @@ up the *same* generation from the last `event_id` with
 
 A stream whose body ends before `interaction.completed` or an `error` event
 ends with `GenaiError::StreamInterrupted`, however the connection cut it
-off:
+off (the one exception, an unrecognized last event, is
+[below](#an-unrecognized-last-event)):
 
 | How the body ended | `source` |
 |--------------------|----------|
@@ -126,6 +127,21 @@ request, so the same request succeeds when re-sent, just as a non-streaming
 of them as permanent would make a retry loop handle the same event two ways.
 Retrying a foreground stream is a new generation: discard the partial output
 you showed first. For a background interaction, resume instead.
+
+#### An unrecognized last event
+
+A body that ends right after an event this crate doesn't recognize
+(`StreamChunk::Unknown`) is not a cut-off for `create_stream()`,
+`execute_stream()`, `interactions().stream()` or `resume_stream()`: the
+stream ends cleanly, with a `warn!`. The event may be a terminal event the
+API added after this release (Evergreen), and an error there would fail
+every stream once it did. Check `is_unknown()` on the last event to tell
+this end from `Completed`.
+
+`create_stream_with_auto_functions()` can't do that: it needs the round's
+`Completed` response to run the round's calls and go on. A round that ends
+this way fails with `StreamInterrupted` (`source` is `None`), retryable as
+a cut-off is, since nothing says the request was at fault.
 
 A stream stopped by the request's own per-chunk limit
 (`InteractionBuilder::with_timeout()` on `create_stream()`) ends with

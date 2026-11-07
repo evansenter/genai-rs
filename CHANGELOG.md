@@ -397,6 +397,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry loop built on `is_retryable()` now also retries a clean early close.
   Discard the partial output first, because a foreground retry is a new
   generation.
+- **Breaking: an auto-function stream round that ends on an event this crate
+  doesn't recognize fails with the retryable `StreamInterrupted`, not
+  `MalformedResponse`.** The plain stream ends such a body cleanly, since
+  the event may be a new terminal one (Evergreen), but
+  `create_stream_with_auto_functions()` needs the round's `Completed` to go
+  on. It reported a permanent `MalformedResponse("Stream ended without
+  Complete event")`, so a retry loop treated the same end of a body two ways
+  depending on which stream read it. Migration: match
+  `StreamInterrupted { source: None, .. }` where you matched that
+  `MalformedResponse`; a retry loop built on `is_retryable()` now retries
+  it. See "An unrecognized last event" in `docs/RELIABILITY.md`.
 - **Breaking: `Client::new` and `ClientBuilder::build` set a 30 s connect
   timeout.** `DEFAULT_CONNECT_TIMEOUT` covers DNS, TCP and TLS. Before,
   there was none, so a black-holed route waited for the OS's timeout (about

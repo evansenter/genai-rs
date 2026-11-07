@@ -313,12 +313,16 @@ impl<'a> InteractionBuilder<'a> {
     ///   a partial result. Use `previous_interaction_id` to continue.
     /// - The server sends an error event mid-stream ([`GenaiError::Stream`])
     /// - A round's stream is cut off before its `Completed` event
-    ///   ([`GenaiError::StreamInterrupted`]). After a round's `Completed`,
-    ///   the rest of its body is read and discarded, errors included and
-    ///   outside the per-chunk timeout, so a late error can't fail a
-    ///   finished round. That read ends before the next round's request is
-    ///   sent, and before this stream ends, since the server stores an
-    ///   interaction only once its stream is done.
+    ///   ([`GenaiError::StreamInterrupted`], retryable). So does a round
+    ///   whose stream ends cleanly on an event this crate doesn't
+    ///   recognize: [`create_stream()`](Self::create_stream) ends such a
+    ///   stream without an error, since the event may be a new terminal
+    ///   one, but the loop needs the round's `Completed` response to go on.
+    ///   After a round's `Completed`, the rest of its body is read and
+    ///   discarded, errors included and outside the per-chunk timeout, so a
+    ///   late error can't fail a finished round. That read ends before the
+    ///   next round's request is sent, and before this stream ends, since
+    ///   the server stores an interaction only once its stream is done.
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
     ///
     /// The stream owns a clone of the client, so it can be stored or
@@ -384,8 +388,17 @@ impl<'a> InteractionBuilder<'a> {
                         _ => {}
                     }
                 }
-                let response = completed.ok_or_else(|| {
-                    GenaiError::MalformedResponse("Stream ended without Complete event".to_string())
+                // A cut-off already failed above, so the round's stream
+                // ended cleanly on an event this crate doesn't recognize
+                // (Evergreen: it may be a new terminal event). The plain
+                // stream lets that pass, but the loop can't go on without
+                // the round's response. Nothing says the request was at
+                // fault, so the round ends as a cut-off one does: retryable.
+                let response = completed.ok_or_else(|| GenaiError::StreamInterrupted {
+                    message: "the round's stream ended on an unrecognized event, with no \
+                              interaction.completed to run the loop on"
+                        .to_string(),
+                    source: None,
                 })?;
 
                 match state.read_round(response)? {

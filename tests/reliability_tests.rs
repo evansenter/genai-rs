@@ -238,6 +238,52 @@ async fn transport_failure_mid_body_is_interrupted_with_its_source() {
     assert!(err.is_retryable());
 }
 
+/// The one exception: a body that ends right after an event this crate
+/// doesn't recognize, which may be a new terminal event (Evergreen). The
+/// plain stream ends cleanly. The auto-function loop can't go on without
+/// the round's `Completed`, so that round ends as a cut-off one does,
+/// retryable; it used to be a permanent `MalformedResponse`.
+#[tokio::test]
+async fn stream_ending_on_an_unknown_event_is_clean_but_interrupts_an_auto_function_round() {
+    let body = || {
+        Reply::sse(&[
+            &delta("a"),
+            "data: {\"event_type\":\"interaction.brand_new_end\",\"interaction\":{\"id\":\"int-1\"}}\n\n",
+        ])
+    };
+
+    let stub = Stub::replying(vec![body()]).await;
+    let events = stream(&stub).await;
+    assert!(
+        matches!(events.as_slice(), [Ok(_), Ok(last)] if last.chunk.is_unknown()),
+        "the plain stream ends cleanly: {events:?}"
+    );
+
+    let stub = Stub::replying(vec![body()]).await;
+    let events: Vec<_> = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(EchoService))
+        .create_stream_with_auto_functions()
+        .collect()
+        .await;
+    let [Ok(first), Err(err)] = events.as_slice() else {
+        panic!("expected the delta, then the error: {events:?}");
+    };
+    assert!(
+        matches!(first.chunk, AutoFunctionStreamChunk::Delta(_)),
+        "{first:?}"
+    );
+    assert!(
+        matches!(err, GenaiError::StreamInterrupted { source: None, .. }),
+        "{err:?}"
+    );
+    assert!(err.is_retryable());
+    assert_eq!(stub.requests().len(), 1, "no round after the failed one");
+}
+
 #[tokio::test]
 async fn non_sse_success_body_is_malformed_not_interrupted() {
     // A body that was never a stream (here the plain JSON interaction a
