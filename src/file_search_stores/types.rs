@@ -45,8 +45,7 @@ pub struct FileSearchStore {
     pub update_time: Option<DateTime<Utc>>,
 
     /// Embedding model used to index documents in this store, e.g.
-    /// `models/gemini-embedding-001` (the default, live 2026-11-05); set at
-    /// creation with
+    /// `models/gemini-embedding-001` (the default); set at creation with
     /// [`CreateFileSearchStoreRequest::with_embedding_model`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
@@ -55,8 +54,8 @@ pub struct FileSearchStore {
     /// store.
     ///
     /// The four counts here are protobuf int64s, sent as JSON strings
-    /// (`"1"`, live 2026-11-05); a plain number is accepted too, and each
-    /// serializes back as a string.
+    /// (`"1"`); a plain number is accepted too, and each serializes back
+    /// as a string.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -65,8 +64,8 @@ pub struct FileSearchStore {
     )]
     pub active_documents_count: Option<i64>,
 
-    /// How many documents are still being indexed. Served only while one is
-    /// (live 2026-11-05).
+    /// How many documents are still being indexed. Served only while a
+    /// document is indexing.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -76,7 +75,7 @@ pub struct FileSearchStore {
     pub pending_documents_count: Option<i64>,
 
     /// How many documents failed to index. Not seen live: a document that
-    /// cannot be indexed failed its upload instead (2026-11-05).
+    /// cannot be indexed fails its upload instead.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -182,8 +181,8 @@ pub struct FileSearchDocument {
     /// The key-value pairs attached when the document was added
     /// ([`DocumentUpload::add_custom_metadata`](super::DocumentUpload::add_custom_metadata),
     /// [`DocumentImport::add_custom_metadata`](super::DocumentImport::add_custom_metadata)),
-    /// served back in the order sent (live 2026-11-05). Empty when none were.
-    /// A malformed entry is dropped on its own.
+    /// served back in the order sent. Empty when none were. A malformed
+    /// entry is dropped on its own.
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -227,8 +226,7 @@ wire_enum! {
     /// Indexing state of a document in a file search store.
     ///
     /// Wire values are SCREAMING_CASE with a `STATE_` prefix (`STATE_PENDING`,
-    /// `STATE_ACTIVE`), which differs from the Files API's [`FileState`] —
-    /// verified live 2026-08-16.
+    /// `STATE_ACTIVE`), which differs from the Files API's [`FileState`].
     ///
     /// [`FileState`]: crate::FileState
     pub enum DocumentState {
@@ -256,8 +254,8 @@ impl DocumentState {
 /// Attach it when adding the document
 /// ([`DocumentUpload::add_custom_metadata`](super::DocumentUpload::add_custom_metadata),
 /// [`DocumentImport::add_custom_metadata`](super::DocumentImport::add_custom_metadata));
-/// it is served back on [`FileSearchDocument::custom_metadata`] (all three
-/// kinds verified live 2026-11-05).
+/// it is served back on [`FileSearchDocument::custom_metadata`], all three
+/// kinds alike.
 ///
 /// ```
 /// use genai_rs::CustomMetadata;
@@ -351,7 +349,7 @@ pub struct StringList {
 /// The only strategy is white space ([`ChunkingConfig::white_space`]). The
 /// API reads it: an unknown key is a `400 Invalid JSON payload`, and an
 /// overlap as large as the chunk or larger fails the upload or import with
-/// a 500 (live 2026-11-05), so
+/// a 500, so
 /// [`FileSearchStores::upload`](crate::FileSearchStores::upload) and
 /// [`import_file`](crate::FileSearchStores::import_file) reject one with
 /// [`GenaiError::InvalidInput`](crate::GenaiError::InvalidInput) before any
@@ -439,7 +437,7 @@ pub struct CreateFileSearchStoreRequest {
     /// The embedding model that indexes the store's documents, e.g.
     /// `models/gemini-embedding-2`. Unset, the API uses
     /// `models/gemini-embedding-001`; a model that does not exist is a
-    /// `400 INVALID_ARGUMENT` (live 2026-11-05).
+    /// `400 INVALID_ARGUMENT`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
 

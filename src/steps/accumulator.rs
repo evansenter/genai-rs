@@ -51,7 +51,8 @@ fn content_of(step: &mut Step) -> Option<&mut Vec<Content>> {
 /// Accumulates `step.start` / `step.delta` / `step.stop` events into complete
 /// [`Step`]s, so streaming consumers get a fully-populated `steps` array on
 /// the final response even when the server's `interaction.completed` payload
-/// omits it (as it did on every stream observed 2026-11-04).
+/// omits it, as it has on every stream observed (StepDelta in
+/// `docs/ENUM_WIRE_FORMATS.md`).
 #[derive(Debug, Default)]
 pub(crate) struct StepAccumulator {
     steps: std::collections::BTreeMap<usize, AccumulatedStep>,
@@ -713,8 +714,8 @@ fn same_or_unnamed<T: PartialEq>(delta: Option<&T>, block: Option<&T>) -> bool {
 /// Appends one base64 chunk to another. Each delta's data is its own
 /// base64 encoding, so text concatenation is exact only when both are whole
 /// quanta: a multiple of 4 characters, with no padding before the join.
-/// Every streamed chunk so far has been (live 2026-11-05: 243 TTS chunks,
-/// each a multiple of 4 characters with no `=`). Otherwise the
+/// Every streamed chunk observed has been (`docs/ENUM_WIRE_FORMATS.md`
+/// records a TTS stream's). Otherwise the
 /// accumulated text's last, partial or padded quantum and the chunk are
 /// decoded (padded or not), joined as bytes and encoded again, so the
 /// result stays valid base64; the whole quanta before them are untouched.

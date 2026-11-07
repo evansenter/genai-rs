@@ -202,7 +202,7 @@ pub(crate) struct UploadDocumentBody<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) display_name: Option<&'a str>,
     /// Also sent as the session's `X-Goog-Upload-Header-Content-Type`; the
-    /// body's wins when they differ (live 2026-11-05).
+    /// body's wins when they differ.
     pub(crate) mime_type: &'a str,
     #[serde(flatten)]
     pub(crate) options: &'a DocumentOptions,
@@ -316,8 +316,8 @@ pub async fn upload_to_file_search_store(
 /// reads the document back.
 ///
 /// The first answer is an unfinished operation with no document; `GET` on
-/// the operation's name reports `done` and the document's ID, bare (live
-/// 2026-11-05).
+/// the operation's name reports `done` and the document's ID, bare (File
+/// Search in `docs/ENUM_WIRE_FORMATS.md`).
 pub async fn import_file(
     ctx: &HttpContext,
     store_name: &str,
@@ -408,7 +408,7 @@ impl Operation {
     }
 
     /// The full name of the document the operation reports. An upload
-    /// reports the full name and an import the bare ID (live 2026-11-05).
+    /// reports the full name and an import the bare ID.
     fn document_name(&self, store_path: &str) -> Option<String> {
         let name = self.response.as_ref()?.get("documentName")?.as_str()?;
         if name.is_empty() {

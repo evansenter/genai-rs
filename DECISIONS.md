@@ -1165,8 +1165,10 @@ rule of their own.
 **Consequences.** The rule still matches an empty, idle environment a
 person made without sources; whether that is acceptable on the shared key
 is the owner's call when setting `JANITOR_DELETE`. On 2026-11-06 the key
-held 35 sourceless environments, all empty, 34 of them from July. A leaked
-fork, which holds its parent's files, is listed rather than deleted.
+held 35 sourceless environments, all empty, 34 of them from July, and a
+dry run would have deleted 112 environments (77 holding only fixture
+sources, and those 35) and 3 credentials. A leaked fork, which holds its
+parent's files, is listed rather than deleted.
 
 ---
 
