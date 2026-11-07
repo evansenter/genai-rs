@@ -16,8 +16,10 @@ program starts. Error responses are printed in full. For output format,
 `RUST_LOG=genai_rs::wire=debug` and programmatic capture, see
 [Logging Strategy](docs/LOGGING_STRATEGY.md).
 
-Every request sends `Api-Revision: 2026-05-20`. The server currently ignores
-the header and serves the 2026-05-20 protocol whatever value it carries, so
+Every request sends `Api-Revision: 2026-05-20`, except the second request of
+a resumable upload, which goes to the session URL the first one returned and
+carries neither the key nor the header. The server currently ignores the
+header and serves the 2026-05-20 protocol whatever value it carries, so
 changing it changes nothing.
 
 ## Errors
@@ -32,7 +34,7 @@ changing it changes nothing.
 | `GenaiError::Timeout(_)` | The request-level `with_timeout()` elapsed |
 | `GenaiError::Http(e)` with `e.is_timeout()` | A **client-level** timeout elapsed before the response headers: the 30 s default connect timeout (`e.is_connect()` too; change it with `with_connect_timeout()`), `ClientBuilder::with_timeout()` (caps every request; a request-level timeout cannot extend it) or `with_read_timeout()`; see [Timeouts](docs/RELIABILITY.md#timeouts) |
 | A connect timeout "after 30 s" in a `start_paused = true` test against a local server | Tokio's paused clock auto-advanced to the connect timer while the connect was in flight. Build the test client with `with_connect_timeout(Duration::MAX)`; see [Tests on a paused clock](docs/RELIABILITY.md#tests-on-a-paused-clock) |
-| `GenaiError::StreamInterrupted { .. }` | A stream was cut off before its terminal event: the server closed early, or the transport failed mid-body (a reset, or a client-level timeout between chunks, kept as `source`). Retryable; see [Cut-off streams](docs/RELIABILITY.md#cut-off-streams) |
+| `GenaiError::StreamInterrupted { .. }` | A stream was cut off before its terminal event: the server closed early, or the transport failed mid-body (a reset, or a client-level timeout between chunks, kept as `source`). From `create_stream_with_auto_functions()`, also a round that ended on an event this crate doesn't recognize. Retryable; see [Cut-off streams](docs/RELIABILITY.md#cut-off-streams) |
 | `GenaiError::InvalidInput(_)` before any request is sent | The builder rejected the combination (for example, no input, both model and agent, or `with_store_disabled()` with chaining or background) |
 | `Thinking level THINKING_LEVEL_MINIMAL is not supported for this model` | `DEFAULT_MODEL` rejects `ThinkingLevel::Minimal`; use `Low`, or pass a model that accepts it to `with_model()` |
 | TLS errors in minimal containers | The crate verifies against the OS trust store; install a CA bundle |

@@ -7,7 +7,7 @@ chained in any order. The request is validated and assembled when you call
 
 This page covers the conventions, how inputs compose, and the validation
 rules. For every method and its arguments, see the
-[API reference](https://docs.rs/genai-rs/latest/genai_rs/struct.InteractionBuilder.html).
+[API reference](https://docs.rs/genai-rs/latest/genai_rs/request_builder/struct.InteractionBuilder.html).
 
 ## Method naming conventions
 

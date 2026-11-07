@@ -39,7 +39,7 @@ use std::path::PathBuf;
 /// `outside_matrix_binaries_run_in_the_antigravity_job`).
 const OUTSIDE_MATRIX: &[&str] = &["antigravity_harness", "antigravity_scripted"];
 
-/// The one ignore reason for a live test (CLAUDE.md, "Test conventions").
+/// The one ignore reason for a live test (CLAUDE.md, "Tests").
 const LIVE_REASON: &str = "Requires API key";
 
 fn root() -> PathBuf {

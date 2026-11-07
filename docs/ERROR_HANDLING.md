@@ -15,7 +15,7 @@ wildcard arm.
 | `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 429 and 5xx only |
 | `Http(reqwest::Error)` | Network, connect (including the default 30 s connect timeout), TLS, or a client-level timeout before the response headers | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
-| `StreamInterrupted { message, source }` | A stream's body ended before its terminal event: the server closed early, or the transport failed mid-body (`source` holds that `reqwest::Error`) | Yes; see [Cut-off streams](RELIABILITY.md#cut-off-streams) |
+| `StreamInterrupted { message, source }` | A stream's body ended before its terminal event: the server closed early, or the transport failed mid-body (`source` holds that `reqwest::Error`). Also an auto-function round that ends on an event this crate doesn't recognize, with `source` `None` ([An unrecognized last event](RELIABILITY.md#an-unrecognized-last-event)) | Yes; see [Cut-off streams](RELIABILITY.md#cut-off-streams) |
 | `InvalidInput(String)` | The builder rejected the request before sending (for example: no input, neither or both of model and agent, or `with_store_disabled()` combined with chaining or background) | No |
 | `MalformedResponse(String)` | A 2xx response did not parse or did not have the expected shape, including a streaming response that is not `text/event-stream`, an SSE event that does not parse or is not valid UTF-8, and one that grows past 64 MiB without ending | No |
 | `PollTimeout { timeout, message }` | A `wait_until_active` (or a file search store import's wait) reached its `PollOptions` timeout; the resource may still be processing | No: wait again rather than re-send |
@@ -62,7 +62,7 @@ what Google support needs to find a specific failed request.
 ## Known transient errors
 
 `is_retryable()` covers transport errors, timeouts, 429 and 5xx. The
-integration suite also retries three error classes that `is_retryable()`
+integration suite also retries four error classes that `is_retryable()`
 deliberately leaves out, because they are matched on message text rather than
 status (`tests/common/retry.rs`, `is_transient_error`):
 
@@ -71,6 +71,7 @@ status (`tests/common/retry.rs`, `is_transient_error`):
 | `Api` whose message contains both `spanner` and `utf-8` | Google backend issue seen on stateful conversations (#60) |
 | `Api` 400 containing `invalid json syntax` | The model occasionally emits invalid JSON (structured output, or a malformed function call) |
 | `Api` 400 containing `there was a problem processing your request` | Server-side bursts that pass on re-run |
+| `Api` 400 containing `please retry the request` | The API says so itself: the model looped (`too_many_tool_calls`) or produced a broken tool call (`malformed_tool_call`) |
 
 If you want the same behavior, compose the two predicates:
 
@@ -88,6 +89,7 @@ fn should_retry(err: &GenaiError) -> bool {
                 || (*status_code == 400 && m.contains("invalid json syntax"))
                 || (*status_code == 400
                     && m.contains("there was a problem processing your request"))
+                || (*status_code == 400 && m.contains("please retry the request"))
         }
         _ => false,
     }

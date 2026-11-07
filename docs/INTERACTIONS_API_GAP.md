@@ -31,7 +31,7 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
 | 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`, and the committed snapshots are those copies, fetched 2026-11-07. They differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. Each snapshot records its URL, and the daily sweep probes both (`watch_spec_urls.sh`). This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
-| 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
+| 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
 Rank 2 disagrees with rank 1 in both directions, which is why nothing from
 the bindings is modeled until it is probed. From the 2.25.0 sweep:
@@ -493,13 +493,17 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
 
 - **Namespaced function names.** On the second user turn of a non-streamed
   chain, a declared function is called as `default_api:<name>`. The
-  auto-function loops resolve it. MCP tools run server-side appear as an
-  answered `function_call` / `function_result` pair named `<server>:<tool>`,
-  not `tool_call` steps; `pending_function_calls()` leaves them out.
-  Re-verified 2026-11-04, streamed and not: `<server>` is the declared
-  `mcp_server` name, and `mcp_calls()` reads the pairs back with server and
-  tool split (#459). A declared client function named `weather:get` was
-  accepted the same day, so the colon alone does not mark an MCP call.
+  auto-function loops resolve it. From 2026-10-01 to 2026-11-04, MCP tools
+  run server-side appeared as an answered `function_call` /
+  `function_result` pair named `<server>:<tool>`, not `tool_call` steps,
+  and `pending_function_calls()` left them out. Re-verified 2026-11-04,
+  streamed and not: `<server>` was the declared `mcp_server` name. A
+  declared client function named `weather:get` was accepted the same day,
+  so the colon alone does not mark an MCP call. Since 2026-11-05 a
+  non-streamed MCP call arrives as an `mcp_server_tool_call` step, and
+  `mcp_calls()` reads both shapes back with server and tool split (#459;
+  the shapes and their dates are under MCP identity in
+  `docs/ENUM_WIRE_FORMATS.md`).
 - **Streamed multi-turn function calling failed (server bug, fixed by
   2026-11-01).** When the user turn and the turn before it were both
   streamed, the function result was rejected with `400 Please ensure that

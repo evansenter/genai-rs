@@ -215,7 +215,10 @@ must not flake.
 
 - **Ignore reason.** A live test is `#[ignore = "Requires API key"]`, that
   exact string. `tests/ci_coverage.rs` fails if any top-level `tests/*.rs`
-  file uses another reason (`antigravity_harness` is exempt).
+  file uses another reason, except the two Antigravity suites, whose
+  key-free tests are `#[ignore = "Requires localharness binary"]`
+  (`antigravity_harness` and `antigravity_scripted`, which run in the
+  `test-antigravity` job rather than the matrix).
 - **CI matrix.** Every top-level file with a live test must be listed in
   exactly one `test-integration` group in `.github/workflows/rust.yml`.
   `ci_coverage.rs` fails on a missing binary, a binary listed twice, or a
@@ -303,8 +306,9 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 | `stored_echo(client, id, pointer)`, `assert_stored(what, sent, stored)` | Read a stored interaction back at a JSON pointer, and check it holds everything sent. The read returns a `Result`, so cancel and delete before asserting |
 | `TINY_RED_PNG_BASE64`, `TINY_BLUE_PNG_BASE64`, `TINY_WAV_BASE64`, `TINY_MP4_BASE64`, `TINY_PDF_BASE64` | Minimal valid media. The MP4 is one second: shorter clips yield no sampled frame and are rejected |
 
-`is_transient_error` matches Spanner UTF-8 errors and two 400s (`invalid json
-syntax`, `there was a problem processing your request`); see
+`is_transient_error` matches Spanner UTF-8 errors and three 400s (`invalid
+json syntax`, `there was a problem processing your request`, and any that
+says `please retry the request`); see
 [Error Handling](ERROR_HANDLING.md#known-transient-errors). A validation
 rejection still fails on the first attempt.
 

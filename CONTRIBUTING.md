@@ -77,7 +77,8 @@ sources disagree, consistently in one direction — see D-004 in
    `cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'`.
 2. **Live probe** — `curl` against `generativelanguage.googleapis.com`, or a
    test with `LOUD_WIRE=1`
-3. **Prose docs** — `ai.google.dev` and this repo's own; both lag
+3. **Prose docs** — Google's, on `aistudio.google.com` (the old
+   `ai.google.dev` URLs redirect there), and this repo's own; both lag
 
 Changes to wire format need a live probe, not a spec reading. Video
 `processing` (#419) was in the 2.18.1 bindings and in neither published doc.

@@ -148,7 +148,7 @@ Both requirements are recorded under Step in
 
 Replaying thought signatures is accepted (`test_stateless_with_thinking_function_calling`).
 These signatures are in different places from the ones the
-[`generateContent` thought-signature guide](https://ai.google.dev/gemini-api/docs/thought-signatures.md.txt)
+[`generateContent` thought-signature guide](https://aistudio.google.com/docs/thought-signatures.md)
 describes; this crate follows what the Interactions API returns.
 
 ### Inline conversations: `conversation()`
