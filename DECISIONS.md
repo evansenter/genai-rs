@@ -1195,3 +1195,28 @@ now also send a field of these configs the crate does not model yet, as
 variants, which keep no `extra` (enums are outside the guard, as `Step`'s
 were before #491).
 
+
+---
+
+## D-NEXT-WP20 — `PollOptions` raises a short interval to 10 ms rather than rejecting zero (2026-11-07)
+
+**Context.** `PollOptions::with_poll_interval(Duration::ZERO)` was taken
+as given, so every `wait_until_active` and file search store import wait
+sent each status request the moment the last one answered, until the
+deadline (120 s by default). On a paused test clock, with reads that answer
+at once, such a wait never reached its deadline at all. The fix could
+reject zero or raise it to a floor.
+
+**Decision.** Raise any interval under `PollOptions::MIN_POLL_INTERVAL`
+(10 ms), zero included, to it, in `poll_interval_or`, where every wait
+reads its interval. Rejecting needs an error path that `with_poll_interval`,
+a `const fn` returning `Self`, can't carry, so the wait itself would fail.
+For an import that is after the import request was sent, and a caller who
+retries the call imports a second document. A floor has no failure mode.
+10 ms is far below any status request's round trip, so it changes no real
+wait, and it is the shortest interval the crate's paused-clock tests use.
+
+**Consequences.** An interval of 1 to 9 ms now polls every 10 ms. The
+floor is public, so a caller can read it. It stops a zero interval, not
+fast polling in general; an interval just over 10 ms still polls about
+once per round trip.

@@ -362,6 +362,9 @@ default, polling every 2 s and 500 ms):
   request is cut off at the deadline too, so a shorter timeout fails even
   for a resource that is already active. The error then says the request
   was cut off by the wait's deadline (no request failed).
+- **The interval has a floor of 10 ms** (`PollOptions::MIN_POLL_INTERVAL`).
+  A shorter one, `Duration::ZERO` included, polls every 10 ms rather than
+  sending each status request the moment the last one answered.
 - **Transient errors are polled through.** A retryable error (a 5xx, a 429,
   a dropped connection) is logged and the wait goes on; any other error
   ends it.

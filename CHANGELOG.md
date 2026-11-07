@@ -640,6 +640,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[build]` in `.cargo/config.toml`; replace
   `#[cfg(feature = "strict-unknown")]` in your tests with
   `#[cfg(genai_strict_unknown)]`.
+- `PollOptions` polls no faster than `PollOptions::MIN_POLL_INTERVAL`
+  (10 ms): a shorter `with_poll_interval`, `Duration::ZERO` included, is
+  raised to it. A zero interval re-polled the moment each status request
+  answered, back to back until the deadline. 10 ms is far below a status
+  request's round trip, so an interval chosen on purpose is unaffected
+  (D-NEXT-WP20).
 - Every client sets TCP keepalive explicitly: a probe after 15 s idle, then
   every 15 s, failing the connection after 3 unanswered. These are reqwest
   0.13's defaults, which the crate relied on without setting, so a reqwest
