@@ -384,7 +384,7 @@ An `Unknown` whose `chunk_type` is spelled like a known one (a future event
 the parser names `created`, say) also writes `"unknown": true`, and a map
 with that marker reads back as `Unknown`, so the chunk can't turn into the
 known one on a round trip. The marker is written only on such a collision;
-maps written by 0.13.0 and earlier have none and read back as before.
+maps written before 0.14.0 have none and read back as before.
 
 ### Annotation
 
