@@ -1,0 +1,11 @@
+# Text files are stored, and checked out on every OS, with LF line endings.
+# Without this a Windows checkout follows core.autocrlf and gets CRLF, and
+# the tests that read a repository file (the docs table the stream-chunk test
+# parses, the workflow guards) failed on main's Windows legs only: twice, for
+# ten pushes the second time (#486, #504). tests/ci_workflows/ checks this
+# line is here.
+* text=auto eol=lf
+
+# Byte-exact fuzz inputs: the SSE parser's seeds carry CRLF and lone CR on
+# purpose, so no seed is ever converted.
+fuzz/seeds/** -text
