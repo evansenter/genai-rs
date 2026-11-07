@@ -149,7 +149,6 @@ bytes = { workspace = true }
 futures-util = { workspace = true }
 proptest = "1.11"
 chrono = { workspace = true }
-doc-comment = "0.3"
 regex = "1"
 backon = "1.6"
 # tests/credentials_tests.rs compares SHA-256 digests of credential values.

@@ -400,35 +400,56 @@ mod streaming_tests;
 
 #[cfg(doctest)]
 mod doc_tests {
-    use doc_comment::doc_comment;
-
     // Root-level documentation
-    doc_comment!(include_str!("../README.md"));
-    doc_comment!(include_str!("../TROUBLESHOOTING.md"));
-    doc_comment!(include_str!("../CONTRIBUTING.md"));
-    doc_comment!(include_str!("../DECISIONS.md"));
-    doc_comment!(include_str!("../SECURITY.md"));
+    #[doc = include_str!("../README.md")]
+    mod readme {}
+    #[doc = include_str!("../TROUBLESHOOTING.md")]
+    mod troubleshooting {}
+    #[doc = include_str!("../CONTRIBUTING.md")]
+    mod contributing {}
+    #[doc = include_str!("../DECISIONS.md")]
+    mod decisions {}
+    #[doc = include_str!("../SECURITY.md")]
+    mod security {}
 
     // Detailed guides in docs/
-    doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
+    #[doc = include_str!("../docs/AGENTS_AND_BACKGROUND.md")]
+    mod agents_and_background {}
     // ANTIGRAVITY.md's blocks use `genai_rs::antigravity`, so they compile
     // only with the feature: the all-features doctest job runs them.
     #[cfg(feature = "antigravity")]
-    doc_comment!(include_str!("../docs/ANTIGRAVITY.md"));
-    doc_comment!(include_str!("../docs/BUILDER_API.md"));
-    doc_comment!(include_str!("../docs/BUILT_IN_TOOLS.md"));
-    doc_comment!(include_str!("../docs/CONFIGURATION.md"));
-    doc_comment!(include_str!("../docs/CONVERSATIONS.md"));
-    doc_comment!(include_str!("../docs/ENUM_WIRE_FORMATS.md"));
-    doc_comment!(include_str!("../docs/ERROR_HANDLING.md"));
-    doc_comment!(include_str!("../docs/EXAMPLES_INDEX.md"));
-    doc_comment!(include_str!("../docs/FUNCTION_CALLING.md"));
-    doc_comment!(include_str!("../docs/LOGGING_STRATEGY.md"));
-    doc_comment!(include_str!("../docs/MULTIMODAL.md"));
-    doc_comment!(include_str!("../docs/OUTPUT_MODALITIES.md"));
-    doc_comment!(include_str!("../docs/RELIABILITY.md"));
-    doc_comment!(include_str!("../docs/RESOURCES.md"));
-    doc_comment!(include_str!("../docs/STREAMING_API.md"));
-    doc_comment!(include_str!("../docs/TESTING.md"));
-    doc_comment!(include_str!("../docs/THINKING_MODE.md"));
+    #[doc = include_str!("../docs/ANTIGRAVITY.md")]
+    mod antigravity {}
+    #[doc = include_str!("../docs/BUILDER_API.md")]
+    mod builder_api {}
+    #[doc = include_str!("../docs/BUILT_IN_TOOLS.md")]
+    mod built_in_tools {}
+    #[doc = include_str!("../docs/CONFIGURATION.md")]
+    mod configuration {}
+    #[doc = include_str!("../docs/CONVERSATIONS.md")]
+    mod conversations {}
+    #[doc = include_str!("../docs/ENUM_WIRE_FORMATS.md")]
+    mod enum_wire_formats {}
+    #[doc = include_str!("../docs/ERROR_HANDLING.md")]
+    mod error_handling {}
+    #[doc = include_str!("../docs/EXAMPLES_INDEX.md")]
+    mod examples_index {}
+    #[doc = include_str!("../docs/FUNCTION_CALLING.md")]
+    mod function_calling {}
+    #[doc = include_str!("../docs/LOGGING_STRATEGY.md")]
+    mod logging_strategy {}
+    #[doc = include_str!("../docs/MULTIMODAL.md")]
+    mod multimodal {}
+    #[doc = include_str!("../docs/OUTPUT_MODALITIES.md")]
+    mod output_modalities {}
+    #[doc = include_str!("../docs/RELIABILITY.md")]
+    mod reliability {}
+    #[doc = include_str!("../docs/RESOURCES.md")]
+    mod resources {}
+    #[doc = include_str!("../docs/STREAMING_API.md")]
+    mod streaming_api {}
+    #[doc = include_str!("../docs/TESTING.md")]
+    mod testing {}
+    #[doc = include_str!("../docs/THINKING_MODE.md")]
+    mod thinking_mode {}
 }
