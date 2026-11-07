@@ -1199,25 +1199,33 @@ interaction serves back keep theirs too: every known variant of `Tool`,
 `ToolChoice::AllowedTools` keeps the keys beside `allowed_tools`
 (D-NEXT-WP13). The guard gained an enum arm: a public enum without
 `#[non_exhaustive]`, a deserializable one without an `Unknown` variant, and
-a known struct variant of such a union without an `extra` map each fail it
-unless an exemption names them with a reason. What stays uncovered, each
-with its reason in the guard:
+a known variant of such a union without an `extra` map each fail it unless
+an exemption names them with a reason. A newtype variant always needs one:
+its inner type keeps its own fields, but the syntax does not show whether
+keys sit beside that value, as they did beside the old
+`ToolChoice::AllowedTools(AllowedTools)`. What stays uncovered, each with
+its reason in the guard:
 
 - The retrieval tool's configs (`SENT_ONLY` above). The retrieval tool
   itself keeps its `extra`.
 - Bare-string forms, which have no fields: `VideoProcessing::Static` and
-  `Agentic`, and `NetworkConfig::Disabled`. `NetworkConfig::AllowlistDisabled`
+  `Agentic`, `NetworkConfig::Disabled`, `ToolChoice::Mode` and
+  `EnvironmentSpec::Id`. `EnvironmentSpec::Remote` reads the whole object
+  into `RemoteEnvironment`, which keeps its `extra`; nothing wraps it.
+  `NetworkConfig::AllowlistDisabled`
   is read only when `allowlist` is the object's one key; with another key
   beside it the object is kept whole as `NetworkConfig::Unknown`.
 - The untagged unions with no `Unknown` variant, whose arms keep what they
   do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
   `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
   `FunctionResultPayload`.
-- The known `StreamChunk` variants and
-  `AutoFunctionStreamChunk::ExecutingFunctions`: parsed stream events that
-  nothing sends back, serialized only in the crate's own `{chunk_type,
-  data}` log form. The payloads inside keep their own `extra`; a key the API
-  adds to an SSE event's envelope itself is dropped.
+- The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
+  stream events that nothing sends back, serialized only in the crate's own
+  `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
+  a key the API adds to an SSE event's envelope itself is dropped.
+- The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
+  crate only sends to the harness. A payload struct keeps its own `extra`;
+  a bool or string payload has no fields.
 - `DecodeError`, which is exhaustive but crate-internal.
 
 

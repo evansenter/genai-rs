@@ -24,11 +24,15 @@
 //!
 //! Enums are held to the same rules (`enums_are_evergreen`): every public
 //! enum is `#[non_exhaustive]`; every deserializable one has an `Unknown`
-//! variant; and every known struct variant of such a union keeps an `extra`
-//! map, as `Step`'s and `Tool`'s do (#491, D-034). Each exemption is named
-//! with its reason in `EXHAUSTIVE_ENUMS`, `WITHOUT_UNKNOWN` or
-//! `VARIANTS_WITHOUT_EXTRA`. The enums a macro generates have no source to
-//! parse, so the macros' templates are checked instead (`ENUM_MACROS`).
+//! variant; and every known variant of such a union keeps an `extra` map, as
+//! `Step`'s and `Tool`'s do (#491, D-034). A newtype variant counts as
+//! keeping none: its inner type keeps its own fields, but the guard cannot
+//! tell from the syntax whether keys sit beside that value on the wire, as
+//! they did beside the old `ToolChoice::AllowedTools(AllowedTools)`'s
+//! `{"allowed_tools": {..}}`. Each exemption is named with its reason in
+//! `EXHAUSTIVE_ENUMS`, `WITHOUT_UNKNOWN` or `VARIANTS_WITHOUT_EXTRA`. The
+//! enums a macro generates have no source to parse, so the macros' templates
+//! are checked instead (`ENUM_MACROS`).
 //!
 //! Not covered: structs a macro generates, and Serialize-only public views
 //! such as `FunctionCallInfo`.
@@ -257,9 +261,84 @@ const WITHOUT_UNKNOWN: &[(&str, &str)] = &[
 ];
 
 /// Known variants of an Evergreen union (a deserializable enum with an
-/// `Unknown` variant) with no `extra` map, each with its reason. Keyed by
-/// `path:Enum::Variant`.
+/// `Unknown` variant) with no `extra` map, each with its reason. Every
+/// newtype variant is listed: its inner type keeps its own fields, so the
+/// reason says why nothing can sit beside that value on the wire, or why a
+/// key there need not be kept. Keyed by `path:Enum::Variant`.
 const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::UserInput",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::ToolConfirmation",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::ToolResponse",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::QuestionResponse",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::HaltRequest",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::AutomatedTrigger",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::CallHookResponse",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::SessionEndRequest",
+        INPUT_EVENT,
+    ),
+    (
+        "src/antigravity/protocol/input.rs:InputEvent::PolicyDecisionResponse",
+        INPUT_EVENT,
+    ),
+    (
+        "src/environments/spec.rs:EnvironmentSpec::Id",
+        "the bare id string, which has no fields",
+    ),
+    (
+        "src/environments/spec.rs:EnvironmentSpec::Remote",
+        "reads the whole object into `RemoteEnvironment`, which keeps its own \
+         `extra`; nothing wraps it",
+    ),
+    (
+        "src/tools/choice.rs:ToolChoice::Mode",
+        "the bare mode string (`\"auto\"`), which has no fields",
+    ),
+    (
+        "src/streaming.rs:AutoFunctionStreamChunk::Delta",
+        AUTO_FUNCTION_CHUNK,
+    ),
+    (
+        "src/streaming.rs:AutoFunctionStreamChunk::ExecutingFunctions",
+        AUTO_FUNCTION_CHUNK,
+    ),
+    (
+        "src/streaming.rs:AutoFunctionStreamChunk::FunctionResults",
+        AUTO_FUNCTION_CHUNK,
+    ),
+    (
+        "src/streaming.rs:AutoFunctionStreamChunk::Complete",
+        AUTO_FUNCTION_CHUNK,
+    ),
+    (
+        "src/streaming.rs:AutoFunctionStreamChunk::MaxLoopsReached",
+        AUTO_FUNCTION_CHUNK,
+    ),
+    (
+        "src/wire_streaming/mod.rs:StreamChunk::Completed",
+        STREAM_CHUNK,
+    ),
     (
         "src/content/video_processing.rs:VideoProcessing::Static",
         "the bare string `\"static\"`, which has no fields; the object form \
@@ -277,11 +356,6 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         "src/environments/spec.rs:NetworkConfig::AllowlistDisabled",
         "read only when `allowlist` is the object's one key: with another key \
          beside it, the object is kept whole as `NetworkConfig::Unknown`",
-    ),
-    (
-        "src/streaming.rs:AutoFunctionStreamChunk::ExecutingFunctions",
-        "the crate's own `{chunk_type, data}` log form, which only the crate \
-         writes; the response inside keeps its own `extra`",
     ),
     (
         "src/wire_streaming/mod.rs:StreamChunk::Created",
@@ -312,6 +386,15 @@ const STREAM_CHUNK: &str = "a parsed SSE event, serialized only in the crate's o
      payloads inside (`InteractionResponse`, `Step`, `StepDelta`, \
      `UsageMetadata`) keep their own `extra`. A key the API adds to the event \
      envelope itself is not kept (D-034)";
+
+/// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
+const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \
+     the crate writes; the payload inside keeps its own `extra`";
+
+/// Why an `InputEvent` arm keeps no `extra`.
+const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \
+     the crate only sends to the harness and never reads from it; a payload struct keeps \
+     its own `extra`, and a bool or string payload has no fields";
 
 /// The `macro_rules!` that generate a public enum. syn cannot see the enums
 /// they expand to, so the guard checks their templates instead.
@@ -779,7 +862,10 @@ impl<'ast> Visit<'ast> for StructCheck<'_> {
 /// of such a union keeps the fields it does not model in an `extra` map, as
 /// `Step`'s do since #491. `Tool`, `ResponseFormat`, `TranscriptionMode` and
 /// `ToolChoice` lacked that last one until #504's WP13, and nothing noticed.
-/// Each exemption is named, with its reason.
+/// A newtype variant always needs a reason: the guard cannot see whether
+/// keys sit beside its value, as they did beside the old
+/// `ToolChoice::AllowedTools(AllowedTools)`. Each exemption is named, with
+/// its reason.
 #[test]
 fn enums_are_evergreen() {
     let report = analyze_enums(&sources(), &enum_exemptions());
@@ -822,8 +908,10 @@ fn enums_are_evergreen() {
             &report.variants_without_extra,
             "known variants of a union with no `extra` map, so a field the API \
              adds is dropped on a round trip (add one, read through \
-             src/wire_fields.rs as `Tool`'s are, or add the variant to \
-             VARIANTS_WITHOUT_EXTRA with the reason)",
+             src/wire_fields.rs as `Tool`'s are; for a newtype variant, make \
+             it a struct variant with `extra`, as `ToolChoice::AllowedTools` \
+             is; or add the variant to VARIANTS_WITHOUT_EXTRA with the reason \
+             nothing is lost)",
         ),
         (
             &report.macros_without_evergreen,
@@ -931,12 +1019,16 @@ impl<'ast> Visit<'ast> for EnumCheck<'_> {
             return;
         }
         for variant in &item.variants {
-            // A newtype variant's inner type keeps its own fields (the
-            // struct check covers a struct); `Unknown` keeps everything.
-            if variant.ident == "Unknown" || matches!(variant.fields, syn::Fields::Unnamed(_)) {
+            // `Unknown` keeps everything.
+            if variant.ident == "Unknown" {
                 continue;
             }
-            if !has_extra(&variant.fields, hand_written && !derived) {
+            // A newtype variant's inner type keeps its own fields (the
+            // struct check covers a struct), but not the keys beside it in a
+            // wrapper such as `{"allowed_tools": {..}}`, and the syntax does
+            // not say which shape it reads. So it always needs a reason.
+            let newtype = matches!(variant.fields, syn::Fields::Unnamed(_));
+            if newtype || !has_extra(&variant.fields, hand_written && !derived) {
                 self.flag(format!("{key}::{}", variant.ident), |r| {
                     &mut r.variants_without_extra
                 });
@@ -1271,6 +1363,17 @@ fn the_enum_scan_detects_what_it_claims_to() {
         }
         impl<'de> serde::Deserialize<'de> for Kept {}
 
+        // The pre-0.14 `ToolChoice`: a wrapper newtype, whose inner struct
+        // keeps its own fields while the keys beside `allowed_tools` are
+        // dropped, and a bare-string newtype.
+        #[non_exhaustive]
+        pub enum OldToolChoice {
+            Mode(FunctionCallingMode),
+            AllowedTools(AllowedTools),
+            Unknown { choice_type: String, data: serde_json::Value },
+        }
+        impl<'de> Deserialize<'de> for OldToolChoice {}
+
         // Derived: only a flattened map is filled.
         #[derive(Deserialize)]
         #[serde(tag = "type")]
@@ -1349,29 +1452,36 @@ fn the_enum_scan_detects_what_it_claims_to() {
         report.variants_without_extra,
         set(&[
             "src/types.rs:Derived::NamedOnly",
+            "src/types.rs:OldToolChoice::AllowedTools",
+            "src/types.rs:OldToolChoice::Mode",
             "src/types.rs:Tool::CodeExecution",
             "src/types.rs:Tool::Function",
+            "src/types.rs:Tool::Search",
         ])
     );
     assert_eq!(report.enum_macros, set(&["bare_enum", "evergreen_enum"]));
     assert_eq!(report.macros_without_evergreen, set(&["bare_enum"]));
 
-    // A variant exemption silences just that variant.
+    // A variant exemption silences just that variant, a newtype's too.
     let report = analyze_enums(
         &sources,
         &[
             "src/types.rs:Exhaustive",
             "src/types.rs:Tool::CodeExecution",
+            "src/types.rs:OldToolChoice::Mode",
         ],
     );
     assert_eq!(
         report.variants_without_extra,
         set(&[
             "src/types.rs:Derived::NamedOnly",
-            "src/types.rs:Tool::Function"
+            "src/types.rs:OldToolChoice::AllowedTools",
+            "src/types.rs:Tool::Function",
+            "src/types.rs:Tool::Search",
         ])
     );
     assert!(report.exempted.contains("src/types.rs:Tool::CodeExecution"));
+    assert!(report.exempted.contains("src/types.rs:OldToolChoice::Mode"));
 }
 
 #[test]
