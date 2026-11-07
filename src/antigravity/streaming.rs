@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_subagent_name_accessor_and_roundtrip() {
-        // 0.1.5 through 0.1.18 emit an empty invokeSubagent: name is None.
+        // 0.1.5 through 0.1.23 emit an empty invokeSubagent: name is None.
         let empty: ActionInvokeSubagent = serde_json::from_str("{}").unwrap();
         assert_eq!(empty.name, None);
         let action = ToolAction::InvokeSubagent(empty);

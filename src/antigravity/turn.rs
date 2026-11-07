@@ -555,8 +555,9 @@ impl TurnState {
     /// Claims the pending hook denial a terminal error step reports, if
     /// any, returning its reason.
     ///
-    /// Harness 0.1.18 gates every observed tool call through the pre-tool
-    /// hook rather than a confirmation step, and answers a denial with a
+    /// Since harness 0.1.18 the harness gates the agent's own tool calls
+    /// through the pre-tool hook rather than a confirmation step (a
+    /// subagent's own calls are not gated), and answers a denial with a
     /// `STATE_ERROR` step whose `errorMessage` is the verdict's reason
     /// verbatim (and no action payload). The match is on that exact string
     /// — the one this client itself sent — in the same trajectory, so it is

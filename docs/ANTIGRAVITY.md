@@ -1023,9 +1023,10 @@ if let Some(value) = response.structured_output() {
 A turn the harness stops early — the model backend's quota exhausted, or a
 harness-side budget exceeded — still *finishes*: it ends in the same
 terminal state as a completed turn, so the only symptom would be a short or
-empty `text()`. Harness 0.1.18 attaches a reason, surfaced as
-`ChatResponse::stop_reason()` (`Some(StopReason::MaxToolCallsExceeded)`,
-`Some(StopReason::QuotaExhausted)`, ...; `None` for a normal completion).
+empty `text()`. The harness attaches a reason, as it has since 0.1.18,
+surfaced as `ChatResponse::stop_reason()`
+(`Some(StopReason::MaxToolCallsExceeded)`, `Some(StopReason::QuotaExhausted)`,
+...; `None` for a normal completion).
 Budgets are set with `with_budget` (see below).
 
 ## Model and harness options
