@@ -745,18 +745,19 @@ Rules (matching the reference SDK):
   containment does not confine them: a read-only subagent can read any
   file the process can (pinned by a scripted test; the probe is recorded in
   `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`). The agent's `run_command` sandbox
-  is its own; a subagent's commands follow the subagent's capabilities.
-  Only the subagent's capabilities limit it, so give a subagent only the
-  builtins it may use unchecked. Enabling `invoke_subagent` also offers the
+  is its own; a subagent's commands are sent with the subagent's
+  capabilities. Only the subagent's capabilities limit it, so give a
+  subagent only the builtins it may use unchecked. Enabling `invoke_subagent` also offers the
   harness's built-in `research` subagent, even with no subagent added.
 - **`spawn()` refuses subagents beside a gate they bypass** (#520), unless
   you opt in with `with_ungated_subagents(true)`. The gates are a pre-tool
   hook, a deny, confirm or `ask_user` policy, `policy::auto()`, workspace
   containment (on by default with a workspace) and the `run_command`
-  sandbox; the refusal is an `AntigravityError::Config` naming the ones
-  set. It applies when `invoke_subagent` or `with_define_subagent_tool(true)`
-  is on. Policies that only allow, like `allow_all()` above, refuse nothing
-  and are not a gate:
+  sandbox while `run_command` is enabled; the refusal is an
+  `AntigravityError::Config` naming the ones set. It applies when
+  `invoke_subagent` or `with_define_subagent_tool(true)` is on. Policies
+  that only allow, like `allow_all()` above, refuse nothing and are not a
+  gate:
 
   ```rust,no_run
   use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};

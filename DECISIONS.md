@@ -1217,13 +1217,14 @@ agent offers subagents (`BuiltinTool::InvokeSubagent`, or
 calls `with_ungated_subagents(true)`. The error names each gate set and the
 opt-in. The gates are a pre-tool hook, a client policy that can refuse or
 ask (deny, confirm, `ask_user`), the auto policy (the harness-side
-`PolicyConfig` this client sends), workspace containment, and the
-`run_command` sandbox (the agent's own; a subagent's commands follow its
-capabilities). The setter takes a `bool` like this builder's other subagent
-and containment switches (`with_define_subagent_tool`,
-`with_workspace_containment`). The bypass is reported upstream; the
-scripted test that pins it, now with the opt-in, fails when a harness
-release closes the gap.
+`PolicyConfig` this client sends; it runs in the evaluator the probe showed
+bypassed, though it was not probed on its own), workspace containment, and
+the `run_command` sandbox while `run_command` is enabled (the agent's own;
+a subagent's commands are sent with its own capabilities). The setter takes
+a `bool` like this builder's other subagent and containment switches
+(`with_define_subagent_tool`, `with_workspace_containment`). A report for
+upstream is drafted for the owner to file; the scripted test that pins the
+bypass, now with the opt-in, fails when a harness release closes the gap.
 
 Three calls made in the work:
 - A policy set that only allows (`allow_all()`, `allow(..)`) is not a gate:
@@ -1233,8 +1234,9 @@ Three calls made in the work:
 - `define_subagent` counts on its own, though the harness offers it only
   beside `invoke_subagent` (0.1.23, scripted probe), in case a later
   release separates them.
-- The sandbox counts whenever it is asked for, even with `run_command`
-  off on the agent, since a subagent may run commands of its own.
+- The sandbox counts only while `run_command` is enabled on the agent: its
+  options apply only then (`Capabilities::with_run_command`), so with the
+  tool off it confines nothing a subagent could get around.
 
 **Consequences.** Breaking (D-007): an agent with subagents and any gate,
 containment by default with a workspace included, no longer starts until it

@@ -324,7 +324,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AntigravityError::Config` naming the gates when any is set: a pre-tool
   hook, a deny, confirm or `ask_user` policy, `policy::auto()`, workspace
   containment (on by default with a workspace), or the `run_command`
-  sandbox. Policies that only allow, such as `allow_all()`, are not gates.
+  sandbox with `run_command` enabled. Policies that only allow, such as
+  `allow_all()`, are not gates.
   Migration: give each subagent only the builtins it may use unchecked and
   add `.with_ungated_subagents(true)`, or drop the gates or the subagent
   builtin.
