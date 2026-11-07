@@ -124,19 +124,25 @@ result items (`GoogleSearchResultItem`, `UrlContextResultItem`,
 `StepError` and `VideoProcessing::StaticSegment` keep theirs in a flattened
 `extra` field. So a field the API adds survives stateless history replay
 before the crate models it, which is how `signature` once broke replay.
+The request-side unions a stored interaction serves back do the same: every
+known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
+`extra` map (with `extra()` / `extra_mut()`), and
+`ToolChoice::AllowedTools` keeps the keys beside `allowed_tools` in its
+`extra`, as `NetworkConfig::Allowlist` does beside `allowlist`.
 
 - Serializing writes the modeled fields first, then `extra`, for every type
   listed above. An `extra` entry named after one of the type's modeled
   fields, set or not, is never written, so a hand-built map cannot shadow a
-  field or write its key twice. On the tagged types (the four unions and
+  field or write its key twice. On the tagged types (the unions and
   `StaticSegment`) `type` counts as modeled, so it cannot retag a value
-  either; on the plain structs a `type` entry is ordinary data and is
-  written. An `arguments_extra` entry named after a modeled argument
+  either; on the plain structs and `ToolChoice::AllowedTools` a `type`
+  entry is ordinary data and is written. An `arguments_extra` entry named after a modeled argument
   (`urls`, `queries`, `language`, `code`) is never merged into `arguments`.
   Other types with a flattened `extra`, such as `InteractionResponse` and
   `UsageMetadata`, write it unfiltered.
 - A known type whose modeled field is malformed becomes `Unknown`, which
-  keeps the whole object. That was already so for a missing `id` or a
+  keeps the whole object (a `TranscriptionMode` used to read its fields
+  leniently, dropping a mistyped one). That was already so for a missing `id` or a
   mistyped `signature`. A non-object `arguments`, a non-string in `urls` or
   `queries`, and a mistyped `fps` on a static video segment used to be read
   leniently, dropping the bad value. For `Step` and `Content` under
@@ -148,7 +154,8 @@ before the crate models it, which is how `signature` once broke replay.
   `extra` in both configurations.
 - `src/proptest_unknown_fields.rs` injects an unknown key into every object,
   at every depth, of random values of every known variant (an exhaustive
-  ordinal match checks the strategies reach them all), and
+  ordinal match checks the strategies reach them all), the request-side
+  unions included, inside a whole `InteractionResponse`, and
   `tests/round_trip_fidelity_tests.rs` does the same over one wire fixture
   per step type.
 
@@ -420,7 +427,7 @@ API rejects a top-level array. Deserializing never wraps.
 | Variant | Wire shape |
 |---------|-----------|
 | `ToolChoice::Mode(FunctionCallingMode)` | `"auto"` / `"any"` / `"none"` / `"validated"` |
-| `ToolChoice::AllowedTools(AllowedTools)` | `{"allowed_tools": {"mode"?, "tools": [...]}}` |
+| `ToolChoice::AllowedTools { allowed_tools, extra }` | `{"allowed_tools": {"mode"?, "tools": [...]}}`, plus any `extra` keys |
 | `ToolChoice::Unknown { choice_type, data }` | Unrecognized shapes |
 
 An unknown mode **string** becomes `ToolChoice::Mode(FunctionCallingMode::Unknown)`;

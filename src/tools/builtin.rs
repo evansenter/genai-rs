@@ -63,6 +63,7 @@ impl From<GoogleSearchConfig> for Tool {
     fn from(config: GoogleSearchConfig) -> Self {
         Tool::GoogleSearch {
             search_types: config.search_types,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -116,6 +117,7 @@ impl From<GoogleMapsConfig> for Tool {
             enable_widget: config.enable_widget,
             latitude: config.latitude,
             longitude: config.longitude,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -186,6 +188,7 @@ impl From<McpServerConfig> for Tool {
             url: config.url,
             allowed_tools: config.allowed_tools,
             headers: config.headers,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -273,6 +276,7 @@ impl From<ComputerUseConfig> for Tool {
             excluded_predefined_functions: config.excluded_predefined_functions,
             enable_prompt_injection_detection: config.enable_prompt_injection_detection,
             disabled_safety_policies: config.disabled_safety_policies,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -337,6 +341,7 @@ impl From<FileSearchConfig> for Tool {
             store_names: config.store_names,
             top_k: config.top_k,
             metadata_filter: config.metadata_filter,
+            extra: serde_json::Map::new(),
         }
     }
 }

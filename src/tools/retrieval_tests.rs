@@ -137,6 +137,7 @@ fn test_tool_retrieval_roundtrip() {
             rag_store_config,
             exa_ai_search_config,
             parallel_ai_search_config,
+            ..
         } => {
             assert_eq!(
                 retrieval_types,

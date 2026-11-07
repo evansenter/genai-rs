@@ -3,7 +3,10 @@ use serde_json;
 
 #[test]
 fn test_tool_google_search_roundtrip() {
-    let tool = Tool::GoogleSearch { search_types: None };
+    let tool = Tool::GoogleSearch {
+        search_types: None,
+        extra: Default::default(),
+    };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"type\":\"google_search\""));
     assert!(!json.contains("search_types"));
@@ -16,6 +19,7 @@ fn test_tool_google_search_roundtrip() {
 fn test_tool_google_search_with_search_types_roundtrip() {
     let tool = Tool::GoogleSearch {
         search_types: Some(vec![SearchType::WebSearch, SearchType::ImageSearch]),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"search_types\""));
@@ -24,7 +28,7 @@ fn test_tool_google_search_with_search_types_roundtrip() {
 
     let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
     match parsed {
-        Tool::GoogleSearch { search_types } => {
+        Tool::GoogleSearch { search_types, .. } => {
             let types = search_types.expect("Should have search_types");
             assert_eq!(types.len(), 2);
             assert_eq!(types[0], SearchType::WebSearch);
@@ -40,6 +44,7 @@ fn test_tool_google_maps_roundtrip() {
         enable_widget: None,
         latitude: None,
         longitude: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"type\":\"google_maps\""));
@@ -58,6 +63,7 @@ fn test_tool_google_maps_with_widget_roundtrip() {
         enable_widget: Some(true),
         latitude: Some(40.758),
         longitude: Some(-73.9855),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"enable_widget\":true"));
@@ -70,6 +76,7 @@ fn test_tool_google_maps_with_widget_roundtrip() {
             enable_widget,
             latitude,
             longitude,
+            ..
         } => {
             assert_eq!(enable_widget, Some(true));
             assert_eq!(latitude, Some(40.758));
@@ -89,6 +96,7 @@ fn test_tool_function_roundtrip() {
             serde_json::json!({}),
             vec![],
         )),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
@@ -106,6 +114,7 @@ fn test_tool_mcp_server_roundtrip() {
         url: "https://mcp.example.com/api".to_string(),
         allowed_tools: None,
         headers: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"type\":\"mcp_server\""));
@@ -121,6 +130,7 @@ fn test_tool_mcp_server_roundtrip() {
             url,
             allowed_tools,
             headers,
+            ..
         } => {
             assert_eq!(name, "my-server");
             assert_eq!(url, "https://mcp.example.com/api");
@@ -144,6 +154,7 @@ fn test_tool_mcp_server_with_optional_fields_roundtrip() {
             "Authorization".to_string(),
             "Bearer token".to_string(),
         )])),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"allowed_tools\""));
@@ -223,6 +234,7 @@ fn test_tool_computer_use_roundtrip() {
         excluded_predefined_functions: vec!["submit_form".to_string(), "download".to_string()],
         enable_prompt_injection_detection: Some(true),
         disabled_safety_policies: vec!["data_modification".to_string()],
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"type\":\"computer_use\""));
@@ -239,6 +251,7 @@ fn test_tool_computer_use_roundtrip() {
             excluded_predefined_functions,
             enable_prompt_injection_detection,
             disabled_safety_policies,
+            ..
         } => {
             assert_eq!(environment, "browser");
             assert_eq!(excluded_predefined_functions.len(), 2);
@@ -261,6 +274,7 @@ fn test_tool_computer_use_empty_exclusions() {
         excluded_predefined_functions: vec![],
         enable_prompt_injection_detection: None,
         disabled_safety_policies: vec![],
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"type\":\"computer_use\""));
@@ -282,7 +296,10 @@ fn test_tool_computer_use_empty_exclusions() {
 #[test]
 fn test_tool_known_types_helper_methods() {
     // Test known types return None for unknown helpers
-    let google_search = Tool::GoogleSearch { search_types: None };
+    let google_search = Tool::GoogleSearch {
+        search_types: None,
+        extra: Default::default(),
+    };
     assert!(!google_search.is_unknown());
     assert_eq!(google_search.unknown_tool_type(), None);
     assert_eq!(google_search.unknown_data(), None);
@@ -291,17 +308,18 @@ fn test_tool_known_types_helper_methods() {
         enable_widget: None,
         latitude: None,
         longitude: None,
+        extra: Default::default(),
     };
     assert!(!google_maps.is_unknown());
     assert_eq!(google_maps.unknown_tool_type(), None);
     assert_eq!(google_maps.unknown_data(), None);
 
-    let code_execution = Tool::CodeExecution;
+    let code_execution = Tool::code_execution();
     assert!(!code_execution.is_unknown());
     assert_eq!(code_execution.unknown_tool_type(), None);
     assert_eq!(code_execution.unknown_data(), None);
 
-    let url_context = Tool::UrlContext;
+    let url_context = Tool::url_context();
     assert!(!url_context.is_unknown());
     assert_eq!(url_context.unknown_tool_type(), None);
     assert_eq!(url_context.unknown_data(), None);
@@ -311,6 +329,7 @@ fn test_tool_known_types_helper_methods() {
         excluded_predefined_functions: vec![],
         enable_prompt_injection_detection: None,
         disabled_safety_policies: vec![],
+        extra: Default::default(),
     };
     assert!(!computer_use.is_unknown());
     assert_eq!(computer_use.unknown_tool_type(), None);
@@ -324,6 +343,7 @@ fn test_tool_known_types_helper_methods() {
             serde_json::json!({}),
             vec![],
         )),
+        extra: Default::default(),
     };
     assert!(!function.is_unknown());
     assert_eq!(function.unknown_tool_type(), None);
@@ -336,6 +356,7 @@ fn test_tool_file_search_roundtrip() {
         store_names: vec!["store1".to_string(), "store2".to_string()],
         top_k: Some(5),
         metadata_filter: Some("category:technical".to_string()),
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"type\":\"file_search\""));
@@ -349,6 +370,7 @@ fn test_tool_file_search_roundtrip() {
             store_names,
             top_k,
             metadata_filter,
+            ..
         } => {
             assert_eq!(store_names, vec!["store1", "store2"]);
             assert_eq!(top_k, Some(5));
@@ -365,6 +387,7 @@ fn test_tool_file_search_minimal() {
         store_names: vec!["my-store".to_string()],
         top_k: None,
         metadata_filter: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert!(json.contains("\"type\":\"file_search\""));
@@ -379,6 +402,7 @@ fn test_tool_file_search_minimal() {
             store_names,
             top_k,
             metadata_filter,
+            ..
         } => {
             assert_eq!(store_names, vec!["my-store"]);
             assert_eq!(top_k, None);
@@ -394,6 +418,7 @@ fn test_tool_file_search_helper_methods() {
         store_names: vec!["store".to_string()],
         top_k: None,
         metadata_filter: None,
+        extra: Default::default(),
     };
     assert!(!file_search.is_unknown());
     assert_eq!(file_search.unknown_tool_type(), None);
@@ -408,6 +433,7 @@ fn test_tool_retrieval_minimal_serializes_type_only() {
         exa_ai_search_config: None,
         parallel_ai_search_config: None,
         rag_store_config: None,
+        extra: Default::default(),
     };
     let json = serde_json::to_string(&tool).expect("Serialization failed");
     assert_eq!(json, r#"{"type":"retrieval"}"#);
@@ -436,12 +462,14 @@ fn test_tool_serializes_type_first_then_fields_in_order() {
                 serde_json::json!({}),
                 vec![]
             )),
+            extra: Default::default(),
         }),
         r#"{"type":"function","name":"get_weather","description":"Weather","parameters":{"type":"object","properties":{}}}"#
     );
     assert_eq!(
         to_json(&Tool::GoogleSearch {
             search_types: Some(vec![SearchType::WebSearch]),
+            extra: Default::default(),
         }),
         r#"{"type":"google_search","search_types":["web_search"]}"#
     );
@@ -450,20 +478,22 @@ fn test_tool_serializes_type_first_then_fields_in_order() {
             enable_widget: Some(true),
             latitude: Some(1.5),
             longitude: Some(-2.25),
+            extra: Default::default(),
         }),
         r#"{"type":"google_maps","enable_widget":true,"latitude":1.5,"longitude":-2.25}"#
     );
     assert_eq!(
-        to_json(&Tool::CodeExecution),
+        to_json(&Tool::code_execution()),
         r#"{"type":"code_execution"}"#
     );
-    assert_eq!(to_json(&Tool::UrlContext), r#"{"type":"url_context"}"#);
+    assert_eq!(to_json(&Tool::url_context()), r#"{"type":"url_context"}"#);
     assert_eq!(
         to_json(&Tool::ComputerUse {
             environment: "browser".to_string(),
             excluded_predefined_functions: vec!["drag".to_string()],
             enable_prompt_injection_detection: Some(false),
             disabled_safety_policies: vec!["account_creation".to_string()],
+            extra: Default::default(),
         }),
         r#"{"type":"computer_use","environment":"browser","excluded_predefined_functions":["drag"],"enable_prompt_injection_detection":false,"disabled_safety_policies":["account_creation"]}"#
     );
@@ -477,6 +507,7 @@ fn test_tool_serializes_type_first_then_fields_in_order() {
                 ..Default::default()
             }]),
             headers: Some(HashMap::from([("X-Key".to_string(), "k".to_string())])),
+            extra: Default::default(),
         }),
         r#"{"type":"mcp_server","name":"srv","url":"https://mcp.example","allowed_tools":[{"tools":["t"]}],"headers":{"X-Key":"k"}}"#
     );
@@ -485,6 +516,7 @@ fn test_tool_serializes_type_first_then_fields_in_order() {
             store_names: vec!["fileSearchStores/a".to_string()],
             top_k: Some(3),
             metadata_filter: Some("x = 1".to_string()),
+            extra: Default::default(),
         }),
         r#"{"type":"file_search","file_search_store_names":["fileSearchStores/a"],"top_k":3,"metadata_filter":"x = 1"}"#
     );
@@ -495,6 +527,7 @@ fn test_tool_serializes_type_first_then_fields_in_order() {
             exa_ai_search_config: Some(ExaAiSearchConfig::new("key")),
             parallel_ai_search_config: None,
             rag_store_config: None,
+            extra: Default::default(),
         }),
         r#"{"type":"retrieval","retrieval_types":["exa_ai_search"],"exa_ai_search_config":{"api_key":"key"}}"#
     );
@@ -506,6 +539,7 @@ fn test_tool_omits_none_and_empty_optional_fields() {
     assert_eq!(
         to_json(&Tool::GoogleSearch {
             search_types: Some(vec![]),
+            extra: Default::default(),
         }),
         r#"{"type":"google_search"}"#
     );
@@ -514,6 +548,7 @@ fn test_tool_omits_none_and_empty_optional_fields() {
             enable_widget: None,
             latitude: None,
             longitude: None,
+            extra: Default::default(),
         }),
         r#"{"type":"google_maps"}"#
     );
@@ -523,6 +558,7 @@ fn test_tool_omits_none_and_empty_optional_fields() {
             excluded_predefined_functions: vec![],
             enable_prompt_injection_detection: None,
             disabled_safety_policies: vec![],
+            extra: Default::default(),
         }),
         r#"{"type":"computer_use","environment":"browser"}"#
     );
@@ -533,6 +569,7 @@ fn test_tool_omits_none_and_empty_optional_fields() {
                 url: "https://mcp.example".to_string(),
                 allowed_tools,
                 headers,
+                extra: Default::default(),
             }),
             r#"{"type":"mcp_server","name":"srv","url":"https://mcp.example"}"#
         );
@@ -544,6 +581,7 @@ fn test_tool_omits_none_and_empty_optional_fields() {
             exa_ai_search_config: None,
             parallel_ai_search_config: None,
             rag_store_config: None,
+            extra: Default::default(),
         }),
         r#"{"type":"retrieval"}"#
     );
@@ -558,6 +596,7 @@ fn test_tool_file_search_leaves_out_an_empty_store_list() {
             store_names: vec![],
             top_k: None,
             metadata_filter: None,
+            extra: Default::default(),
         }),
         r#"{"type":"file_search"}"#
     );
@@ -625,7 +664,7 @@ fn a_tool_missing_its_optional_fields_reads_as_that_tool() {
     let tool: Tool = serde_json::from_str(r#"{"type":"function","name":"get_time"}"#).unwrap();
     assert!(matches!(
         tool,
-        Tool::Function { ref name, description: None, parameters: None } if name == "get_time"
+        Tool::Function { ref name, description: None, parameters: None, .. } if name == "get_time"
     ));
 }
 
@@ -659,4 +698,87 @@ fn function_parameters_keep_every_schema_keyword() {
     let tool: Tool = serde_json::from_value(bare.clone()).unwrap();
     assert!(!tool.is_unknown());
     assert_eq!(serde_json::to_value(&tool).unwrap(), bare);
+}
+
+/// Every known tool keeps the fields it does not model and writes them back
+/// after its own (D-001): a stored interaction's `tools` used to lose them.
+#[test]
+fn every_known_tool_keeps_unmodeled_fields() {
+    for wire in [
+        r#"{"type":"function","name":"f","future_knob":1}"#,
+        r#"{"type":"google_search","search_types":["web_search"],"future_knob":1}"#,
+        r#"{"type":"google_maps","enable_widget":true,"future_knob":1}"#,
+        r#"{"type":"code_execution","future_knob":1}"#,
+        r#"{"type":"url_context","future_knob":1}"#,
+        r#"{"type":"computer_use","environment":"browser","future_knob":1}"#,
+        r#"{"type":"mcp_server","name":"s","url":"https://example.com","future_knob":1}"#,
+        r#"{"type":"file_search","file_search_store_names":["fileSearchStores/s"],"future_knob":1}"#,
+        r#"{"type":"retrieval","retrieval_types":["vertex_ai_search"],"future_knob":1}"#,
+    ] {
+        let tool: Tool = serde_json::from_str(wire).unwrap();
+        assert!(!tool.is_unknown(), "{wire} read as {tool:?}");
+        assert_eq!(tool.extra().unwrap()["future_knob"], 1, "{wire}");
+        assert_eq!(to_json(&tool), wire, "round trip of {wire}");
+    }
+    assert!(
+        Tool::Unknown {
+            tool_type: "zz".into(),
+            data: serde_json::json!({}),
+        }
+        .extra()
+        .is_none()
+    );
+}
+
+/// A hand-set `extra` entry is written after the modeled fields, unless it
+/// names one of them (set or not) or `type`.
+#[test]
+fn a_tool_extra_never_shadows_a_modeled_field_or_the_type() {
+    let mut tool: Tool = FunctionDeclaration::builder("f").build().into_tool();
+    let extra = tool.extra_mut().unwrap();
+    extra.insert("name".into(), serde_json::json!("shadow"));
+    extra.insert("type".into(), serde_json::json!("code_execution"));
+    extra.insert("future_knob".into(), serde_json::json!(true));
+    let wire: serde_json::Value = serde_json::from_str(&to_json(&tool)).unwrap();
+    assert_eq!(wire["type"], "function");
+    assert_eq!(wire["name"], "f");
+    assert_eq!(wire["future_knob"], true);
+
+    // `file_search_store_names` is the wire name of `store_names`, and a
+    // `search_types` left out because it is empty still counts as modeled.
+    let mut tool: Tool = crate::FileSearchConfig::new(vec![]).into();
+    tool.extra_mut().unwrap().insert(
+        "file_search_store_names".into(),
+        serde_json::json!(["shadow"]),
+    );
+    assert_eq!(to_json(&tool), r#"{"type":"file_search"}"#);
+    let mut tool: Tool = crate::GoogleSearchConfig::new().into();
+    tool.extra_mut()
+        .unwrap()
+        .insert("search_types".into(), serde_json::json!(["shadow"]));
+    assert_eq!(to_json(&tool), r#"{"type":"google_search"}"#);
+}
+
+#[test]
+fn code_execution_and_url_context_constructors() {
+    let code = Tool::code_execution();
+    assert!(matches!(&code, Tool::CodeExecution { extra } if extra.is_empty()));
+    assert_eq!(to_json(&code), r#"{"type":"code_execution"}"#);
+    let url = Tool::url_context();
+    assert!(matches!(&url, Tool::UrlContext { extra } if extra.is_empty()));
+    assert_eq!(to_json(&url), r#"{"type":"url_context"}"#);
+}
+
+/// A known tool with a mistyped field is kept whole as `Unknown`.
+#[test]
+fn a_tool_with_a_malformed_field_is_kept_whole() {
+    for wire in [
+        r#"{"type":"function","name":7}"#,
+        r#"{"type":"google_maps","latitude":"north"}"#,
+        r#"{"type":"mcp_server","headers":{"a":1}}"#,
+    ] {
+        let tool: Tool = serde_json::from_str(wire).unwrap();
+        assert!(tool.is_unknown(), "{wire} read as {tool:?}");
+        assert_eq!(to_json(&tool), wire);
+    }
 }

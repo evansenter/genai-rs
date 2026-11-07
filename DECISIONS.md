@@ -1191,9 +1191,7 @@ merely a field named `extra`.
 request configs and the Antigravity types (D-007): add
 `..Default::default()`. `SafetySetting::new` loses `const`. A caller can
 now also send a field of these configs the crate does not model yet, as
-`GenerationConfig::extra` allowed. Not covered: the `Tool` enum's known
-variants, which keep no `extra` (enums are outside the guard, as `Step`'s
-were before #491).
+`GenerationConfig::extra` allowed.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1244,3 +1242,38 @@ fixtures every example copy is checked against.
 **Consequences.** The example and the live test make one TTS request
 before transcribing. A silent clip still serves the acceptance tests, which
 read the stored config back rather than the transcript.
+
+## D-NEXT-WP13 — Known request-side union variants keep `extra`; the unit tools become struct variants (2026-11-07)
+
+**Context.** C1 of the 2026-11-07 grading: `Tool`, `ResponseFormat` and
+`TranscriptionMode` read their known variants with derived or field-picking
+serde, and `ToolChoice` kept only `allowed_tools`, so a stored
+interaction's echoed `tools`, `response_format` and `generation_config`
+lost a field the API adds. D-034 had named `Tool` as not covered, and no
+guard looked at enums. `Tool::CodeExecution` and `Tool::UrlContext` were
+unit variants, with nowhere to keep a field.
+
+**Decision.** Every known variant gets `extra: Map<String, Value>`, read
+and written through `src/wire_fields.rs` as `Step`'s is (#491), so an
+`extra` entry never shadows a modeled field or `type`. The two unit tools
+become `{ extra }` struct variants, built with `Tool::code_execution()` and
+`Tool::url_context()`. Rejected: reading a unit tool that carries an extra
+key as `Tool::Unknown`, which keeps the data but makes the tool stop
+matching `Tool::CodeExecution`. `ToolChoice::AllowedTools(AllowedTools)`
+becomes `AllowedTools { allowed_tools, extra }`, as
+`NetworkConfig::Allowlist { entries, extra }` is, with
+`From<AllowedTools> for ToolChoice`. `TranscriptionMode` gains `smart()`
+and `verbatim()`, since a variant literal now needs `extra`. A known variant
+with a malformed field is kept whole as `Unknown`; `TranscriptionMode` used
+to read its fields leniently instead. Strict mode still does not apply to
+these unions (D-001).
+
+**Consequences.** Breaking (D-007) for struct literals of these variants
+(add `extra: Default::default()` or use a constructor), for patterns that
+list every field (add `..`), for `Tool::CodeExecution` and
+`Tool::UrlContext` as values (`Tool::code_execution()`) and patterns
+(`{ .. }`), and for `ToolChoice::AllowedTools(x)` (`ToolChoice::from(x)`;
+the pattern is `AllowedTools { allowed_tools, .. }`). `ResponseFormat`
+grew past clippy's `large_enum_variant` bar inside `ResponseFormatSpec`;
+the lint is allowed there, since a request holds one.
+

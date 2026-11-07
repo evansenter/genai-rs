@@ -52,7 +52,10 @@ pub(super) fn arb_allowed_tools() -> impl Strategy<Value = AllowedTools> {
 pub(crate) fn arb_tool_choice() -> impl Strategy<Value = ToolChoice> {
     prop_oneof![
         arb_function_calling_mode().prop_map(ToolChoice::Mode),
-        arb_allowed_tools().prop_map(ToolChoice::AllowedTools),
+        arb_allowed_tools().prop_map(|allowed_tools| ToolChoice::AllowedTools {
+            allowed_tools,
+            extra: serde_json::Map::new(),
+        }),
         // Unknown shape: an object without the "allowed_tools" key
         arb_unknown_type().prop_map(|key| {
             let data = serde_json::json!({ key.clone(): "future_config" });
@@ -90,11 +93,16 @@ pub(super) fn arb_tool() -> impl Strategy<Value = Tool> {
             .prop_map(|(name, description, parameters)| Tool::Function {
                 name,
                 description,
-                parameters
+                parameters,
+                extra: Default::default()
             }),
         // Google Search (non-empty search_types when present)
-        proptest::option::of(proptest::collection::vec(arb_search_type(), 1..3))
-            .prop_map(|search_types| Tool::GoogleSearch { search_types }),
+        proptest::option::of(proptest::collection::vec(arb_search_type(), 1..3)).prop_map(
+            |search_types| Tool::GoogleSearch {
+                search_types,
+                extra: Default::default()
+            }
+        ),
         // Google Maps (with optional location bias)
         (
             proptest::option::of(any::<bool>()),
@@ -105,9 +113,10 @@ pub(super) fn arb_tool() -> impl Strategy<Value = Tool> {
                 enable_widget,
                 latitude,
                 longitude,
+                extra: Default::default(),
             }),
-        Just(Tool::CodeExecution),
-        Just(Tool::UrlContext),
+        Just(Tool::code_execution()),
+        Just(Tool::url_context()),
         // FileSearch tool
         (
             proptest::collection::vec(arb_identifier(), 1..4),
@@ -119,6 +128,7 @@ pub(super) fn arb_tool() -> impl Strategy<Value = Tool> {
                     store_names,
                     top_k,
                     metadata_filter,
+                    extra: Default::default(),
                 }
             }),
         // ComputerUse tool
@@ -139,6 +149,7 @@ pub(super) fn arb_tool() -> impl Strategy<Value = Tool> {
                     excluded_predefined_functions: excluded,
                     enable_prompt_injection_detection: detect,
                     disabled_safety_policies: disabled,
+                    extra: Default::default(),
                 }
             ),
         // MCP Server (use BTreeMap for deterministic JSON key ordering in roundtrip tests;
@@ -158,6 +169,7 @@ pub(super) fn arb_tool() -> impl Strategy<Value = Tool> {
                 url,
                 allowed_tools,
                 headers: headers.map(|m| m.into_iter().collect()),
+                extra: Default::default(),
             }),
         // Retrieval tool (types non-empty when present since empty is skipped)
         (
@@ -180,6 +192,7 @@ pub(super) fn arb_tool() -> impl Strategy<Value = Tool> {
                     exa_ai_search_config,
                     parallel_ai_search_config,
                     rag_store_config: rag_store_config.map(Box::new),
+                    extra: Default::default(),
                 },
             ),
         // Unknown tool (Tool preserves unknowns even in strict mode)
@@ -410,6 +423,7 @@ fn recorded_seed_mcp_server_with_random_unicode_roundtrips() {
             ("LtE_99zu_F_4__LF__c".to_string(), first_header.to_string()),
             ("Uj_7mcVau6xL_L_Ot_Z".to_string(), second_header.to_string()),
         ])),
+        extra: Default::default(),
     };
     assert_value_roundtrip(&tool).unwrap();
     let json = serde_json::to_value(&tool).unwrap();

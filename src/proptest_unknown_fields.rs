@@ -8,6 +8,12 @@
 //! and under `genai_strict_unknown`, which rejects unknown *types* but must keep
 //! unknown *fields*.
 //!
+//! A whole `InteractionResponse` gets the same treatment, so the request
+//! config a stored interaction serves back is covered too: every known
+//! `Tool`, `ResponseFormat` and `TranscriptionMode` variant and the
+//! `tool_choice` restriction (D-034). [`NOT_INJECTED_UNDER`] names the
+//! subtrees left alone, each with its reason.
+//!
 //! The strategies are `prop_oneof!` lists, which nothing checks for
 //! exhaustiveness, so `*_ordinal` below match every variant exhaustively and
 //! a deterministic sample asserts each strategy reaches all of them.
@@ -22,20 +28,58 @@ use super::content::{
     arb_annotation, arb_content, arb_google_maps_result_item, arb_google_search_result_item,
     arb_known_content, arb_url_context_result_item,
 };
+use super::request::arb_transcription_mode;
+use super::response::arb_interaction_response;
 use super::steps::{arb_known_step, arb_step, arb_step_delta, arb_step_error};
+use super::tools::arb_tool;
 use super::*;
 
 /// The key added to every object. Not a field name any type models.
 const INJECTED: &str = "x_future_field";
 
-/// Adds [`INJECTED`] to every object in `value`, at every depth.
-fn inject_everywhere(value: &mut Value) {
+/// Keys of an `InteractionResponse` whose values the injection leaves alone.
+/// Everything else in it keeps an unknown field.
+const NOT_INJECTED_UNDER: &[(&str, &str)] = &[
+    (
+        "headers",
+        "an MCP server tool's HTTP headers: a map from header name to string \
+         value, so every key is data and a non-string value is malformed",
+    ),
+    (
+        "vertex_ai_search_config",
+        "the retrieval tool's configs are sent only: the Gemini API rejects \
+         `type: retrieval`, so no stored interaction serves one back (D-034's \
+         SENT_ONLY). The retrieval tool itself keeps its `extra`",
+    ),
+    (
+        "exa_ai_search_config",
+        "the retrieval tool's, as `vertex_ai_search_config`",
+    ),
+    (
+        "parallel_ai_search_config",
+        "the retrieval tool's, as `vertex_ai_search_config`",
+    ),
+    (
+        "rag_store_config",
+        "the retrieval tool's, as `vertex_ai_search_config`",
+    ),
+];
+
+/// Adds [`INJECTED`] to every object in `value`, at every depth, except
+/// below a key named in `skip`.
+fn inject_except_under(value: &mut Value, skip: &[&str]) {
     match value {
         Value::Object(map) => {
-            map.values_mut().for_each(inject_everywhere);
+            for (key, child) in map.iter_mut() {
+                if !skip.contains(&key.as_str()) {
+                    inject_except_under(child, skip);
+                }
+            }
             map.insert(INJECTED.into(), json!({"nested": [1, "two", null]}));
         }
-        Value::Array(items) => items.iter_mut().for_each(inject_everywhere),
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| inject_except_under(item, skip)),
         _ => {}
     }
 }
@@ -46,8 +90,16 @@ fn assert_injected_round_trip<T>(value: &T) -> Result<(), TestCaseError>
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
+    assert_injected_round_trip_except(value, &[])
+}
+
+/// [`assert_injected_round_trip`], leaving the values under `skip` alone.
+fn assert_injected_round_trip_except<T>(value: &T, skip: &[&str]) -> Result<(), TestCaseError>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
     let mut wire = serde_json::to_value(value).expect("serialize");
-    inject_everywhere(&mut wire);
+    inject_except_under(&mut wire, skip);
     let parsed: T = serde_json::from_value(wire.clone())
         .map_err(|e| TestCaseError::fail(format!("injected wire rejected: {e}\n{wire}")))?;
     let again = serde_json::to_value(&parsed).expect("re-serialize");
@@ -74,6 +126,29 @@ proptest! {
     #[test]
     fn annotation_keeps_unknown_fields_at_every_depth(annotation in arb_annotation()) {
         assert_injected_round_trip(&annotation)?;
+    }
+
+    /// The request config a stored interaction serves back keeps an unknown
+    /// field on every known `Tool`, `ResponseFormat` and `TranscriptionMode`
+    /// variant and beside `tool_choice`'s `allowed_tools`, as the steps do
+    /// (C1 of the 2026-11-07 grading).
+    #[test]
+    fn interaction_response_keeps_unknown_fields_at_every_depth(
+        response in arb_interaction_response(),
+    ) {
+        let skip: Vec<&str> = NOT_INJECTED_UNDER.iter().map(|(key, _)| *key).collect();
+        assert_injected_round_trip_except(&response, &skip)?;
+    }
+
+    #[test]
+    fn tool_keeps_unknown_fields_at_every_depth(tool in arb_tool()) {
+        let skip: Vec<&str> = NOT_INJECTED_UNDER.iter().map(|(key, _)| *key).collect();
+        assert_injected_round_trip_except(&tool, &skip)?;
+    }
+
+    #[test]
+    fn transcription_mode_keeps_unknown_fields(mode in arb_transcription_mode()) {
+        assert_injected_round_trip(&mode)?;
     }
 
     #[test]
@@ -192,6 +267,89 @@ fn annotation_ordinal(annotation: &Annotation) -> Option<usize> {
     })
 }
 
+/// Number of known `Tool` variants; [`tool_ordinal`] numbers them.
+const TOOL_VARIANTS: usize = 9;
+
+fn tool_ordinal(tool: &Tool) -> Option<usize> {
+    Some(match tool {
+        Tool::Function { .. } => 0,
+        Tool::GoogleSearch { .. } => 1,
+        Tool::GoogleMaps { .. } => 2,
+        Tool::CodeExecution { .. } => 3,
+        Tool::UrlContext { .. } => 4,
+        Tool::ComputerUse { .. } => 5,
+        Tool::McpServer { .. } => 6,
+        Tool::FileSearch { .. } => 7,
+        Tool::Retrieval { .. } => 8,
+        Tool::Unknown { .. } => return None,
+    })
+}
+
+/// Number of known `ResponseFormat` variants; [`format_ordinal`] numbers
+/// them.
+const FORMAT_VARIANTS: usize = 4;
+
+fn format_ordinal(format: &ResponseFormat) -> Option<usize> {
+    Some(match format {
+        ResponseFormat::Text { .. } => 0,
+        ResponseFormat::Audio { .. } => 1,
+        ResponseFormat::Image { .. } => 2,
+        ResponseFormat::Video { .. } => 3,
+        ResponseFormat::Unknown { .. } => return None,
+    })
+}
+
+/// Number of known `TranscriptionMode` variants; [`mode_ordinal`] numbers
+/// them.
+const MODE_VARIANTS: usize = 2;
+
+fn mode_ordinal(mode: &TranscriptionMode) -> Option<usize> {
+    Some(match mode {
+        TranscriptionMode::Smart { .. } => 0,
+        TranscriptionMode::Verbatim { .. } => 1,
+        TranscriptionMode::Unknown { .. } => return None,
+    })
+}
+
+/// Number of known `ToolChoice` variants; [`choice_ordinal`] numbers them.
+const CHOICE_VARIANTS: usize = 2;
+
+fn choice_ordinal(choice: &ToolChoice) -> Option<usize> {
+    Some(match choice {
+        ToolChoice::Mode(_) => 0,
+        ToolChoice::AllowedTools { .. } => 1,
+        ToolChoice::Unknown { .. } => return None,
+    })
+}
+
+/// The request-side variants a response carries, as `(union, ordinal)`:
+/// 0 for `Tool`, 1 for `ResponseFormat`, 2 for `TranscriptionMode` and 3 for
+/// `ToolChoice`.
+fn request_side_ordinals(response: &InteractionResponse) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    for tool in response.tools.iter().flatten() {
+        found.extend(tool_ordinal(tool).map(|n| (0, n)));
+    }
+    let formats = match &response.response_format {
+        Some(ResponseFormatSpec::Single(format)) => std::slice::from_ref(format),
+        Some(ResponseFormatSpec::List(formats)) => formats.as_slice(),
+        _ => &[],
+    };
+    for format in formats {
+        found.extend(format_ordinal(format).map(|n| (1, n)));
+    }
+    if let Some(config) = &response.generation_config {
+        let mode = config
+            .transcription_config
+            .as_ref()
+            .and_then(|transcription| transcription.mode.as_ref());
+        found.extend(mode.and_then(mode_ordinal).map(|n| (2, n)));
+        let choice = config.tool_choice.as_ref();
+        found.extend(choice.and_then(choice_ordinal).map(|n| (3, n)));
+    }
+    found
+}
+
 /// The known-variant ordinals a strategy produces over a fixed sample.
 fn ordinals_reached<S: Strategy>(
     strategy: S,
@@ -226,4 +384,34 @@ fn strategies_reach_every_known_variant() {
         all(ANNOTATION_VARIANTS),
         "arb_annotation misses an Annotation variant"
     );
+}
+
+/// The response property above reaches every request-side variant it
+/// claims to cover.
+#[test]
+fn the_response_strategy_reaches_every_request_side_variant() {
+    let mut runner = TestRunner::deterministic();
+    let strategy = arb_interaction_response();
+    let mut reached = BTreeSet::new();
+    for _ in 0..2000 {
+        let response = strategy.new_tree(&mut runner).expect("sample").current();
+        reached.extend(request_side_ordinals(&response));
+    }
+    for (union, name, count) in [
+        (0, "Tool", TOOL_VARIANTS),
+        (1, "ResponseFormat", FORMAT_VARIANTS),
+        (2, "TranscriptionMode", MODE_VARIANTS),
+        (3, "ToolChoice", CHOICE_VARIANTS),
+    ] {
+        let got: BTreeSet<usize> = reached
+            .iter()
+            .filter(|(u, _)| *u == union)
+            .map(|(_, n)| *n)
+            .collect();
+        assert_eq!(
+            got,
+            (0..count).collect(),
+            "arb_interaction_response misses a {name} variant"
+        );
+    }
 }

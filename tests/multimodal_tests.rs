@@ -284,6 +284,7 @@ mod audio {
             .with_mode(TranscriptionMode::Verbatim {
                 diarization_mode: Some("speaker".to_string()),
                 timestamp_granularities: Some(vec!["word".to_string()]),
+                extra: Default::default(),
             });
         let response = crate::retry_request!([client, speech, config] => {
             client
@@ -349,6 +350,7 @@ mod audio {
             source_text: Some(
                 "My friend Kaytlinn Smyth runs the bakery on Main Street.".to_string(),
             ),
+            extra: Default::default(),
         });
         let response = crate::retry_request!([client, speech, config] => {
             client

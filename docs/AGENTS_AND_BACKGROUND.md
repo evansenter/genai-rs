@@ -81,7 +81,7 @@ let agent = client.agents().create(
     &Agent::new("customer-sentinel", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
         .with_system_instruction("You monitor customer feedback.")
         .with_description("Watches feedback channels and summarizes sentiment")
-        .add_tool(Tool::CodeExecution)
+        .add_tool(Tool::code_execution())
         .with_base_environment(
             RemoteEnvironment::new().add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
         ),

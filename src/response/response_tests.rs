@@ -1297,7 +1297,11 @@ fn stored_request_config_keeps_unmodeled_nested_fields() {
         config.transcription_config.as_ref().unwrap().extra["future_transcription_knob"],
         serde_json::json!([1])
     );
-    let Some(crate::ToolChoice::AllowedTools(allowed)) = &config.tool_choice else {
+    let Some(crate::ToolChoice::AllowedTools {
+        allowed_tools: allowed,
+        ..
+    }) = &config.tool_choice
+    else {
         panic!(
             "expected an allowed_tools restriction: {:?}",
             config.tool_choice

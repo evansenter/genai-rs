@@ -53,11 +53,14 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
         seed: Some(7),
         stop_sequences: Some(vec!["STOP".into()]),
         thinking_summaries: Some(ThinkingSummaries::Auto),
-        tool_choice: Some(ToolChoice::AllowedTools(AllowedTools {
-            mode: Some(FunctionCallingMode::Any),
-            tools: vec!["get_weather".into()],
-            ..Default::default()
-        })),
+        tool_choice: Some(ToolChoice::AllowedTools {
+            allowed_tools: AllowedTools {
+                mode: Some(FunctionCallingMode::Any),
+                tools: vec!["get_weather".into()],
+                ..Default::default()
+            },
+            extra: Default::default(),
+        }),
         speech_config: Some(vec![SpeechConfig {
             voice: Some("Kore".into()),
             language: Some("en-US".into()),
@@ -84,6 +87,7 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             mode: Some(TranscriptionMode::Verbatim {
                 diarization_mode: Some("speaker".into()),
                 timestamp_granularities: Some(vec!["word".into()]),
+                extra: Default::default(),
             }),
             ..Default::default()
         }),
@@ -93,6 +97,7 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
     modes.transcription_config = Some(TranscriptionConfig {
         mode: Some(TranscriptionMode::Smart {
             source_text: Some("Hello there.".into()),
+            extra: Default::default(),
         }),
         ..Default::default()
     });
@@ -147,18 +152,21 @@ pub(super) fn response_formats() -> Vec<ResponseFormat> {
         ResponseFormat::Text {
             mime_type: Some("application/json".into()),
             schema: Some(json!({"type": "object"})),
+            extra: Default::default(),
         },
         ResponseFormat::Audio {
             mime_type: Some("audio/wav".into()),
             delivery: Some(ResponseDelivery::Inline),
             sample_rate: Some(24_000),
             bit_rate: Some(64_000),
+            extra: Default::default(),
         },
         ResponseFormat::Image {
             mime_type: Some("image/jpeg".into()),
             delivery: Some(ResponseDelivery::Uri),
             aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
             image_size: Some(ImageSize::Hd2k),
+            extra: Default::default(),
         },
         ResponseFormat::Video {
             delivery: Some(ResponseDelivery::Uri),
@@ -166,6 +174,7 @@ pub(super) fn response_formats() -> Vec<ResponseFormat> {
             aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
             duration: Some("8s".into()),
             resolution: Some(VideoResolution::Hd720p),
+            extra: Default::default(),
         },
     ];
     for format in &all {
@@ -403,8 +412,8 @@ pub(super) fn agents() -> Vec<Value> {
                 description: Some("d".into()),
                 tools: Some(vec![
                     tools().remove(0),
-                    Tool::CodeExecution,
-                    Tool::UrlContext,
+                    Tool::code_execution(),
+                    Tool::url_context(),
                     tools().remove(1),
                     tools().remove(6),
                 ]),

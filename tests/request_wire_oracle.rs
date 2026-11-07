@@ -146,14 +146,18 @@ fn interaction(agent: bool) -> InteractionRequest {
         )])),
         previous_interaction_id: Some("prev".into()),
         tools: Some(vec![
-            Tool::CodeExecution,
-            Tool::GoogleSearch { search_types: None },
-            Tool::UrlContext,
+            Tool::code_execution(),
+            Tool::GoogleSearch {
+                search_types: None,
+                extra: Default::default(),
+            },
+            Tool::url_context(),
         ]),
         response_modalities: Some(vec!["text".into()]),
         response_format: Some(ResponseFormatSpec::Single(ResponseFormat::Text {
             mime_type: Some("application/json".into()),
             schema: Some(json!({"type": "object"})),
+            extra: Default::default(),
         })),
         generation_config: (!agent).then(|| GenerationConfig {
             max_output_tokens: Some(100),
@@ -279,7 +283,7 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
             &Agent::new("my-agent", "base")
                 .with_system_instruction("be brief")
                 .with_description("d")
-                .add_tool(Tool::CodeExecution)
+                .add_tool(Tool::code_execution())
                 .with_agent_config(
                     AntigravityConfig::new()
                         .with_model("m")

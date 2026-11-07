@@ -42,7 +42,7 @@ use crate::tools::Tool;
 /// let agent = Agent::new("customer-sentinel", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
 ///     .with_system_instruction("You monitor customer feedback.")
 ///     .with_description("Watches feedback channels and summarizes sentiment")
-///     .add_tool(Tool::CodeExecution)
+///     .add_tool(Tool::code_execution())
 ///     .with_base_environment(
 ///         RemoteEnvironment::new()
 ///             .add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
@@ -280,7 +280,7 @@ impl<'a> Agents<'a> {
     ///     .create(
     ///         &Agent::new("customer-sentinel", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     ///             .with_system_instruction("You monitor customer feedback.")
-    ///             .add_tool(Tool::CodeExecution),
+    ///             .add_tool(Tool::code_execution()),
     ///     )
     ///     .await?;
     ///
@@ -442,7 +442,7 @@ mod tests {
         // rejects with `'base_agent' must be specified.` (2026-10-30).
         let agent = Agent::new("customer-sentinel", crate::DEFAULT_ANTIGRAVITY_AGENT)
             .with_system_instruction("You monitor customer feedback.")
-            .add_tool(Tool::CodeExecution)
+            .add_tool(Tool::code_execution())
             .with_base_environment(
                 RemoteEnvironment::new()
                     .add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
