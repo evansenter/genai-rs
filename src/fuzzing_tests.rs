@@ -146,14 +146,6 @@ fn committed_seeds_replay_through_their_targets() {
         ("stream_event", stream_event),
     ];
     let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds");
-    let listing = |dir: &std::path::Path| -> Vec<std::path::PathBuf> {
-        let mut paths: Vec<_> = std::fs::read_dir(dir)
-            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
-            .map(|entry| entry.expect("dir entry").path())
-            .collect();
-        paths.sort();
-        paths
-    };
     let dirs: Vec<String> = listing(&seeds)
         .iter()
         .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
@@ -176,6 +168,32 @@ fn committed_seeds_replay_through_their_targets() {
             }
         }
     }
+}
+
+/// The entries of `dir`, sorted, but for hidden ones such as the
+/// `.DS_Store` macOS's Finder leaves: git ignores them, so they are no seed.
+fn listing(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+        .map(|entry| entry.expect("dir entry").path())
+        .filter(|path| !path.file_name().unwrap().to_string_lossy().starts_with('.'))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn seed_listing_skips_hidden_files() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["b", ".DS_Store", "a"] {
+        std::fs::write(dir.path().join(name), b"{}").unwrap();
+    }
+    std::fs::create_dir(dir.path().join("content")).unwrap();
+    let names: Vec<_> = listing(dir.path())
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["a", "b", "content"]);
 }
 
 #[test]
