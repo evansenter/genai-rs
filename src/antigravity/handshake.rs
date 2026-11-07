@@ -87,7 +87,7 @@ pub struct OutputConfig {
 
 /// Errors produced while decoding a handshake frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodeError {
+pub(crate) enum DecodeError {
     /// The buffer ended in the middle of a value.
     Truncated,
     /// A varint ran past 10 bytes (the maximum for 64-bit values).

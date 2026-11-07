@@ -228,10 +228,7 @@ const SENT_ONLY: &[(&str, &str)] = &[
 
 /// Public enums without `#[non_exhaustive]`, each with its reason. Keyed by
 /// `path:Name`.
-const EXHAUSTIVE_ENUMS: &[(&str, &str)] = &[(
-    "src/antigravity/handshake.rs:DecodeError",
-    "crate-internal: `handshake` is a private module and nothing re-exports it",
-)];
+const EXHAUSTIVE_ENUMS: &[(&str, &str)] = &[];
 
 /// Deserializable enums with no `Unknown` variant, each with the reason a
 /// value the crate does not model still has somewhere to go. Keyed by
