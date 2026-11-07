@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Annotation`, and `arguments_extra()` / `arguments_extra_mut()` on `Step`
   and `StepDelta`, expose the wire fields the crate does not model, for
   reading or editing before replay (#491).
+- `extra()` and `extra_mut()` on `Tool`, `ResponseFormat`,
+  `TranscriptionMode` and `ToolChoice` expose the wire fields the crate does
+  not model, as on `Step`. New constructors build values with no extra
+  fields: `Tool::code_execution()`, `Tool::url_context()`,
+  `TranscriptionMode::smart(..)`, `TranscriptionMode::verbatim(..)`, and
+  `ToolChoice::from(AllowedTools)`.
 - `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
   `ReviewSnippet` and `StepError` have a public `extra` map for unmodeled
   fields, like `Place`. As on the unions, an
@@ -224,6 +230,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FileSource` enum: `Uploaded`, `Generated`, `Registered`), served on
   every file (verified live 2026-11-05). `FileError::details` and
   `FileError::extra` keep a failed file's `google.rpc.Status` whole.
+- `FileMetadata::download_uri`, the bindings' `downloadUri`, which they
+  set only on a file the API generated (`FileSource::Generated`). It was
+  the last field the coverage oracle listed as not modeled. It is modeled
+  from the bindings and not yet seen live: an uploaded file carries none
+  (live 2026-11-07), so it is `None` there.
 - `Agent::agent_config` and `Agent::with_agent_config(AntigravityConfig)`
   set the base agent's configuration. It is stored and echoed,
   `max_total_tokens` as a string; a config of another type is stored as a
@@ -255,7 +266,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   say, which the transcript follows (accepted and stored as sent, verified
   live 2026-11-07). A stored interaction's smart mode now keeps it, where
   the unit variant dropped it. Migration: `TranscriptionMode::Smart` becomes
-  `TranscriptionMode::Smart { source_text: None }` in an expression and
+  `TranscriptionMode::smart(None)` in an expression and
   `TranscriptionMode::Smart { .. }` in a pattern.
 - **Breaking: `Step::CodeExecutionResult`'s `result` is a
   `CodeExecutionOutput`, not a `String`.** google-genai 3.0.0 types it as
@@ -286,6 +297,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or use the constructors (`Step::user_text`, `Step::function_call`,
   `Content::text`, `Content::image_data`,
   `VideoProcessing::segment()...build()`), which set them empty.
+- **Breaking: every known variant of `Tool`, `ResponseFormat` and
+  `TranscriptionMode` has a new `extra` field, `Tool::CodeExecution` and
+  `Tool::UrlContext` are struct variants, and `ToolChoice::AllowedTools` is
+  `AllowedTools { allowed_tools, extra }`.** A stored interaction serves
+  these back (`tools`, `response_format`, and `generation_config`'s
+  `transcription_config.mode` and `tool_choice`), and a field the crate does
+  not model now survives the round trip in `extra` instead of being
+  dropped; for `tool_choice` that is a key beside `allowed_tools`. A known
+  transcription mode with a mistyped field is kept whole as
+  `TranscriptionMode::Unknown`, where it used to be read leniently, dropping
+  the bad value. Migration: in a struct literal add
+  `extra: Default::default()`, or use the constructors
+  (`TranscriptionMode::smart(..)`, `TranscriptionMode::verbatim(..)`,
+  `ResponseFormat::json_schema(..)`, the tool configs such as
+  `GoogleSearchConfig`); add `..` to a pattern that lists every field.
+  `Tool::CodeExecution` and `Tool::UrlContext` become
+  `Tool::code_execution()` and `Tool::url_context()` as values and
+  `Tool::CodeExecution { .. }` / `Tool::UrlContext { .. }` in patterns.
+  `ToolChoice::AllowedTools(allowed)` becomes `ToolChoice::from(allowed)`,
+  and the pattern `ToolChoice::AllowedTools { allowed_tools, .. }`.
 - **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
   `extra` map cannot be built in a const context. Migration: call it at
   runtime.
@@ -310,6 +341,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SlashCommand`, `ToolResponse`). `OutputEvent::extra` keeps an envelope
   key a newer harness adds beside a recognized payload, which used to be
   dropped. Migration: add `..Default::default()` to a struct literal.
+- **Breaking: an Antigravity harness enum (`TrajectoryState`, `StepState`,
+  `LifecycleHook`, ...) read from a non-string value names it
+  `<non-string: 7>`, not `7`.** That is what `unknown_<context>_type()` and
+  `as_wire_str()` return and what `drift_report()` counts it under, as the
+  API enums do. The value is written back unchanged, `7`; it used to be
+  written as the string `"7"`. Migration: compare against
+  `<non-string: …>` where code compared the raw JSON text, or read the value
+  itself from `unknown_data()`.
 - **Breaking: a known step, delta, content block or annotation whose
   modeled field is malformed now deserializes as `Unknown`.** `Unknown`
   keeps the whole object. Examples: a non-object `arguments`, a non-string

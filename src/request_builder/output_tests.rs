@@ -112,6 +112,7 @@ fn test_builder_with_response_format_typed_variant() {
             delivery: Some(ResponseDelivery::Inline),
             sample_rate: Some(24000),
             bit_rate: None,
+            extra: Default::default(),
         })
         .build()
         .unwrap();
@@ -139,6 +140,7 @@ fn test_builder_with_response_formats_list() {
                 delivery: None,
                 aspect_ratio: None,
                 image_size: None,
+                extra: Default::default(),
             },
         ])
         .build()

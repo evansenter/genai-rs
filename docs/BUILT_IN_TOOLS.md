@@ -75,11 +75,11 @@ use genai_rs::{GoogleSearchConfig, SearchType};
 # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Find enterprise deployment guides for Kubernetes")
+    .with_model(genai_rs::DEFAULT_IMAGE_MODEL)
+    .with_text("Find a photo of the Eiffel Tower at night and describe it")
     .add_tool(GoogleSearchConfig::new().with_search_types(vec![
         SearchType::WebSearch,
-        SearchType::EnterpriseWebSearch,  // wire: "enterprise_web_search"
+        SearchType::ImageSearch,  // wire: "image_search"; some models only
     ]))
     .create()
     .await?;
@@ -88,11 +88,14 @@ let response = client
 # }
 ```
 
-| Variant | Wire value |
-|---------|-----------|
-| `SearchType::WebSearch` | `web_search` |
-| `SearchType::ImageSearch` | `image_search` |
-| `SearchType::EnterpriseWebSearch` | `enterprise_web_search` |
+| Variant | Wire value | On the Gemini API |
+|---------|-----------|-------------------|
+| `SearchType::WebSearch` | `web_search` | Every model |
+| `SearchType::ImageSearch` | `image_search` | Some models: `DEFAULT_IMAGE_MODEL` takes it, `DEFAULT_MODEL` answers 400 |
+| `SearchType::EnterpriseWebSearch` | `enterprise_web_search` | Rejected as Vertex-only (400) |
+
+What each was observed to do is under SearchType in
+`docs/ENUM_WIRE_FORMATS.md`.
 
 ### With Annotations (Citations)
 
@@ -239,10 +242,11 @@ let response = client
 # }
 ```
 
-`ComputerUseConfig::new()` defaults to the `"browser"` environment. Computer
-use is allowlisted, and most API keys can't enable it. Exclude actions a task
-doesn't need, and turn on prompt-injection detection when browsing untrusted
-pages.
+`ComputerUseConfig::new()` defaults to the `"browser"` environment. It runs
+on a standard API key; the first action comes back as a `function_call` with
+the interaction in `requires_action` (Computer Use in
+`docs/ENUM_WIRE_FORMATS.md`). Exclude actions a task doesn't need, and turn
+on prompt-injection detection when browsing untrusted pages.
 
 **Example**: `cargo run --example computer_use`
 

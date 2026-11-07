@@ -270,6 +270,41 @@ fn file_metadata_reads_the_live_upload_shape() {
     assert_eq!(serde_json::to_value(&file).unwrap(), wire);
 }
 
+/// A generated file's `downloadUri` (google-genai 3.0.0's `File`, which
+/// `files.download` reads) is modeled, not left in `extra`; an uploaded
+/// file, which has none, serializes without it.
+#[test]
+fn file_metadata_reads_a_generated_files_download_uri() {
+    let wire = serde_json::json!({
+        "name": "files/generated1",
+        "mimeType": "video/mp4",
+        "uri": "https://generativelanguage.googleapis.com/v1beta/files/generated1",
+        "downloadUri": "https://generativelanguage.googleapis.com/download/v1beta/files/generated1:download?alt=media",
+        "state": "ACTIVE",
+        "source": "GENERATED"
+    });
+    let file: FileMetadata = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(
+        file.download_uri.as_deref(),
+        wire["downloadUri"].as_str(),
+        "{file:?}"
+    );
+    assert!(file.extra.is_empty(), "{:?}", file.extra);
+    assert_eq!(serde_json::to_value(&file).unwrap(), wire);
+
+    let uploaded: FileMetadata = serde_json::from_value(serde_json::json!({
+        "name": "files/up", "mimeType": "text/plain", "uri": "u", "source": "UPLOADED"
+    }))
+    .unwrap();
+    assert_eq!(uploaded.download_uri, None);
+    assert!(
+        serde_json::to_value(&uploaded)
+            .unwrap()
+            .get("downloadUri")
+            .is_none()
+    );
+}
+
 #[test]
 fn file_source_wire_values() {
     for (source, wire) in [
@@ -532,7 +567,10 @@ mod proptest_tests {
                 prop::option::of(arb_datetime()), // expiration_time
             ),
             prop::option::of("[a-f0-9]{64}"), // sha256_hash (API returns raw hash, no prefix)
-            "https?://[a-z]+\\.[a-z]+/[a-z]+", // uri
+            (
+                "https?://[a-z]+\\.[a-z]+/[a-z]+",                  // uri
+                prop::option::of("https://[a-z]+\\.[a-z]+/[a-z]+"), // download_uri
+            ),
             prop::option::of(arb_file_state()),
             prop::option::of(arb_file_error()),
             prop::option::of(arb_video_metadata()),
@@ -543,7 +581,7 @@ mod proptest_tests {
                     (name, display_name, mime_type, size_bytes),
                     (create_time, update_time, expiration_time),
                     sha256_hash,
-                    uri,
+                    (uri, download_uri),
                     state,
                     error,
                     video_metadata,
@@ -559,6 +597,7 @@ mod proptest_tests {
                         expiration_time,
                         sha256_hash,
                         uri,
+                        download_uri,
                         state,
                         error,
                         video_metadata,

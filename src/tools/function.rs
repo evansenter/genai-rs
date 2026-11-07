@@ -75,6 +75,7 @@ impl FunctionDeclaration {
             name: self.name,
             description: Some(self.description),
             parameters: Some(self.parameters),
+            extra: serde_json::Map::new(),
         }
     }
 }

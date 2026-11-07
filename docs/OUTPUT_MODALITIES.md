@@ -265,6 +265,7 @@ let image = ResponseFormat::Image {
     delivery: None,
     aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
     image_size: Some(ImageSize::Hd2k),
+    extra: Default::default(),
 };
 
 let response = client

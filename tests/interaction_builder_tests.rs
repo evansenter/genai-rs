@@ -521,7 +521,7 @@ mod tools {
         assert!(request.tools.is_some());
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 1);
-        assert!(matches!(tools[0], Tool::CodeExecution));
+        assert!(matches!(tools[0], Tool::CodeExecution { .. }));
     }
 
     #[test]
@@ -545,7 +545,7 @@ mod tools {
         assert!(request.tools.is_some());
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 2);
-        assert!(matches!(tools[0], Tool::CodeExecution));
+        assert!(matches!(tools[0], Tool::CodeExecution { .. }));
         assert!(matches!(tools[1], Tool::GoogleSearch { .. }));
     }
 
@@ -568,7 +568,7 @@ mod tools {
 
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 1);
-        assert!(matches!(tools[0], Tool::UrlContext));
+        assert!(matches!(tools[0], Tool::UrlContext { .. }));
     }
 
     #[test]
@@ -597,7 +597,7 @@ mod tools {
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 2);
         assert!(matches!(tools[0], Tool::Function { .. }));
-        assert!(matches!(tools[1], Tool::UrlContext));
+        assert!(matches!(tools[1], Tool::UrlContext { .. }));
     }
 
     #[test]
@@ -622,8 +622,8 @@ mod tools {
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 3);
         assert!(matches!(tools[0], Tool::GoogleSearch { .. }));
-        assert!(matches!(tools[1], Tool::CodeExecution));
-        assert!(matches!(tools[2], Tool::UrlContext));
+        assert!(matches!(tools[1], Tool::CodeExecution { .. }));
+        assert!(matches!(tools[2], Tool::UrlContext { .. }));
     }
 }
 
@@ -1342,7 +1342,10 @@ mod new_request_options {
             .as_ref()
             .expect("Should have generation config");
         match &config.tool_choice {
-            Some(ToolChoice::AllowedTools(allowed)) => {
+            Some(ToolChoice::AllowedTools {
+                allowed_tools: allowed,
+                ..
+            }) => {
                 assert!(allowed.mode.is_none());
                 assert_eq!(allowed.tools, vec!["get_weather", "get_time"]);
             }

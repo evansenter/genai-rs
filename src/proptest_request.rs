@@ -156,6 +156,29 @@ pub(crate) fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
         })
 }
 
+/// Strategy for `TranscriptionMode`: both known modes, and an unknown one in
+/// the string and the object form (kept in strict mode too).
+pub(super) fn arb_transcription_mode() -> impl Strategy<Value = TranscriptionMode> {
+    prop_oneof![
+        proptest::option::of(arb_text()).prop_map(TranscriptionMode::smart),
+        (
+            proptest::option::of(arb_identifier()),
+            proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        )
+            .prop_map(|(diarization_mode, timestamp_granularities)| {
+                TranscriptionMode::verbatim(diarization_mode, timestamp_granularities)
+            }),
+        arb_unknown_type().prop_map(|mode_type| TranscriptionMode::Unknown {
+            data: serde_json::Value::String(mode_type.clone()),
+            mode_type,
+        }),
+        (arb_unknown_type(), arb_unknown_object()).prop_map(|(mode_type, mut data)| {
+            data["type"] = serde_json::Value::String(mode_type.clone());
+            TranscriptionMode::Unknown { mode_type, data }
+        }),
+    ]
+}
+
 pub(crate) fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
     (
         proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
@@ -163,6 +186,7 @@ pub(crate) fn arb_transcription_config() -> impl Strategy<Value = TranscriptionC
         proptest::option::of(arb_identifier()),
         proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
         proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_transcription_mode()),
     )
         .prop_map(
             |(
@@ -171,13 +195,14 @@ pub(crate) fn arb_transcription_config() -> impl Strategy<Value = TranscriptionC
                 diarization_mode,
                 language_codes,
                 timestamp_granularities,
+                mode,
             )| TranscriptionConfig {
                 adaptation_phrases,
                 custom_vocabulary,
                 diarization_mode,
                 language_codes,
                 timestamp_granularities,
-                mode: None,
+                mode,
                 ..Default::default()
             },
         )
@@ -367,7 +392,11 @@ pub(crate) fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
             proptest::option::of(arb_identifier()),
             proptest::option::of(arb_unknown_object()),
         )
-            .prop_map(|(mime_type, schema)| ResponseFormat::Text { mime_type, schema }),
+            .prop_map(|(mime_type, schema)| ResponseFormat::Text {
+                mime_type,
+                schema,
+                extra: Default::default()
+            }),
         (
             proptest::option::of(arb_identifier()),
             proptest::option::of(arb_response_delivery()),
@@ -380,6 +409,7 @@ pub(crate) fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
                     delivery,
                     sample_rate,
                     bit_rate,
+                    extra: Default::default(),
                 }
             }),
         (
@@ -394,6 +424,7 @@ pub(crate) fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
                     delivery,
                     aspect_ratio,
                     image_size,
+                    extra: Default::default(),
                 }
             }),
         (
@@ -409,6 +440,7 @@ pub(crate) fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
                     aspect_ratio,
                     duration,
                     resolution: None,
+                    extra: Default::default(),
                 }
             }),
     ]

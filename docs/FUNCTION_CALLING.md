@@ -354,9 +354,10 @@ arrays work as in JSON Schema.
 
 - `ToolChoice::Mode(FunctionCallingMode)` serializes as a plain lowercase string
   (e.g., `"auto"`)
-- `ToolChoice::AllowedTools(AllowedTools)` serializes as
+- `ToolChoice::AllowedTools { allowed_tools, extra }` serializes as
   `{"allowed_tools": {"mode": ..., "tools": [...]}}` and restricts the model to a
-  named subset of the declared tools
+  named subset of the declared tools (`extra` keeps any key beside
+  `allowed_tools` a stored interaction serves back)
 
 ```rust,no_run
 use genai_rs::{AllowedTools, Client, FunctionCallingMode, ToolChoice};
@@ -380,7 +381,7 @@ let builder = client.interaction()
 
 // Equivalent, via the AllowedTools builder
 let builder = client.interaction()
-    .with_tool_choice(ToolChoice::AllowedTools(
+    .with_tool_choice(ToolChoice::from(
         AllowedTools::new(vec!["get_weather".to_string()])
             .with_mode(FunctionCallingMode::Any),
     ));

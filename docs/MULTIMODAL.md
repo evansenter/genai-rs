@@ -92,11 +92,11 @@ effect):
 
 - BCP-47 `with_language_codes` hints (omit for auto-detect)
 - `with_custom_vocabulary` biasing
-- `with_mode(TranscriptionMode::Verbatim { diarization_mode, timestamp_granularities })`
+- `with_mode(TranscriptionMode::verbatim(diarization_mode, timestamp_granularities))`
   for speaker diarization (`"speaker"`) and word timestamps (`"word"`): the
   transcript's text block carries an `Annotation::WordInfo` per word, with
   its byte span, `start_offset` / `end_offset` and speaker
-- `with_mode(TranscriptionMode::Smart { source_text })`, where
+- `with_mode(TranscriptionMode::smart(source_text))`, where
   `source_text` is the script the speaker read: the transcript follows its
   wording and spelling where the audio agrees
 

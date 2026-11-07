@@ -30,13 +30,19 @@ fn test_search_type_unknown_roundtrip() {
 #[test]
 fn test_google_search_config_into_tool() {
     let tool: Tool = GoogleSearchConfig::new().into();
-    assert!(matches!(tool, Tool::GoogleSearch { search_types: None }));
+    assert!(matches!(
+        tool,
+        Tool::GoogleSearch {
+            search_types: None,
+            ..
+        }
+    ));
 
     let tool: Tool = GoogleSearchConfig::new()
         .with_search_types(vec![SearchType::ImageSearch])
         .into();
     match tool {
-        Tool::GoogleSearch { search_types } => {
+        Tool::GoogleSearch { search_types, .. } => {
             let types = search_types.expect("Should have search_types");
             assert_eq!(types, vec![SearchType::ImageSearch]);
         }
@@ -74,6 +80,7 @@ fn test_mcp_server_config_into_tool() {
             url,
             allowed_tools,
             headers,
+            ..
         } => {
             assert_eq!(name, "server");
             assert_eq!(url, "https://example.com");
@@ -124,6 +131,7 @@ fn test_file_search_config_into_tool() {
             store_names,
             top_k,
             metadata_filter,
+            ..
         } => {
             assert_eq!(store_names, vec!["store"]);
             assert_eq!(top_k, Some(5));

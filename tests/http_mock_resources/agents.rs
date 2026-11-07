@@ -25,7 +25,7 @@ async fn agent_endpoints_send_the_documented_requests() {
                     let agent = Agent::new("my-agent", "agents/base")
                         .with_system_instruction("Be brief.")
                         .with_description("A test agent")
-                        .add_tool(Tool::CodeExecution)
+                        .add_tool(Tool::code_execution())
                         .with_base_environment("env-1");
                     c.agents().create(&agent).await
                 },
@@ -88,7 +88,7 @@ async fn agent_responses_parse_tools_and_preserve_unknown_environments() {
     let fetched = client.agents().get("my-agent").await.unwrap();
     assert!(matches!(
         fetched.tools.as_deref(),
-        Some([Tool::CodeExecution, Tool::UrlContext])
+        Some([Tool::CodeExecution { .. }, Tool::UrlContext { .. }])
     ));
     let env = fetched.base_environment.as_ref().unwrap();
     assert_eq!(env.unknown_environment_type(), Some("gpu_sandbox"));
