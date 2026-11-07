@@ -1277,3 +1277,25 @@ the pattern is `AllowedTools { allowed_tools, .. }`). `ResponseFormat`
 grew past clippy's `large_enum_variant` bar inside `ResponseFormatSpec`;
 the lint is allowed there, since a request holds one.
 
+## D-NEXT-WP13-a — The Antigravity enums share `wire_enum!`'s non-string rule but keep their own macro (2026-11-07)
+
+**Context.** C2 of the 2026-11-07 grading: `wire_string_enum!`
+(`src/antigravity/protocol/enums.rs`, 17 enums) duplicated `wire_enum!`
+and still had the bug `wire_enum!` had fixed: a non-string value read into
+`Unknown` was written back as a string, `7` as `"7"`.
+
+**Decision.** Port the fix rather than merge the macros. The rule lives in
+two crate-private helpers in `src/wire_enum.rs`, `unknown_type` and
+`serialize_wire`, which both macros call, so it cannot drift again: a
+non-string value is typed `<non-string: ...>` and written back as its JSON.
+The harness enums keep their own macro because they differ on purpose:
+strict mode does not apply to the harness protocol, which is internal and
+unstable; an unrecognized value is recorded for `drift_report`; and
+`as_wire_str` is public, and `all_wire_values` feeds the protocol-drift
+guard. Generating them from `wire_enum!` would take three switches on it,
+one of them turning strict mode off.
+
+**Consequences.** `unknown_<context>_type()` on a harness enum read from a
+non-string value now returns `<non-string: 7>`, not `7`, and
+`drift_report` keys it the same way. The enum guard checks both macros'
+templates for `#[non_exhaustive]` and an `Unknown` variant.

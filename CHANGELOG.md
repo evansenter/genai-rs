@@ -788,6 +788,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that
   warns on or denies `missing_docs` reported each of them for every tool.
+- An Antigravity harness enum (`TrajectoryState`, `StepState`,
+  `LifecycleHook`, ...) that read a non-string value into `Unknown` writes
+  that value back unchanged, as the API enums already did; it wrote it as a
+  string, `7` as `"7"`. `unknown_<context>_type()` names such a value
+  `<non-string: 7>`, as the API enums do, and so does `drift_report()`.
 - Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
   variants now survive a deserialize/re-serialize round trip, and so do
   unknown fields on the result items, review snippets, step errors and

@@ -1239,6 +1239,11 @@ against 0.1.18, 0.1.10 and 0.1.5.
 | `HookDecision` | `decision_type` | `ALLOW`, `DENY` |
 | `LineAction` | `action_type` | `LINE_ACTION_INSERT`, `LINE_ACTION_DELETE`, `LINE_ACTION_NONE` |
 
+An unrecognized value lands in `Unknown` and is written back as it came,
+under the same rule as `wire_enum!`'s: a non-string value (a number, an
+object, `null`) is typed `<non-string: ...>` and serializes as the original
+JSON, not as a string.
+
 The envelope oneofs have Unknown variants too (`InputEvent::Unknown` and
 `OutputPayload::Unknown`, with `event_type` + `data`). Harness-emitted
 structs (`StepUpdate`, `ToolCall`, `UsageMetadata`, action submessages, ...)
