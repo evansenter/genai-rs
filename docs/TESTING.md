@@ -578,7 +578,7 @@ cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | bi
 Then update the `docs/INTERACTIONS_API_GAP.md` header (CI checks it matches
 the baseline). With a newer copy of the OpenAPI spec, add
 `--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD` (and
-`--spec-source URL` once the spec has a public URL again; it defaults to
+`--spec-source URL`, the URL it was downloaded from; it defaults to
 `manual`). The baseline is written last, so a failed download or dump
 leaves it and the snapshot unchanged.
 

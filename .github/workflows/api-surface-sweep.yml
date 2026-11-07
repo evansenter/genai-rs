@@ -23,8 +23,8 @@ name: API Surface Sweep
 # Search Store, Document and Operation modules: their endpoints, and the
 # classes in `types.py` their methods' signatures name.
 #
-# Every run also probes the published OpenAPI spec URLs, which stopped
-# serving around 2026-11-03, and says so on #511 when one serves again.
+# Every run also probes the published OpenAPI spec URLs, and says so on
+# #511 when one serves the spec (their record is in the gap tracker).
 #
 # The same dump, resolved (`--json`), is the coverage oracle's snapshot in
 # `tests/fixtures/api_surface/`. Each run checks that the committed copy
@@ -457,10 +457,11 @@ jobs:
           echo "Closed issue #$EXISTING"
 
       # The published OpenAPI spec URLs (the `source` each committed spec
-      # snapshot records) stopped serving the spec around 2026-11-03, so the
-      # committed copies are the latest (#511). This probes them every day
-      # and comments on #511 once per URL that serves an OpenAPI document
-      # again, with the commands that refresh the snapshot from it. A dead
+      # snapshot records) are what #511 tracks; their state is recorded in
+      # docs/INTERACTIONS_API_GAP.md ("How to verify API surface"). This
+      # probes them every day and comments on #511 once per URL that serves
+      # an OpenAPI document, with the commands that refresh the snapshot
+      # from it. A dead
       # URL is the state #511 tracks, not a failure; a closed #511 gets no
       # comment. `!cancelled()`: it does not depend on the PyPI diff above.
       - name: Watch the published OpenAPI spec URLs (#511)

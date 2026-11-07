@@ -29,7 +29,7 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404 since about 2026-11-03, and no new public URL was found (2026-11-04), so the 2026-11-01 copies are the latest. This is the one record of the URL's state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths that 404'd from about 2026-11-03, with no new public URL found (2026-11-04). On 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`; they differ from the committed 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), and refreshing the copies is #511. The daily sweep probes both URLs and comments on #511 when one serves (`watch_spec_urls.sh`). This is the one record of the URL's state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
 
@@ -415,7 +415,11 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
   `alt=media` serves the file's bytes under its own content type, and a
   directory as `application/x-tar`. The bindings list that endpoint once,
   for both verbs, so the oracle maps both to it.
-- **Deferred** (SDK verbs outside the bindings' classes and endpoints):
+- **Deferred** (in the bindings, but the crate sends none of them:
+  `tests/ci_coverage.rs` lists the three endpoints in
+  `ENDPOINTS_WITHOUT_A_VERB`, `tests/request_wire_oracle.rs` the triggers
+  `filter` in `NOT_SENT`, and `src/coverage_oracle/` the upload's `name` in
+  `UNMAPPED`):
   `files.download` (an uploaded file is a `400 Only GENERATED files can be
   downloaded`), `files.register_files` (`401 API keys are not supported`),
   `files.upload(config={"name"})` (accepted, but `FileUpload` is shared with

@@ -115,7 +115,7 @@ become `with_*` setters.
 | `client.voices.delete(id)` | `client.voices().delete(id)` |
 | `client.files.upload(file=path, config={"mime_type": m, "display_name": n})` | `client.files().upload(FileUpload::from_path(path).with_mime_type(m).with_display_name(n))` |
 | `client.files.upload(file=io_object, config={"mime_type": m})` | `client.files().upload(FileUpload::from_bytes(data, m))` |
-| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled: the API accepts a chosen name on the start request, but `FileUpload` is shared with store uploads, which have no such name; outside the bindings' classes |
+| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled: the API accepts a chosen name on the start request, but `FileUpload` is shared with store uploads, which have no such name. It is the bindings' `UploadFileConfig.name`, listed with that reason in the coverage oracle's `UNMAPPED` |
 | `client.files.get(name=)` | `client.files().get(name)` |
 | `client.files.list(config={"page_size": n, "page_token": t})` (one page) | `client.files().list().with_page_size(n).with_page_token(t).send()` |
 | iterating `client.files.list()` | `client.files().list().items()` (or `.pages()`) |

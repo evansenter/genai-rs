@@ -151,7 +151,10 @@ const UNMAPPED: &[Allowed] = &[
     (
         "legacy.UploadFileConfig",
         "files.upload's settings, which go out as the uploaded file's fields: \
-         tests/request_wire_oracle.rs checks that body against legacy.File.",
+         tests/request_wire_oracle.rs checks that body against legacy.File, which \
+         covers displayName and mimeType. Its `name` (a chosen `files/<id>`) is not \
+         sent: `FileUpload` is shared with store uploads, which take no name \
+         (docs/RESOURCES.md, files.upload).",
     ),
     ("legacy.UploadToFileSearchStoreOperation", OPERATION),
     ("legacy.UploadToFileSearchStoreResponse", OPERATION),

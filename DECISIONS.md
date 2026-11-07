@@ -1255,7 +1255,8 @@ no endpoints in it, and its classes came from a hand-picked
 `LEGACY_ROOTS` that left out `Operation`, so a new verb there went
 unseen. The `Api-Revision` the crate sends was a hand-kept constant with
 two script copies. The published OpenAPI URLs stopped serving around
-2026-11-03, and nothing watched them (#511).
+2026-11-03, and nothing watched them (#511; the URLs' state is recorded
+in docs/INTERACTIONS_API_GAP.md, "How to verify API surface").
 
 **Decision.** `dump_bindings_schema.py` records `endpoints` as an object,
 each `METHOD /path` with its `query` parameters (the `_gaos/models/`
