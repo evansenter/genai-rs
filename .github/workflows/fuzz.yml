@@ -5,6 +5,8 @@ name: Fuzz
 # InteractionStreamEvent, and Step, StepDelta and Content deserialization.
 # Each target checks for panics and a round trip where the input is valid.
 # Weekly, on demand, and on pull requests that touch code the targets build.
+# The Fuzz Gate job reports on every pull request, fuzzed or not, so it is
+# the one check branch protection can require.
 on:
   schedule:
     - cron: '41 3 * * 6' # Saturday 03:41 UTC
@@ -14,18 +16,11 @@ on:
         description: "Seconds to fuzz each target"
         required: false
         default: "60"
+  # Every pull request, with no `paths:` filter: a workflow a filter skips
+  # reports no check at all, and a required one would then wait forever. The
+  # `changes` job decides whether the targets run.
   pull_request:
     branches: [ "main" ]
-    # Everything the targets compile: the crate (without the antigravity
-    # feature, which fuzz/Cargo.toml does not enable), its macros crate, and
-    # the fuzz crate with its own lockfile (the root Cargo.lock is not used).
-    paths:
-      - "src/**"
-      - "!src/antigravity/**"
-      - "genai-rs-macros/**"
-      - "Cargo.toml"
-      - "fuzz/**"
-      - ".github/workflows/fuzz.yml"
 
 permissions:
   contents: read
@@ -38,8 +33,51 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Whether the run fuzzes: always on schedule and on demand; on a pull
+  # request, only when it touches what the targets compile. That is the
+  # crate (without the antigravity feature, which fuzz/Cargo.toml does not
+  # enable), its macros crate, and the fuzz crate with its own lockfile (the
+  # root Cargo.lock is not used).
+  changes:
+    name: Fuzzed Paths
+    runs-on: ubuntu-latest
+    outputs:
+      fuzz: ${{ steps.paths.outputs.fuzz }}
+    steps:
+      # A pull request's checkout is its merge commit: its first parent is
+      # the base, so the diff between them is what the merge would change.
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+      - name: Check whether a fuzzed path changed
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # In doubt (not a pull request, or not a merge commit), fuzz.
+          if [ "$EVENT" != pull_request ] || ! git rev-parse -q --verify 'HEAD^2' >/dev/null; then
+            echo "fuzz=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only 'HEAD^1' HEAD)
+          fuzz=false
+          while IFS= read -r path; do
+            case "$path" in
+              src/antigravity/*) ;;
+              src/*|genai-rs-macros/*|Cargo.toml|fuzz/*|.github/workflows/fuzz.yml)
+                echo "Fuzzed path changed: $path"
+                fuzz=true
+                ;;
+            esac
+          done <<< "$changed"
+          echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+
   fuzz:
     name: Fuzz ${{ matrix.target }}
+    needs: changes
+    if: needs.changes.outputs.fuzz == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -100,12 +138,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  # The check to require. The matrix's checks exist only on runs that fuzz,
+  # so this one job passes when every target ran clean or none had to, and
+  # fails otherwise. `always()`, so it reports when a target fails too.
+  fuzz-gate:
+    name: Fuzz Gate
+    needs: [changes, fuzz]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pass when every target ran clean, or none had to run
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          FUZZ_NEEDED: ${{ needs.changes.outputs.fuzz }}
+          FUZZ_RESULT: ${{ needs.fuzz.result }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != success ]; then
+            echo "::error::The path check ended '$CHANGES_RESULT', so whether to fuzz is unknown."
+            exit 1
+          fi
+          if [ "$FUZZ_NEEDED" != true ]; then
+            echo "No fuzzed path changed; the targets did not run."
+            exit 0
+          fi
+          if [ "$FUZZ_RESULT" != success ]; then
+            echo "::error::The fuzz matrix ended '$FUZZ_RESULT'. A failed target uploads its input as the fuzz-<target>-crash artifact."
+            exit 1
+          fi
+          echo "Every fuzz target ran clean."
+
   # Scheduled runs fail quietly (an email to whoever last committed this
   # file), so a red weekly run opens or updates a `ci-health-escalation` issue
-  # and a green one closes it, as rust.yml does.
+  # and a green one closes it, as rust.yml does. It needs every job: a failed
+  # path check skips the matrix, and a skip alone would not escalate.
   scheduled-run-status:
     name: Scheduled Run Status
-    needs: [fuzz]
+    needs: [changes, fuzz, fuzz-gate]
     if: always() && github.event_name == 'schedule' && github.repository_owner == 'evansenter'
     runs-on: ubuntu-latest
     permissions:

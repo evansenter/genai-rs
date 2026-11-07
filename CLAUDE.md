@@ -324,7 +324,8 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   `antigravity-release` issue when PyPI's `google-antigravity` differs from
   `SUPPORTED_HARNESS_VERSION`), `fuzz.yml` (the `fuzz/` cargo-fuzz targets,
   a minute each on nightly: weekly, and on PRs touching what the targets
-  build, keeping the grown corpus between scheduled runs; `fuzz/README.md`),
+  build, keeping the grown corpus between scheduled runs; its `Fuzz Gate`
+  job reports on every PR; `fuzz/README.md`),
   and `test-resource-janitor.yml` (daily; the marked resources live tests
   leaked, once six hours old. A scheduled run only lists them in the job
   summary unless the repository variable `JANITOR_DELETE` is `true`, the
