@@ -640,6 +640,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[build]` in `.cargo/config.toml`; replace
   `#[cfg(feature = "strict-unknown")]` in your tests with
   `#[cfg(genai_strict_unknown)]`.
+- Every client sets TCP keepalive explicitly: a probe after 15 s idle, then
+  every 15 s, failing the connection after 3 unanswered. These are reqwest
+  0.13's defaults, which the crate relied on without setting, so a reqwest
+  upgrade could have changed the only thing that notices a dead peer on a
+  connection with no read timeout. A `Client`'s `Debug` output shows them;
+  see `docs/RELIABILITY.md`.
 - `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
   harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
   containment to a subagent's own tool calls, so a read-only subagent can

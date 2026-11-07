@@ -36,6 +36,9 @@ pub struct Client {
     /// none), as `ClientBuilder::reqwest_builder` applied it. reqwest's
     /// built client doesn't show it, so `Debug` shows this instead.
     connect_timeout: Option<Duration>,
+    /// The TCP keepalive `http`'s reqwest client was built with, as
+    /// `ClientBuilder::reqwest_builder` applied it, for `Debug` too.
+    tcp_keepalive: TcpKeepalive,
 }
 
 // Resource handles hand out futures and `'static` list streams that carry the
@@ -53,6 +56,7 @@ impl std::fmt::Debug for Client {
         f.debug_struct("Client")
             .field("api_key", &"[REDACTED]")
             .field("connect_timeout", &self.connect_timeout)
+            .field("tcp_keepalive", &self.tcp_keepalive)
             .field("http_client", &self.http.http_client)
             .finish()
     }
@@ -97,11 +101,53 @@ fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<d
 /// `with_connect_timeout(Duration::MAX)`, which registers no timer.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// TCP keepalive settings for a client's connections.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TcpKeepalive {
+    /// How long a connection is idle before the first probe.
+    pub(crate) idle: Duration,
+    /// The time between unanswered probes.
+    pub(crate) interval: Duration,
+    /// How many unanswered probes fail the connection (the OS's own count
+    /// on Windows, which can't set it).
+    pub(crate) retries: u32,
+}
+
+/// The TCP keepalive every client sets on its connections: a probe after
+/// 15 s idle, then every 15 s, failing the connection after 3 unanswered,
+/// so a peer that stopped answering is noticed within a minute.
+///
+/// There is no default read timeout (see [`DEFAULT_CONNECT_TIMEOUT`]), so on
+/// a connection that is silent by design, such as a non-streaming request
+/// while the model generates, this is what notices a dead peer: a NAT or
+/// load balancer that dropped the connection, or a host gone from the
+/// network. A live server answers the probes, so a long generation is not
+/// cut off. The values are reqwest 0.13's defaults, set explicitly so that
+/// a reqwest upgrade can't change or drop them.
+pub(crate) const TCP_KEEPALIVE: TcpKeepalive = TcpKeepalive {
+    idle: Duration::from_secs(15),
+    interval: Duration::from_secs(15),
+    retries: 3,
+};
+
+impl TcpKeepalive {
+    /// `builder` with these settings on every connection it opens.
+    fn apply(self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+        builder
+            .tcp_keepalive(self.idle)
+            .tcp_keepalive_interval(self.interval)
+            .tcp_keepalive_retries(self.retries)
+    }
+}
+
 /// Builder for `Client` instances.
 ///
 /// Every client gets [`DEFAULT_CONNECT_TIMEOUT`] (30 s) unless
 /// [`with_connect_timeout`](Self::with_connect_timeout) sets another, and no
-/// read or total timeout unless one is set.
+/// read or total timeout unless one is set. Every connection sends TCP
+/// keepalive probes after 15 s idle, then every 15 s, and fails after 3
+/// unanswered, so a dead peer is noticed within a minute even on a
+/// connection with no read timeout.
 ///
 /// # Example
 ///
@@ -325,17 +371,18 @@ impl ClientBuilder {
     /// Returns an error if the underlying HTTP client cannot be constructed. This should only
     /// happen in exceptional circumstances such as TLS backend initialization failures.
     pub fn build(self) -> Result<Client, GenaiError> {
-        let (builder, connect_timeout) = self.reqwest_builder();
+        let (builder, applied) = self.reqwest_builder();
         let http_client = builder.build().map_err(GenaiError::ClientBuild)?;
-        Ok(self.finish(http_client, connect_timeout))
+        Ok(self.finish(http_client, applied))
     }
 
-    /// The reqwest builder with this builder's timeouts applied, and the
-    /// connect timeout it set (`None`: none), for the `Client` to record.
-    /// Split from [`build`](Self::build) so tests can add a resolver before
-    /// building.
-    fn reqwest_builder(&self) -> (reqwest::ClientBuilder, Option<Duration>) {
-        let mut builder = ReqwestClient::builder();
+    /// The reqwest builder with this builder's timeouts and
+    /// [`TCP_KEEPALIVE`] applied, and what it applied, for the `Client` to
+    /// record. Split from [`build`](Self::build) so tests can add a resolver
+    /// before building.
+    fn reqwest_builder(&self) -> (reqwest::ClientBuilder, Applied) {
+        let tcp_keepalive = TCP_KEEPALIVE;
+        let mut builder = tcp_keepalive.apply(ReqwestClient::builder());
 
         // `Duration::MAX` sets none. reqwest would otherwise arm a timer
         // decades out, and a paused test clock auto-advances to any timer.
@@ -355,10 +402,16 @@ impl ClientBuilder {
             builder = builder.read_timeout(read_timeout);
         }
 
-        (builder, connect_timeout)
+        (
+            builder,
+            Applied {
+                connect_timeout,
+                tcp_keepalive,
+            },
+        )
     }
 
-    fn finish(self, http_client: ReqwestClient, connect_timeout: Option<Duration>) -> Client {
+    fn finish(self, http_client: ReqwestClient, applied: Applied) -> Client {
         let mut http = HttpContext::new(
             http_client,
             self.api_key,
@@ -372,9 +425,18 @@ impl ClientBuilder {
         }
         Client {
             http,
-            connect_timeout,
+            connect_timeout: applied.connect_timeout,
+            tcp_keepalive: applied.tcp_keepalive,
         }
     }
+}
+
+/// What [`ClientBuilder::reqwest_builder`] set on the reqwest builder that
+/// reqwest's built client doesn't show.
+struct Applied {
+    /// The connect timeout (`None`: none).
+    connect_timeout: Option<Duration>,
+    tcp_keepalive: TcpKeepalive,
 }
 
 impl Client {
@@ -780,6 +842,46 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(off.connect_timeout, None);
+    }
+
+    #[test]
+    fn test_public_constructors_set_tcp_keepalive() {
+        // reqwest's built client doesn't show its keepalive either, so the
+        // `Client` records what `reqwest_builder` applied. This pins that
+        // both public constructors set it, whatever the timeouts, and the
+        // values: the first probe plus three retries notice a dead peer
+        // within a minute.
+        assert_eq!(
+            TCP_KEEPALIVE,
+            TcpKeepalive {
+                idle: Duration::from_secs(15),
+                interval: Duration::from_secs(15),
+                retries: 3,
+            }
+        );
+        assert_eq!(
+            TCP_KEEPALIVE.idle + TCP_KEEPALIVE.interval * TCP_KEEPALIVE.retries,
+            Duration::from_secs(60)
+        );
+        for client in [
+            Client::new("k".to_string()),
+            Client::builder("k".to_string()).build().unwrap(),
+            Client::builder("k".to_string())
+                .with_connect_timeout(Duration::MAX)
+                .with_read_timeout(Duration::from_secs(5))
+                .with_timeout(Duration::from_secs(9))
+                .build()
+                .unwrap(),
+        ] {
+            assert_eq!(client.tcp_keepalive, TCP_KEEPALIVE);
+            let debug = format!("{client:?}");
+            assert!(
+                debug.contains(
+                    "tcp_keepalive: TcpKeepalive { idle: 15s, interval: 15s, retries: 3 }"
+                ),
+                "{debug}"
+            );
+        }
     }
 
     #[test]
