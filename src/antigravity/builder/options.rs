@@ -137,7 +137,9 @@ impl AgentBuilder {
     /// **Off by default**: enabling the subagent builtin gives the model
     /// your static subagents, `invoke_subagent`, `manage_subagents` and
     /// `send_message`, but not this. The Python SDK leaves it on (it has no
-    /// setting for it).
+    /// setting for it). Harness 0.1.23 offers it only beside
+    /// [`BuiltinTool::InvokeSubagent`](crate::antigravity::BuiltinTool::InvokeSubagent):
+    /// set alone, it adds no tool.
     ///
     /// Like the subagent builtin, it makes `spawn()` refuse an agent with
     /// any gate a subagent bypasses unless

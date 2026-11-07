@@ -13,7 +13,7 @@ follow.
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
 | Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
-| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
+| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, and a reason above every `ignore` fence) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`#[doc = include_str!(..)]` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |

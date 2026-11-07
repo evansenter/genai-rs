@@ -825,7 +825,8 @@ Rules (matching the reference SDK):
   `manage_subagents` and `send_message`. The harness would also offer
   `define_subagent`, with which the model writes subagents of its own at
   runtime; it is **off** unless you call `with_define_subagent_tool(true)`
-  (D-023).
+  (D-023). Harness 0.1.23 offers it only beside `invoke_subagent`: the
+  setter alone adds no tool.
 
 ## Streaming
 
