@@ -114,6 +114,13 @@ fn assert_clean(
     );
 }
 
+/// Why the file search operations are not response targets.
+#[cfg(not(genai_strict_unknown))]
+const OPERATION: &str = "A store upload's or import's operation: the crate reads only its \
+     `done`, `error` and `response.documentName` (`Operation` in \
+     src/http/file_search_stores.rs) to find the document, then returns the document \
+     read back, whose legacy.Document is a response target.";
+
 /// Binding classes no request case or response target reaches, each with
 /// its reason. (Like the response side, checked in the default build only.)
 #[cfg(not(genai_strict_unknown))]
@@ -128,6 +135,29 @@ const UNMAPPED: &[Allowed] = &[
          `data:` line itself (src/http/sse_parser.rs), and the response side \
          checks InteractionSSEEvent.",
     ),
+    (
+        "legacy.DeleteFileResponse",
+        "`Files::delete` returns `()` and reads no body.",
+    ),
+    ("legacy.ImportFileOperation", OPERATION),
+    ("legacy.ImportFileResponse", OPERATION),
+    ("legacy.Operation", OPERATION),
+    (
+        "legacy.RegisterFilesResponse",
+        "files.register_files has no verb: it wants OAuth credentials, and an API \
+         key gets `401 API keys are not supported` (live 2026-11-05, \
+         docs/INTERACTIONS_API_GAP.md \"Resource residue\").",
+    ),
+    (
+        "legacy.UploadFileConfig",
+        "files.upload's settings, which go out as the uploaded file's fields: \
+         tests/request_wire_oracle.rs checks that body against legacy.File, which \
+         covers displayName and mimeType. Its `name` (a chosen `files/<id>`) is not \
+         sent: `FileUpload` is shared with store uploads, which take no name \
+         (D-039; docs/RESOURCES.md, files.upload).",
+    ),
+    ("legacy.UploadToFileSearchStoreOperation", OPERATION),
+    ("legacy.UploadToFileSearchStoreResponse", OPERATION),
     (
         "types.Security",
         "The SDK's client credentials (api key, access token), not API surface.",

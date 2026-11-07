@@ -1197,7 +1197,7 @@ now also send a field of these configs the crate does not model yet, as
 interaction serves back keep theirs too: every known variant of `Tool`,
 `ResponseFormat` and `TranscriptionMode` has an `extra` map, and
 `ToolChoice::AllowedTools` keeps the keys beside `allowed_tools`
-(D-NEXT-WP13). The guard gained an enum arm: a public enum without
+(D-037). The guard gained an enum arm: a public enum without
 `#[non_exhaustive]`, a deserializable one without an `Unknown` variant, and
 a known variant of such a union without an `extra` map each fail it unless
 an exemption names them with a reason. A newtype variant always needs one:
@@ -1278,7 +1278,7 @@ fixtures every example copy is checked against.
 before transcribing. A silent clip still serves the acceptance tests, which
 read the stored config back rather than the transcript.
 
-## D-NEXT-WP13 — Known request-side union variants keep `extra`; the unit tools become struct variants (2026-11-07)
+## D-037 — Known request-side union variants keep `extra`; the unit tools become struct variants (2026-11-07)
 
 **Context.** C1 of the 2026-11-07 grading: `Tool`, `ResponseFormat` and
 `TranscriptionMode` read their known variants with derived or field-picking
@@ -1312,7 +1312,7 @@ the pattern is `AllowedTools { allowed_tools, .. }`). `ResponseFormat`
 grew past clippy's `large_enum_variant` bar inside `ResponseFormatSpec`;
 the lint is allowed there, since a request holds one.
 
-## D-NEXT-WP13-a — The Antigravity enums share `wire_enum!`'s non-string rule but keep their own macro (2026-11-07)
+## D-038 — The Antigravity enums share `wire_enum!`'s non-string rule but keep their own macro (2026-11-07)
 
 **Context.** C2 of the 2026-11-07 grading: `wire_string_enum!`
 (`src/antigravity/protocol/enums.rs`, 17 enums) duplicated `wire_enum!`
@@ -1335,7 +1335,7 @@ non-string value now returns `<non-string: 7>`, not `7`, and
 `drift_report` keys it the same way. The enum guard checks both macros'
 templates for `#[non_exhaustive]` and an `Unknown` variant.
 
-## D-NEXT-WP15 — A chosen Files API upload name stays unmodeled (2026-11-07)
+## D-039 — A chosen Files API upload name stays unmodeled (2026-11-07)
 
 **Context.** google-genai's `files.upload(config={"name": ...})` sends a
 chosen `files/<id>` in the upload's start request. Probed live on
@@ -1344,8 +1344,7 @@ second upload under the same name fails at finalize, after the bytes are
 sent, with `409 <id> already exists. (ALREADY_EXISTS)`. So a chosen name
 makes an upload idempotent: a retry of one that landed gets the 409
 instead of a duplicate file. `UploadFileConfig` is a hand-written class in
-`types.py`, outside the bindings snapshot, so the coverage oracle does not
-see it. `FileUpload`, the value `Files::upload` takes, is shared with
+`types.py`; D-040 brings it into the bindings snapshot. `FileUpload`, the value `Files::upload` takes, is shared with
 `FileSearchStores::upload`, whose documents have no name to choose.
 
 **Decision.** Not modeled for now, and recorded in `docs/RESOURCES.md` and
@@ -1359,7 +1358,50 @@ today.
 
 **Consequences.** A caller who wants an idempotent upload has no way to
 choose the name; a retry after a lost upload response can leave a duplicate
-file, which expires after 48 hours. When WP16 derives the legacy classes
-from the SDK's method signatures, `UploadFileConfig` will enter the
-snapshot and `every_binding_class_is_mapped` will need either the model or
-an `UNMAPPED` entry citing this decision.
+file, which expires after 48 hours. `legacy.UploadFileConfig` is in the
+coverage oracle's `UNMAPPED` list with this reason, so modeling the name
+means removing that entry.
+
+## D-040 — The bindings snapshot carries query parameters, the legacy endpoints and the Api-Revision (2026-11-07)
+
+**Context.** `bindings.json` recorded each `_gaos` endpoint's method and
+path only, so a query key the crate misspelled, or one a release added,
+was invisible to the sweep and the oracle. The Files, File Search Store,
+Document and Operation surface (google-genai's hand-written modules) had
+no endpoints in it, and its classes came from a hand-picked
+`LEGACY_ROOTS` that left out `Operation`, so a new verb there went
+unseen. The `Api-Revision` the crate sends was a hand-kept constant with
+two script copies. The published OpenAPI URLs stopped serving around
+2026-11-03, and nothing watched them (#511; the URLs' state is recorded
+in docs/INTERACTIONS_API_GAP.md, "How to verify API surface").
+
+**Decision.** `dump_bindings_schema.py` records `endpoints` as an object,
+each `METHOD /path` with its `query` parameters (the `_gaos/models/`
+request class's `QueryParamMetadata` fields, or the `_query` keys the
+legacy converters set), and `api_revision` (the bindings'
+`*API_REVISION` constant). The legacy modules' endpoints come from the
+methods that reach the Gemini Developer API; a full resource name in a
+path (`{name}`, `{parent}`) is spelled out from the class's `_list` path
+(`fileSearchStores/{}/documents/{}`), and one it cannot place keeps its
+name (`{operationName}`), since `{}` would collide. The legacy classes
+are the ones those methods' signatures name (return type, `config`,
+`*OrDict` arguments, a TypeVar's bound), with inherited fields, without
+the fields a converter routes into the URL or query string, and without
+a root that has no wire field left. `tests/request_wire_oracle.rs` calls
+every handle verb with every list builder option (both checked) and
+checks each query key against its endpoint, with `QUERY_ALLOWED` and
+`NOT_SENT` holding the reasoned exceptions; a template that keeps a full
+resource name matches only the resource names `FULL_NAMES` gives it, so
+it cannot take every GET. `tests/ci_coverage.rs` maps the legacy
+endpoints and holds every `API_REVISION` copy to the bindings'. The
+sweep probes the spec URLs daily and comments on #511 once per URL that
+serves again.
+
+**Consequences.** Conservative choices, left for the owner: the crate
+keeps sending `page_size`/`page_token` to the store and document
+listings, which take them as well as the bindings' camelCase pair (live
+2026-09-27), so both spellings are reasoned entries rather than a wire
+change; and the watch comments rather than refreshing the spec snapshot
+itself, since a refresh feeds the response-side spec pass. A new
+legacy class appears in `bindings.json` as soon as a signature names it,
+so `every_binding_class_is_mapped` lists it until it is mapped.

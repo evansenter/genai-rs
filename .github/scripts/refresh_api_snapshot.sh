@@ -18,18 +18,21 @@
 #                  build an artifact without touching the checkout); the
 #                  baseline file is then left alone.
 # --spec-v1beta, --spec-v1
-#                  A freshly downloaded OpenAPI spec to snapshot. The spec's
-#                  URL is dead (see CLAUDE.md, "Sources of truth"), so this
-#                  is manual: without these flags the committed spec
-#                  snapshots are kept.
+#                  A freshly downloaded OpenAPI spec to snapshot. Downloading
+#                  it is manual (the URL's state is recorded in
+#                  docs/INTERACTIONS_API_GAP.md, "How to verify API surface";
+#                  the daily sweep comments on #511 when it serves): without
+#                  these flags the committed spec snapshots are kept.
 # --spec-fetched   The download date recorded with the spec (default today).
 # --spec-source    Where the spec came from, recorded with it (default
-#                  "manual"): the URL, once the spec has a public one again.
+#                  "manual"): the URL it was downloaded from.
 # --check          Write nothing; exit 1 when the committed bindings.json is
 #                  wrong. First, offline: it must be JSON whose `sdk_version`
 #                  is exactly the baseline in `.github/last-swept-sdk-version`
-#                  (a bump made without this script fails here), with classes
-#                  and endpoints in it. Then it dumps the baseline release and
+#                  (a bump made without this script fails here), with classes,
+#                  endpoints and the bindings' Api-Revision in it (the
+#                  revision `tests/ci_coverage.rs` holds the crate's
+#                  `API_REVISION` to). Then it dumps the baseline release and
 #                  fails when the committed file differs (a hand edit, or a
 #                  dump-script change made without a refresh). PR CI runs it
 #                  when the dump script, this script, the baseline or the
@@ -143,7 +146,7 @@ if found != baseline:
         "Bump with .github/scripts/refresh_api_snapshot.sh --version X.Y.Z, "
         "which writes both."
     )
-empty = [key for key in ("classes", "endpoints") if not snapshot.get(key)]
+empty = [key for key in ("classes", "endpoints", "api_revision") if not snapshot.get(key)]
 if empty:
     sys.exit(
         f"tests/fixtures/api_surface/bindings.json has no {' or '.join(empty)}. {fix}"

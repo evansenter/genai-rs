@@ -37,6 +37,8 @@ import urllib.error
 import urllib.request
 
 BASE = "https://generativelanguage.googleapis.com"
+# The revision the crate sends (src/http/common.rs); tests/ci_coverage.rs
+# holds both to the one the bindings pin.
 API_REVISION = "2026-05-20"
 
 

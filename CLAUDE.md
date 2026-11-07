@@ -15,9 +15,10 @@ order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
    releases to find new surface). The OpenAPI spec is the same surface in
-   machine-readable form. Its published URL no longer serves it, so the
-   committed snapshot is the latest copy; the record is in
-   `docs/INTERACTIONS_API_GAP.md` ("How to verify API surface").
+   machine-readable form. The oracle reads the committed snapshot, and
+   the daily sweep watches the published URL (#511); the URL's state is
+   recorded in `docs/INTERACTIONS_API_GAP.md` ("How to verify API
+   surface").
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
@@ -39,8 +40,9 @@ harness version, with the dated record in
 `.github/last-swept-sdk-version`) and the spec as a snapshot, and the
 coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
 checks the crate against it offline: request keys against the binding
-classes, every response field for an empty `extra`, and every class
-reached or listed with a reason. `tests/ci_coverage.rs` maps every endpoint
+classes, query keys against each endpoint's parameters, every response
+field for an empty `extra`, and every class reached or listed with a
+reason. `tests/ci_coverage.rs` maps every endpoint
 to the handle verbs that call it and requires a live test of each verb on
 its handle. `tests/fixtures/api_surface/bindings.json` is the one
 committed dump of the bindings, and only
