@@ -36,7 +36,7 @@ use bodies::{
 use content::{contents, steps, tools};
 
 /// Keys the crate sends that a class lacks, each on purpose.
-const ALLOWED: &[Allowed] = &[
+pub(super) const ALLOWED: &[Allowed] = &[
     (
         "interactions.FunctionCallStep.signature",
         "Served on function_call steps and required when one is replayed in \
@@ -57,7 +57,7 @@ const ALLOWED: &[Allowed] = &[
 ];
 
 /// Request fields the crate never sends.
-const NOT_SENT: &[Allowed] = &[
+pub(super) const NOT_SENT: &[Allowed] = &[
     // Deprecated in the bindings, and either superseded or rejected live.
     (
         "interactions.CreateModelInteraction.response_mime_type",
@@ -69,13 +69,13 @@ const NOT_SENT: &[Allowed] = &[
     ),
     (
         "interactions.CreateModelInteraction.cached_content",
-        "Deprecated; rejected live with 400 Unknown parameter (2.25.0 sweep, \
-         docs/INTERACTIONS_API_GAP.md, D-005).",
+        "Deprecated; rejected live with 400 Unknown parameter (2026-09-24, \
+         the 2.25.0 sweep in docs/INTERACTIONS_API_GAP.md; D-005).",
     ),
     (
         "interactions.TranscriptionConfig.language_hints",
-        "Deprecated; rejected live with 400 Unknown parameter (2.25.0 sweep, \
-         docs/INTERACTIONS_API_GAP.md, D-005).",
+        "Deprecated; rejected live with 400 Unknown parameter (2026-09-24, \
+         the 2.25.0 sweep in docs/INTERACTIONS_API_GAP.md; D-005).",
     ),
     (
         "interactions.SpeakerConfig.speakers",

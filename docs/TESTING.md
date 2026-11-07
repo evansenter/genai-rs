@@ -460,8 +460,9 @@ checks on it:
   response formats, the environment, and every resource's create and update
   body) is built fully populated as struct literals with no
   `..Default::default()`, so a new field does not compile until it is
-  populated (the agent configs, whose fields are private, through every
-  builder), plus proptest samples for the union arms and enum values. An
+  populated (the agent configs, whose fields are private, through each
+  type's `fully_populated()` literal beside it, which
+  `agent_configs_set_every_field` holds to every field), plus proptest samples for the union arms and enum values. An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
@@ -498,8 +499,10 @@ checks on it:
   sits directly in a list (`a_dropped_field_on_a_list_element_is_reported`).
   Each finding is
   traced to its `Class.field` by removing keys until it goes away. It runs
-  against the bindings and the v1beta spec (whose `writeOnly` fields are
-  left out of responses), and not in strict mode.
+  against the bindings and both specs, v1beta and v1 (whose `writeOnly`
+  fields are left out of responses), and not in strict mode. v1 defines
+  only the interaction schemas, with a few values of its own, which
+  `v1_only_values_are_checked` shows its bodies carry.
 - **Sparse response bodies** (`src/coverage_oracle/response_minimal.rs`,
   `sparse_binding_bodies_deserialize` and `sparse_spec_bodies_deserialize`).
   The bodies above set every field, so a type that demands a field the
@@ -513,7 +516,9 @@ checks on it:
 - **Completeness** (`src/coverage_oracle/mod.rs`,
   `every_binding_class_is_mapped`). The checks above only see the classes
   their tables reach, so every class in `bindings.json` must be reached by a
-  request case or response target, or listed in `UNMAPPED` with its reason.
+  request case or response target, or listed in `UNMAPPED` with its reason;
+  its twin, `every_spec_schema_is_mapped`, holds every schema of both specs
+  to a response target or `SPEC_UNMAPPED`.
   `tests/ci_coverage.rs` (`every_api_endpoint_maps_to_a_handle_verb`) maps
   every endpoint in the bindings and the specs to the handle verbs that call
   it. A baseline bump that adds a resource, a body or an endpoint fails one
@@ -541,10 +546,13 @@ reason to the list that fits:
 | `GAPS` (response) | Served or specified but not modeled yet, the work list for the next modeling pass |
 | `SPARSE` (`response_minimal.rs`) | An optional field the crate cannot read its class without, with why that is safe |
 | `UNMAPPED` (`mod.rs`) | A binding class no table reaches: SDK plumbing, an empty body, a body checked at the wire, or a request not modeled yet |
+| `SPEC_UNMAPPED` (`mod.rs`) | A spec schema no response target reaches: a request body (checked against the bindings), the SSE frame, a raw media body |
 | `ENDPOINTS_WITHOUT_A_VERB`, `EXEMPT` (`tests/ci_coverage.rs`) | An endpoint no handle verb calls; a verb no live test can call |
 | `NO_JSON_BODY` (`tests/request_wire_oracle.rs`) | A verb whose POST, PATCH or PUT carries no JSON body (an upload's bytes) |
 
-Date every live fact in a reason (D-010). An entry that matches nothing
+Date every live fact in a reason (D-010): `live_claims_are_dated` fails on
+a reason in the in-crate lists that says what the API served, rejected or
+accepted, or quotes an error status, without a `YYYY-MM` date. An entry that matches nothing
 fails the test, so the lists only shrink when the crate catches up. A
 `values()` override in `response.rs` replaces a synthesized value where the
 snapshot's type is looser than what the API sends (a function's
