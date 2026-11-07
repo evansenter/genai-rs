@@ -321,3 +321,54 @@ async fn test_on_file_change_holds_changes_during_a_turn_and_sends_one_batch() {
     );
     handle.abort();
 }
+
+/// Calls to [`flaky_snapshot`].
+static FLAKY_SNAPSHOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A watched tree as a script: `a.txt` throughout, a failed snapshot on the
+/// first poll, `b.txt` added from the third.
+fn flaky_snapshot(_: &Path) -> BTreeMap<PathBuf, Stamp> {
+    let call = FLAKY_SNAPSHOTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut files = BTreeMap::from([(PathBuf::from("a.txt"), (None, 1))]);
+    match call {
+        1 => panic!("the snapshot task failed (scripted)"),
+        0 | 2 => {}
+        _ => {
+            files.insert(PathBuf::from("b.txt"), (None, 1));
+        }
+    }
+    files
+}
+
+#[tokio::test]
+async fn test_on_file_change_skips_a_poll_whose_snapshot_failed() {
+    // A failed snapshot used to read as an empty tree: every file reported
+    // deleted, then added back on the next poll.
+    let (_idle_tx, idle_rx) = watch::channel(true);
+    let (context, mut rx) = observable_context(idle_rx);
+    let trigger = watch_files(
+        PathBuf::from("/watched"),
+        Duration::from_millis(10),
+        |changes| {
+            Some(
+                changes
+                    .iter()
+                    .map(|c| format!("{:?} {}", c.kind, c.path.display()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        },
+        flaky_snapshot,
+    );
+    let handle = tokio::spawn(trigger(context));
+    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("a message within 5s");
+    assert_eq!(
+        message.as_deref(),
+        Some("Added b.txt"),
+        "the failed poll is skipped, not diffed as an empty tree"
+    );
+    assert!(FLAKY_SNAPSHOTS.load(std::sync::atomic::Ordering::SeqCst) >= 4);
+    handle.abort();
+}

@@ -6,9 +6,10 @@
 # guard and the harness suites run against whatever CI installs, which is the
 # pin (#499). When PyPI's latest differs from the pin, this diffs the two
 # wheels' protobuf descriptors (.github/scripts/dump_harness_descriptor.py)
-# and opens or updates one rolling issue, the way report_scheduled_failure.sh
-# keeps one per failing workflow. Once the pin catches up, the next run closes
-# it.
+# and their Python SDK options (.github/scripts/dump_sdk_options.py, the
+# parity table's keys), and opens or updates one rolling issue, the way
+# report_scheduled_failure.sh keeps one per failing workflow. Once the pin
+# catches up, the next run closes it.
 #
 # Usage: antigravity_release_watch.sh
 # Requires: GH_TOKEN with issues:write; python3 with pip, unzip, jq.
@@ -91,6 +92,17 @@ python3 -I "$HERE/dump_harness_descriptor.py" "$LATEST_DIR" > "$WORK/latest.desc
 # diff exits 1 for "differences found" and 2 for trouble; only 2 may fail.
 diff "$WORK/pinned.descriptor" "$WORK/latest.descriptor" > "$WORK/descriptor.diff" || [ $? -eq 1 ]
 
+# The Python SDK's options: the keys of the parity table in
+# docs/ANTIGRAVITY_BRIDGE_DESIGN.md. New Python-side options change no
+# descriptor, so only this shows them before the pin moves. The pin's dump
+# must be clean (the parity guard holds the table to it); the latest's may
+# hold names the dump does not place yet, which --lenient lists on stderr
+# instead of failing.
+python3 -I "$HERE/dump_sdk_options.py" "$PINNED_DIR" > "$WORK/pinned.options"
+python3 -I "$HERE/dump_sdk_options.py" --lenient "$LATEST_DIR" \
+  > "$WORK/latest.options" 2> "$WORK/latest.problems"
+diff "$WORK/pinned.options" "$WORK/latest.options" > "$WORK/options.diff" || [ $? -eq 1 ]
+
 # Where the Python SDK chooses its transport. #494 is waiting on it making the
 # Interactions-mode transport (use_interactions_api) its default.
 grep -rn --include='*.py' 'use_interactions_api' "$LATEST_DIR/google/antigravity" 2>/dev/null \
@@ -145,6 +157,39 @@ BODY="$WORK/body.md"
     echo "change behavior behind the same messages."
   fi
   echo
+  echo "### Python SDK option diff"
+  echo
+  if [ -s "$WORK/options.diff" ]; then
+    echo "\`<\` only in $PINNED, \`>\` only in $LATEST: the option keys"
+    echo "\`.github/scripts/dump_sdk_options.py\` reads, which are the first column of"
+    echo "the parity table in \`docs/ANTIGRAVITY_BRIDGE_DESIGN.md\`. Each new key needs"
+    echo "a row there, modeled or with the reason it is not."
+    echo
+    echo '<details><summary>Expand</summary>'
+    echo
+    echo '~~~diff'
+    head -c 20000 "$WORK/options.diff"
+    if [ "$(wc -c < "$WORK/options.diff")" -gt 20000 ]; then
+      echo
+      echo "... truncated; rerun .github/scripts/dump_sdk_options.py on both wheels ..."
+    fi
+    echo '~~~'
+    echo
+    echo '</details>'
+  else
+    echo "None: both wheels expose the same option keys."
+  fi
+  if [ -s "$WORK/latest.problems" ]; then
+    echo
+    echo "$LATEST also exposes names the dump does not place yet (a new module,"
+    echo "class or export). Read each into the script's \`SPEC\` or skip it there with"
+    echo "the reason, then add its rows:"
+    echo
+    echo '~~~'
+    head -c 10000 "$WORK/latest.problems"
+    echo '~~~'
+  fi
+  echo
   echo "### Python transport (#494)"
   echo
   if [ -s "$WORK/transport.txt" ]; then
@@ -165,8 +210,11 @@ BODY="$WORK/body.md"
   echo "   on \`PATH\`: the key-free \`binary(antigravity_scripted)\`, then"
   echo "   \`binary(antigravity_harness)\` with a key (the drift guard reads the"
   echo "   wheel's protos)."
-  echo "2. Model what changed: inbound values the drift guard names, and outbound"
-  echo "   config, where a new \`HarnessSideTools\` toggle must be written explicitly."
+  echo "2. Model what changed: inbound values the drift guard names, outbound"
+  echo "   config (a new \`HarnessSideTools\` toggle must be written explicitly), and"
+  echo "   each new Python SDK option, which gets a row in the parity table"
+  echo "   (\`test_python_sdk_options_are_all_in_the_parity_table\` in"
+  echo "   \`binary(antigravity_scripted)\` fails until it has one)."
   echo "3. Bump the pin as CLAUDE.md describes (\`SUPPORTED_HARNESS_VERSION\`, every"
   echo "   pin and \"currently\" mention, and a row in the upgrade table in"
   echo "   \`docs/ANTIGRAVITY_BRIDGE_DESIGN.md\`). The next run of this watch then"

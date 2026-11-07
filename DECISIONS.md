@@ -769,7 +769,7 @@ log under the new module path (`genai_rs::antigravity::policies`), which an
 
 ## D-022 — Antigravity policies are evaluated client-side; the auto policy runs in the harness (2026-11-05)
 
-**Status: proposed, awaiting the owner's review.** #493 item 6 asked for
+**Status: accepted (2026-11-07).** #493 item 6 asked for
 harness-side `PolicyConfig` rules; this departs from it and was decided
 during the work, not discussed first. The alternative, the Python SDK's
 split, is below under Consequences.
@@ -1405,6 +1405,132 @@ change; and the watch comments rather than refreshing the spec snapshot
 itself, since a refresh feeds the response-side spec pass. A new
 legacy class appears in `bindings.json` as soon as a signature names it,
 so `every_binding_class_is_mapped` lists it until it is mapped.
+
+---
+
+## D-041 — The next turn halts an abandoned Antigravity turn; dropping it sends nothing (2026-11-07)
+
+**Context.** Dropping a `chat` future or a `send_streaming` stream mid-turn
+abandons the turn on this side only. The harness stays inside it, waiting
+for a custom tool's result or a hook's verdict that will never come, so the
+next `chat` hung until its turn timeout and the one after got the abandoned
+turn's reply (G1, #504). Something has to halt the harness's turn before the
+next turn sends its input. `Drop` cannot await, so halting when the turn is
+dropped means spawning a task to send the halt.
+
+**Decision.** The agent records whether the turn it last drove reached its
+end: a `Finished`, a terminal error from the harness (the main trajectory
+went idle with an error, or was cancelled, as on a pre-turn denial), or a
+turn timeout whose halt-and-drain went quiet. `begin_turn` halts and drains
+a turn that did not, before it sends the new input, the way it already
+discarded a trigger turn. Any other error (a fatal model error read from a
+step, a lost connection, a hook thread that could not start) counts as
+unfinished: the harness may still be inside the turn, and a halt sent to an
+idle harness does nothing but cost the drain's half-second silence window.
+Nothing is sent when the turn is dropped.
+
+**Consequences.** The halt and the next turn's input go out in order from
+the same task, so a halt can never arrive after the next input and cancel
+the new turn, as one sent from a spawned task could. The cost: until the
+next `chat` or `send_streaming`, the harness keeps working on an abandoned
+turn (a slow model call, or builtins the turn goes on to run), and the call
+after a turn that failed on this side takes half a second longer.
+`cancel_handle()` remains the way to stop a turn at once and keep its
+partial output. `next_trigger_turn` does not halt an abandoned turn first:
+it consumes what is left of it. The scripted cancel tests count halts: a
+halt after a turn that ended in any of those three ways fails them.
+
+---
+
+## D-042 — `spawn()` refuses subagents beside a gate they bypass (2026-11-07)
+
+**Context.** #520. On harness 0.1.23 a subagent's own tool calls reach
+neither the pre-tool callback (so neither this client's policies nor the
+`on_pre_tool` hook) nor the harness's policy evaluator, and workspace
+containment does not confine them (probed 2026-11-05: with deny-all rules,
+a denying hook and containment set, a read-only subagent read a file
+outside the workspace). `invoke_subagent` also offers the harness's
+built-in `research` subagent, so enabling it exposes an ungated agent even
+with no subagent added. Until now `spawn()` only warned. The issue listed
+three options: refuse at `spawn()` without an explicit opt-in, give
+subagents no builtins by default, or report upstream. The owner chose the
+first and the third on 2026-11-07.
+
+**Decision.** `spawn()` fails with `AntigravityError::Config` when the
+agent offers subagents (`BuiltinTool::InvokeSubagent`, or
+`with_define_subagent_tool(true)`) while any gate is set, unless the caller
+calls `with_ungated_subagents(true)`. The error names each gate set and the
+opt-in. The gates are a pre-tool hook, a client policy that can refuse or
+ask (deny, confirm, `ask_user`), the auto policy (the harness-side
+`PolicyConfig` this client sends; it runs in the evaluator the probe showed
+bypassed, though it was not probed on its own), workspace containment, and
+the `run_command` sandbox while `run_command` is enabled (the agent's own;
+a subagent's commands are sent with its own capabilities). The setter takes
+a `bool` like this builder's other subagent and containment switches
+(`with_define_subagent_tool`, `with_workspace_containment`). A report for
+upstream is drafted for the owner to file; the scripted test that pins the
+bypass, now with the opt-in, fails when a harness release closes the gap.
+
+Three calls made in the work:
+- A policy set that only allows (`allow_all()`, `allow(..)`) is not a gate:
+  it refuses nothing, so a subagent bypasses nothing. Counting it would make
+  the opt-in boilerplate on every subagent agent, since `invoke_subagent`
+  is write-capable and the safety gate already demands a policy or hook.
+- `define_subagent` counts on its own, though the harness offers it only
+  beside `invoke_subagent` (0.1.23, scripted probe), in case a later
+  release separates them.
+- The sandbox counts only while `run_command` is enabled on the agent: its
+  options apply only then (`Capabilities::with_run_command`), so with the
+  tool off it confines nothing a subagent could get around.
+
+**Consequences.** Breaking (D-007): an agent with subagents and any gate,
+containment by default with a workspace included, no longer starts until it
+opts in. The opt-in is a deliberate acknowledgment, not a fix: the
+subagent's capabilities remain its only bound. Revisit when the harness
+gates subagent calls (the pinned test fails then), at which point the
+refusal can go and the setter be removed.
+
+---
+
+## D-043 — Antigravity's `run_workflow` stays unmodeled (2026-11-07)
+
+**Context.** #493 item 9. Harness 0.1.23 has a beta `run_workflow` builtin,
+and the Python SDK a beta `Agent.run_workflow`: it turns the builtin on
+(it needs subagents too), asks the model in a chat turn to run a workflow
+script at a given path, and reads the result off the `run_workflow` step.
+The script is Python written against the SDK's `workflows` module
+(`phase`, `agent`, `call_tool`, `parallel`, `pipeline`, `define`), and the
+harness runs it with Python. This crate writes the toggle disabled.
+
+**Decision.** Not modeled. A Rust caller could flip the toggle and send
+the prompt, but every workflow it ran would be a Python script needing the
+Python SDK installed beside the harness, the dependency this crate exists
+to remove, and the feature is beta on both sides. The parity table lists
+the builtin, `Agent.run_workflow` and each `workflows` function with this
+reason, so a wheel that changes them shows in its diff.
+
+**Consequences.** `BuiltinTool` has no `RunWorkflow`, and the toggle stays
+off. Revisit if the harness runs workflows written some other way, or the
+feature leaves beta and users ask for Python workflows driven from Rust.
+
+---
+
+## D-044 — The Antigravity stderr drain moves to `harness_stderr.rs` (2026-11-07)
+
+**Context.** Bounding harness discovery and capping stderr lines (#504,
+WP17) took `src/antigravity/process.rs` to 821 lines, over D-014's 800.
+
+**Decision.** Moved, per D-011, with no behavior change beyond that work:
+
+| From | To |
+|------|----|
+| `StderrRing`, `drain_stderr` and their limits in `src/antigravity/process.rs` | `src/antigravity/harness_stderr.rs` |
+| The stderr tests in `src/antigravity/process_tests.rs` | `src/antigravity/harness_stderr_tests.rs` |
+
+`process.rs` keeps discovery, the version read, spawn and shutdown.
+
+**Consequences.** Links to `src/antigravity/process.rs:<line>` for the
+stderr drain, written before 2026-11-07, point at the old layout.
 
 ---
 
