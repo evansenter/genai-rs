@@ -511,7 +511,7 @@ check `Append` too.
 ### Unrecognized tool confirmations
 
 Harness-side builtins can pause in a *waiting* step until the client
-confirms them (none observed doing so on 0.1.18 — see above); the pending
+confirms them (none observed doing so since 0.1.18 — see above); the pending
 action's identity comes solely from which action field the step carries
 (the confirmation request itself is an empty marker on the wire — verified
 against the pinned harness proto). Two edge cases:
