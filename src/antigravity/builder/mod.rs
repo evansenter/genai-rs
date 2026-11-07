@@ -534,7 +534,7 @@ impl AgentBuilder {
         self.validate(&dispatcher)?;
         let policy_engine = PolicyEngine::new(self.policies.clone());
 
-        let binary = process::discover_harness(self.harness_path.as_deref())?;
+        let binary = process::discover_harness(self.harness_path.as_deref()).await?;
 
         let mut inspectors = self.inspectors.clone();
         if let Some(printer) = crate::wire::env_inspector() {
