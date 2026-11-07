@@ -30,6 +30,12 @@ pub(crate) const API_REVISION_HEADER: &str = "Api-Revision";
 /// server currently serves this protocol whatever the header says; it is
 /// still sent so a future server that honors it gets the shape this crate
 /// parses.
+///
+/// It is the revision the swept google-genai bindings pin
+/// (`api_revision` in `tests/fixtures/api_surface/bindings.json`):
+/// `tests/ci_coverage.rs` holds this and every copy of it (the API scripts
+/// in `.github/scripts/`, the resource stub tests) to that value, so a
+/// baseline bump that moves the revision fails until they move with it.
 pub(crate) const API_REVISION: &str = "2026-05-20";
 
 /// Passed as the `body` of a request that has none.

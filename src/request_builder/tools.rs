@@ -230,7 +230,7 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::google_search_results`]: crate::InteractionResponse::google_search_results
     #[must_use]
     pub fn with_google_search(mut self) -> Self {
-        self.replace_tool(InternalTool::GoogleSearch { search_types: None });
+        self.replace_tool(crate::GoogleSearchConfig::new().into());
         self
     }
 
@@ -263,11 +263,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_google_maps(mut self) -> Self {
-        self.replace_tool(InternalTool::GoogleMaps {
-            latitude: None,
-            longitude: None,
-            enable_widget: None,
-        });
+        self.replace_tool(crate::GoogleMapsConfig::new().into());
         self
     }
 
@@ -316,7 +312,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_code_execution(mut self) -> Self {
-        self.replace_tool(InternalTool::CodeExecution);
+        self.replace_tool(InternalTool::code_execution());
         self
     }
 
@@ -367,7 +363,7 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::url_context_results`]: crate::InteractionResponse::url_context_results
     #[must_use]
     pub fn with_url_context(mut self) -> Self {
-        self.replace_tool(InternalTool::UrlContext);
+        self.replace_tool(InternalTool::url_context());
         self
     }
 
@@ -460,7 +456,7 @@ impl<'a> InteractionBuilder<'a> {
         // Preserve any previously-set mode when upgrading to the object form.
         let mode = match config.tool_choice.take() {
             Some(ToolChoice::Mode(mode)) => Some(mode),
-            Some(ToolChoice::AllowedTools(allowed)) => allowed.mode,
+            Some(ToolChoice::AllowedTools { allowed_tools, .. }) => allowed_tools.mode,
             _ => None,
         };
         config.tool_choice = Some(ToolChoice::allowed_tools(mode, tool_names));

@@ -457,6 +457,7 @@ impl From<RetrievalConfig> for Tool {
             exa_ai_search_config: config.exa_ai_search_config,
             parallel_ai_search_config: config.parallel_ai_search_config,
             rag_store_config: config.rag_store_config,
+            extra: serde_json::Map::new(),
         }
     }
 }

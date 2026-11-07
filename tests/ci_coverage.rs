@@ -9,8 +9,9 @@
 //!
 //! The second half ties the committed API-surface snapshot
 //! (`tests/fixtures/api_surface/`) to the crate: every endpoint maps to the
-//! handle verbs that call it, and every verb of every resource handle is
-//! called by a live test on that handle (`tests/live_verbs/`).
+//! handle verbs that call it, every verb of every resource handle is called
+//! by a live test on that handle (`tests/live_verbs/`), and every copy of
+//! the `Api-Revision` value is the one the bindings pin.
 //!
 //! The workflows themselves are guarded in `tests/ci_workflows/`: no nextest
 //! run fails fast, retries are set in `NEXTEST_RETRIES` where the flakiness
@@ -242,11 +243,115 @@ fn api_snapshot_matches_the_sweep_baseline() {
     );
 }
 
-/// Every endpoint in the snapshot, and the handle verbs that call it.
+/// Every copy of the `Api-Revision` value, as `(file, the start of its line
+/// up to the quoted value)`: the crate's, the scripts' that call the API
+/// directly, and the resource stub tests' that expect it on the wire.
+const API_REVISION_COPIES: &[(&str, &str)] = &[
+    (
+        "src/http/common.rs",
+        "pub(crate) const API_REVISION: &str = ",
+    ),
+    (
+        ".github/scripts/cleanup_test_resources.py",
+        "API_REVISION = ",
+    ),
+    (".github/scripts/capture_fixtures.py", "API_REVISION = "),
+    (
+        "tests/http_mock_resources.rs",
+        "const API_REVISION: &str = ",
+    ),
+];
+
+/// The quoted values of the lines of `source` that start with `prefix`.
+fn quoted_constants(source: &str, prefix: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix(prefix))
+        .map(|rest| {
+            rest.trim()
+                .trim_end_matches(';')
+                .trim_matches('"')
+                .to_string()
+        })
+        .collect()
+}
+
+/// The crate sends the `Api-Revision` the bindings pin
+/// (`bindings.json`'s `api_revision`, google-genai's
+/// `GOOGLE_GENAI_API_REVISION`), and so does every other copy. A baseline
+/// bump that moves the revision fails here until each copy moves with it,
+/// after the new revision's wire changes are swept.
+#[test]
+fn api_revision_copies_match_the_bindings() {
+    let bindings = snapshot("bindings.json");
+    let pinned = bindings["api_revision"].as_str().expect(
+        "bindings.json has no api_revision: regenerate it with \
+         .github/scripts/refresh_api_snapshot.sh",
+    );
+    let mut problems = Vec::new();
+    for (file, prefix) in API_REVISION_COPIES {
+        let source = std::fs::read_to_string(root().join(file))
+            .unwrap_or_else(|e| panic!("cannot read {file}: {e}"))
+            .replace("\r\n", "\n");
+        match quoted_constants(&source, prefix).as_slice() {
+            [value] if value == pinned => {}
+            [value] => problems.push(format!(
+                "{file}: {value:?}, but google-genai {} pins {pinned:?}",
+                bindings["sdk_version"]
+            )),
+            found => problems.push(format!(
+                "{file}: expected one `{prefix}\"...\"` line, found {found:?}"
+            )),
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "Api-Revision copies that differ from the bindings':\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// A copy is read from its own line only: not from a longer name that
+/// starts the same (`API_REVISION_HEADER`), nor from a comment.
+#[test]
+fn an_api_revision_copy_is_read_from_its_own_line() {
+    let source = "pub(crate) const API_REVISION_HEADER: &str = \"Api-Revision\";\n\
+                  /// Sent as `API_REVISION = \"x\"`.\n\
+                  pub(crate) const API_REVISION: &str = \"2026-05-20\";\n";
+    assert_eq!(
+        quoted_constants(source, "pub(crate) const API_REVISION: &str = "),
+        ["2026-05-20"]
+    );
+    assert_eq!(
+        quoted_constants(
+            "GOOGLE_API_REVISION = \"a\"\nAPI_REVISION = \"b\"\n",
+            "API_REVISION = "
+        ),
+        ["b"]
+    );
+}
+
+/// Every endpoint in the snapshot, and the handle verbs that call it. The
+/// Files, File Search Store, Document and Operation endpoints come from
+/// google-genai's hand-written modules, which name a resource by its full
+/// name; the dump spells those out (`fileSearchStores/{}/documents/{}`)
+/// and keeps a name it cannot place (`{operationName}`).
 const ENDPOINTS: &[(&str, &[&str])] = &[
     ("DELETE /{}/agents/{}", &["Agents::delete"]),
     ("DELETE /{}/credentials/{}", &["Credentials::delete"]),
     ("DELETE /{}/environments/{}", &["Environments::delete"]),
+    (
+        "DELETE /{}/fileSearchStores/{}",
+        &["FileSearchStores::delete", "FileSearchStores::force_delete"],
+    ),
+    (
+        "DELETE /{}/fileSearchStores/{}/documents/{}",
+        &[
+            "FileSearchDocuments::delete",
+            "FileSearchDocuments::force_delete",
+        ],
+    ),
+    ("DELETE /{}/files/{}", &["Files::delete"]),
     ("DELETE /{}/interactions/{}", &["Interactions::delete"]),
     ("DELETE /{}/triggers/{}", &["Triggers::delete"]),
     ("DELETE /{}/voices/{}", &["Voices::delete"]),
@@ -261,6 +366,27 @@ const ENDPOINTS: &[(&str, &[&str])] = &[
     (
         "GET /{}/environments/{}/files/{}",
         &["EnvironmentFiles::list", "EnvironmentFiles::download"],
+    ),
+    ("GET /{}/fileSearchStores", &["FileSearchStores::list"]),
+    ("GET /{}/fileSearchStores/{}", &["FileSearchStores::get"]),
+    (
+        "GET /{}/fileSearchStores/{}/documents",
+        &["FileSearchDocuments::list"],
+    ),
+    // An upload and an import read the document they made back.
+    (
+        "GET /{}/fileSearchStores/{}/documents/{}",
+        &[
+            "FileSearchDocuments::get",
+            "FileSearchDocuments::wait_until_active",
+            "FileSearchStores::upload",
+            "FileSearchStores::import_file",
+        ],
+    ),
+    ("GET /{}/files", &["Files::list"]),
+    (
+        "GET /{}/files/{}",
+        &["Files::get", "Files::wait_until_active"],
     ),
     (
         "GET /{}/interactions/{}",
@@ -281,12 +407,23 @@ const ENDPOINTS: &[(&str, &[&str])] = &[
     ("GET /{}/voices/{}", &["Voices::get"]),
     ("GET /{}/webhooks", &["Webhooks::list"]),
     ("GET /{}/webhooks/{}", &["Webhooks::get"]),
+    // An operation by its full name: an import polls the one it starts
+    // (`fileSearchStores/{}/operations/{}`) until it names its document.
+    (
+        "GET /{}/{operationName}",
+        &["FileSearchStores::import_file"],
+    ),
     ("PATCH /{}/credentials/{}", &["Credentials::update"]),
     ("PATCH /{}/triggers/{}", &["Triggers::update"]),
     ("PATCH /{}/webhooks/{}", &["Webhooks::update"]),
     ("POST /{}/agents", &["Agents::create"]),
     ("POST /{}/credentials", &["Credentials::create"]),
     ("POST /{}/environments", &["Environments::create"]),
+    ("POST /{}/fileSearchStores", &["FileSearchStores::create"]),
+    (
+        "POST /{}/fileSearchStores/{}:importFile",
+        &["FileSearchStores::import_file"],
+    ),
     ("POST /{}/interactions/{}/cancel", &["Interactions::cancel"]),
     ("POST /{}/triggers", &["Triggers::create"]),
     ("POST /{}/triggers/{}/executions", &["Triggers::run"]),
@@ -298,17 +435,42 @@ const ENDPOINTS: &[(&str, &[&str])] = &[
         &["Webhooks::rotate_signing_secret"],
     ),
     (
+        "POST /upload/{}/fileSearchStores/{}:uploadToFileSearchStore",
+        &["FileSearchStores::upload"],
+    ),
+    ("POST /upload/{}/files", &["Files::upload"]),
+    (
         "PUT /upload/{}/environments/{}/files/{}",
         &["EnvironmentFiles::upload"],
     ),
 ];
 
 /// Endpoints no handle verb calls, each with its reason.
-const ENDPOINTS_WITHOUT_A_VERB: &[(&str, &str)] = &[(
-    "POST /{}/interactions",
-    "Sent by `client.interaction()...create()` / `create_stream()` \
-     (`InteractionBuilder`, not a handle), which every live interaction test calls.",
-)];
+const ENDPOINTS_WITHOUT_A_VERB: &[(&str, &str)] = &[
+    (
+        "GET /{}/files/{}:download",
+        "files.download: only generated files download, and an uploaded one is a \
+         `400 Only GENERATED files can be downloaded` (live 2026-11-05, \
+         docs/INTERACTIONS_API_GAP.md \"Resource residue\").",
+    ),
+    (
+        "GET /{}/{clean_id}",
+        "file_search_stores.download_media (`GET {media_id}?alt=media`): it needs a \
+         `media_id` from a `file_citation`, which the API had not served by \
+         2026-11-05 (docs/INTERACTIONS_API_GAP.md \"Resource residue\").",
+    ),
+    (
+        "POST /{}/files:register",
+        "files.register_files registers Cloud Storage files with OAuth credentials, \
+         and an API key gets `401 API keys are not supported` (live 2026-11-05, \
+         docs/INTERACTIONS_API_GAP.md \"Resource residue\").",
+    ),
+    (
+        "POST /{}/interactions",
+        "Sent by `client.interaction()...create()` / `create_stream()` \
+         (`InteractionBuilder`, not a handle), which every live interaction test calls.",
+    ),
+];
 
 /// `/{api_version}/agents/{agentsId}` -> `/{}/agents/{}`, the form the
 /// bindings dump writes.
@@ -338,10 +500,11 @@ fn every_api_endpoint_maps_to_a_handle_verb() {
     let mut endpoints = BTreeSet::new();
     let bindings = snapshot("bindings.json");
     for e in bindings["endpoints"]
-        .as_array()
+        .as_object()
         .expect("bindings endpoints")
+        .keys()
     {
-        endpoints.insert(e.as_str().expect("endpoint").to_string());
+        endpoints.insert(e.clone());
     }
     let from_bindings = endpoints.len();
     for file in ["openapi-v1beta.json", "openapi-v1.json"] {
@@ -353,9 +516,16 @@ fn every_api_endpoint_maps_to_a_handle_verb() {
         }
     }
     assert!(
-        from_bindings > 30,
+        from_bindings > 45,
         "parsed only {from_bindings} binding endpoints"
     );
+    for legacy in ["GET /{}/files", "GET /{}/fileSearchStores/{}/documents/{}"] {
+        assert!(
+            endpoints.contains(legacy),
+            "the snapshot has no legacy endpoint {legacy}: the dump stopped reading \
+             google-genai's hand-written modules"
+        );
+    }
 
     let handles = live_verbs::handles();
     let mut problems = Vec::new();

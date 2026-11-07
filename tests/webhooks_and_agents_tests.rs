@@ -311,7 +311,7 @@ async fn test_agent_crud_lifecycle() {
                 .with_model(genai_rs::DEFAULT_MODEL)
                 .with_max_total_tokens(50_000),
         )
-        .add_tool(Tool::CodeExecution);
+        .add_tool(Tool::code_execution());
 
     // Not retried: a retry after a lost response would 409 on the id.
     let created = client.agents().create(&agent).await.expect("agents.create");
@@ -333,7 +333,7 @@ async fn test_agent_crud_lifecycle() {
             Some(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
         );
         assert!(
-            matches!(fetched.tools.as_deref(), Some([Tool::CodeExecution])),
+            matches!(fetched.tools.as_deref(), Some([Tool::CodeExecution { .. }])),
             "agent tools must round-trip: {:?}",
             fetched.tools
         );
@@ -547,6 +547,7 @@ async fn test_multi_speaker_tts_with_audio_response_format() {
             delivery: None,
             sample_rate: Some(24_000),
             bit_rate: None,
+            extra: Default::default(),
         })
         .with_store_disabled()
         .create()

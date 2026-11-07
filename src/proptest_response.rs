@@ -1,7 +1,9 @@
 //! Property tests: `InteractionResponse`, its usage and status, the stream chunks, and the
 //! auto-function results.
 
-use super::request::{arb_interaction_input, arb_service_tier};
+use super::request::{
+    arb_generation_config, arb_interaction_input, arb_response_format_spec, arb_service_tier,
+};
 use super::resources::arb_webhook_config;
 use super::steps::{arb_step, arb_step_delta};
 use super::tools::arb_tool;
@@ -141,6 +143,11 @@ pub(super) fn arb_interaction_response() -> impl Strategy<Value = InteractionRes
         prop::collection::vec(arb_step(), 0..4),       // steps
         arb_interaction_status(),                      // status
         proptest::option::of(arb_usage_metadata()),    // usage
+        // The request config a stored interaction serves back, boxed: its
+        // strategy trees are deep enough to overflow a test thread's stack
+        // inline in the stream chunk strategies.
+        proptest::option::of(arb_generation_config()).boxed(), // generation_config
+        proptest::option::of(arb_response_format_spec()).boxed(), // response_format
     );
     let part2 = (
         proptest::option::of(prop::collection::vec(arb_tool(), 0..3)), // tools
@@ -156,7 +163,7 @@ pub(super) fn arb_interaction_response() -> impl Strategy<Value = InteractionRes
 
     (part1, part2).prop_map(
         |(
-            (id, model, agent, input, steps, status, usage),
+            (id, model, agent, input, steps, status, usage, generation_config, response_format),
             (
                 tools,
                 previous_interaction_id,
@@ -186,6 +193,8 @@ pub(super) fn arb_interaction_response() -> impl Strategy<Value = InteractionRes
                 output_text,
                 created,
                 updated,
+                generation_config,
+                response_format,
                 ..Default::default()
             }
         },
@@ -535,6 +544,7 @@ fn recorded_seed_cancelled_agent_response_roundtrips() {
                     ("gfb__Wh".to_string(), "$Ⱥ\u{1b}?.�.\u{3}".to_string()),
                     ("KvCs1WI__t_K_F_lEh3".to_string(), random(3)),
                 ])),
+                extra: Default::default(),
             },
             Tool::Unknown {
                 tool_type: "B_hjPaV_Y_jtXOUrTP".to_string(),
@@ -609,6 +619,7 @@ fn recorded_seed_requires_action_completed_chunk_roundtrips() {
                     ("e_".to_string(), random(6)),
                     ("CX_I_8Jb__c_4___V3NBiPxSC_6L".to_string(), random(7)),
                 ])),
+                extra: Default::default(),
             },
             Tool::Unknown {
                 tool_type: "AME2P5V_4Q_JzdFfGqI_iI329G4cz_F".to_string(),

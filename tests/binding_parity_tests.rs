@@ -80,13 +80,18 @@ async fn test_transcription_modes_are_accepted() {
     };
 
     for mode in [
-        TranscriptionMode::Smart { source_text: None },
+        TranscriptionMode::Smart {
+            source_text: None,
+            extra: Default::default(),
+        },
         TranscriptionMode::Smart {
             source_text: Some("The quick brown fox jumps over the lazy dog.".to_string()),
+            extra: Default::default(),
         },
         TranscriptionMode::Verbatim {
             diarization_mode: Some("speaker".to_string()),
             timestamp_granularities: Some(vec!["word".to_string()]),
+            extra: Default::default(),
         },
     ] {
         let response = client

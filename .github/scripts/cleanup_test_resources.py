@@ -88,6 +88,8 @@ import urllib.parse
 import urllib.request
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+# The revision the crate sends (src/http/common.rs); tests/ci_coverage.rs
+# holds both to the one the bindings pin.
 API_REVISION = "2026-05-20"
 PREFIX = "genai-rs-test"
 TEST_WEBHOOK_URI_PREFIX = "https://example.com/genai-rs-test"

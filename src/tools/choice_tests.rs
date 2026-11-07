@@ -69,3 +69,58 @@ fn test_function_calling_mode_non_string_value() {
     // The mode_type should indicate it was a non-string value
     assert!(parsed.unknown_mode_type().unwrap().contains("<non-string:"));
 }
+
+/// A key beside `allowed_tools` is kept and written back after it, as
+/// `NetworkConfig::Allowlist` keeps the keys beside `allowlist` (D-001): a
+/// stored interaction's `tool_choice` used to lose it.
+#[test]
+fn allowed_tools_keeps_its_sibling_keys() {
+    let wire = serde_json::json!({
+        "allowed_tools": {"mode": "any", "tools": ["f"], "inner_knob": 1},
+        "future_knob": {"a": [1]},
+        "type": "kept as data"
+    });
+    let choice: ToolChoice = serde_json::from_value(wire.clone()).unwrap();
+    let ToolChoice::AllowedTools {
+        allowed_tools,
+        extra,
+    } = &choice
+    else {
+        panic!("{choice:?}");
+    };
+    assert_eq!(allowed_tools.tools, ["f"]);
+    assert_eq!(allowed_tools.extra["inner_knob"], 1);
+    assert_eq!(extra["future_knob"], serde_json::json!({"a": [1]}));
+    assert_eq!(choice.extra(), Some(extra));
+    assert_eq!(serde_json::to_value(&choice).unwrap(), wire);
+    assert_eq!(
+        serde_json::to_string(&choice).unwrap(),
+        r#"{"allowed_tools":{"mode":"any","tools":["f"],"inner_knob":1},"future_knob":{"a":[1]},"type":"kept as data"}"#
+    );
+}
+
+/// A hand-set `allowed_tools` entry in `extra` cannot shadow the modeled one.
+#[test]
+fn allowed_tools_extra_never_shadows_the_restriction() {
+    let mut choice = ToolChoice::from(AllowedTools::new(vec!["f".into()]));
+    let extra = choice.extra_mut().unwrap();
+    extra.insert("allowed_tools".into(), serde_json::json!({"tools": ["g"]}));
+    extra.insert("future_knob".into(), serde_json::json!(true));
+    assert_eq!(
+        serde_json::to_string(&choice).unwrap(),
+        r#"{"allowed_tools":{"tools":["f"]},"future_knob":true}"#
+    );
+}
+
+#[test]
+fn tool_choice_from_allowed_tools_and_modes() {
+    let choice = ToolChoice::from(AllowedTools::new(vec!["f".into()]));
+    assert_eq!(
+        choice,
+        ToolChoice::allowed_tools(None, vec!["f".into()]),
+        "From<AllowedTools> matches the constructor"
+    );
+    assert_eq!(choice.extra().map(serde_json::Map::len), Some(0));
+    let mode = ToolChoice::from(FunctionCallingMode::Any);
+    assert!(mode.extra().is_none());
+}

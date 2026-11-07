@@ -54,6 +54,11 @@ wire_enum! {
         /// Interaction ended before completion (e.g., token limit reached).
         Incomplete = "incomplete",
         /// Interaction stopped because the configured budget was exceeded.
+        ///
+        /// Deprecated in the v1beta spec, absent from v1, and never observed
+        /// live: an Antigravity run that went past its
+        /// [`max_total_tokens`](crate::AntigravityConfig::with_max_total_tokens)
+        /// ended [`Incomplete`](Self::Incomplete) instead.
         BudgetExceeded = "budget_exceeded",
         /// Decoding paused and can be resumed with
         /// [`continuation_token`](InteractionResponse::continuation_token).

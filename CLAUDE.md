@@ -15,9 +15,10 @@ order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
    releases to find new surface). The OpenAPI spec is the same surface in
-   machine-readable form. Its published URL no longer serves it, so the
-   committed snapshot is the latest copy; the record is in
-   `docs/INTERACTIONS_API_GAP.md` ("How to verify API surface").
+   machine-readable form. The oracle reads the committed snapshot, and
+   the daily sweep watches the published URL (#511); the URL's state is
+   recorded in `docs/INTERACTIONS_API_GAP.md` ("How to verify API
+   surface").
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
@@ -39,8 +40,9 @@ harness version, with the dated record in
 `.github/last-swept-sdk-version`) and the spec as a snapshot, and the
 coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
 checks the crate against it offline: request keys against the binding
-classes, every response field for an empty `extra`, and every class
-reached or listed with a reason. `tests/ci_coverage.rs` maps every endpoint
+classes, query keys against each endpoint's parameters, every response
+field for an empty `extra`, and every class reached or listed with a
+reason. `tests/ci_coverage.rs` maps every endpoint
 to the handle verbs that call it and requires a live test of each verb on
 its handle. `tests/fixtures/api_surface/bindings.json` is the one
 committed dump of the bindings, and only
@@ -135,8 +137,12 @@ with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 stored interaction and the types read from the Antigravity harness (D-034);
 `tests/non_exhaustive_responses.rs` guards both, with each exemption named
 and reasoned. The known
-variants of `Step`, `StepDelta`, `Content` and `Annotation` do the same with
-an `extra` field, through `src/wire_fields.rs` (#491). Polling
+variants of `Step`, `StepDelta`, `Content`, `Annotation`, `Tool`,
+`ResponseFormat` and `TranscriptionMode` (and `ToolChoice::AllowedTools`) do
+the same with an `extra` field, through `src/wire_fields.rs` (#491). The
+guard's enum arm checks every deserializable union for an `Unknown` arm and
+an `extra` field on each known variant; a newtype variant, whose wrapper
+keys it cannot see, needs a named reason. Polling
 continues on unknown statuses, bounded by timeouts. Strict mode, the
 `--cfg genai_strict_unknown` flag (a cfg, not a feature: D-030), makes
 `Content`, `Step` and every string enum fail on unknown values instead

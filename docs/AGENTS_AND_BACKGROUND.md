@@ -81,7 +81,7 @@ let agent = client.agents().create(
     &Agent::new("customer-sentinel", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
         .with_system_instruction("You monitor customer feedback.")
         .with_description("Watches feedback channels and summarizes sentiment")
-        .add_tool(Tool::CodeExecution)
+        .add_tool(Tool::code_execution())
         .with_base_environment(
             RemoteEnvironment::new().add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
         ),
@@ -480,7 +480,7 @@ async fn poll_until_done(
 | `RequiresAction` | Waiting for input |
 | `Incomplete` | Ended before completion (for example a token limit); inspect partial results. On `CONTINUATION_MODEL` it carries a `continuation_token` to resume the decode |
 | `RequiresContinuation` | In the spec, never observed: continuable responses report `Incomplete` |
-| `BudgetExceeded` | The configured budget ran out; inspect partial results |
+| `BudgetExceeded` | Deprecated in the spec, never observed: an Antigravity run that went past its `max_total_tokens` ended `Incomplete` |
 | `Queued` | Accepted, not started. In the bindings, never observed: background interactions report `InProgress` from their create response on |
 
 Persist the interaction id as soon as `create()` returns, so a restart can

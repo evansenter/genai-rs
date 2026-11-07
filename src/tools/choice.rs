@@ -1,5 +1,7 @@
 use crate::wire_enum::wire_enum;
+use crate::wire_fields::{ModeledMap, WireFields};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 wire_enum! {
     /// Modes for function calling behavior.
@@ -75,7 +77,9 @@ impl AllowedTools {
 /// # Forward Compatibility
 ///
 /// `#[non_exhaustive]`; unrecognized shapes deserialize into
-/// [`ToolChoice::Unknown`] with the data preserved.
+/// [`ToolChoice::Unknown`] with the data preserved, and a key the crate does
+/// not model beside `allowed_tools` is kept in that variant's `extra`
+/// ([`ToolChoice::extra`]).
 ///
 /// # Example
 ///
@@ -91,6 +95,10 @@ impl AllowedTools {
 ///     Some(FunctionCallingMode::Any),
 ///     vec!["get_weather".to_string()],
 /// );
+/// let ToolChoice::AllowedTools { allowed_tools, .. } = &choice else {
+///     unreachable!()
+/// };
+/// assert_eq!(allowed_tools.tools, ["get_weather"]);
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -98,7 +106,15 @@ pub enum ToolChoice {
     /// A plain function calling mode.
     Mode(FunctionCallingMode),
     /// Restriction to a named set of tools (wire: `{"allowed_tools": {...}}`).
-    AllowedTools(AllowedTools),
+    /// Build one with [`ToolChoice::allowed_tools`] or
+    /// `ToolChoice::from(AllowedTools)`.
+    AllowedTools {
+        /// The restriction (wire: `allowed_tools`).
+        allowed_tools: AllowedTools,
+        /// Keys beside `allowed_tools` that the crate does not model, kept
+        /// for round trip ([`ToolChoice::extra`]).
+        extra: Map<String, Value>,
+    },
     /// Unknown tool choice shape for forward compatibility.
     Unknown {
         /// A short description of the unrecognized shape (the string value or
@@ -113,11 +129,34 @@ impl ToolChoice {
     /// Creates a tool restriction choice from a mode and tool names.
     #[must_use]
     pub fn allowed_tools(mode: Option<FunctionCallingMode>, tools: Vec<String>) -> Self {
-        Self::AllowedTools(AllowedTools {
-            mode,
-            tools,
-            ..Default::default()
-        })
+        Self::AllowedTools {
+            allowed_tools: AllowedTools {
+                mode,
+                tools,
+                ..Default::default()
+            },
+            extra: Map::new(),
+        }
+    }
+
+    /// The keys beside `allowed_tools` that the crate does not model, kept
+    /// so they round-trip (#491). `None` for a [`Mode`](Self::Mode), which
+    /// is a bare string, and for [`Unknown`](Self::Unknown).
+    #[must_use]
+    pub fn extra(&self) -> Option<&Map<String, Value>> {
+        match self {
+            Self::AllowedTools { extra, .. } => Some(extra),
+            Self::Mode(_) | Self::Unknown { .. } => None,
+        }
+    }
+
+    /// Mutable access to [`extra`](Self::extra). An entry named
+    /// `allowed_tools` is never written.
+    pub fn extra_mut(&mut self) -> Option<&mut Map<String, Value>> {
+        match self {
+            Self::AllowedTools { extra, .. } => Some(extra),
+            Self::Mode(_) | Self::Unknown { .. } => None,
+        }
     }
 
     /// Check if this is an unknown tool choice shape.
@@ -151,19 +190,31 @@ impl From<FunctionCallingMode> for ToolChoice {
     }
 }
 
+/// The restriction form, with no keys beside `allowed_tools`.
+impl From<AllowedTools> for ToolChoice {
+    fn from(allowed_tools: AllowedTools) -> Self {
+        Self::AllowedTools {
+            allowed_tools,
+            extra: Map::new(),
+        }
+    }
+}
+
 impl Serialize for ToolChoice {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeMap;
-
         match self {
             Self::Mode(mode) => mode.serialize(serializer),
-            Self::AllowedTools(allowed) => {
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("allowed_tools", allowed)?;
-                map.end()
+            Self::AllowedTools {
+                allowed_tools,
+                extra,
+            } => {
+                // `allowed_tools`, then the extras that do not name it.
+                let mut map = ModeledMap::untagged(serializer)?;
+                map.field("allowed_tools", allowed_tools)?;
+                map.end(extra)
             }
             Self::Unknown { data, .. } => data.serialize(serializer),
         }
@@ -184,8 +235,12 @@ impl<'de> Deserialize<'de> for ToolChoice {
                 Ok(Self::Mode(mode))
             }
             serde_json::Value::Object(obj) if obj.contains_key("allowed_tools") => {
-                match serde_json::from_value::<AllowedTools>(obj["allowed_tools"].clone()) {
-                    Ok(allowed) => Ok(Self::AllowedTools(allowed)),
+                let mut fields = WireFields::untagged(obj);
+                match fields.required::<AllowedTools>("allowed_tools") {
+                    Ok(allowed_tools) => Ok(Self::AllowedTools {
+                        allowed_tools,
+                        extra: fields.extra(),
+                    }),
                     Err(e) => {
                         tracing::warn!(
                             "Failed to parse tool_choice.allowed_tools: {}. \

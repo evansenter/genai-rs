@@ -46,7 +46,7 @@ EOF
 chmod +x "$work/bin/python3"
 
 # A committed snapshot of the right shape for baseline 1.0.0.
-SNAP='{"sdk_version": "1.0.0", "endpoints": ["GET /{}/x"], "classes": {"a.A": {"x": {}}}}'
+SNAP='{"sdk_version": "1.0.0", "api_revision": "2026-05-20", "endpoints": {"GET /{}/x": {"query": []}}, "classes": {"a.A": {"x": {}}}}'
 
 # A checkout: the script under test, a stub dump script (FAKE_DUMP=fail
 # exits 1; otherwise it prints FAKE_DUMP_OUTPUT), the real spec snapshotter,
@@ -158,7 +158,7 @@ FAKE_DUMP_OUTPUT=$SNAP expect_rc "--check, matching snapshot" 0 --check
 
 # A hand-edited body: the offline part passes, the fresh dump differs.
 new_repo
-FAKE_DUMP_OUTPUT='{"sdk_version": "1.0.0", "endpoints": ["GET /{}/y"], "classes": {"a.A": {"x": {}}}}' \
+FAKE_DUMP_OUTPUT='{"sdk_version": "1.0.0", "api_revision": "2026-05-20", "endpoints": {"GET /{}/y": {"query": []}}, "classes": {"a.A": {"x": {}}}}' \
     expect_rc "--check, edited body" 1 --check
 unchanged "--check"
 
@@ -187,10 +187,15 @@ FAKE_PIP=fail expect_rc "--check --offline, prefix version" 1 --check --offline
 
 # A snapshot with the version but nothing in it, or that is not JSON.
 new_repo
-set_snapshot '{"sdk_version": "1.0.0", "endpoints": [], "classes": {}}'
+set_snapshot '{"sdk_version": "1.0.0", "api_revision": "2026-05-20", "endpoints": {}, "classes": {}}'
 FAKE_PIP=fail expect_rc "--check --offline, empty body" 1 --check --offline
-set_snapshot '{"sdk_version": "1.0.0", "endpoints": ["GET /{}/x"]}'
+set_snapshot '{"sdk_version": "1.0.0", "api_revision": "2026-05-20", "endpoints": {"GET /{}/x": {"query": []}}}'
 FAKE_PIP=fail expect_rc "--check --offline, no classes" 1 --check --offline
+# No Api-Revision: a snapshot from before the dump recorded it.
+set_snapshot '{"sdk_version": "1.0.0", "endpoints": {"GET /{}/x": {"query": []}}, "classes": {"a.A": {"x": {}}}}'
+FAKE_PIP=fail expect_rc "--check --offline, no api_revision" 1 --check --offline
+grep -q "has no api_revision" "$work/out.log" ||
+    fail "--check on a snapshot without api_revision did not name it: $(cat "$work/out.log")"
 set_snapshot 'model a.py:A.x: str'
 FAKE_PIP=fail expect_rc "--check --offline, not JSON" 1 --check --offline
 

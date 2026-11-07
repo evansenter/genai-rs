@@ -483,6 +483,7 @@ impl<'a> InteractionBuilder<'a> {
     ///         delivery: Some(ResponseDelivery::Inline),
     ///         sample_rate: Some(24000),
     ///         bit_rate: None,
+    ///         extra: Default::default(),
     ///     })
     ///     .create()
     ///     .await?;
@@ -518,6 +519,7 @@ impl<'a> InteractionBuilder<'a> {
     ///             delivery: None,
     ///             aspect_ratio: None,
     ///             image_size: None,
+    ///             extra: Default::default(),
     ///         },
     ///     ])
     ///     .create()
