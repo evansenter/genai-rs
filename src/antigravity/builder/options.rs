@@ -138,6 +138,10 @@ impl AgentBuilder {
     /// your static subagents, `invoke_subagent`, `manage_subagents` and
     /// `send_message`, but not this. The Python SDK leaves it on (it has no
     /// setting for it).
+    ///
+    /// Like the subagent builtin, it makes `spawn()` refuse an agent with
+    /// any gate a subagent bypasses unless
+    /// [`Self::with_ungated_subagents`] opts in.
     #[must_use]
     pub fn with_define_subagent_tool(mut self, enabled: bool) -> Self {
         self.options.define_subagent_tool = enabled;

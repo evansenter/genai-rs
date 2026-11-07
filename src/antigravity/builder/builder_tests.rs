@@ -522,6 +522,11 @@ fn subagent_agent(harness: &std::path::Path) -> AgentBuilder {
         .add_policy(policy::allow_all())
 }
 
+/// `run_command` options asking for the OS sandbox.
+fn sandbox() -> crate::antigravity::RunCommandOptions {
+    crate::antigravity::RunCommandOptions::new().with_sandbox(true)
+}
+
 /// A gate a subagent's own calls bypass, as the words the refusal names it
 /// by and a function that sets it on a builder.
 type Gate = (&'static str, fn(AgentBuilder) -> AgentBuilder);
@@ -543,14 +548,15 @@ fn each_gate() -> Vec<Gate> {
         }),
         ("auto policy", |b| b.add_policy(policy::auto())),
         ("workspace containment", |b| b.add_workspace("/repo")),
+        // Added to the builder's capabilities, so the subagent builtin
+        // stays as it was.
         ("run_command sandbox", |b| {
-            b.with_capabilities(
-                Capabilities::read_only()
-                    .enable(BuiltinTool::InvokeSubagent)
-                    .with_run_command(
-                        crate::antigravity::RunCommandOptions::new().with_sandbox(true),
-                    ),
-            )
+            let capabilities = b
+                .capabilities
+                .clone()
+                .enable(BuiltinTool::RunCommand)
+                .with_run_command(sandbox());
+            b.with_capabilities(capabilities)
         }),
     ]
 }
@@ -614,14 +620,21 @@ async fn test_spawn_names_every_gate_subagents_would_bypass() {
 #[tokio::test]
 async fn test_spawn_allows_subagents_without_a_gate() {
     let (_dir, path) = unexecutable_harness();
-    // Policies that only allow refuse nothing, and containment is off (no
-    // workspace, or opted out): there is nothing for a subagent to bypass.
+    // Policies that only allow refuse nothing, containment is off (no
+    // workspace, or opted out), and a sandbox on a run_command the agent
+    // does not have confines nothing: there is nothing for a subagent to
+    // bypass.
     let ungated = [
         subagent_agent(&path),
         subagent_agent(&path).add_policy(policy::allow("view_file")),
         subagent_agent(&path)
             .add_workspace("/repo")
             .with_workspace_containment(false),
+        subagent_agent(&path).with_capabilities(
+            Capabilities::read_only()
+                .enable(BuiltinTool::InvokeSubagent)
+                .with_run_command(sandbox()),
+        ),
     ];
     for builder in ungated {
         let err = builder.spawn().await.unwrap_err();
@@ -654,16 +667,15 @@ async fn test_spawn_refuses_define_subagent_beside_a_gate() {
 async fn test_spawn_allows_gates_without_subagents() {
     let (_dir, path) = unexecutable_harness();
     // Every gate, no subagent tools: nothing is refused, opt-in or not.
-    let err = each_gate()
-        .into_iter()
-        .fold(
-            AntigravityAgent::builder().with_harness_path(&path),
-            |b, (_, apply)| apply(b),
-        )
-        .with_capabilities(Capabilities::read_only())
-        .spawn()
-        .await
-        .unwrap_err();
+    let builder = each_gate().into_iter().fold(
+        AntigravityAgent::builder()
+            .with_harness_path(&path)
+            .with_capabilities(Capabilities::read_only()),
+        |b, (_, apply)| apply(b),
+    );
+    assert!(builder.sandboxes_commands() && builder.contains_workspaces());
+    assert!(!builder.capabilities.is_enabled(BuiltinTool::InvokeSubagent));
+    let err = builder.spawn().await.unwrap_err();
     assert!(
         matches!(err, AntigravityError::HandshakeFailed { .. }),
         "{err:?}"

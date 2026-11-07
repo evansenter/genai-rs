@@ -279,6 +279,10 @@ impl AgentBuilder {
     /// `~/.gemini/antigravity/brain` (verified on 0.1.23). The Python SDK
     /// contains by default too.
     ///
+    /// It confines the agent's own calls, not a subagent's (harness
+    /// 0.1.23), so with subagents enabled `spawn()` also needs
+    /// [`Self::with_ungated_subagents`].
+    ///
     /// Turn it off only if the agent must reach paths outside its
     /// workspaces, and gate those tools with a pre-tool hook or policy:
     ///
@@ -328,6 +332,10 @@ impl AgentBuilder {
     /// docs). So `[deny_all(), allow("get_weather")]` allows only
     /// `get_weather`. When no rule matches, the call is allowed (default
     /// open), subject to the pre-tool hook.
+    ///
+    /// Policies judge the agent's own calls, not a subagent's (harness
+    /// 0.1.23), so with subagents enabled `spawn()` refuses any policy but
+    /// an allow without [`Self::with_ungated_subagents`].
     ///
     /// [`policy`]: super::policy
     #[must_use]
@@ -528,15 +536,17 @@ impl AgentBuilder {
     ///
     /// On harness 0.1.23 a subagent's own tool calls reach neither the
     /// pre-tool hook and this client's policies nor the harness's policy
-    /// evaluator (where [`policy::auto`](super::policy::auto) runs), and
-    /// workspace containment does not confine them; the agent's
-    /// `run_command` sandbox is its own, and a subagent's commands follow
-    /// the subagent's capabilities. Only the subagent's
-    /// [capabilities](Subagent::with_capabilities) limit it. That holds for
-    /// the harness's built-in `research` subagent too, which
-    /// `invoke_subagent` offers whether or not you add a subagent.
+    /// evaluator (probed with a deny rule), and workspace containment does
+    /// not confine them. [`policy::auto`](super::policy::auto) runs in that
+    /// evaluator, so it is treated as bypassed too, though it was not
+    /// probed on its own. The agent's `run_command` sandbox is its own: a
+    /// subagent's commands are sent with the subagent's capabilities. Only
+    /// the subagent's [capabilities](Subagent::with_capabilities) limit
+    /// it. That holds for the harness's built-in `research` subagent too,
+    /// which `invoke_subagent` offers whether or not you add a subagent.
     ///
-    /// So while any of those gates is set, `spawn()` refuses an agent that
+    /// So while any of those gates is set (the sandbox only with
+    /// `run_command` enabled), `spawn()` refuses an agent that
     /// enables [`BuiltinTool::InvokeSubagent`](super::BuiltinTool::InvokeSubagent)
     /// or [`Self::with_define_subagent_tool`], with an
     /// [`AntigravityError::Config`] naming the gates, unless this is
@@ -626,8 +636,7 @@ impl AgentBuilder {
 
         // Conversation init.
         let config = self.build_harness_config(&dispatcher);
-        let sandbox_requested = self.capabilities.run_command().sandbox()
-            && self.capabilities.is_enabled(super::BuiltinTool::RunCommand);
+        let sandbox_requested = self.sandboxes_commands();
         let init = protocol::InitializeConversationEvent {
             config: Some(config),
         };
@@ -720,6 +729,13 @@ impl AgentBuilder {
     /// an explicit opt-in without one).
     fn contains_workspaces(&self) -> bool {
         self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty()
+    }
+
+    /// Whether the agent's own commands run in the OS sandbox: asked for,
+    /// and `run_command` enabled (its options apply only then).
+    fn sandboxes_commands(&self) -> bool {
+        self.capabilities.run_command().sandbox()
+            && self.capabilities.is_enabled(super::BuiltinTool::RunCommand)
     }
 }
 

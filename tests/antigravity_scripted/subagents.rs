@@ -382,6 +382,7 @@ fn gates(workspace: &str) -> Vec<Gate> {
                 b.with_capabilities(
                     Capabilities::read_only()
                         .enable(BuiltinTool::InvokeSubagent)
+                        .enable(BuiltinTool::RunCommand)
                         .with_run_command(RunCommandOptions::new().with_sandbox(true)),
                 )
             }),

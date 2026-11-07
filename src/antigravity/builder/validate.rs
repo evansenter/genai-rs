@@ -238,7 +238,8 @@ impl AgentBuilder {
 
     /// The gates set on this agent that a subagent's own tool calls bypass.
     /// A policy set that only allows is not one: it refuses nothing, so
-    /// there is nothing for a subagent to get around.
+    /// there is nothing for a subagent to get around. Nor is a sandbox on a
+    /// `run_command` the agent does not have: it confines nothing.
     fn subagent_bypassed_gates(&self) -> Vec<&'static str> {
         let refusing_policy = self
             .policies
@@ -254,7 +255,7 @@ impl AgentBuilder {
                 "workspace containment (on by default with a workspace)",
             ),
             (
-                self.capabilities.run_command().sandbox(),
+                self.sandboxes_commands(),
                 "the run_command sandbox (RunCommandOptions::with_sandbox)",
             ),
         ]
