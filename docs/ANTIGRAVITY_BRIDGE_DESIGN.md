@@ -513,6 +513,11 @@ its policies and pre-tool hook, before the question is posed, as on
 Denied by policy for tool 'ask_question'` and `on_questions` never runs;
 with `allow("ask_question")` beside it, the question reaches the hook.
 
+Subagent names (0.1.23, 2026-11-07, live
+`test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`
+action still carries no name, as on 0.1.5 through 0.1.18, so
+`ToolAction::subagent_name()` is `None`.
+
 ## Python SDK parity (google-antigravity 0.1.23)
 
 Every option the 0.1.23 Python SDK exposes for the harness, and what this

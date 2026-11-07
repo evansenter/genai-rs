@@ -817,8 +817,9 @@ Rules (matching the reference SDK):
   steps and trajectories with a `parentTrajectoryId`, which the bridge uses
   to keep a subagent from ever being mistaken for the turn's own
   trajectory). `ToolAction::subagent_name()` exposes the invoked subagent's
-  name **if the harness reports it** — harnesses 0.1.5 through 0.1.18 emit
-  an empty `invokeSubagent` action (verified via `LOUD_WIRE`), so it is
+  name **if the harness reports it** — harnesses 0.1.5 through the pinned
+  0.1.23 emit an empty `invokeSubagent` action (verified via `LOUD_WIRE`
+  and the live `test_antigravity_subagent_is_actually_invoked`), so it is
   `None`; the name is visible only in the pre-tool hook's arguments
   (`Subagents[].TypeName`).
 - Enabling the subagent builtin exposes `invoke_subagent`,
