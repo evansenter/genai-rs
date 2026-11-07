@@ -273,10 +273,17 @@ Version bump — update all of:
 Harness bump (`SUPPORTED_HARNESS_VERSION` in `src/antigravity/config.rs`):
 update every pin and "currently" mention
 (`git grep -n 'google-antigravity==\|currently .0\.1\.'`), add a row to the
-upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
+upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and bring its Python
+SDK parity table up to the new wheel: a row for every new option key, and
+any new module, class or export placed in
+`.github/scripts/dump_sdk_options.py`'s `SPEC` or skipped there with the
+reason (the release watch's issue lists both). Then, against the new wheel
+with its venv first on `PATH`, run the key-free
 `cargo nextest run --features antigravity --run-ignored all -E
-'binary(antigravity_harness)'` against the new wheel with its venv first on
-`PATH` (the drift guard imports the wheel's protos with `python3`).
+'binary(antigravity_scripted)'`, which holds the parity guard, and
+`cargo nextest run --features antigravity --run-ignored all -E
+'binary(antigravity_harness)'` with a key (the drift guard imports the
+wheel's protos with `python3`).
 
 ## Release
 

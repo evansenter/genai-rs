@@ -270,6 +270,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SlashCommand`, `ToolResponse`). `OutputEvent::extra` keeps an envelope
   key a newer harness adds beside a recognized payload, which used to be
   dropped. Migration: add `..Default::default()` to a struct literal.
+- **Breaking: Antigravity's `protocol::OutputEvent` has a new field,
+  `usage_update`.** It holds the rest of a harness `usageUpdate` beside its
+  total: the usage of each trajectory (`UsageUpdate::agents`, as
+  `TrajectoryUsageEntry`s) and any field the crate does not model.
+  `usage_metadata` still holds the total. The breakdown used to be dropped,
+  and an event read from a `usageUpdate` serialized back as a flat
+  `usageMetadata`; it now round-trips as it came. Migration: add
+  `..Default::default()` to an `OutputEvent` struct literal.
 - **Breaking: a known step, delta, content block or annotation whose
   modeled field is malformed now deserializes as `Unknown`.** `Unknown`
   keeps the whole object. Examples: a non-object `arguments`, a non-string
@@ -765,7 +773,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the command was orphaned and kept running (verified on macOS,
   2026-11-04). The forced paths now signal the harness's process group and
   the group of each of its children. A command that detaches itself
-  (`setsid`) is still out of reach.
+  (`setsid`) is still out of reach. This is the Unix behavior: on Windows,
+  with no process groups, the forced paths still end the harness process
+  only, so call `shutdown()` there.
+- Antigravity harness discovery no longer runs on the calling task's
+  thread. Finding the binary started `python3` to list its site-packages
+  there, with no bound, so a hung `python3` held `spawn()`, and with it a
+  current-thread runtime, forever. Discovery now runs on tokio's blocking
+  pool, `python3` gets 10 seconds before the search moves on to `PATH`, and
+  the read of the wheel's version beside the binary has the same bound.
+- Antigravity keeps a bounded tail of the harness's stderr: each line up to
+  8 KiB, marked when cut (the rest of the line is dropped), and 64 KiB in
+  all for error messages. Output with no newlines used to grow one buffer
+  without limit.
+- `triggers::on_file_change` skips a poll whose snapshot failed (the
+  snapshot task panicked, or the runtime was shutting down) and logs a
+  warning. It used to take the failure for an empty tree, reporting every
+  watched file deleted, then added back on the next poll.
 - `document_from_file()` sends `.txt` and `.md` files as text content
   (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
   `text/markdown` document content, which the API rejects with a 400 since
