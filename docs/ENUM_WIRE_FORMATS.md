@@ -1179,7 +1179,7 @@ Try lowercase (`"auto"`), SCREAMING_CASE (`"AUTO"`) and fully qualified
 (`"THINKING_SUMMARIES_AUTO"`) spellings. This revision is mostly
 lowercase/snake_case, but check with `LOUD_WIRE=1` before assuming.
 
-## Structs and `#[non_exhaustive]`
+## Structs, enums and `#[non_exhaustive]`
 
 Response and resource structs are `#[non_exhaustive]`, so the crate can add
 fields without a breaking change (D-002). `tests/non_exhaustive_responses.rs`
@@ -1207,6 +1207,17 @@ Types with neither `Default` nor a constructor need a JSON fixture:
 `FileUploadResponse` and `AutoFunctionResult`.
 (`ModalityTokens::new()`, `StreamEvent::new()` and
 `FunctionCallInfo::to_owned()` cover the others without `Default`.)
+
+The same file holds enums to the Evergreen rules (`enums_are_evergreen`,
+D-034): every public enum is `#[non_exhaustive]`, every deserializable one
+has an `Unknown` variant, and every known variant of such a union keeps an
+`extra` map. A newtype variant always needs a reason, since the guard cannot
+see whether keys sit beside its value on the wire, as they did beside the
+old `ToolChoice::AllowedTools(AllowedTools)`. Exemptions are named with
+their reasons in `EXHAUSTIVE_ENUMS`, `WITHOUT_UNKNOWN` and
+`VARIANTS_WITHOUT_EXTRA`. The enums `wire_enum!` and the Antigravity
+`wire_string_enum!` generate have no source to parse, so the guard checks
+the macros' templates for `#[non_exhaustive]` and an `Unknown` variant.
 
 ## Antigravity harness protocol (feature `antigravity`)
 

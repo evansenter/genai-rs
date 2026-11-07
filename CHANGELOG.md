@@ -336,6 +336,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SlashCommand`, `ToolResponse`). `OutputEvent::extra` keeps an envelope
   key a newer harness adds beside a recognized payload, which used to be
   dropped. Migration: add `..Default::default()` to a struct literal.
+- **Breaking: an Antigravity harness enum (`TrajectoryState`, `StepState`,
+  `LifecycleHook`, ...) read from a non-string value names it
+  `<non-string: 7>`, not `7`.** That is what `unknown_<context>_type()` and
+  `as_wire_str()` return and what `drift_report()` counts it under, as the
+  API enums do. The value is written back unchanged, `7`; it used to be
+  written as the string `"7"`. Migration: compare against
+  `<non-string: …>` where code compared the raw JSON text, or read the value
+  itself from `unknown_data()`.
 - **Breaking: a known step, delta, content block or annotation whose
   modeled field is malformed now deserializes as `Unknown`.** `Unknown`
   keeps the whole object. Examples: a non-object `arguments`, a non-string
@@ -788,11 +796,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that
   warns on or denies `missing_docs` reported each of them for every tool.
-- An Antigravity harness enum (`TrajectoryState`, `StepState`,
-  `LifecycleHook`, ...) that read a non-string value into `Unknown` writes
-  that value back unchanged, as the API enums already did; it wrote it as a
-  string, `7` as `"7"`. `unknown_<context>_type()` names such a value
-  `<non-string: 7>`, as the API enums do, and so does `drift_report()`.
 - Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
   variants now survive a deserialize/re-serialize round trip, and so do
   unknown fields on the result items, review snippets, step errors and

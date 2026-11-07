@@ -12,7 +12,7 @@ follow.
 | Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` (and `tests/http_mock_resources/`), `tests/reliability_tests.rs` | No | `make test` |
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
-| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
+| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
 | CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
@@ -433,7 +433,7 @@ Serialization is tested twice, on purpose:
 
 | Layer | Where | Purpose |
 |-------|-------|---------|
-| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491) |
+| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491); it does the same over a whole generated `InteractionResponse`, reaching every known `Tool`, `ResponseFormat`, `TranscriptionMode` and `ToolChoice` variant a stored interaction serves back, except under the keys `NOT_INJECTED_UNDER` lists with their reasons (#504) |
 | Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
 Keep both: the examples are documentation, and they run fast. Both take
@@ -492,8 +492,11 @@ checks on it:
   `Step`, `StepDelta`, `Content` and `Annotation` keeps an unmodeled key in
   its `extra` (a call's `arguments` keys in `arguments_extra`), as do the
   result items, places, review snippets, step errors and static video
-  segments in them (#491), so a new field there is reported as landing in
-  `extra` (`a_new_field_on_a_known_variant_is_reported`). A type with no
+  segments in them (#491), and the known variants of `Tool`,
+  `ResponseFormat` and `TranscriptionMode` and `ToolChoice`'s
+  `allowed_tools` object, which a stored interaction serves back (#504). So
+  a new field there is reported as landing in `extra`
+  (`a_new_field_on_a_known_variant_is_reported`). A type with no
   `extra` drops the key, which is reported too, including on an object that
   sits directly in a list (`a_dropped_field_on_a_list_element_is_reported`).
   Each finding is
