@@ -113,10 +113,12 @@ fn test_genai_error_malformed_response_patterns() {
     assert!(display1.contains("Malformed API response"));
     assert!(display1.contains("call_id"));
 
-    // Stream ended without Complete event
-    let error2 = GenaiError::MalformedResponse("Stream ended without Complete event".to_string());
+    // A streamed SSE event past the size limit
+    let error2 = GenaiError::MalformedResponse(
+        "an SSE event passed 67108864 bytes without ending".to_string(),
+    );
     let display2 = format!("{error2}");
-    assert!(display2.contains("Complete event"));
+    assert!(display2.contains("SSE event"));
 }
 
 #[test]
