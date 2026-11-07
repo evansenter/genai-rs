@@ -183,6 +183,15 @@ pub(super) fn targets() -> Vec<Target> {
             Some("GetEnvironmentFilesResponse"),
             probe::<EnvironmentFileListResponse>,
         ),
+        // What `EnvironmentFiles::upload` reads. The spec has its own
+        // schema for the upload's response; the bindings parse it as
+        // `GetEnvironmentFilesResponse`, the target above.
+        t(
+            "EnvironmentFileListResponse (upload)",
+            None,
+            Some("UploadEnvironmentFileResponse"),
+            probe::<EnvironmentFileListResponse>,
+        ),
         t(
             "Credential",
             Some("credentials.Credential"),

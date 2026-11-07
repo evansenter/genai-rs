@@ -34,10 +34,10 @@ use super::api_surface::{
     remove_path, string_values,
 };
 use super::response_targets::{Probe, Target, probe, probe_stream_event, targets};
-use super::{Allowed, assert_clean};
+use super::{Allowed, assert_clean, spec_class};
 
 /// Fields and values the crate does not model on purpose.
-const ALLOWED: &[Allowed] = &[
+pub(super) const ALLOWED: &[Allowed] = &[
     ("interactions.Interaction.cached_content", DEPRECATED),
     ("interactions.Interaction.response_mime_type", DEPRECATED),
     (
@@ -49,17 +49,17 @@ const ALLOWED: &[Allowed] = &[
         "CreateAgentInteractionParams.response_mime_type",
         DEPRECATED,
     ),
+    ("legacy.File.state=STATE_UNSPECIFIED", FILE_PROTOBUF_DEFAULT),
     (
-        "legacy.File.state=STATE_UNSPECIFIED",
-        "The protobuf default; never served.",
+        "legacy.File.source=SOURCE_UNSPECIFIED",
+        FILE_PROTOBUF_DEFAULT,
     ),
     (
         "legacy.Document.state=STATE_UNSPECIFIED",
-        "The protobuf default; never served.",
-    ),
-    (
-        "legacy.File.source=SOURCE_UNSPECIFIED",
-        "The protobuf default; never served.",
+        "The protobuf default, which protobuf JSON leaves out rather than \
+         serves: the documents read live carried `STATE_PENDING` or \
+         `STATE_ACTIVE` (2026-08-16), and one that failed indexing failed its \
+         upload with a 500 instead (2026-11-05).",
     ),
     ("legacy.ListFilesResponse.data", CLAUDE_FILES),
     ("legacy.ListFilesResponse.nextPage", CLAUDE_FILES),
@@ -90,8 +90,9 @@ const ALLOWED: &[Allowed] = &[
     ),
     (
         "interactions.TranscriptionConfig.language_hints",
-        "Deprecated, and rejected on create with 400 Unknown parameter (2.25.0 \
-         sweep, D-005), so a stored interaction never carries it.",
+        "Deprecated, and rejected on create with 400 Unknown parameter (live \
+         2026-09-24, the 2.25.0 sweep; D-005), so a stored interaction never \
+         carries it.",
     ),
     (
         "interactions.VideoConfig.task=upscale",
@@ -108,6 +109,9 @@ const ALLOWED: &[Allowed] = &[
     ),
 ];
 
+const FILE_PROTOBUF_DEFAULT: &str = "The protobuf default, which protobuf \
+     JSON leaves out rather than serves: every file read live carried a real \
+     `state` and `source` (`ACTIVE` or `FAILED`, `UPLOADED`; 2026-11-05).";
 const OUTPUT_CONVENIENCE: &str = "A convenience copy of the output in the \
      bindings, never served: not on a create response or stored read of a TTS \
      or image interaction, nor on a stream's completed event (live \
@@ -131,17 +135,9 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
      `InteractionRequest::extra` and be sent back when the interaction is \
      reused (before #500 it was dropped).";
 
-/// Fields and values the crate does not model yet.
-const GAPS: &[Allowed] = &[
-    // Files.
-    (
-        "legacy.File.downloadUri",
-        "Not served on an uploaded file, nor on one that failed processing (live \
-         2026-11-05). The bindings' `files.download` reads it on a generated \
-         file (`source` GENERATED), which only a video generation makes, so it \
-         is unprobed; it lands in `FileMetadata::extra` until it is seen.",
-    ),
-];
+/// Fields and values the crate does not model yet: the next modeling
+/// pass's work list, empty when the crate has caught up with the snapshot.
+pub(super) const GAPS: &[Allowed] = &[];
 
 /// Values for sites whose snapshot type is looser than what the API sends,
 /// so a synthesized value would test the synthesizer rather than the crate.
@@ -532,16 +528,107 @@ fn binding_fields_deserialize_without_extra() {
     );
 }
 
+/// Both spec snapshots ([`super::SPECS`]), with one set of exceptions.
 #[test]
 fn spec_fields_deserialize_without_extra() {
-    let surface = Surface::openapi("openapi-v1beta.json");
+    let mut all = Vec::new();
+    let mut fetched = Vec::new();
+    for file in super::SPECS {
+        let surface = Surface::openapi(file);
+        for mut finding in findings(&surface, targets(), |t| spec_class(&surface, t)) {
+            finding.path = format!("{} {}", surface.name, finding.path);
+            all.push(finding);
+        }
+        fetched.push(format!("{} {}", surface.name, surface.version));
+    }
     assert_clean(
         &format!(
-            "Response fields vs the v1beta OpenAPI spec ({})",
-            surface.version
+            "Response fields vs the OpenAPI specs ({})",
+            fetched.join(", ")
         ),
-        &surface,
-        findings(&surface, targets(), |t| t.spec),
+        &Surface::openapi(super::SPECS[0]),
+        all,
         &[("ALLOWED", ALLOWED), ("GAPS", GAPS)],
+    );
+}
+
+/// The v1 spec pass is not vacuous: it runs the interaction targets, and
+/// their bodies carry every enum value a class they reach defines in v1 and
+/// not in v1beta (`requires_continuation` on a stream event's interaction,
+/// `video/jpeg2000`, the `models/`-prefixed model ids), so
+/// `spec_fields_deserialize_without_extra` and
+/// `sparse_spec_bodies_deserialize` check each one.
+#[test]
+fn v1_only_values_are_checked() {
+    let v1 = Surface::openapi("openapi-v1.json");
+    let v1beta = Surface::openapi("openapi-v1beta.json");
+    let options = SynthOptions {
+        values: values(),
+        ..SynthOptions::default()
+    };
+    let mut ran = Vec::new();
+    let mut reached = BTreeSet::new();
+    let mut carried = BTreeSet::new();
+    for target in targets() {
+        let Some(class) = spec_class(&v1, &target) else {
+            continue;
+        };
+        ran.push(target.name);
+        let ty = v1.ty(class);
+        reached.extend(v1.reachable_classes(&ty));
+        for body in v1.fixtures(&ty, &options) {
+            let sites = v1.sites(&ty, &body);
+            for (path, value) in string_values(&body) {
+                carried.insert((site_of(&sites, key_path(&path)), value));
+            }
+        }
+    }
+    assert_eq!(ran, ["InteractionResponse", "StreamEvent"], "v1 targets");
+
+    let literal = |surface: &Surface, ty: &Ty| -> BTreeSet<String> {
+        match surface.resolve(ty) {
+            Ty::Literal { values, .. } => values
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            _ => BTreeSet::new(),
+        }
+    };
+    let mut only_v1 = BTreeSet::new();
+    for class in &reached {
+        for (wire, field) in &v1.classes[class].fields {
+            let theirs = v1beta
+                .classes
+                .get(class)
+                .and_then(|c| c.fields.get(wire))
+                .map(|f| literal(&v1beta, &f.ty))
+                .unwrap_or_default();
+            for value in literal(&v1, &field.ty).difference(&theirs) {
+                only_v1.insert((format!("{class}.{wire}"), value.clone()));
+            }
+        }
+    }
+    for (site, value) in [
+        (
+            "InteractionSseEventInteraction.status",
+            "requires_continuation",
+        ),
+        ("VideoContent.mime_type", "video/jpeg2000"),
+    ] {
+        assert!(
+            only_v1.contains(&(site.to_string(), value.to_string())),
+            "{site}={value} is no longer v1-only: {only_v1:?}"
+        );
+    }
+    assert!(
+        only_v1
+            .iter()
+            .any(|(site, value)| site == "Interaction.model" && value.starts_with("models/")),
+        "v1's `models/`-prefixed model ids are no longer v1-only: {only_v1:?}"
+    );
+    let missing: Vec<_> = only_v1.difference(&carried).collect();
+    assert!(
+        missing.is_empty(),
+        "v1-only values no body carries: {missing:?}"
     );
 }

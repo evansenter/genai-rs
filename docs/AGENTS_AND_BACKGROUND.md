@@ -480,7 +480,7 @@ async fn poll_until_done(
 | `RequiresAction` | Waiting for input |
 | `Incomplete` | Ended before completion (for example a token limit); inspect partial results. On `CONTINUATION_MODEL` it carries a `continuation_token` to resume the decode |
 | `RequiresContinuation` | In the spec, never observed: continuable responses report `Incomplete` |
-| `BudgetExceeded` | The configured budget ran out; inspect partial results |
+| `BudgetExceeded` | Deprecated in the spec, never observed: an Antigravity run that went past its `max_total_tokens` ended `Incomplete` |
 | `Queued` | Accepted, not started. In the bindings, never observed: background interactions report `InProgress` from their create response on |
 
 Persist the interaction id as soon as `create()` returns, so a restart can

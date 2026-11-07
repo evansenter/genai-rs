@@ -59,8 +59,8 @@ pub struct StepSummary {
     /// `mcp_server_tool_call` steps, counted in
     /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count)
     /// (in between, as answered `function_call` steps counted in
-    /// [`function_call_count`](Self::function_call_count)). See #433, and
-    /// MCP identity in `docs/ENUM_WIRE_FORMATS.md` for the dates.
+    /// [`function_call_count`](Self::function_call_count)). See MCP
+    /// identity in `docs/ENUM_WIRE_FORMATS.md` for the dates.
     pub tool_call_count: usize,
     /// Number of `mcp_server_tool_call` steps.
     ///

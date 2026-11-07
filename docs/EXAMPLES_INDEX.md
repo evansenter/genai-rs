@@ -121,7 +121,6 @@ all ten are smoke-run in CI:
 | Example | Needs |
 |---------|-------|
 | `deep_research` | Deep Research agent access; takes minutes (`DEEP_RESEARCH_MAX_WAIT_SECS` sets the budget) |
-| `computer_use` | Computer Use access on your key |
 | Antigravity examples | `localharness` binary (`pip install google-antigravity==0.1.23`) + `--features antigravity` |
 
 Everything else runs on a standard API key.

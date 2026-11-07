@@ -165,12 +165,12 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 |------|-------------|---------|------------------|
 | `InteractionInput` | string, `[Step]`, `[Content]` or `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests send `Content` input as one `user_input` step; see [InteractionInput](#interactioninput-request-input). Verified live 2026-08-16 |
 | `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"` | Core shapes verified live 2026-07; see [Step](#step) |
-| `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from the variant names. Pending live verification |
+| `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from the variant names. All three verified live 2026-11-07; see [StepDelta](#stepdelta) |
 | `Annotation` | tagged by `"type"` | `"url_citation"`, `"speech_metadata"` | `url_citation` observed live 2026-07; `speech_metadata` verified 2026-09-24 |
 | `FunctionResultPayload` | untagged | `"ok"` / `{...}` / `[{"type": "text", ...}]` | String, JSON, or content-block list |
-| `ToolChoice` | string or object | `"any"` / `{"allowed_tools": {...}}` | Pending live verification |
-| `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | Uppercase spellings (pre-revision) now deserialize to `Unknown`. Pending live verification |
-| `CodeExecutionLanguage` | lowercase | `"python"`, `"bash"` | `"PYTHON"` (pre-revision) now deserializes to `Unknown`. `bash` is spec only (2.34.0) |
+| `ToolChoice` | string or object | `"any"` / `{"allowed_tools": {...}}` | Both forms verified live 2026-11-07; see [ToolChoice and FunctionCallingMode](#toolchoice-and-functioncallingmode) |
+| `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | All four verified live 2026-11-07. The uppercase spellings (pre-revision) deserialize to `Unknown`, and the API refuses them on send |
+| `CodeExecutionLanguage` | lowercase | `"python"`, `"bash"` | `python` verified live 2026-11-07; `"PYTHON"` (pre-revision) now deserializes to `Unknown`. `bash` is spec only (2.34.0) |
 | `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"`, `"deferred"` | `flex`/`priority` accepted and echoed live 2026-11-01; `deferred` is Vertex-only |
 | `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | Sent under the item key `type`. Five values accepted live 2026-10-30; `civic_integrity` and `image_*` are Vertex-only |
 | `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Four values accepted live 2026-10-30; `block_none` is Vertex-only |
@@ -178,8 +178,8 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 | `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `"active"` verified live 2026-08-08 |
 | `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `active`/`paused` verified live 2026-11-01; `error` is output-only (sending it is a 400) |
 | `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | `completed` verified live 2026-11-01; the rest from the SDK spec |
-| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"`, `"requires_continuation"`, `"queued"` | `budget_exceeded` pending live verification; `requires_continuation` spec only; `queued` bindings only. `Default` is `InProgress` |
-| `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` pending live verification |
+| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"`, `"requires_continuation"`, `"queued"` | `budget_exceeded` never observed, and deprecated in the v1beta spec; `requires_continuation` spec only; `queued` bindings only. See [InteractionStatus](#interactionstatus). `Default` is `InProgress` |
+| `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `web_search` and `image_search` served live 2026-11-07 (`image_search` on some models only); `enterprise_web_search` is Vertex-only. See [SearchType](#searchtype) |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
 | `ThinkingLevel` | lowercase | `"minimal"`, `"low"`, `"medium"`, `"high"` | Which levels `DEFAULT_MODEL` accepts is under Models in `docs/INTERACTIONS_API_GAP.md` |
@@ -188,8 +188,8 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 | `Tool::Function` | object | `{"type": "function", "name": "get_time", "description": "...", "parameters": {...}}` | Only `name` is needed: a function tool sent with just a `name` is accepted and called, and a stored read serves it that way (live 2026-11-05). `description` and `parameters` are left out when `None`; `FunctionParameters` keeps schema keywords it doesn't model. A tool read without its optional fields is still `Tool::Function`, not `Unknown` |
 | `Tool::FileSearch` | object | `{"type": "file_search", "file_search_store_names": [...]}` | Rust `store_names` → wire `file_search_store_names`, left out when the list is empty. Verified live 2026-08-16 |
 | `Tool::GoogleSearch` | object + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
-| `Tool::GoogleMaps` | object + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification |
-| `Tool::ComputerUse` | snake_case object | `{"type": "computer_use", "environment": "browser", ...}` | Pending live verification. An empty `environment` (as read from a tool without one) is left out; so are an `mcp_server` tool's empty `name` and `url` |
+| `Tool::GoogleMaps` | object + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` verified live 2026-11-07: a stored read serves them back as sent. What they do is under Tools in `docs/INTERACTIONS_API_GAP.md` |
+| `Tool::ComputerUse` | snake_case object | `{"type": "computer_use", "environment": "browser", ...}` | Verified live 2026-11-07, every field stored as sent; see [Computer Use](#computer-use). An empty `environment` (as read from a tool without one) is left out; so are an `mcp_server` tool's empty `name` and `url` |
 | `Tool::Retrieval` | object | `{"type": "retrieval", "retrieval_types": [...], ...}` | **Rejected by the Gemini API** as Vertex-only (live 2026-07) |
 | `RetrievalType` | snake_case | `"vertex_ai_search"`, `"rag_store"` | Not verifiable on the Gemini API |
 | `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | The crate sends the list. See [speech_config wire forms](#speech_config-wire-forms) (live 2026-09-24) |
@@ -325,7 +325,14 @@ reads 0 on a successful call. Count with `step_summary().tool_call_count` or
 
 ### StepDelta
 
-Deltas build up the step that the matching `step.start` announced.
+Deltas build up the step that the matching `step.start` announced. The tags
+below that differ from the variant names were verified live 2026-11-07 on
+`gemini-3.8-flash`: a grounded answer streamed its text as `text` deltas
+(`{"type": "text", "text": "..."}`) and its citations as one
+`text_annotation_delta` (`{"annotations": [{"start_index", "end_index",
+"url", ...}]}`), and a function call streamed a `step.start` with
+`arguments: {}` and one `arguments_delta` holding the whole JSON
+(`{"arguments": "{\"city\":\"Tokyo\"}"}`).
 
 | Wire `type` | Variant | Notes |
 |-------------|---------|-------|
@@ -433,7 +440,14 @@ API rejects a top-level array. Deserializing never wraps.
 An unknown mode **string** becomes `ToolChoice::Mode(FunctionCallingMode::Unknown)`;
 an unknown **shape** becomes `ToolChoice::Unknown`. `AllowedTools` is also the
 element type of an MCP server's `allowed_tools`. The pre-revision uppercase
-modes (`"AUTO"`) deserialize to `Unknown`. Pending live verification.
+modes (`"AUTO"`) deserialize to `Unknown`.
+
+Verified live 2026-11-07 on `gemini-3.8-flash`, every mode and the
+`allowed_tools` object sent in the forms above: a stored read serves
+`tool_choice` back as sent (`"none"`, or the whole `allowed_tools` object),
+and a create response carries no `generation_config`. What each mode does,
+and the API's answer to an uppercase one, are under Tools in
+`docs/INTERACTIONS_API_GAP.md`.
 
 ### ServiceTier
 
@@ -545,7 +559,7 @@ under Models in `docs/INTERACTIONS_API_GAP.md`.
 | `Failed` | `failed` | |
 | `Cancelled` | `cancelled` | |
 | `Incomplete` | `incomplete` | Live 2026-11-01: `max_output_tokens` reached; carries a `continuation_token` on the continuation model |
-| `BudgetExceeded` | `budget_exceeded` | Pending live verification |
+| `BudgetExceeded` | `budget_exceeded` | Never observed live. The v1beta spec marks the value deprecated, and v1 drops it. How an Antigravity run past its `max_total_tokens` ended is under Agents and environments in `docs/INTERACTIONS_API_GAP.md` |
 | `RequiresContinuation` | `requires_continuation` | google-genai 2.34.0; never observed live |
 | `Queued` | `queued` | google-genai 2.34.0 bindings, not the spec (#501); never observed live: background interactions report `in_progress` from their create response on (2026-11-05) |
 
@@ -771,8 +785,14 @@ Verified live 2026-07 with `LOUD_WIRE=1`, and again 2026-11-05:
 - There is no `computer_use_call` / `computer_use_result` any more. Actions
   arrive as plain `function_call` steps (`navigate`, `click_at`, ...).
 
-Derived from the API docs; pending live verification (the tool is
-allowlisted).
+Verified live 2026-11-07 on `gemini-3.8-flash`, on a standard API key, as
+it has answered since 2026-08-16 (it was allowlisted before). The tool
+above, every field set, was accepted, and a stored read served it back
+exactly. Asked to read a live page, the model answered `requires_action`
+with a `thought` step and one `function_call` step, `navigate` with
+`arguments: {"url": "https://news.ycombinator.com", "intent": "Navigate to
+Hacker News"}`; with `environment` `"mobile"` or `"desktop"` the first
+action was `take_screenshot` (`arguments: {"intent": ...}`).
 
 ### SpeechConfig (generation_config)
 
@@ -855,12 +875,16 @@ All three verified live 2026-09-24.
 
 - `url_context_call`: `{"id", "arguments": {"urls": [...]}}`, flattened to
   `urls: Vec<String>`.
-- `url_context_result`: `{"call_id", "result": [{"url", "status"}]}`.
-  `UrlContextResultItem` has `is_success()`, `is_error()`, `is_unsafe()`
-  and `is_paywall()`.
+- `url_context_result`: `{"call_id", "is_error", "result": [{"url",
+  "status"}]}`. `UrlContextResultItem` has `is_success()`, `is_error()`,
+  `is_unsafe()` and `is_paywall()`.
 
-Shapes verified 2026-01-09 pre-revision; the step form is pending live
-verification.
+The step form verified live 2026-11-07 (`gemini-3.8-flash`, one fetch of
+an IANA page): a `url_context_call` with `arguments.urls` holding the URL,
+then a `url_context_result` with `is_error: false` and one `{"status":
+"success", "url"}` item, then the answer, its text cited with
+`url_citation` annotations on that URL. The shapes were first verified on
+2026-01-09, pre-revision.
 
 ### Code execution
 
@@ -894,15 +918,19 @@ is a string in the bindings too. What the API does with the list form sent
 back in history is under Tools in `docs/INTERACTIONS_API_GAP.md`.
 
 `CodeExecutionLanguage` is lowercase `"python"` in
-`code_execution_call.arguments.language`. `"PYTHON"` (pre-revision) now
-deserializes to `Unknown`, and `Display` prints `"python"`. Pending live
-verification.
+`code_execution_call.arguments.language` (`{"code": "...", "language":
+"python"}`, live 2026-11-07). `"PYTHON"` (pre-revision) now deserializes to
+`Unknown`, and `Display` prints `"python"`.
 
 ### SearchType
 
-`Tool::GoogleSearch.search_types` and `google_search_call.search_type`:
-`web_search` (verified pre-revision), `image_search` (model-restricted),
-`enterprise_web_search` (pending live verification).
+`Tool::GoogleSearch.search_types` and `google_search_call.search_type`.
+Verified live 2026-11-07: a `google_search_call` carries `search_type:
+"web_search"` when the request sent `["web_search"]` or no `search_types`,
+and `"image_search"` (after a `web_search` call) when it sent
+`["image_search"]` to a model that takes it. Which models take
+`image_search`, and that `enterprise_web_search` is Vertex-only (kept,
+D-005), are under Tools in `docs/INTERACTIONS_API_GAP.md`.
 
 ### Tool::Retrieval
 

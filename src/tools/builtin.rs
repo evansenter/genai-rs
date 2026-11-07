@@ -12,9 +12,13 @@ wire_enum! {
     pub enum SearchType {
         /// Web search
         WebSearch = "web_search",
-        /// Image search (only available for specific models like `gemini-3.1-flash-image-preview`)
+        /// Image search. Only some models take it:
+        /// [`DEFAULT_IMAGE_MODEL`](crate::DEFAULT_IMAGE_MODEL) does, and
+        /// [`DEFAULT_MODEL`](crate::DEFAULT_MODEL) answers 400 (see SearchType
+        /// in `docs/ENUM_WIRE_FORMATS.md`).
         ImageSearch = "image_search",
-        /// Enterprise web search
+        /// Enterprise web search. Vertex-only: the Gemini API rejects it with
+        /// a 400 that names the Gemini Enterprise Agent Platform.
         EnterpriseWebSearch = "enterprise_web_search",
     }
     unknown(search_type, unknown_search_type)

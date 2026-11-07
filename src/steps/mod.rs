@@ -409,7 +409,7 @@ pub enum Step {
     /// reads back; the dates are under MCP identity in
     /// `docs/ENUM_WIRE_FORMATS.md`. Before it was modeled, this step landed in
     /// [`Step::Unknown`], so a successful MCP interaction reported zero tool
-    /// calls. See #433. Any key beyond `id` and `signature` (a `name` or
+    /// calls. Any key beyond `id` and `signature` (a `name` or
     /// `server_name`, should the API add one) is kept in `extra`.
     ToolCall {
         /// Unique ID for this call.
@@ -429,7 +429,8 @@ pub enum Step {
     /// [`Step::FunctionResult`] pairs;
     /// [`InteractionResponse::mcp_calls`](crate::InteractionResponse::mcp_calls)
     /// reads this shape and the function-call one, with the tool stripped
-    /// of its server prefix. Tracked in #459.
+    /// of its server prefix. The shapes and their dates are under MCP
+    /// identity in `docs/ENUM_WIRE_FORMATS.md`.
     McpServerToolCall {
         /// Unique ID for this call.
         id: String,

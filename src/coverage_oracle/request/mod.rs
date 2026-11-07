@@ -3,9 +3,9 @@
 //! Each request type is serialized fully populated, as struct literals with
 //! no `..Default::default()`, so a field added to one of these structs fails
 //! to compile here until it is populated and checked. (The agent configs keep
-//! their fields private, so they are built with every builder instead; a
-//! binding field none of them sets still fails the reverse test below.)
-//! Samples from the
+//! their fields private, so each builds its own literal, `fully_populated()`
+//! in `src/request/agent_config.rs`; `agent_configs_set_every_field` fails on
+//! a field there that sends no key.) Samples from the
 //! proptest strategies add the union arms and enum values the literals do not
 //! reach. Each value is walked, recursively and path by path, against the
 //! google-genai binding class it is sent as (rank 1, D-004; the spec lags
@@ -27,16 +27,16 @@ use crate::content::Content;
 use crate::proptest_tests as strategies;
 use crate::steps::Step;
 use bodies::{
-    agent_configs, agent_requests, agents, credential_requests, credential_updates,
-    document_imports, document_uploads, environment_requests, environment_specs,
-    file_search_store_requests, generation_configs, inputs, model_requests, response_formats,
-    safety_settings, samples, to_value, trigger_params, trigger_updates, values, voice_requests,
-    webhook_config, webhook_updates, webhooks,
+    agent_config_types, agent_configs, agent_requests, agents, credential_requests,
+    credential_updates, document_imports, document_uploads, environment_requests,
+    environment_specs, file_search_store_requests, generation_configs, inputs, model_requests,
+    response_formats, safety_settings, samples, to_value, trigger_params, trigger_updates, values,
+    voice_requests, webhook_config, webhook_updates, webhooks,
 };
 use content::{contents, steps, tools};
 
 /// Keys the crate sends that a class lacks, each on purpose.
-const ALLOWED: &[Allowed] = &[
+pub(super) const ALLOWED: &[Allowed] = &[
     (
         "interactions.FunctionCallStep.signature",
         "Served on function_call steps and required when one is replayed in \
@@ -57,7 +57,7 @@ const ALLOWED: &[Allowed] = &[
 ];
 
 /// Request fields the crate never sends.
-const NOT_SENT: &[Allowed] = &[
+pub(super) const NOT_SENT: &[Allowed] = &[
     // Deprecated in the bindings, and either superseded or rejected live.
     (
         "interactions.CreateModelInteraction.response_mime_type",
@@ -69,13 +69,13 @@ const NOT_SENT: &[Allowed] = &[
     ),
     (
         "interactions.CreateModelInteraction.cached_content",
-        "Deprecated; rejected live with 400 Unknown parameter (2.25.0 sweep, \
-         docs/INTERACTIONS_API_GAP.md, D-005).",
+        "Deprecated; rejected live with 400 Unknown parameter (2026-09-24, \
+         the 2.25.0 sweep in docs/INTERACTIONS_API_GAP.md; D-005).",
     ),
     (
         "interactions.TranscriptionConfig.language_hints",
-        "Deprecated; rejected live with 400 Unknown parameter (2.25.0 sweep, \
-         docs/INTERACTIONS_API_GAP.md, D-005).",
+        "Deprecated; rejected live with 400 Unknown parameter (2026-09-24, \
+         the 2.25.0 sweep in docs/INTERACTIONS_API_GAP.md; D-005).",
     ),
     (
         "interactions.SpeakerConfig.speakers",
@@ -488,6 +488,110 @@ fn a_populated_variant_extra_is_sent_flat_and_not_vouched_for() {
     ]
     .map(|class| format!("{class}.brand_new_field"));
     assert_eq!(added, BTreeSet::from(expected));
+}
+
+/// The field names in a `{:?}` string: each identifier that opens a field
+/// (after the type's `{` or a `,`) and is followed by `: `. String literals
+/// are blanked first, so a `: ` inside one is not read as a field.
+fn debug_field_names(debug: &str) -> BTreeSet<String> {
+    let mut blanked = String::with_capacity(debug.len());
+    let (mut in_string, mut escaped) = (false, false);
+    for c in debug.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+                blanked.push(c);
+            }
+            continue;
+        }
+        in_string = c == '"';
+        blanked.push(c);
+    }
+    blanked
+        .split(['{', ','])
+        .filter_map(|segment| segment.trim_start().split_once(": "))
+        .map(|(name, _)| name)
+        .filter(|name| {
+            !name.is_empty() && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+        })
+        .map(String::from)
+        .collect()
+}
+
+/// Every object key in `value`, at any depth.
+fn object_keys(value: &Value) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Object(map) => {
+                keys.extend(map.keys().cloned());
+                stack.extend(map.values());
+            }
+            Value::Array(items) => stack.extend(items),
+            _ => {}
+        }
+    }
+    keys
+}
+
+/// The fields of a config, as its `{:?}` names them, that name no key of
+/// the JSON it emits. A key counts at any depth, so `max_rounds`, sent
+/// inside `session_config`, is sent.
+fn unsent_config_fields(debug: &str, emitted: &Value) -> Vec<String> {
+    let keys = object_keys(emitted);
+    debug_field_names(debug)
+        .into_iter()
+        .filter(|field| !keys.contains(field))
+        .collect()
+}
+
+/// The agent configs' `fully_populated()` literals set every field to a
+/// value `From` sends. A field added to a config type and set to what
+/// `From` leaves out (`None`, an empty list, `false`) to make the literal
+/// compile would emit no key, and so go unchecked: every field named in a
+/// config's `{:?}` must name a key of its JSON. (Sent, the key fails
+/// `request_wire_keys_exist_in_bindings` unless the bindings have it.) A
+/// field `From` sends under another name needs that name here. `None` and
+/// `[]` are rejected outright too, since another field may send the name.
+#[test]
+fn agent_configs_set_every_field() {
+    let types = agent_config_types();
+    assert_eq!(types.len(), 4, "one per typed agent config");
+    for (debug, config) in &types {
+        let unsent = unsent_config_fields(debug, config.as_value());
+        assert!(
+            unsent.is_empty(),
+            "{unsent:?} send no key: {debug} emits {}",
+            config.as_value()
+        );
+        for unset in [": None", ": []"] {
+            assert!(
+                !debug.contains(unset),
+                "a field is unset ({unset}): {debug}"
+            );
+        }
+    }
+}
+
+/// The verifier's mutation in the form the `None` check misses: a `bool`
+/// flag set to `false` in the literal, which `From` sends only when true.
+#[test]
+fn a_config_field_that_sends_no_key_is_caught() {
+    let debug = r#"AntigravityConfig { model: Some("m: x, y"), max_total_tokens: Some(1000), mut_budget: false }"#;
+    let emitted = json!({"type": "antigravity", "model": "m: x, y", "max_total_tokens": 1000});
+    assert_eq!(unsent_config_fields(debug, &emitted), ["mut_budget"]);
+
+    let nested = r#"CodeMenderConfig { max_rounds: Some(3), find_request: Some(CodeMenderFindRequest { source_files: [CodeMenderFile { path: Some("a") }] }) }"#;
+    let emitted = json!({
+        "session_config": {"max_rounds": 3},
+        "find_request": {"source_files": [{"path": "a"}]},
+    });
+    assert!(unsent_config_fields(nested, &emitted).is_empty());
 }
 
 /// The other direction: every field of every class a request reaches is

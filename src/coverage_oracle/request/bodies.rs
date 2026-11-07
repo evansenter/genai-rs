@@ -24,11 +24,10 @@ use crate::file_search_stores::{
 use crate::http::file_search_stores::{ImportFileBody, UploadDocumentBody};
 use crate::http::webhooks::WebhookInput;
 use crate::request::{
-    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
-    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
-    ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, ServiceTier,
-    SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TranscriptionMode,
-    VideoConfig, VideoTask, Visualization,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, DeepResearchConfig, DynamicConfig,
+    GenerationConfig, ImageAspectRatio, ImageConfig, ImageSize, InteractionInput,
+    InteractionRequest, ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries,
+    TranscriptionConfig, TranscriptionMode, VideoConfig, VideoTask,
 };
 use crate::response_format::{
     ResponseDelivery, ResponseFormat, ResponseFormatSpec, VideoResolution,
@@ -113,38 +112,29 @@ pub(super) fn safety_settings() -> Vec<SafetySetting> {
     }]
 }
 
-pub(super) fn agent_configs() -> Vec<AgentConfig> {
+/// Every agent config, each built by its type's `fully_populated()`: a
+/// struct literal with every field set, which a new field fails to compile
+/// (the fields are private, so the literals live beside the types, in
+/// `src/request/agent_config.rs`). Paired with the `{:?}` of each, so
+/// `agent_configs_set_every_field` can see a field that sends no key.
+pub(super) fn agent_config_types() -> Vec<(String, AgentConfig)> {
+    let deep_research = DeepResearchConfig::fully_populated();
+    let antigravity = AntigravityConfig::fully_populated();
+    let dynamic = DynamicConfig::fully_populated();
+    let code_mender = CodeMenderConfig::fully_populated();
     vec![
-        DeepResearchConfig::new()
-            .with_thinking_summaries(ThinkingSummaries::Auto)
-            .with_visualization(Visualization::Auto)
-            .with_collaborative_planning(true)
-            .with_bigquery_tool(true)
-            .into(),
-        AntigravityConfig::new()
-            .with_model("m")
-            .with_max_total_tokens(1000)
-            .into(),
-        DynamicConfig::new().into(),
-        CodeMenderConfig::new()
-            .with_model("m")
-            .with_session_id("s")
-            .with_max_rounds(3)
-            .with_find_request(
-                CodeMenderFindRequest::new()
-                    .with_description("d")
-                    .with_finding_id("f")
-                    .with_mode(CodeMenderMode::Verify)
-                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
-            )
-            .with_fix_request(
-                CodeMenderFixRequest::new()
-                    .with_description("d")
-                    .with_finding_id("f")
-                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
-            )
-            .into(),
+        (format!("{deep_research:?}"), deep_research.into()),
+        (format!("{antigravity:?}"), antigravity.into()),
+        (format!("{dynamic:?}"), dynamic.into()),
+        (format!("{code_mender:?}"), code_mender.into()),
     ]
+}
+
+pub(super) fn agent_configs() -> Vec<AgentConfig> {
+    agent_config_types()
+        .into_iter()
+        .map(|(_, config)| config)
+        .collect()
 }
 
 pub(super) fn response_formats() -> Vec<ResponseFormat> {
@@ -402,12 +392,7 @@ pub(super) fn agents() -> Vec<Value> {
             to_value(&Agent {
                 id: Some("my-agent".into()),
                 base_agent: Some(crate::DEFAULT_ANTIGRAVITY_AGENT.into()),
-                agent_config: Some(
-                    AntigravityConfig::new()
-                        .with_model("m")
-                        .with_max_total_tokens(1000)
-                        .into(),
-                ),
+                agent_config: Some(AntigravityConfig::fully_populated().into()),
                 system_instruction: Some("be brief".into()),
                 description: Some("d".into()),
                 tools: Some(vec![
