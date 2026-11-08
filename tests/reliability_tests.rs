@@ -1,7 +1,8 @@
 //! Offline reliability tests against the local HTTP stub: the default
 //! timeouts, how a cut-off stream is classified, the read of a stream's tail
-//! after its terminal event, and `Retry-After` in a poll. See
-//! `docs/RELIABILITY.md`.
+//! after its terminal event, and `Retry-After` and the retryable statuses in
+//! a poll. See `docs/RELIABILITY.md`; one test checks that its backon recipe
+//! matches `examples/retry_with_backoff.rs`.
 //!
 //! The paused-clock tests do real localhost I/O. Tokio advances a paused
 //! clock to the next timer whenever the runtime is idle, even while I/O is
@@ -754,4 +755,130 @@ async fn wait_until_active_waits_out_a_429_retry_after() {
     assert_eq!(arrivals[0], start);
     let gap = arrivals[1] - arrivals[0];
     assert_eq!(gap, Duration::from_secs(1), "polled again after {gap:?}");
+}
+
+// =============================================================================
+// Which failed status reads a poll goes on through
+// =============================================================================
+
+/// Waits for `files/abc` against `stub`, polling every 10 ms for up to 30 s.
+async fn wait_for_file(stub: &Stub) -> Result<genai_rs::FileMetadata, GenaiError> {
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(Duration::from_secs(30));
+    stub.paused_clock_client()
+        .files()
+        .wait_until_active("files/abc", poll)
+        .await
+}
+
+/// A 408 from a front end that gave up waiting for the status request is
+/// retryable, so the wait goes on through it.
+#[tokio::test(start_paused = true)]
+async fn wait_until_active_polls_through_a_408() {
+    let stub = Stub::replying(vec![
+        Reply::text(408, "<html><title>408 Request Timeout</title></html>"),
+        Reply::json(
+            200,
+            json!({"name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": "ACTIVE"}),
+        ),
+    ])
+    .await;
+
+    let ready = wait_for_file(&stub).await.unwrap();
+
+    assert!(ready.is_active());
+    assert_eq!(stub.requests().len(), 2);
+}
+
+/// A 501 is not retryable: the wait ends with it at once, rather than
+/// asking again until the deadline for an answer that will not change.
+#[tokio::test(start_paused = true)]
+async fn wait_until_active_ends_at_a_501() {
+    let stub = Stub::replying(vec![Reply::json(
+        501,
+        json!({"error": {"code": 501, "message": "Method not implemented.", "status": "UNIMPLEMENTED"}}),
+    )])
+    .await;
+
+    let err = wait_for_file(&stub).await.unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            GenaiError::Api {
+                status_code: 501,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(stub.requests().len(), 1);
+}
+
+// =============================================================================
+// The backon recipe in docs/RELIABILITY.md and its runnable example
+// =============================================================================
+
+/// The lines of the backon recipe in `source`, trimmed: `MAX_DELAY`,
+/// `next_delay`, the backoff's builder chain and the retry's `retry`,
+/// `when` and `adjust`. Comments and doctest-hidden lines (`# ...`) are not
+/// part of it.
+fn backon_recipe(source: &str) -> Vec<&str> {
+    let lines: Vec<&str> = source
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//") && !line.starts_with('#'))
+        .collect();
+    let mut recipe = Vec::new();
+    for (start, end) in [
+        ("const MAX_DELAY", ";"),
+        ("fn next_delay(", "}"),
+        ("let backoff = ExponentialBuilder", ";"),
+    ] {
+        let from = lines
+            .iter()
+            .position(|line| line.starts_with(start))
+            .expect("the recipe has each of its parts");
+        let to = from
+            + lines[from..]
+                .iter()
+                .position(|line| line.ends_with(end))
+                .expect("each part of the recipe ends");
+        recipe.extend_from_slice(&lines[from..=to]);
+    }
+    recipe.extend(lines.iter().filter(|line| {
+        [".retry(", ".when(", ".adjust("]
+            .iter()
+            .any(|call| line.starts_with(call))
+    }));
+    recipe
+}
+
+/// `docs/RELIABILITY.md`'s backon snippet (doctested) and
+/// `examples/retry_with_backoff.rs` (built) are the same recipe, jitter
+/// included: the snippet once lacked the example's `.with_jitter()`, and
+/// nothing compiled either one against the other.
+#[test]
+fn the_backon_recipe_in_reliability_md_matches_its_example() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let doc = std::fs::read_to_string(root.join("docs/RELIABILITY.md")).unwrap();
+    let example = std::fs::read_to_string(root.join("examples/retry_with_backoff.rs")).unwrap();
+    let start = doc
+        .find("use backon::")
+        .expect("RELIABILITY.md has the backon snippet");
+    let end = start + doc[start..].find("```").expect("the snippet ends");
+    let snippet = &doc[start..end];
+
+    let recipe = backon_recipe(snippet);
+
+    assert_eq!(recipe, backon_recipe(&example));
+    assert!(
+        recipe.iter().any(|line| line.starts_with(".with_jitter()")),
+        "{recipe:#?}"
+    );
+    assert!(
+        recipe.contains(&".when(GenaiError::is_retryable)"),
+        "{recipe:#?}"
+    );
 }

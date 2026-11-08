@@ -35,12 +35,37 @@ let response = client.execute(request.clone()).await?;
 |-------|------------|
 | `Http(_)` (network, connect, TLS, client-level timeout) | Yes |
 | `Http(_)` from a request that can't be built (bad base URL, rejected header) or a redirect loop | No |
+| `Api { status_code: 408, .. }` (the server stopped waiting for the request) | Yes |
 | `Api { status_code: 429, .. }` | Yes |
-| `Api { status_code: 500..=599, .. }` | Yes |
+| `Api { status_code: 500..=599, .. }`, except the six below | Yes |
+| `Api` with 501, 505, 506, 508, 510 or 511 | No |
 | `Timeout(_)` (request-level timeout) | Yes |
 | `StreamInterrupted { .. }` (a stream cut off before its terminal event) | Yes; see [Cut-off streams](#cut-off-streams) |
 | Any other `Api` status (400, 401, 403, 404, ...) | No |
 | `Internal`, `InvalidInput`, `MalformedResponse`, `PollTimeout`, `ProcessingFailed`, `Stream`, `ClientBuild` | No |
+
+A 408 means the server stopped waiting before the request arrived whole, so
+it acted on nothing and the same request can succeed; google-genai retries it
+too. The six 5xx that are not retryable each name a condition the same
+request meets on every attempt:
+
+- 501 Not Implemented: the server does not support the method or feature
+  (Google's `UNIMPLEMENTED`). One kind can pass: the API also answers 501
+  when a remote MCP server (an `mcp_server` tool) returns an error, with a
+  message saying "MCP server returned an error". A URL that is no MCP
+  server gets that on every attempt, but so does a real one while it is
+  down. To retry it, match the 501 and that message before calling
+  `is_retryable()`.
+- 505 HTTP Version Not Supported: every attempt uses the same version.
+- 506 Variant Also Negotiates: a server misconfiguration.
+- 508 Loop Detected: the same request loops again.
+- 510 Not Extended: the request lacks an extension the server requires.
+- 511 Network Authentication Required: a captive portal wants a sign-in.
+
+Every other 5xx is a failure on the server's side that can pass, including
+507 Insufficient Storage (temporary, per RFC 4918) and the unregistered codes
+some proxies send, such as 520 to 599. For a narrower set, match the status
+before calling `is_retryable()`.
 
 A few 400s are transient in practice but are **not** covered by
 `is_retryable()`; see
@@ -63,12 +88,12 @@ use std::time::Duration;
 const MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// The wait before the next attempt, or `None` once the attempts are used
-/// up: the server's `Retry-After` when it sent one, but never past
-/// `MAX_DELAY`. `adjust` replaces backon's delay after `with_max_delay`
-/// has capped it, so without the `min` a server asking for an hour gets
-/// one.
+/// up: the server's `Retry-After` when it sent one, else backon's delay,
+/// but never past `MAX_DELAY`. `adjust` replaces backon's delay after
+/// `with_max_delay` has capped it and the jitter has added up to as much
+/// again, so without the `min` a server asking for an hour gets one.
 fn next_delay(e: &GenaiError, backoff: Option<Duration>) -> Option<Duration> {
-    backoff.map(|d| e.retry_after().map_or(d, |asked| asked.min(MAX_DELAY)))
+    backoff.map(|d| e.retry_after().unwrap_or(d).min(MAX_DELAY))
 }
 
 # async fn run(client: genai_rs::Client) -> Result<(), GenaiError> {
@@ -78,14 +103,17 @@ let request = client
     .with_text("Hello")
     .build()?;
 
+// backon's exponential backoff has no jitter unless asked for; without
+// it, clients that failed together retry together.
 let backoff = ExponentialBuilder::default()
-    .with_min_delay(Duration::from_millis(100))
+    .with_min_delay(Duration::from_millis(500))
     .with_max_delay(MAX_DELAY)
-    .with_max_times(3);
+    .with_max_times(3)
+    .with_jitter();
 
 let response = (|| async { client.execute(request.clone()).await })
     .retry(backoff)
-    .when(|e: &GenaiError| e.is_retryable())
+    .when(GenaiError::is_retryable)
     .adjust(next_delay)
     .await?;
 # let _ = response;
@@ -101,7 +129,10 @@ let response = (|| async { client.execute(request.clone()).await })
 #     let step = Some(Duration::from_millis(100));
 #     assert_eq!(next_delay(&asked(3600), step), Some(MAX_DELAY));
 #     assert_eq!(next_delay(&asked(2), step), Some(Duration::from_secs(2)));
-#     assert_eq!(next_delay(&GenaiError::InvalidInput(String::new()), step), step);
+#     let other = GenaiError::InvalidInput(String::new());
+#     assert_eq!(next_delay(&other, step), step);
+#     // A jittered step past the cap is cut back to it.
+#     assert_eq!(next_delay(&other, Some(MAX_DELAY * 2)), Some(MAX_DELAY));
 #     assert_eq!(next_delay(&asked(2), None), None);
 # }
 ```
@@ -365,9 +396,9 @@ default, polling every 2 s and 500 ms):
 - **The interval has a floor of 10 ms** (`PollOptions::MIN_POLL_INTERVAL`).
   A shorter one, `Duration::ZERO` included, polls every 10 ms rather than
   sending each status request the moment the last one answered.
-- **Transient errors are polled through.** A retryable error (a 5xx, a 429,
-  a dropped connection) is logged and the wait goes on; any other error
-  ends it.
+- **Transient errors are polled through.** A retryable error (a 408, a 429,
+  a 5xx other than the six [above](#genaierroris_retryable), a dropped
+  connection) is logged and the wait goes on; any other error ends it.
 - **`Retry-After` is honored.** When that error carries one (a 429), the
   next poll waits at least that long. If that is past the deadline, the
   wait gives up at once, saying so.

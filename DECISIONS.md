@@ -1883,3 +1883,41 @@ until they age out, and a test stays chronic while two of its retried runs
 are in it: the Antigravity test's are all from 2026-11-01, so it clears
 from the 2026-11-09 report, and the search test's second-to-last is from
 2026-11-05, so it clears from the 2026-11-13 report, with no new retry.
+
+## D-NEXT-H5 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
+
+**Context.** `is_retryable()` called every 5xx transient and every 4xx but
+429 permanent (#504, Reliability). So a 408, which google-genai retries,
+ended a retry loop, and a 501, the API's `UNIMPLEMENTED`, spent its whole
+budget on the same answer. google-genai has two lists. Its older client
+retries 408, 429, 500, 502, 503 and 504. Its generated Interactions client,
+the surface this crate mirrors, retries 408, 409, 429 and every 5xx by
+default.
+
+**Decision.** A status is retryable when it is 408, 429, or a 5xx other than
+the registered ones whose definition is a condition the same request meets
+again: 501 Not Implemented, 505 HTTP Version Not Supported, 506 Variant
+Also Negotiates, 508 Loop Detected, 510 Not Extended and 511 Network
+Authentication Required. The 5xx default stays retryable, so 507 (temporary
+per RFC 4918) and the unregistered codes proxies send (520 to 599) are
+retried, as they were. A 408 is safe to re-send even for a create: the
+server stopped waiting before the request arrived whole, so it acted on
+nothing. 409 stays permanent: Google's `ALREADY_EXISTS` never passes, and
+`ABORTED` wants a fresh read rather than the same request. Nothing at 600
+or above is a server error. The private `is_retryable_status` in
+`src/errors.rs` gives each code's reason.
+
+**Consequences.** The deny-list is the conservative reading: it changes
+only the codes whose definition a retry cannot fix and keeps the old answer
+for every other 5xx, where google-genai's older allow-list would have stopped
+retrying unregistered codes. The cost is that a misbehaving proxy's
+permanent unregistered 5xx is retried until the caller's budget runs out,
+as before. One 501 can pass: the API also sends it when a remote MCP
+server returns an error, which `classify_mcp_create_error` in
+`tests/tools_and_config_tests.rs` counts as that server's availability. The
+status cannot tell it from a URL that is no MCP server, which fails every
+time, and `is_retryable()` does not match message text (the transient 400s
+are left out for the same reason), so 501 stays permanent and the docs
+tell a caller who wants that one retried to match its message first. The
+crate's own waits (`wait_until_active`, an import's wait) poll through
+what `is_retryable()` accepts, so they follow this list.
