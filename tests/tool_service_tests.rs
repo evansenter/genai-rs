@@ -8,6 +8,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -24,7 +28,6 @@ use std::sync::Arc;
 
 /// A global `#[tool]` registration that `CustomWeatherTool` shadows. It must
 /// live in this binary: `inventory` registrations are per test binary.
-#[allow(dead_code)]
 #[tool(city(description = "The city name"))]
 fn get_weather_test(city: String) -> String {
     format!(r#"{{"city": "{city}", "source": "global_registry"}}"#)

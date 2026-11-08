@@ -716,7 +716,7 @@ fn test_denied_action_dedups_terminal_allowed_emission() {
         .collect();
     assert_eq!(actions.len(), 1);
     let AgentEvent::ToolAction { decision, .. } = actions[0] else {
-        unreachable!();
+        panic!("the filter keeps only tool actions");
     };
     assert!(decision.is_denied());
 

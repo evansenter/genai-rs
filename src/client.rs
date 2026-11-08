@@ -486,6 +486,10 @@ impl Client {
     /// in some minimal containers). [`Client::builder`]`(..).build()`
     /// reports the same failure as [`GenaiError::ClientBuild`] instead.
     #[must_use]
+    #[expect(
+        clippy::panic,
+        reason = "documented under `# Panics`; `Client::builder(..).build()` returns the error"
+    )]
     pub fn new(api_key: impl Into<String>) -> Self {
         match Self::builder(api_key).build() {
             Ok(client) => client,
@@ -591,8 +595,8 @@ impl Client {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Completed(response) => {
-    ///             println!("\nDone! ID: {:?}", response.id);
+    ///         StreamChunk::Completed { interaction, .. } => {
+    ///             println!("\nDone! ID: {:?}", interaction.id);
     ///         }
     ///         _ => {} // Handle unknown future variants
     ///     }
@@ -683,7 +687,7 @@ impl Client {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Completed(response) => {
+    ///         StreamChunk::Completed { .. } => {
     ///             println!("\nDone!");
     ///         }
     ///         _ => {}

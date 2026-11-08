@@ -372,11 +372,11 @@ impl<'a> InteractionBuilder<'a> {
                         // whole. The tail is read below, outside the
                         // per-chunk timeout, which must not fail a finished
                         // round.
-                        StreamChunk::Completed(response) => {
-                            completed = Some(*response);
+                        StreamChunk::Completed { interaction, .. } => {
+                            completed = Some(*interaction);
                             break;
                         }
-                        StreamChunk::Error { message, code } => {
+                        StreamChunk::Error { message, code, .. } => {
                             Err(GenaiError::Stream { message, code })?;
                         }
                         StreamChunk::Unknown { chunk_type, .. } => {

@@ -29,7 +29,10 @@
 //! Not a test target itself: Cargo only builds `tests/*.rs` and
 //! `tests/*/main.rs`.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "ci_coverage and request_wire_oracle each use a different part"
+)]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -39,8 +42,10 @@ use syn::{Expr, ImplItem, Item, Pat, ReturnType, Type};
 
 mod bodies;
 
-// `tests/ci_coverage.rs` compiles this module too and calls neither.
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "`tests/ci_coverage.rs` compiles this module too and calls neither"
+)]
 pub use bodies::{body_verbs, body_verbs_in};
 
 /// The attribute that marks a resource handle.

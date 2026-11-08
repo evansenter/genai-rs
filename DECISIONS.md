@@ -599,6 +599,13 @@ Streams borrowing the client would avoid those clones, but switching to
 owned streams afterwards would change the handle types, so owned streams
 were chosen up front.
 
+*Amended 2026-11-07 (#504).* Rules 2 and 6 are checked on every handle,
+not only the sampled verbs the compile guard calls: a source scan in
+`tests/http_mock_resources/paging.rs` fails on a public handle method that
+takes anything but `self` or `mut self`, or returns a value that is
+neither `#[must_use]` itself (a `Result`, a handle, a list builder) nor
+marked on the method.
+
 ---
 
 ## D-017 — Interaction methods move to `src/interactions.rs` (2026-09-27)
@@ -1246,14 +1253,20 @@ its reason in the guard:
   do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
   `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
   `FunctionResultPayload`.
-- The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
-  stream events that nothing sends back, serialized only in the crate's own
-  `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
-  a key the API adds to an SSE event's envelope itself is dropped (tracked
-  in #538).
+- The known `AutoFunctionStreamChunk` variants: the crate's own
+  `{chunk_type, data}` log form, which only the crate writes. The payload
+  inside keeps its own `extra`, but no chunk's `extra` (D-NEXT-H3) is
+  passed on: `Delta` carries the `StepDelta` alone, and the stream reads
+  the other events without yielding them. A key the API adds to an SSE
+  event's envelope reaches `execute_stream()`'s `StreamChunk::extra`
+  only.
 - The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
   crate only sends to the harness. A payload struct keeps its own `extra`;
   a bool or string payload has no fields.
+
+*Amended 2026-11-07 (#538).* The known `StreamChunk` variants left the
+list above: each keeps the SSE event's keys it does not read in an `extra`
+map (D-NEXT-H3), and the guard no longer exempts them.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1740,6 +1753,33 @@ mutexes inside hook closures that cannot return an error.
 if it unwraps outside a `#[test]` function. A new invariant panic in the
 library needs its reason written down.
 
+*Amended 2026-11-07 (#504).* The panicking macros follow the same rule:
+`clippy::panic`, `clippy::unreachable`, `clippy::todo` and
+`clippy::unimplemented` are on at warn. The one library site,
+`Client::new`'s documented panic, carries `#[expect(clippy::panic, reason
+= "...")]`, and the fuzz entry points' module-level `#![expect]` names
+`clippy::panic` beside `clippy::expect_used`. Tests are exempt as before:
+`clippy.toml`'s `allow-panic-in-tests`, and all four lints in every
+integration-test crate root's allow, for helpers outside a `#[test]`
+function. Clippy has no in-tests setting for the other three, so each
+crate's `lib.rs` allows them under `#![cfg_attr(test, ...)]`: the
+unit-test build compiles `#[cfg(test)]` modules, and the library build,
+which `--all-targets` lints as well, still denies them. An example that
+uses one adds it to its crate-root allow; none does today.
+
+`clippy::allow_attributes_without_reason` is on as well, in tests too:
+every `#[allow]` and `#[expect]` says why in `reason = "..."`, not in a
+comment beside it. Where the lint always fires, the attribute is
+`#[expect]`, so it fails once nothing needs it (the `unsafe_code` sites, a
+test struct whose field is only parsed). A lint that fires in some builds
+and not others keeps `#[allow]`: dead code in `tests/common/`, which each
+test binary compiles and uses a part of (one allow at its root now, in
+place of one per helper), `clone_on_copy` in the `list_builder!` template,
+and `ref_option`, a pedantic lint that is off, on the two serde helpers
+whose signature serde dictates. Six `#[allow(dead_code)]` on
+`#[tool]` functions suppressed nothing, since the registration uses them,
+and are gone.
+
 ---
 
 ## D-049 — `AntigravityError::WebSocket` keeps its cause as a boxed error (2026-11-07)
@@ -1921,3 +1961,55 @@ are left out for the same reason), so 501 stays permanent and the docs
 tell a caller who wants that one retried to match its message first. The
 crate's own waits (`wait_until_active`, an import's wait) poll through
 what `is_retryable()` accepts, so they follow this list.
+
+---
+
+## D-NEXT-H3 — Known `StreamChunk` variants keep the event's unread keys; `Completed` is a struct variant (2026-11-07)
+
+**Context.** #538: a stream's known events kept only their modeled fields,
+so a key the API adds beside an event's payload was dropped. The payloads
+kept their own `extra` (D-034), but the envelope did not, and the
+Evergreen guard exempted all seven known variants for it. The issue named
+two shapes: an `extra` map on each known variant, or the raw event JSON,
+as `InteractionStreamEvent` keeps for an unknown type.
+
+**Decision.** Each known variant has an `extra` map, read by
+`StreamChunk::extra()`, which is what the guard's enum arm checks and how
+`Step`, `Tool` and `ToolChoice::AllowedTools` already keep theirs.
+`Completed(Box<InteractionResponse>)` becomes
+`Completed { interaction, extra }`: a newtype variant has nowhere to put
+the map, and the guard needs a named reason for every newtype, which this
+one no longer has. A chunk's `extra` holds every key of its event it does
+not read:
+
+- a key the crate models on no event type;
+- a modeled key on an event type that does not read it (an `index` on a
+  `status_update`), as it came: the parser reads only the keys the
+  event's type reads, so it neither writes such a key back through the
+  crate's type (which would not reproduce it) nor fails the event on a
+  value that type could not read;
+- what is left of `metadata` beside the `total_usage` a `step.delta` or
+  `interaction.completed` reads from it, and of `error` beside its
+  `message` and `code`, under that key.
+
+`event_type` is the variant, and `event_id` is on `StreamEvent`, so neither
+is in it. A known event is still parsed by value (#498): each key its type
+reads is moved out of the object and read, a null modeled key is dropped
+as an absent one is, and what is left is the `extra`. The crate's
+`{chunk_type, data}` log form writes a non-empty `extra` beside `data` and
+reads it back.
+
+Rejected: the raw event JSON on every chunk. It would copy each event
+before parsing it, the cost #498 removed from the delta path (a streamed
+image delta is the whole base64 image), and would hold every payload
+twice. Rejected too: one map on `StreamEvent`. The guard checks the
+union's variants, and a chunk is often handled without its event.
+
+**Consequences.** Breaking (D-007): a pattern on `Completed(response)`
+becomes `Completed { interaction, .. }`, a pattern listing every field of
+a known variant needs `..`, and a struct literal needs `extra`. The
+guard's `StreamChunk` exemption and D-034's uncovered bullet are gone. The
+auto-function stream passes on no chunk's `extra` (D-034's
+`AutoFunctionStreamChunk` bullet), so an envelope key reaches only a
+caller of `execute_stream()`.
+

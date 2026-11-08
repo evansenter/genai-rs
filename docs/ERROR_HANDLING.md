@@ -155,8 +155,8 @@ instead of reaching the model as a result.
 
 A stream from `create_stream()` ends in one of three ways:
 
-- A terminal `StreamChunk::Completed(response)`.
-- A terminal `StreamChunk::Error { message, code }` event, which the server
+- A terminal `StreamChunk::Completed { interaction, .. }`.
+- A terminal `StreamChunk::Error { message, code, .. }` event, which the server
   sends inside the SSE stream, such as a recitation block (`code:
   "recitation"`). No events follow it.
 - An `Err(GenaiError)` item, for transport, parse, or timeout errors. A

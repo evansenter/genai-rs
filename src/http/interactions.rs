@@ -6,7 +6,7 @@ use super::error_helpers::{deserialize_with_context, not_an_event_stream};
 use super::sse_parser::parse_sse_stream;
 use crate::errors::GenaiError;
 use crate::steps::StepAccumulator;
-use crate::wire_streaming::InteractionStreamEvent;
+use crate::wire_streaming::{InteractionStreamEvent, keep_rest};
 use crate::{InteractionRequest, InteractionResponse, StreamChunk, StreamEvent};
 use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};
@@ -76,18 +76,27 @@ fn drop_transport_keys(request: &mut InteractionRequest) {
 /// Dispatches one parsed SSE event to `StreamChunk`s, updating the step
 /// accumulator. Shared by the create and get streaming paths.
 ///
+/// Each known chunk keeps the event's keys it does not read in its `extra`
+/// (#538): the event's own `extra` (the unmodeled keys, and a modeled key
+/// this event type does not read, as they came), and the rest of a
+/// `metadata` or `error` object beside the fields read from it. Each arm
+/// reads exactly the fields `wire_streaming::event_reads` names for its
+/// type; the parser leaves the others unset.
+///
 /// Returns `Some(chunk)` for events that should be surfaced to the consumer;
 /// `None` for events that were dropped (with a warning).
 pub(crate) fn dispatch_stream_event(
-    event: InteractionStreamEvent,
+    mut event: InteractionStreamEvent,
     accumulator: &mut StepAccumulator,
 ) -> Option<StreamChunk> {
     match event.event_type.as_str() {
         "interaction.created" => {
+            let extra = std::mem::take(&mut event.extra);
             // Interaction accepted - provides early access to interaction ID
             if let Some(interaction) = event.interaction {
                 Some(StreamChunk::Created {
                     interaction: Box::new(interaction),
+                    extra,
                 })
             } else {
                 warn!("interaction.created event missing interaction field - event dropped");
@@ -96,57 +105,71 @@ pub(crate) fn dispatch_stream_event(
         }
         // No interaction_id on a `store: false` stream (live 2026-11-01),
         // so only the status is required.
-        "interaction.status_update" => match event.status {
-            Some(status) => Some(StreamChunk::StatusUpdate {
-                interaction_id: event.interaction_id,
-                status,
-                usage: event.usage.map(Box::new),
-                continuation_token: event.continuation_token,
-            }),
-            None => {
-                warn!("interaction.status_update missing status - event dropped");
-                None
-            }
-        },
-        "step.start" => match (event.index, event.step) {
-            (Some(index), Some(step)) => {
-                accumulator.start(index, step.clone());
-                Some(StreamChunk::StepStart { index, step })
-            }
-            (index, step) => {
-                warn!(
-                    "step.start missing required fields: index={}, step={} - event dropped",
-                    index.is_some(),
-                    step.is_some()
-                );
-                None
-            }
-        },
-        "step.delta" => match (event.index, event.delta) {
-            (Some(index), Some(delta)) => {
-                accumulator.apply_delta(index, &delta);
-                let total_usage = event.metadata.and_then(|metadata| metadata.total_usage);
-                // Like a step.stop's usage, a fallback for a terminal event
-                // that omits usage.
-                if let Some(usage) = &total_usage {
-                    accumulator.record_cumulative_usage(usage.clone());
+        "interaction.status_update" => {
+            let extra = std::mem::take(&mut event.extra);
+            match event.status {
+                Some(status) => Some(StreamChunk::StatusUpdate {
+                    interaction_id: event.interaction_id,
+                    status,
+                    usage: event.usage.map(Box::new),
+                    continuation_token: event.continuation_token,
+                    extra,
+                }),
+                None => {
+                    warn!("interaction.status_update missing status - event dropped");
+                    None
                 }
-                Some(StreamChunk::StepDelta {
-                    index,
-                    delta,
-                    total_usage: total_usage.map(Box::new),
-                })
             }
-            (index, delta) => {
-                warn!(
-                    "step.delta missing required fields: index={}, delta={} - event dropped",
-                    index.is_some(),
-                    delta.is_some()
-                );
-                None
+        }
+        "step.start" => {
+            let extra = std::mem::take(&mut event.extra);
+            match (event.index, event.step) {
+                (Some(index), Some(step)) => {
+                    accumulator.start(index, step.clone());
+                    Some(StreamChunk::StepStart { index, step, extra })
+                }
+                (index, step) => {
+                    warn!(
+                        "step.start missing required fields: index={}, step={} - event dropped",
+                        index.is_some(),
+                        step.is_some()
+                    );
+                    None
+                }
             }
-        },
+        }
+        "step.delta" => {
+            let mut extra = std::mem::take(&mut event.extra);
+            match (event.index, event.delta) {
+                (Some(index), Some(delta)) => {
+                    accumulator.apply_delta(index, &delta);
+                    let metadata = event.metadata.unwrap_or_default();
+                    keep_rest(&mut extra, "metadata", metadata.extra);
+                    let total_usage = metadata.total_usage;
+                    // Like a step.stop's usage, a fallback for a terminal event
+                    // that omits usage.
+                    if let Some(usage) = &total_usage {
+                        accumulator.record_cumulative_usage(usage.clone());
+                    }
+                    Some(StreamChunk::StepDelta {
+                        index,
+                        delta,
+                        total_usage: total_usage.map(Box::new),
+                        extra,
+                    })
+                }
+                (index, delta) => {
+                    warn!(
+                        "step.delta missing required fields: index={}, delta={} - event dropped",
+                        index.is_some(),
+                        delta.is_some()
+                    );
+                    None
+                }
+            }
+        }
         "step.stop" => {
+            let extra = std::mem::take(&mut event.extra);
             if let Some(index) = event.index {
                 accumulator.stop(index);
                 // Retain the cumulative interaction usage as a fallback for
@@ -158,6 +181,7 @@ pub(crate) fn dispatch_stream_event(
                     index,
                     usage: event.usage.map(Box::new),
                     step_usage: event.step_usage.map(Box::new),
+                    extra,
                 })
             } else {
                 warn!("step.stop event missing index field - event dropped");
@@ -165,16 +189,18 @@ pub(crate) fn dispatch_stream_event(
             }
         }
         "interaction.completed" => {
+            let mut extra = std::mem::take(&mut event.extra);
             if let Some(mut interaction) = event.interaction {
+                let metadata = event.metadata.unwrap_or_default();
+                keep_rest(&mut extra, "metadata", metadata.extra);
                 // Total usage may arrive via event metadata instead of the
                 // partial interaction payload; if both are absent, fall back
                 // to the last cumulative usage seen on a step.stop event.
                 // (Runs before the steps fill below, which takes the
                 // accumulator.)
                 if interaction.usage.is_none() {
-                    interaction.usage = event
-                        .metadata
-                        .and_then(|metadata| metadata.total_usage)
+                    interaction.usage = metadata
+                        .total_usage
                         .or_else(|| accumulator.take_cumulative_usage());
                 }
                 // The lifecycle payload may omit steps (streaming already
@@ -183,24 +209,31 @@ pub(crate) fn dispatch_stream_event(
                 if interaction.steps.is_empty() && !accumulator.is_empty() {
                     interaction.steps = std::mem::take(accumulator).finish();
                 }
-                Some(StreamChunk::Completed(Box::new(interaction)))
+                Some(StreamChunk::Completed {
+                    interaction: Box::new(interaction),
+                    extra,
+                })
             } else {
                 warn!("interaction.completed event missing interaction field - event dropped");
                 None
             }
         }
         "error" => {
+            let mut extra = std::mem::take(&mut event.extra);
             // Error occurred during streaming
             if let Some(error) = event.error {
+                keep_rest(&mut extra, "error", error.extra);
                 Some(StreamChunk::Error {
                     message: error.message,
                     code: error.code,
+                    extra,
                 })
             } else {
                 // If no error object, treat as unknown error
                 Some(StreamChunk::Error {
                     message: "Unknown streaming error".to_string(),
                     code: None,
+                    extra,
                 })
             }
         }
@@ -505,6 +538,7 @@ pub async fn cancel_interaction(
 mod tests {
     use super::*;
     use crate::{InteractionInput, InteractionStatus, Step, StepDelta};
+    use serde_json::{Value, json};
 
     #[test]
     fn test_interaction_urls() {
@@ -670,7 +704,10 @@ mod tests {
         )
         .unwrap();
         match completed {
-            StreamChunk::Completed(response) => {
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => {
                 // Steps were filled from the accumulator.
                 assert_eq!(response.as_text(), Some("Hello"));
                 // Usage was taken from event metadata.
@@ -717,7 +754,10 @@ mod tests {
         )
         .unwrap();
         match completed {
-            StreamChunk::Completed(response) => {
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => {
                 let calls = response.function_calls();
                 assert_eq!(calls.len(), 1);
                 assert_eq!(calls[0].name, "get_weather");
@@ -725,6 +765,112 @@ mod tests {
             }
             other => panic!("Expected Completed, got {other:?}"),
         }
+    }
+
+    /// #538: a known event keeps every key its chunk does not read in the
+    /// chunk's `extra`, and the chunk's own serialized form round-trips it.
+    #[test]
+    fn test_dispatch_keeps_unread_envelope_keys_through_a_round_trip() {
+        let future = json!({"nested": [1, "two"]});
+        let cases = [
+            (
+                r#"{"event_type":"interaction.created","interaction":{"id":"i1","status":"in_progress"}}"#,
+                json!({}),
+            ),
+            (
+                r#"{"event_type":"interaction.status_update","status":"in_progress","index":3}"#,
+                // A modeled key this event type does not read.
+                json!({"index": 3}),
+            ),
+            (
+                r#"{"event_type":"step.start","index":0,"step":{"type":"model_output","content":[]}}"#,
+                json!({}),
+            ),
+            (
+                r#"{"event_type":"step.delta","index":0,"delta":{"type":"text","text":"Hi"},"metadata":{"total_usage":{"total_tokens":3},"trace":"t1"}}"#,
+                // What `metadata` holds beside the `total_usage` read from it.
+                json!({"metadata": {"trace": "t1"}}),
+            ),
+            (r#"{"event_type":"step.stop","index":0}"#, json!({})),
+            (
+                r#"{"event_type":"interaction.completed","interaction":{"id":"i1","status":"completed"}}"#,
+                json!({}),
+            ),
+            (
+                r#"{"event_type":"error","error":{"message":"boom","code":"c","status":"UNAVAILABLE"}}"#,
+                // What `error` holds beside its `message` and `code`.
+                json!({"error": {"status": "UNAVAILABLE"}}),
+            ),
+        ];
+        for (event, also) in cases {
+            let mut wire: Value = serde_json::from_str(event).unwrap();
+            wire["future_key"] = future.clone();
+            wire["event_id"] = json!("e7");
+            let parsed = parse_event(&wire.to_string());
+            let event_id = parsed.event_id.clone();
+            let chunk = dispatch_stream_event(parsed, &mut StepAccumulator::new())
+                .unwrap_or_else(|| panic!("dropped: {event}"));
+            let mut expected = also.as_object().unwrap().clone();
+            expected.insert("future_key".into(), future.clone());
+            assert_eq!(chunk.extra(), Some(&expected), "{event}");
+
+            // The crate's `{chunk_type, data}` form writes it beside `data`
+            // and reads it back, on the chunk and on the event.
+            let logged = serde_json::to_value(&chunk).unwrap();
+            assert_eq!(logged["extra"], Value::Object(expected.clone()), "{event}");
+            let back: StreamChunk = serde_json::from_value(logged.clone()).unwrap();
+            assert_eq!(back.extra(), Some(&expected), "{event}");
+            assert_eq!(serde_json::to_value(&back).unwrap(), logged, "{event}");
+            let streamed = StreamEvent::new(chunk, event_id);
+            let back: StreamEvent =
+                serde_json::from_value(serde_json::to_value(&streamed).unwrap()).unwrap();
+            assert_eq!(back.chunk.extra(), Some(&expected), "{event}");
+            assert_eq!(back.event_id.as_deref(), Some("e7"));
+        }
+    }
+
+    /// A modeled key on an event type that does not read it reaches the
+    /// chunk's `extra` as it came: not re-serialized through the crate's
+    /// type (a `StreamError` would add `"message": ""`), and not parsed at
+    /// all, so a value that type could not read does not fail the event.
+    #[test]
+    fn test_dispatch_keeps_an_unread_modeled_key_as_it_came() {
+        let cases = [
+            (
+                r#"{"event_type":"interaction.status_update","status":"failed","error":{"code":"c"}}"#,
+                json!({"error": {"code": "c"}}),
+            ),
+            (
+                r#"{"event_type":"step.delta","index":0,"delta":{"type":"text","text":"Hi"},"usage":{"total_tokens":"many"},"step":7}"#,
+                json!({"usage": {"total_tokens": "many"}, "step": 7}),
+            ),
+            (
+                r#"{"event_type":"error","error":{"message":"boom"},"interaction":"not an interaction"}"#,
+                json!({"interaction": "not an interaction"}),
+            ),
+        ];
+        for (event, expected) in cases {
+            let chunk = dispatch_stream_event(parse_event(event), &mut StepAccumulator::new())
+                .unwrap_or_else(|| panic!("dropped: {event}"));
+            assert_eq!(chunk.extra(), expected.as_object(), "{event}");
+        }
+    }
+
+    /// The keys a chunk reads stay out of its `extra`, and so do the
+    /// event's own `event_type` and `event_id`; nothing is written for an
+    /// empty one.
+    #[test]
+    fn test_dispatch_leaves_extra_empty_for_a_fully_read_event() {
+        let chunk = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.delta","index":0,"delta":{"type":"text","text":"Hi"},"metadata":{"total_usage":{"total_tokens":3}},"event_id":"e1","usage":null}"#,
+            ),
+            &mut StepAccumulator::new(),
+        )
+        .unwrap();
+        assert_eq!(chunk.extra(), Some(&serde_json::Map::new()));
+        let logged = serde_json::to_value(&chunk).unwrap();
+        assert!(logged.get("extra").is_none(), "{logged}");
     }
 
     #[test]
@@ -793,7 +939,10 @@ mod tests {
         )
         .unwrap();
         match completed {
-            StreamChunk::Completed(response) => {
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => {
                 assert_eq!(response.total_tokens(), Some(42));
             }
             other => panic!("Expected Completed, got {other:?}"),
@@ -831,7 +980,10 @@ mod tests {
         )
         .unwrap();
         match completed {
-            StreamChunk::Completed(response) => {
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => {
                 assert_eq!(response.usage.and_then(|u| u.total_tokens), Some(21));
             }
             other => panic!("Expected Completed, got {other:?}"),
@@ -855,7 +1007,10 @@ mod tests {
         )
         .unwrap();
         match completed {
-            StreamChunk::Completed(response) => {
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => {
                 assert_eq!(response.total_tokens(), Some(99));
             }
             other => panic!("Expected Completed, got {other:?}"),
@@ -878,7 +1033,10 @@ mod tests {
         )
         .unwrap();
         match completed {
-            StreamChunk::Completed(response) => {
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => {
                 assert_eq!(response.as_text(), Some("authoritative"));
             }
             other => panic!("Expected Completed, got {other:?}"),

@@ -7,7 +7,7 @@ exclude = ["fuzz"]
 
 [workspace.lints.rust]
 # A new `unsafe` is a reviewed decision: each existing site carries an
-# explicit `#[allow(unsafe_code)]` and a SAFETY comment.
+# `#[expect(unsafe_code, reason = "...")]` and a SAFETY comment.
 unsafe_code = "deny"
 # Every public item is documented: docs.rs is the API reference. Test and
 # example crates need a crate doc too, saying what they cover (#501).
@@ -24,6 +24,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)", 
 # `#[allow(unreachable_patterns)]` cannot switch the check back off. The
 # lint does not see a `_ =>` after a partial list, which stays reachable.
 unreachable_patterns = "forbid"
+# Every public type can be printed with `{:?}` (a type holding a secret
+# prints it redacted, as `Client` does its key).
+missing_debug_implementations = "warn"
 
 # Pedantic lints chosen one by one, beyond clippy's defaults (#501).
 # `make clippy` and CI run with `-D warnings`, so each is enforced in src/,
@@ -48,6 +51,17 @@ missing_errors_doc = "warn"
 # example crate).
 unwrap_used = "warn"
 expect_used = "warn"
+# The same for the panicking macros: `panic!`, `unreachable!`, `todo!` and
+# `unimplemented!` in library code carry `#[expect(clippy::..., reason =
+# "...")]`. Tests are exempt as for `unwrap` (`clippy.toml`'s
+# `allow-panic-in-tests`, a `cfg(test)` allow in each lib.rs for the other
+# three, and the test crate-root allow), D-048.
+panic = "warn"
+unreachable = "warn"
+todo = "warn"
+unimplemented = "warn"
+# Every `#[allow]` and `#[expect]` says why, in `reason = "..."`.
+allow_attributes_without_reason = "warn"
 # Every `unsafe` block says why it is sound, in a `// SAFETY:` comment.
 undocumented_unsafe_blocks = "warn"
 

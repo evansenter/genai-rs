@@ -13,6 +13,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -206,7 +210,10 @@ mod google_search {
                     other if other.is_unknown() => unknown.push(other),
                     _ => {}
                 },
-                StreamChunk::Completed(response) => final_response = Some(response),
+                StreamChunk::Completed {
+                    interaction: response,
+                    ..
+                } => final_response = Some(response),
                 _ => {}
             }
         }
@@ -424,7 +431,10 @@ mod code_execution {
                     streamed_call |= matches!(delta, StepDelta::CodeExecutionCall { .. });
                     streamed_result |= matches!(delta, StepDelta::CodeExecutionResult { .. });
                 }
-                StreamChunk::Completed(response) => final_response = Some(response),
+                StreamChunk::Completed {
+                    interaction: response,
+                    ..
+                } => final_response = Some(response),
                 _ => {}
             }
         }
@@ -634,7 +644,11 @@ mod url_context {
         while let Some(result) = stream.next().await {
             match result {
                 Ok(event) => {
-                    if let StreamChunk::Completed(response) = event.chunk {
+                    if let StreamChunk::Completed {
+                        interaction: response,
+                        ..
+                    } = event.chunk
+                    {
                         final_response = Some(response);
                     }
                 }
@@ -1335,7 +1349,10 @@ mod structured_output {
                         collected_text.push_str(text);
                     }
                 }
-                StreamChunk::Completed(response) => final_response = Some(response),
+                StreamChunk::Completed {
+                    interaction: response,
+                    ..
+                } => final_response = Some(response),
                 _ => {}
             }
         }

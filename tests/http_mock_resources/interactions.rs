@@ -104,7 +104,10 @@ async fn interactions_stream_without_resume_token_streams_the_lifecycle() {
     assert_eq!(ids, ["e1", "e2", "e3", "e4", "e5"]);
     assert!(matches!(events[0].chunk, StreamChunk::Created { .. }));
     match &events[4].chunk {
-        StreamChunk::Completed(response) => assert_eq!(response.as_text(), Some("Hi")),
+        StreamChunk::Completed {
+            interaction: response,
+            ..
+        } => assert_eq!(response.as_text(), Some("Hi")),
         other => panic!("expected Completed, got {other:?}"),
     }
 

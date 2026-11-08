@@ -68,6 +68,20 @@
 //! - [`Content`] and [`Step`]: Constructors for request content and history
 //! - [`function_calling`]: Function registration and execution
 
+// `clippy.toml` exempts a `#[cfg(test)]` module from `unwrap_used`,
+// `expect_used` and `panic`; clippy has no such setting for the other
+// panicking macros, so the unit-test build allows them here. The library
+// build still denies them (D-048).
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented,
+        reason = "a test reports a failure by panicking"
+    )
+)]
+
 // =============================================================================
 // Internal HTTP Layer (pub(crate))
 // =============================================================================
@@ -310,6 +324,7 @@ pub mod __private {
 
     /// A `#[tool]` function's registration, collected by `inventory` into
     /// the registry `create_with_auto_functions` consults.
+    #[derive(Debug)]
     pub struct CallableFunctionFactory {
         pub(crate) factory_fn: fn() -> Box<dyn crate::CallableFunction>,
     }

@@ -23,10 +23,13 @@
 //! Shared by the in-crate oracle (`src/coverage_oracle/`, through `#[path]`)
 //! and `tests/request_wire_oracle.rs`, along with the date check on reasoned
 //! exceptions ([`undated_live_claim`]), which `tests/ci_coverage.rs`
-//! includes on its own to hold every list in `tests/` to it. Not a test target itself: Cargo only builds
-//! `tests/*.rs` and `tests/*/main.rs`.
+//! includes on its own to hold every list in `tests/` to it. Not a test
+//! target itself: Cargo only builds `tests/*.rs` and `tests/*/main.rs`.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each includer (the in-crate oracle, request_wire_oracle) uses a different part"
+)]
 
 mod check;
 mod claims;
@@ -38,13 +41,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 // Each includer uses a different part.
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "each includer uses a different part")]
 pub use check::Finding;
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "each includer uses a different part")]
 pub use claims::{undated_live_claim, undated_live_claims};
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "each includer uses a different part")]
 pub use readback::{debug_extra_keys, debug_unknown_values, key_paths, remove_path, string_values};
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "each includer uses a different part")]
 pub use synth::SynthOptions;
 
 /// `tests/fixtures/api_surface/`.

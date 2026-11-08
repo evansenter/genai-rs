@@ -9,14 +9,15 @@ fmt:
 
 # Lint with warnings as errors, as CI's Clippy job does: all features; strict
 # mode (`--cfg genai_strict_unknown`, D-030), which compiles code in and out
-# (the coverage oracle's response side); and the library without default
+# (the coverage oracle's response side); and every target without default
 # features, whose code the all-features run never compiles. RUSTFLAGS rebuilds
 # every crate, so strict mode builds in its own target dir rather than
-# evicting the default build.
+# evicting the default build. The Windows-only code is linted by CI's Cross
+# Platform job, on its Windows stable leg.
 clippy:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	RUSTFLAGS="--cfg genai_strict_unknown" cargo clippy --workspace --all-targets --all-features --target-dir target/strict -- -D warnings
-	cargo clippy --lib --no-default-features -- -D warnings
+	cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
 # Unit tests in strict mode, as CI's test-strict-unknown job runs them
 test-strict:

@@ -22,6 +22,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -871,7 +875,9 @@ async fn test_scripted_turn_deadline_bounds_a_blocking_pre_tool_hook() {
 // Process lifecycle
 // =============================================================================
 
-/// Pids of processes whose command line contains `pattern`.
+/// Pids of processes whose command line contains `pattern`. Unix only, as
+/// the tests that use it are.
+#[cfg(unix)]
 fn pids_matching(pattern: &str) -> Vec<u32> {
     let output = std::process::Command::new("pgrep")
         .args(["-f", pattern])

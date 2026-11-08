@@ -75,6 +75,10 @@ pub enum AutoFunctionStreamChunk {
     /// Incremental step payload from the model (text fragments,
     /// `arguments_delta` function-argument fragments, thought summaries and
     /// signatures, tool call/result deltas, ...)
+    ///
+    /// The `StepDelta` alone: the `step.delta` event's other keys
+    /// ([`StreamChunk::extra`](crate::StreamChunk::extra)) reach a caller of
+    /// `execute_stream()` only.
     Delta(StepDelta),
 
     /// Function calls detected, about to execute.

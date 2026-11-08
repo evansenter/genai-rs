@@ -154,7 +154,9 @@ stored interaction and the types read from the Antigravity harness (D-034);
 and reasoned. The known
 variants of `Step`, `StepDelta`, `Content`, `Annotation`, `Tool`,
 `ResponseFormat` and `TranscriptionMode` (and `ToolChoice::AllowedTools`) do
-the same with an `extra` field, through `src/wire_fields.rs` (#491). The
+the same with an `extra` field, through `src/wire_fields.rs` (#491), and so
+do the known `StreamChunk` variants, with the SSE event's keys they do not
+read (#538). The
 guard's enum arm checks every deserializable union for an `Unknown` arm and
 an `extra` field on each known variant; a newtype variant, whose wrapper
 keys it cannot see, needs a named reason. Polling
@@ -210,9 +212,12 @@ reaches the wire must use a real id.
   clippy's `uninlined_format_args`, `assigning_clones`,
   `redundant_closure_for_method_calls` and `must_use_candidate` hold in
   src/, tests/ and examples/; `make clippy` denies warnings. Library code
-  does not `unwrap()` or `expect()`: a panic that cannot happen carries
-  `#[expect(clippy::expect_used, reason = "...")]`, and each test and
-  example crate root allows both (D-048). Every `unsafe` block has
+  does not `unwrap()`, `expect()` or call `panic!`, `unreachable!`,
+  `todo!` or `unimplemented!`: a panic that cannot happen carries
+  `#[expect(clippy::..., reason = "...")]`, and tests are exempt
+  (`clippy.toml`, and each test and example crate root's allow; D-048).
+  Every `#[allow]` and `#[expect]` gives its `reason = "..."`, and is an
+  `#[expect]` where the lint always fires. Every `unsafe` block has
   a `// SAFETY:` comment. `unreachable_patterns` is forbidden: a wildcard
   after every variant is listed is an error, and its allow cannot come
   back. The lint does not catch a `_ =>` after a partial list, so on an
@@ -339,10 +344,11 @@ wheel's protos with `python3`).
   replays the fresh copies, and fails once the committed ones are over 90
   days old), fmt, shell-scripts (the script harnesses,
   shellcheck, the workflow parse check and actionlint over every workflow),
-  clippy (also the library without default features, as `make clippy`
+  clippy (also every target without default features, as `make clippy`
   does), doc, msrv, cross-platform (offline; stable and beta on Linux, macOS
   and Windows, but only Windows stable on a PR; checks the `antigravity`
-  feature off Linux; trybuild's `ui_tests` are skipped on beta), coverage,
+  feature off Linux, and runs clippy over it, every target, on Windows
+  stable; trybuild's `ui_tests` are skipped on beta), coverage,
   build-metrics, main-push-status, scheduled-run-status. Live
   jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each

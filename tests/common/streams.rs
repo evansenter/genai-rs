@@ -12,7 +12,6 @@ use genai_rs::{
 
 /// What a fully consumed stream produced.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct StreamResult {
     /// Number of `StepDelta` chunks received.
     pub delta_count: usize,
@@ -36,7 +35,6 @@ pub struct StreamResult {
 
 impl StreamResult {
     /// True if the stream produced deltas or a final response.
-    #[allow(dead_code)]
     pub fn has_output(&self) -> bool {
         self.delta_count > 0 || self.final_response.is_some()
     }
@@ -48,7 +46,6 @@ impl StreamResult {
 /// A stream that errors midway has usually already produced a delta, so a
 /// helper that stopped quietly would let `has_output()` pass on a broken
 /// stream. Tests that expect an error should iterate the stream themselves.
-#[allow(dead_code)]
 pub async fn consume_stream(
     mut stream: futures_util::stream::BoxStream<'_, Result<StreamEvent, GenaiError>>,
 ) -> StreamResult {
@@ -91,8 +88,11 @@ pub async fn consume_stream(
                     result.saw_thought = true;
                 }
             }
-            StreamChunk::Completed(response) => result.final_response = Some(*response),
-            StreamChunk::Error { message, code } => panic!(
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => result.final_response = Some(*response),
+            StreamChunk::Error { message, code, .. } => panic!(
                 "stream sent an error event after {} delta(s): {message} (code {code:?})",
                 result.delta_count
             ),
@@ -118,7 +118,6 @@ pub async fn consume_stream(
 /// page. Lists put new resources last or interleave concurrent runs on the
 /// shared key, so a first-page or `take(n)` check starts failing once
 /// earlier runs have leaked enough resources. Panics on a list error.
-#[allow(dead_code)]
 pub async fn listed<T>(
     mut items: futures_util::stream::BoxStream<'_, Result<T, GenaiError>>,
     found: impl Fn(&T) -> bool,
@@ -133,7 +132,6 @@ pub async fn listed<T>(
 
 /// What a fully consumed auto-function stream produced.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct AutoFunctionStreamResult {
     /// Number of `Delta` chunks received.
     pub delta_count: usize,
@@ -153,7 +151,6 @@ pub struct AutoFunctionStreamResult {
 
 impl AutoFunctionStreamResult {
     /// True if the stream produced deltas or a final response.
-    #[allow(dead_code)]
     pub fn has_output(&self) -> bool {
         self.delta_count > 0 || self.final_response.is_some()
     }
@@ -167,7 +164,6 @@ impl AutoFunctionStreamResult {
 /// check, every caller would pass on a stream whose functions all failed;
 /// the non-streaming tests catch the same thing with
 /// `all_executions_succeeded()`.
-#[allow(dead_code)]
 pub async fn consume_auto_function_stream(
     mut stream: futures_util::stream::BoxStream<'_, Result<AutoFunctionStreamEvent, GenaiError>>,
 ) -> AutoFunctionStreamResult {

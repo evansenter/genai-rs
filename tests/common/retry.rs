@@ -10,14 +10,12 @@ use tokio::time::sleep;
 // =============================================================================
 
 /// Maximum number of retries for transient API errors.
-#[allow(dead_code)]
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
 /// Cumulative sleep budget for [`retry_on_transient`], across all attempts
 /// (plain backoff and honored `Retry-After` alike). Once the next delay
 /// would exceed it, the real error surfaces instead of sleeping toward a
 /// harness timeout.
-#[allow(dead_code)]
 pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 
 /// Known model-side flakes worth retrying: Spanner UTF-8 errors (#60), and
@@ -32,7 +30,6 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 /// the match is on the code the crate puts at the front of the message.
 /// Transport transience (network, timeouts, 408, 429, most 5xx) is
 /// [`GenaiError::is_retryable`]'s job.
-#[allow(dead_code)]
 pub fn is_transient_error(err: &GenaiError) -> bool {
     match err {
         GenaiError::Api {
@@ -70,7 +67,6 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 /// exponential backoff, honoring `Retry-After`, capped at [`MAX_RETRY_SLEEP`]
 /// of total sleep. Anything else, such as a 400 that names its problem,
 /// returns on the first attempt.
-#[allow(dead_code)]
 pub async fn retry_on_transient<F, Fut, T>(max_retries: u32, operation: F) -> Result<T, GenaiError>
 where
     F: Fn() -> Fut,

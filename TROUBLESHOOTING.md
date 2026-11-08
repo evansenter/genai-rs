@@ -77,7 +77,7 @@ Stateless conversations need the manual loop; see
 **The stream ends early.**
 - `Err(GenaiError)` items are transport, parse or timeout errors. A
   cut-off body is `GenaiError::StreamInterrupted`.
-- A `StreamChunk::Error { message, code }` event is a server-side error; it
+- A `StreamChunk::Error { message, code, .. }` event is a server-side error; it
   is terminal.
 - A client-level total timeout (`ClientBuilder::with_timeout`) cuts off long
   streams. Prefer `with_read_timeout`, which bounds each gap and also

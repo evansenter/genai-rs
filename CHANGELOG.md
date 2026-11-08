@@ -257,9 +257,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content type); a directory comes back as a tar archive
   (`is_tar_archive()`). It is `GET` on the listing's path with `alt=media`
   (verified live 2026-11-05).
+- `ConversationBuilder` implements `Debug`, as every other public type
+  does: it prints the parent `InteractionBuilder` (without the client, so
+  without the API key) and the steps so far.
 
 ### Changed
 
+- **Breaking: every known `StreamChunk` variant has an `extra` field, and
+  `StreamChunk::Completed` is a struct variant,
+  `Completed { interaction, extra }`** (#538). `extra` is a
+  `serde_json::Map<String, serde_json::Value>` holding the SSE event's keys
+  the variant does not read, as they came, such as a key the API adds
+  beside the payload, which a `StreamChunk` used to drop;
+  `StreamChunk::extra()` reads it, and the chunk's serialized
+  `{chunk_type, data}` form writes and reads it as `extra`. It is empty for
+  every event the API sends today. A key the crate reads on another event
+  type is no longer parsed on one that does not read it, so a value the
+  crate could not read there no longer fails the event. The auto-function
+  stream passes on no chunk's `extra`: `AutoFunctionStreamChunk::Delta`
+  still carries the `StepDelta` alone. Migration:
+  `StreamChunk::Completed(response)` becomes
+  `StreamChunk::Completed { interaction: response, .. }` (or
+  `Completed { interaction, .. }`); a pattern that lists every field of a
+  known variant adds `..` (`StreamChunk::Error { message, code, .. }`); a
+  struct literal adds `extra: Default::default()`.
+- **Breaking: `FunctionDeclarationBuilder::add_parameter` takes the name as
+  `impl Into<String>`, and `InteractionBuilder::add_functions` takes
+  `impl IntoIterator<Item = FunctionDeclaration>`**, in place of `&str`
+  and `Vec<FunctionDeclaration>`. The name takes what the builder's `new`
+  and `with_description` take, so a `String` needs no `&`, and an array or
+  a mapped iterator of declarations needs no `vec!` or `collect()`.
+  Migration: a `&str`, `&String`, `String` or `Vec` argument compiles
+  unchanged. A `&&str` name (what iterating over `&["a", "b"]` yields), a
+  `&Box<str>` or a `&Cow<str>` has no `Into<String>`: dereference it
+  (`*name`) or pass `name.to_string()`. A `collect()` passed straight to
+  `add_functions` can no longer infer its collection (E0283): pass the
+  iterator without it, or write `collect::<Vec<_>>()`.
 - **Breaking: `TranscriptionMode::Smart` is a struct variant,
   `Smart { source_text: Option<String> }`**, for google-genai 3.0.0's
   `SmartTranscriptionMode.source_text`: the text the audio is expected to

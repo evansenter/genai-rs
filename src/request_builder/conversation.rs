@@ -78,6 +78,10 @@ impl<'a> InteractionBuilder<'a> {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// Its `Debug` output is the parent builder's (which leaves out the client,
+/// and so the API key) and the steps so far.
+#[derive(Debug)]
 pub struct ConversationBuilder<'a> {
     parent: InteractionBuilder<'a>,
     steps: Vec<Step>,

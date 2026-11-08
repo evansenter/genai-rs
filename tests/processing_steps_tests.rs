@@ -12,6 +12,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -33,8 +37,11 @@ async fn completed_response(
     let mut completed = None;
     while let Some(event) = stream.next().await {
         match event?.chunk {
-            StreamChunk::Completed(response) => completed = Some(*response),
-            StreamChunk::Error { message, code } => {
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => completed = Some(*response),
+            StreamChunk::Error { message, code, .. } => {
                 return Err(GenaiError::Stream { message, code });
             }
             _ => {}

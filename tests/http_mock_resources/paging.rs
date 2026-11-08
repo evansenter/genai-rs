@@ -1,4 +1,6 @@
-//! List paging: `.pages()` / `.items()` over several stub pages (D-016).
+//! List paging: `.pages()` / `.items()` over several stub pages, and D-016's
+//! receiver rule: a compile guard on sampled verbs, and a source scan of
+//! every public method on every resource handle.
 
 use super::files::file_names;
 use super::*;
@@ -165,7 +167,8 @@ async fn list_streams_send_nothing_until_polled() {
 /// Compile guard for D-016. Handle methods take `self`, so a call's future
 /// holds the client borrow rather than the temporary handle (an `&self`
 /// receiver fails these with E0515), and list streams own a client clone,
-/// so one built from a temporary client can be spawned.
+/// so one built from a temporary client can be spawned. The verbs here are
+/// a sample; the scan below checks every one.
 #[tokio::test]
 async fn handle_futures_and_list_streams_outlive_their_temporaries() {
     fn assert_send<T: Send>(_: &T) {}
@@ -221,4 +224,289 @@ async fn handle_futures_and_list_streams_outlive_their_temporaries() {
     let pages = c.agents().list().with_page_size(1).pages();
     let spawned = tokio::spawn(async move { pages.try_collect::<Vec<_>>().await });
     assert_eq!(spawned.await.unwrap().unwrap().len(), 1);
+}
+
+// =============================================================================
+// D-016's receiver rule, on every handle
+// =============================================================================
+
+/// The attribute that marks a resource handle (as `tests/live_verbs/` finds
+/// them; `ci_coverage`'s `resource_handles_carry_the_marker` checks that
+/// every handle carries it).
+const HANDLE_MARKER: &str = "a resource handle does nothing until you call one of its methods";
+
+/// The handles the scan must find, so a renamed marker cannot empty it.
+const HANDLES: [&str; 11] = [
+    "Agents",
+    "Credentials",
+    "EnvironmentFiles",
+    "Environments",
+    "FileSearchDocuments",
+    "FileSearchStores",
+    "Files",
+    "Interactions",
+    "Triggers",
+    "Voices",
+    "Webhooks",
+];
+
+/// Every `.rs` file under `dir`, parsed.
+fn parse_tree(dir: &std::path::Path, out: &mut Vec<syn::File>) {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            parse_tree(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            let text = std::fs::read_to_string(&path).unwrap();
+            out.push(syn::parse_file(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display())));
+        }
+    }
+}
+
+/// Every item, inline modules' included.
+fn all_items(files: &[syn::File]) -> Vec<&syn::Item> {
+    fn walk<'a>(items: &'a [syn::Item], out: &mut Vec<&'a syn::Item>) {
+        for item in items {
+            if let syn::Item::Mod(module) = item
+                && let Some((_, inner)) = &module.content
+            {
+                walk(inner, out);
+            }
+            out.push(item);
+        }
+    }
+    let mut out = Vec::new();
+    for file in files {
+        walk(&file.items, &mut out);
+    }
+    out
+}
+
+/// A type's name for a report: a path's last segment, `&` before a
+/// reference, `_` for anything else.
+fn type_name(ty: &syn::Type) -> String {
+    match ty {
+        syn::Type::Path(p) => p
+            .path
+            .segments
+            .last()
+            .map_or_else(|| "_".to_string(), |s| s.ident.to_string()),
+        syn::Type::Reference(r) => format!("&{}", type_name(&r.elem)),
+        _ => "_".to_string(),
+    }
+}
+
+fn has_must_use(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident("must_use"))
+}
+
+/// The handle structs (those carrying [`HANDLE_MARKER`]), and every
+/// D-016 problem with their public methods: a receiver other than `self` or
+/// `mut self` (an `&self` verb's future borrows the temporary handle, E0515),
+/// no receiver at all, or a returned value that is not `#[must_use]`. A
+/// value is `#[must_use]` when the method says so, or its type is a `Result`
+/// or a type declared `#[must_use]` (a handle, a list builder); an `async`
+/// method is judged by the value its future yields.
+fn handle_receiver_problems(
+    files: &[syn::File],
+) -> (std::collections::BTreeSet<String>, Vec<String>) {
+    use std::collections::BTreeSet;
+
+    let items = all_items(files);
+    let mut handles = BTreeSet::new();
+    let mut must_use_types: BTreeSet<String> = BTreeSet::from(["Result".to_string()]);
+    let mut list_builders = BTreeSet::new();
+    let mut builder_template_must_use = false;
+    for item in &items {
+        match item {
+            syn::Item::Struct(s) => {
+                let marked = s.attrs.iter().any(|attr| {
+                    matches!(&attr.meta, syn::Meta::NameValue(nv)
+                        if nv.path.is_ident("must_use")
+                            && matches!(&nv.value, syn::Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(text), ..
+                            }) if text.value() == HANDLE_MARKER))
+                });
+                if marked {
+                    handles.insert(s.ident.to_string());
+                }
+                if has_must_use(&s.attrs) {
+                    must_use_types.insert(s.ident.to_string());
+                }
+            }
+            syn::Item::Enum(e) if has_must_use(&e.attrs) => {
+                must_use_types.insert(e.ident.to_string());
+            }
+            // The list builders are declared inside `list_builder!`, whose
+            // template marks each `#[must_use]`.
+            syn::Item::Macro(m) if m.ident.as_ref().is_some_and(|i| i == "list_builder") => {
+                let template: String = m.mac.tokens.to_string().split_whitespace().collect();
+                // The transcriber's struct is the last one, after the
+                // caller's `$(#[$meta])*` and the template's own attributes.
+                builder_template_must_use = template.rfind("pubstruct$name").is_some_and(|at| {
+                    let before = &template[..at];
+                    before[before.rfind(")*").map_or(0, |i| i + 2)..].contains("#[must_use")
+                });
+            }
+            syn::Item::Macro(m)
+                if m.mac
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|s| s.ident == "list_builder") =>
+            {
+                let tokens = m.mac.tokens.to_string();
+                let words: Vec<&str> = tokens.split_whitespace().collect();
+                for pair in words.windows(2) {
+                    if pair[0] == "struct" {
+                        list_builders.insert(pair[1].to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if builder_template_must_use {
+        must_use_types.extend(list_builders);
+    }
+
+    let mut problems = Vec::new();
+    for item in &items {
+        let syn::Item::Impl(imp) = item else { continue };
+        if imp.trait_.is_some() {
+            continue;
+        }
+        let syn::Type::Path(owner) = &*imp.self_ty else {
+            continue;
+        };
+        let Some(owner) = owner.path.segments.last().map(|s| s.ident.to_string()) else {
+            continue;
+        };
+        if !handles.contains(&owner) {
+            continue;
+        }
+        for item in &imp.items {
+            let syn::ImplItem::Fn(f) = item else { continue };
+            if !matches!(f.vis, syn::Visibility::Public(_)) {
+                continue;
+            }
+            let verb = format!("{owner}::{}", f.sig.ident);
+            match f.sig.receiver() {
+                None => problems.push(format!("{verb} takes no `self`")),
+                Some(receiver) => {
+                    let taken = match (&receiver.reference, &receiver.mutability) {
+                        (Some(_), Some(_)) => Some("&mut self".to_string()),
+                        (Some(_), None) => Some("&self".to_string()),
+                        (None, _) => match &*receiver.ty {
+                            syn::Type::Path(p) if p.path.is_ident("Self") => None,
+                            other => Some(format!("self: {}", type_name(other))),
+                        },
+                    };
+                    if let Some(taken) = taken {
+                        problems.push(format!("{verb} takes `{taken}`, not `self`"));
+                    }
+                }
+            }
+            let syn::ReturnType::Type(_, returned) = &f.sig.output else {
+                continue;
+            };
+            let unit = matches!(&**returned, syn::Type::Tuple(t) if t.elems.is_empty());
+            let must_use_type = matches!(&**returned, syn::Type::Path(p)
+                if p.path.segments.last().is_some_and(|s| must_use_types.contains(&s.ident.to_string())));
+            if !unit && !must_use_type && !has_must_use(&f.attrs) {
+                problems.push(format!(
+                    "{verb} returns `{}`, which is not `#[must_use]`: mark the method",
+                    type_name(returned)
+                ));
+            }
+        }
+    }
+    (handles, problems)
+}
+
+/// D-016: every public method of every resource handle takes `self` by
+/// value, and what it returns is `#[must_use]`. The compile guard above
+/// covers sampled verbs; this covers them all.
+#[test]
+fn every_handle_method_takes_self_and_its_value_is_must_use() {
+    let mut files = Vec::new();
+    parse_tree(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let (handles, problems) = handle_receiver_problems(&files);
+    let missing: Vec<&str> = HANDLES
+        .into_iter()
+        .filter(|name| !handles.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the scan found no handle named {missing:?} (found {handles:?}); update HANDLES \
+         or HANDLE_MARKER"
+    );
+    assert!(
+        problems.is_empty(),
+        "Resource handles break D-016 (docs/BUILDER_API.md):\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// The receiver scan reports what it claims to, and nothing on a
+/// conforming handle or on a type that is not one.
+#[test]
+fn the_receiver_scan_catches_what_it_claims_to() {
+    let file: syn::File = syn::parse_quote! {
+        #[must_use = "a resource handle does nothing until you call one of its methods"]
+        pub struct Things<'a> { client: &'a Client }
+        #[must_use = "not the marker"]
+        pub struct NotAHandle<'a> { client: &'a Client }
+        macro_rules! list_builder {
+            ($name:ident) => {
+                #[must_use = "a list request does nothing"]
+                pub struct $name<'a> {}
+            };
+        }
+        paging::list_builder! {
+            pub struct ListThings<'a> { parent: Option<String> }
+        }
+        impl<'a> Things<'a> {
+            pub async fn get(self, id: &str) -> Result<Thing, GenaiError> { todo!() }
+            pub async fn delete(mut self, id: &str) { todo!() }
+            pub fn list(self) -> ListThings<'a> { todo!() }
+            pub fn nested(self) -> Things<'a> { todo!() }
+            #[must_use = "streams do nothing unless polled"]
+            pub fn stream(self, id: &str) -> BoxStream<'static, Thing> { todo!() }
+            pub(crate) fn private(&self) -> Thing { todo!() }
+
+            pub async fn by_ref(&self, id: &str) -> Result<Thing, GenaiError> { todo!() }
+            pub fn by_mut_ref(&mut self) -> Things<'a> { todo!() }
+            pub fn typed(self: &Self) -> Things<'a> { todo!() }
+            pub fn boxed(self: Box<Self>) -> Things<'a> { todo!() }
+            pub fn associated(id: &str) -> Things<'static> { todo!() }
+            pub fn unmarked(self) -> BoxStream<'static, Thing> { todo!() }
+            pub async fn unmarked_output(self) -> Vec<Thing> { todo!() }
+        }
+        impl NotAHandle<'_> {
+            pub fn by_ref(&self) -> Vec<Thing> { todo!() }
+        }
+    };
+    let (handles, problems) = handle_receiver_problems(&[file]);
+    assert_eq!(
+        handles,
+        std::collections::BTreeSet::from(["Things".to_string()])
+    );
+    let expected = [
+        "Things::by_ref takes `&self`, not `self`",
+        "Things::by_mut_ref takes `&mut self`, not `self`",
+        "Things::typed takes `self: &Self`, not `self`",
+        "Things::boxed takes `self: Box`, not `self`",
+        "Things::associated takes no `self`",
+        "Things::unmarked returns `BoxStream`, which is not `#[must_use]`: mark the method",
+        "Things::unmarked_output returns `Vec`, which is not `#[must_use]`: mark the method",
+    ];
+    assert_eq!(problems, expected, "{problems:#?}");
 }

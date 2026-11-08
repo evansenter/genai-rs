@@ -12,6 +12,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -1018,7 +1022,10 @@ mod text_to_speech {
                         chunks += 1;
                         streamed.extend(engine.decode(data).expect("chunk decodes"));
                     }
-                    StreamChunk::Completed(response) => completed = Some(response),
+                    StreamChunk::Completed {
+                        interaction: response,
+                        ..
+                    } => completed = Some(response),
                     _ => {}
                 }
             }
