@@ -17,14 +17,18 @@ SERVER="$HERE/fake_api_server.py"
 TITLE='API surface sweep: a published OpenAPI spec drifted or stopped serving'
 WORK="$(mktemp -d)"
 SERVER_PID=""
-stop_server() {
-    if [ -n "$SERVER_PID" ]; then
-        kill "$SERVER_PID" 2>/dev/null || true
-        wait "$SERVER_PID" 2>/dev/null || true
-        SERVER_PID=""
-    fi
+TRUNCATING_PID=""
+stop_servers() {
+    for pid in "$SERVER_PID" "$TRUNCATING_PID"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    SERVER_PID=""
+    TRUNCATING_PID=""
 }
-trap 'stop_server; rm -rf "$WORK"' EXIT
+trap 'stop_servers; rm -rf "$WORK"' EXIT
 
 failures=0
 fail() {
@@ -66,17 +70,39 @@ cat >"$WORK/routes.json" <<'EOF'
   "GET /flaky/spec.json": [{"status": 503, "body": {}}, {"body": "served-spec.json"}]
 }
 EOF
+# A server that promises a body and hangs up partway through it, so the
+# probe's read fails mid-response.
+cat >"$WORK/truncating_server.py" <<'EOF'
+import os, socket, sys
+
+port_file = sys.argv[1]
+listener = socket.socket()
+listener.bind(("127.0.0.1", 0))
+listener.listen()
+with open(port_file + ".tmp", "w", encoding="utf-8") as f:
+    f.write(str(listener.getsockname()[1]))
+os.replace(port_file + ".tmp", port_file)
+while True:
+    conn, _ = listener.accept()
+    with conn:
+        conn.recv(65536)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                     b"Content-Length: 4096\r\n\r\n{\"openapi\": ")
+EOF
 python3 "$SERVER" "$WORK/routes.json" "$WORK" "$WORK/port" "$WORK/requests" &
 SERVER_PID=$!
+python3 "$WORK/truncating_server.py" "$WORK/truncating-port" &
+TRUNCATING_PID=$!
 for _ in $(seq 1 100); do
-    [ -s "$WORK/port" ] && break
+    [ -s "$WORK/port" ] && [ -s "$WORK/truncating-port" ] && break
     sleep 0.05
 done
-[ -s "$WORK/port" ] || {
-    echo "the fake server did not start" >&2
+[ -s "$WORK/port" ] && [ -s "$WORK/truncating-port" ] || {
+    echo "the fake servers did not start" >&2
     exit 1
 }
 BASE="http://127.0.0.1:$(cat "$WORK/port")"
+TRUNCATING="http://127.0.0.1:$(cat "$WORK/truncating-port")/spec.json"
 
 # A committed snapshot of spec.json, recording `$2` as where it came from.
 snapshot() {
@@ -141,6 +167,8 @@ snapshot dead.json "$BASE/dead/spec.json"
 snapshot notspec.json "$BASE/not-a-spec.json"
 snapshot unreadable.json "$BASE/no-schemas.json"
 snapshot flaky.json "$BASE/flaky/spec.json"
+snapshot truncated.json "$TRUNCATING"
+snapshot malformed.json "http://[malformed/spec.json"
 
 # Every spec matches (prose changes included): no issue is opened, and the
 # bindings sweep's issue under the same label is left alone.
@@ -209,6 +237,15 @@ done
 [ "$(grep -c "^GET /dead/spec.json" "$WORK/requests")" = 2 ] ||
     fail "a dead URL was not tried twice: $(cat "$WORK/requests")"
 logged "refresh_api_snapshot.sh" && fail "a dead URL got a refresh command"
+
+# A response cut off partway through its body, and a URL the HTTP client
+# rejects, are dead URLs too: reported on the issue, not a failed run.
+run "$WORK/truncated.json" "$WORK/malformed.json"
+expect_rc "truncated response, malformed URL" 0
+for want in "$TRUNCATING stopped serving the spec" "IncompleteRead" \
+    "http://[malformed/spec.json stopped serving the spec" "ValueError"; do
+    logged "$want" || fail "the issue lacks: $want"$'\n'"$out"
+done
 
 # A URL that fails once and then serves is not dead.
 run "$WORK/flaky.json"

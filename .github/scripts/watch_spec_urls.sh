@@ -15,7 +15,8 @@
 #       tests/fixtures/api_surface/openapi-v1.json
 #
 # A URL that does not serve an OpenAPI document (an HTTP error, a timeout,
-# a page that is not JSON, JSON that is not a spec) is tried twice,
+# a response cut off mid-body, a URL the HTTP client rejects, a page that is
+# not JSON, JSON that is not a spec) is tried twice,
 # SPEC_WATCH_RETRY_DELAY seconds apart (default 10), before it counts as
 # dead. A snapshot whose source is not a URL (`manual`) is skipped. The
 # issue is found by its exact title and the `api-sweep` label, closed
@@ -52,20 +53,23 @@ trap 'rm -rf "$work"' EXIT
 # `dead<TAB>reason`.
 probe() {
     python3 -I - "$1" "$2" <<'EOF'
-import json, sys, urllib.error, urllib.request
+import http.client, json, sys, urllib.error, urllib.request
 
 url, out = sys.argv[1], sys.argv[2]
-request = urllib.request.Request(url, headers={"User-Agent": "genai-rs-spec-watch"})
 # `timeout=` so a connection that is accepted and then stalls fails the
 # probe instead of hanging the job.
 try:
+    request = urllib.request.Request(url, headers={"User-Agent": "genai-rs-spec-watch"})
     with urllib.request.urlopen(request, timeout=30) as response:
         final, body = response.geturl(), response.read()
 except urllib.error.HTTPError as e:
     print(f"dead\tHTTP {e.code} at {e.geturl()}")
     sys.exit(0)
-except (urllib.error.URLError, OSError) as e:
-    print(f"dead\t{e}")
+# A connection that fails, a response cut off mid-body (IncompleteRead is an
+# HTTPException, not an OSError) and a URL the client rejects (ValueError)
+# all mean the URL serves no spec: reported, never a crashed run.
+except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
+    print(f"dead\t{type(e).__name__}: {e}")
     sys.exit(0)
 try:
     spec = json.loads(body)
