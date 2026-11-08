@@ -685,10 +685,10 @@ fn accumulate(steps: &[Streamed]) -> Result<Vec<Step>, TestCaseError> {
     for event in events {
         let parsed: InteractionStreamEvent = serde_json::from_value(event.clone())
             .map_err(|e| TestCaseError::fail(format!("{event} does not parse: {e}")))?;
-        if let Some(StreamChunk::Completed(response)) =
+        if let Some(StreamChunk::Completed { interaction, .. }) =
             dispatch_stream_event(parsed, &mut accumulator)
         {
-            completed = Some(response);
+            completed = Some(interaction);
         }
     }
     let response =
