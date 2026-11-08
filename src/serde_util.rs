@@ -59,7 +59,10 @@ resource_markers! {
 ///
 /// Works for any `Option<C>` whose `&C` iterates: `Vec`, `HashMap`,
 /// `BTreeMap`, and so on.
-#[allow(clippy::ref_option)] // signature dictated by serde's skip_serializing_if
+#[allow(
+    clippy::ref_option,
+    reason = "the signature serde's `skip_serializing_if` calls"
+)]
 pub(crate) fn is_none_or_empty<T>(value: &Option<T>) -> bool
 where
     for<'a> &'a T: IntoIterator,
@@ -121,7 +124,10 @@ where
 /// Serializes an optional int64 in the protobuf-JSON string form the API
 /// uses on the wire, keeping deserialize-then-serialize roundtrips faithful
 /// to captured responses.
-#[allow(clippy::ref_option)] // signature dictated by serde's serialize_with
+#[allow(
+    clippy::ref_option,
+    reason = "the signature serde's `serialize_with` calls"
+)]
 pub(crate) fn serialize_string_i64<S>(value: &Option<i64>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,

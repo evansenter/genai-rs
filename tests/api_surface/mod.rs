@@ -24,7 +24,10 @@
 //! and `tests/request_wire_oracle.rs`. Not a test target itself: Cargo only
 //! builds `tests/*.rs` and `tests/*/main.rs`.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each includer (the in-crate oracle, request_wire_oracle) uses a different part"
+)]
 
 mod check;
 mod readback;
@@ -35,11 +38,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 // Each includer uses a different part.
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "each includer uses a different part")]
 pub use check::Finding;
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "each includer uses a different part")]
 pub use readback::{debug_extra_keys, debug_unknown_values, key_paths, remove_path, string_values};
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "each includer uses a different part")]
 pub use synth::SynthOptions;
 
 /// `tests/fixtures/api_surface/`.

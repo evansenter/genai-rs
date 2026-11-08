@@ -150,7 +150,11 @@ macro_rules! list_builder {
                 let client = client.clone();
                 $crate::paging::pages($label, page_token, move |$token| {
                     let client = client.clone();
-                    $(#[allow(clippy::clone_on_copy)] let $field = $field.clone();)*
+                    $(#[allow(
+                        clippy::clone_on_copy,
+                        reason = "a field may be `Copy` in one builder and not in another"
+                    )]
+                    let $field = $field.clone();)*
                     async move {
                         let $http = &client.http;
                         $fetch.await

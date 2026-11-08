@@ -650,7 +650,7 @@ mod tests {
                 | StreamChunk::StepStop { .. }
                 | StreamChunk::Completed(_)
                 | StreamChunk::Error { .. } => {}
-                StreamChunk::Unknown { .. } => unreachable!("samples are known chunks"),
+                StreamChunk::Unknown { .. } => panic!("samples are known chunks"),
             }
         }
         let written: std::collections::BTreeSet<String> = samples

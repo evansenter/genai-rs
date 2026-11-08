@@ -14,7 +14,6 @@ use genai_rs::{Client, GenaiError};
 /// An unparseable or missing verdict counts as valid but prints the
 /// `SEMANTIC_VALIDATION_SKIPPED` marker, which CI counts, so a drifted
 /// validator contract cannot go quietly green.
-#[allow(dead_code)]
 pub async fn validate_response_semantically(
     client: &Client,
     context: &str,
@@ -87,7 +86,6 @@ pub async fn validate_response_semantically(
 /// survives it is tolerated with the `SEMANTIC_VALIDATION_SKIPPED` marker,
 /// because the validator is a second round-trip that can fail independently
 /// of the input under test; any other validator error panics.
-#[allow(dead_code)]
 pub async fn assert_response_semantic(
     client: &Client,
     context: &str,

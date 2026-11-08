@@ -1,10 +1,14 @@
 //! The `#[tool]` macro: the declarations it generates from a function's
 //! signature, doc comments and attribute, and calling the result.
 
-#![allow(dead_code)] // Functions are used by the macro, not called directly
+#![allow(
+    dead_code,
+    reason = "the macro registers these functions; most are not called directly"
+)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -85,7 +89,10 @@ fn test_enum_values() {
     #[tool(
         unit(enum_values = ["celsius", "fahrenheit", "kelvin"])
     )]
-    #[allow(unused_variables)]
+    #[expect(
+        unused_variables,
+        reason = "the declaration is under test, not the body"
+    )]
     fn convert_temp(value: f64, unit: String) -> f64 {
         value
     }

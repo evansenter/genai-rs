@@ -1729,6 +1729,32 @@ mutexes inside hook closures that cannot return an error.
 if it unwraps outside a `#[test]` function. A new invariant panic in the
 library needs its reason written down.
 
+*Amended 2026-11-07 (#504).* The panicking macros follow the same rule:
+`clippy::panic`, `clippy::unreachable`, `clippy::todo` and
+`clippy::unimplemented` are on at warn. The one library site,
+`Client::new`'s documented panic, carries `#[expect(clippy::panic, reason
+= "...")]`, and the fuzz entry points' module-level `#![expect]` names
+`clippy::panic` beside `clippy::expect_used`. Tests are exempt as before:
+`clippy.toml`'s `allow-panic-in-tests`, and `clippy::panic` in every
+integration-test crate root's allow, for helpers outside a `#[test]`
+function. Clippy has no in-tests setting for the other three, so a test
+writes `panic!("...")` where it would have written `unreachable!()`, which
+says the same and names the case. An example that uses one adds it to its
+crate-root allow; none does today.
+
+`clippy::allow_attributes_without_reason` is on as well, in tests too:
+every `#[allow]` and `#[expect]` says why in `reason = "..."`, not in a
+comment beside it. Where the lint always fires, the attribute is
+`#[expect]`, so it fails once nothing needs it (the `unsafe_code` sites, a
+test struct whose field is only parsed). A lint that fires in some builds
+and not others keeps `#[allow]`: dead code in `tests/common/`, which each
+test binary compiles and uses a part of (one allow at its root now, in
+place of one per helper), `clone_on_copy` in the `list_builder!` template,
+and `ref_option`, a pedantic lint that is off, on the two serde helpers
+whose signature serde dictates. Six `#[allow(dead_code)]` on
+`#[tool]` functions suppressed nothing, since the registration uses them,
+and are gone.
+
 ---
 
 ## D-049 — `AntigravityError::WebSocket` keeps its cause as a boxed error (2026-11-07)

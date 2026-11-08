@@ -486,6 +486,10 @@ impl Client {
     /// in some minimal containers). [`Client::builder`]`(..).build()`
     /// reports the same failure as [`GenaiError::ClientBuild`] instead.
     #[must_use]
+    #[expect(
+        clippy::panic,
+        reason = "documented under `# Panics`; `Client::builder(..).build()` returns the error"
+    )]
     pub fn new(api_key: impl Into<String>) -> Self {
         match Self::builder(api_key).build() {
             Ok(client) => client,

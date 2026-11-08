@@ -7,7 +7,7 @@ exclude = ["fuzz"]
 
 [workspace.lints.rust]
 # A new `unsafe` is a reviewed decision: each existing site carries an
-# explicit `#[allow(unsafe_code)]` and a SAFETY comment.
+# `#[expect(unsafe_code, reason = "...")]` and a SAFETY comment.
 unsafe_code = "deny"
 # Every public item is documented: docs.rs is the API reference. Test and
 # example crates need a crate doc too, saying what they cover (#501).
@@ -48,6 +48,16 @@ missing_errors_doc = "warn"
 # example crate).
 unwrap_used = "warn"
 expect_used = "warn"
+# The same for the panicking macros: `panic!`, `unreachable!`, `todo!` and
+# `unimplemented!` in library code carry `#[expect(clippy::..., reason =
+# "...")]`. Tests are exempt as for `unwrap` (`clippy.toml`'s
+# `allow-panic-in-tests`, and the crate-root allow), D-048.
+panic = "warn"
+unreachable = "warn"
+todo = "warn"
+unimplemented = "warn"
+# Every `#[allow]` and `#[expect]` says why, in `reason = "..."`.
+allow_attributes_without_reason = "warn"
 # Every `unsafe` block says why it is sound, in a `// SAFETY:` comment.
 undocumented_unsafe_blocks = "warn"
 

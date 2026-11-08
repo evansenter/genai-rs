@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_deserialize_with_context_error_includes_context() {
         #[derive(serde::Deserialize, Debug)]
-        #[allow(dead_code)]
+        #[expect(dead_code, reason = "only parsed; the field is never read")]
         struct TestData {
             required_field: String,
         }
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn test_deserialize_with_context_truncates_long_json() {
         #[derive(serde::Deserialize, Debug)]
-        #[allow(dead_code)]
+        #[expect(dead_code, reason = "only parsed; the field is never read")]
         struct TestData {
             id: String,
         }

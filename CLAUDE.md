@@ -209,9 +209,12 @@ reaches the wire must use a real id.
   clippy's `uninlined_format_args`, `assigning_clones`,
   `redundant_closure_for_method_calls` and `must_use_candidate` hold in
   src/, tests/ and examples/; `make clippy` denies warnings. Library code
-  does not `unwrap()` or `expect()`: a panic that cannot happen carries
-  `#[expect(clippy::expect_used, reason = "...")]`, and each test and
-  example crate root allows both (D-048). Every `unsafe` block has
+  does not `unwrap()`, `expect()` or call `panic!`, `unreachable!`,
+  `todo!` or `unimplemented!`: a panic that cannot happen carries
+  `#[expect(clippy::..., reason = "...")]`, and tests are exempt
+  (`clippy.toml`, and each test and example crate root's allow; D-048).
+  Every `#[allow]` and `#[expect]` gives its `reason = "..."`, and is an
+  `#[expect]` where the lint always fires. Every `unsafe` block has
   a `// SAFETY:` comment. `unreachable_patterns` is forbidden: a wildcard
   after every variant is listed is an error, and its allow cannot come
   back. The lint does not catch a `_ =>` after a partial list, so on an

@@ -409,7 +409,10 @@ impl<'de> Deserialize<'de> for ResponseFormat {
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
 // One value per request, so boxing `Single` to match `List`'s size would buy
 // nothing and break every `Single(format)` pattern.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one value per request; boxing `Single` would break every `Single(format)` pattern"
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[non_exhaustive]

@@ -115,8 +115,10 @@ pub(crate) struct LoudWireGuard {
     prior: Option<String>,
 }
 
-// Test-only env mutation (see the SAFETY comment on `set`).
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "test-only env mutation; see the SAFETY comment on `set`"
+)]
 impl LoudWireGuard {
     /// The one place the ambient value is read.
     ///
@@ -184,7 +186,7 @@ impl LoudWireGuard {
     }
 }
 
-#[allow(unsafe_code)] // restores LOUD_WIRE; see `LoudWireGuard::set`
+#[expect(unsafe_code, reason = "restores LOUD_WIRE; see `LoudWireGuard::set`")]
 impl Drop for LoudWireGuard {
     fn drop(&mut self) {
         match &self.prior {

@@ -8,9 +8,6 @@
 //! API key and a deterministic outcome. Built on the HTTP stub in
 //! `http_stub.rs`.
 
-// Each test binary compiles `common` separately and uses a subset of it.
-#![allow(dead_code)]
-
 use std::time::Duration;
 
 use serde_json::{Value, json};

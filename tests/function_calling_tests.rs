@@ -13,6 +13,7 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -33,26 +34,20 @@ use serde_json::json;
 // =============================================================================
 // Registered Test Functions
 // =============================================================================
-//
-// `#[allow(dead_code)]` because the macro registers these through `inventory`;
-// nothing calls them by name.
 
 /// Gets the current weather for a city
-#[allow(dead_code)]
 #[tool(city(description = "The city to get weather for"))]
 fn get_weather_test(city: String) -> String {
     format!(r#"{{"city": "{city}", "temperature": "22°C", "conditions": "sunny"}}"#)
 }
 
 /// Gets the current time in a timezone
-#[allow(dead_code)]
 #[tool(timezone(description = "The timezone like UTC, PST, JST"))]
 fn get_time_test(timezone: String) -> String {
     format!(r#"{{"timezone": "{timezone}", "time": "14:30:00"}}"#)
 }
 
 /// Converts temperature between units
-#[allow(dead_code)]
 #[tool(
     value(description = "The temperature value"),
     from_unit(description = "Source unit: celsius or fahrenheit"),
@@ -71,7 +66,6 @@ fn convert_temperature(value: f64, from_unit: String, to_unit: String) -> String
 }
 
 /// Implementation behind `common::get_weather_function()`.
-#[allow(dead_code)]
 #[tool(city(description = "City name"))]
 fn get_weather(city: String) -> String {
     match city.to_lowercase().as_str() {
@@ -86,7 +80,6 @@ fn get_weather(city: String) -> String {
 }
 
 /// Implementation behind `common::get_time_function()`.
-#[allow(dead_code)]
 #[tool(timezone(description = "Timezone like PST, EST, JST"))]
 fn get_time(timezone: String) -> String {
     format!(r#"{{"timezone": "{timezone}", "time": "14:00"}}"#)
