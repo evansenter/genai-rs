@@ -150,7 +150,8 @@ Python SDK, extended):
 2. `ANTIGRAVITY_HARNESS_PATH` env var (same var the Python SDK honors).
 3. Scan installed `google-antigravity` pip package for
    `google/antigravity/bin/localharness[.exe]` (site-packages of `python3`
-   on PATH, plus common user-site locations).
+   on PATH, then on Windows of `python`, which python.org's installer
+   provides instead, plus their user-site directories).
 4. `localharness` on `PATH`.
 
 If not found, the error message tells the user to
@@ -675,7 +676,7 @@ test asserts so that the day it does is noticed.
 | `McpStreamableHttpServer.headers` | `McpServer::add_header` | |
 | `BaseMcpServerConfig.name` | `McpServer::with_name` | Defaults from the command or host. |
 | `BaseMcpServerConfig.enabled_tools`, `BaseMcpServerConfig.disabled_tools` | `with_enabled_tools`, `with_disabled_tools` | |
-| `BaseMcpServerConfig.timeout_seconds` | `with_timeout_seconds` | Bounds loading the server (connecting and listing its tools; a slower server fails the turn that loads it) and, on 0.1.23, each call (a slower one returns an error to the model). |
+| `BaseMcpServerConfig.timeout_seconds` | `with_timeout_seconds` | On 0.1.23, bounds both loading the server (connecting and listing its tools; a slower server fails the turn that loads it) and each call (a slower one returns an error to the model). |
 | `BaseMcpServerConfig.force_all_tools_eager` | `with_force_all_tools_eager` | Tools declared by name instead of behind `call_mcp_tool`. |
 | `McpStreamableHttpServer.timeout`, `McpStreamableHttpServer.sse_read_timeout`, `McpStreamableHttpServer.terminate_on_close` | Not modeled | The Python SDK does not send them to the harness either (its `_to_mcp_server_proto` drops them), so they change nothing on the local harness. |
 | `AgentConfig.budget_config`, `BudgetConfig.max_model_calls`, `BudgetConfig.max_tool_calls`, `BudgetConfig.max_input_tokens`, `BudgetConfig.max_output_tokens`, `BudgetConfig.max_total_tokens`, `BudgetConfig.scope`, `BudgetScope.LIFETIME`, `BudgetScope.FORWARD_LOOKING` | `with_budget(Budget)` | A reached cap surfaces as `ChatResponse::stop_reason`. |

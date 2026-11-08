@@ -909,10 +909,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not followed. A `poll_interval` under 10 ms, zero included, polls every
   10 ms, as `PollOptions` does (D-047), rather than walking the tree back
   to back.
-- `McpServer::with_timeout_seconds` said it bounds each call. On harness
-  0.1.23 it also bounds loading the server (connecting and listing its
-  tools, on the first turn), and a server slower than it fails that turn;
-  the rustdoc and `docs/ANTIGRAVITY.md` say so.
+- `McpServer::with_timeout_seconds` said only that it bounds each call. On
+  harness 0.1.23 it bounds both each call and loading the server
+  (connecting and listing its tools, on the first turn), where a server
+  slower than it fails that turn; the rustdoc and `docs/ANTIGRAVITY.md` say
+  so.
 - The `backon` retry snippet in `docs/RELIABILITY.md` and
   `examples/retry_with_backoff.rs` let a server's `Retry-After` bypass
   `with_max_delay`: `adjust` replaces backon's delay after the cap, so a

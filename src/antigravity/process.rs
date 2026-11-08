@@ -286,8 +286,8 @@ fn python_site_dirs(interpreter: &OsStr, timeout: Duration) -> Vec<PathBuf> {
             .collect(),
         (_, None) => {
             tracing::warn!(
-                "{} did not list its site-packages within {timeout:?}; looking for \
-                 localharness on PATH instead",
+                "{} did not list its site-packages within {timeout:?}; discovery goes on \
+                 without them",
                 interpreter.to_string_lossy()
             );
             Vec::new()
