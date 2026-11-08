@@ -25,6 +25,15 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const CONNECT_ATTEMPTS: u32 = 5;
 const CONNECT_BASE_DELAY: Duration = Duration::from_millis(100);
 
+/// How long one connect attempt (the TCP connect and the WebSocket upgrade)
+/// may take before it counts as failed. Both go to a harness on localhost
+/// that has already written its port, so a healthy one answers in
+/// milliseconds; 5 s leaves room for a loaded CI runner. A harness that
+/// accepts the connection but never answers the upgrade then fails
+/// `spawn()` after about 26.5 s (5 attempts and the backoff between them)
+/// instead of holding it forever.
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// How long to wait for the WebSocket close handshake during shutdown (the
 /// harness does not reply with a close frame).
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -100,7 +109,8 @@ impl std::fmt::Debug for Session {
 
 impl Session {
     /// Connects to `ws://localhost:{port}/` with the per-process token in
-    /// the `x-goog-api-key` header, retrying with exponential backoff.
+    /// the `x-goog-api-key` header, retrying with exponential backoff. An
+    /// attempt that takes over [`CONNECT_ATTEMPT_TIMEOUT`] counts as failed.
     pub(crate) async fn connect(
         port: i32,
         api_key: &str,
@@ -115,7 +125,19 @@ impl Session {
 
         let mut attempt = 0;
         loop {
-            match tokio_tungstenite::connect_async(request.clone()).await {
+            let connected = tokio::time::timeout(
+                CONNECT_ATTEMPT_TIMEOUT,
+                tokio_tungstenite::connect_async(request.clone()),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("no WebSocket upgrade within {CONNECT_ATTEMPT_TIMEOUT:?}"),
+                )
+                .into())
+            });
+            match connected {
                 Ok((ws, _response)) => {
                     let (sink, stream) = ws.split();
                     return Ok(Self {
@@ -330,6 +352,46 @@ mod tests {
         let chained = std::error::Error::source(&error).expect("source() is the transport error");
         assert_eq!(chained.to_string(), source.to_string());
         assert!(error.to_string().ends_with(&source.to_string()), "{error}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_a_connect_the_harness_never_answers_times_out_each_attempt() {
+        // Accepts TCP (the kernel completes the handshake) but never answers
+        // the WebSocket upgrade: each attempt used to wait forever.
+        let listener = std::net::TcpListener::bind("localhost:0").expect("bind a local port");
+        let port = i32::from(listener.local_addr().expect("local address").port());
+
+        let started = tokio::time::Instant::now();
+        let connect = Session::connect(port, "token", WireContext::new(Vec::new()));
+        let error = tokio::time::timeout(Duration::from_secs(120), connect)
+            .await
+            .expect("connect gives up rather than hanging")
+            .expect_err("nothing answers the upgrade");
+        let AntigravityError::WebSocket { message, source } = &error else {
+            panic!("expected a WebSocket error: {error:?}");
+        };
+        assert!(
+            message.contains(&format!("after {CONNECT_ATTEMPTS} attempts")),
+            "{message}"
+        );
+        let Some(tokio_tungstenite::tungstenite::Error::Io(io)) = source.downcast_ref() else {
+            panic!("the last attempt's timeout is the source: {source:?}");
+        };
+        assert_eq!(io.kind(), std::io::ErrorKind::TimedOut, "{io}");
+        // Every attempt waited its timeout, then the backoff.
+        let backoff: Duration = (0..CONNECT_ATTEMPTS - 1)
+            .map(|n| CONNECT_BASE_DELAY * 2u32.pow(n))
+            .sum();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= CONNECT_ATTEMPT_TIMEOUT * CONNECT_ATTEMPTS + backoff,
+            "gave up after {elapsed:?}"
+        );
+        assert!(
+            elapsed < CONNECT_ATTEMPT_TIMEOUT * (CONNECT_ATTEMPTS + 1) + backoff,
+            "{elapsed:?}"
+        );
+        drop(listener);
     }
 
     #[tokio::test]
