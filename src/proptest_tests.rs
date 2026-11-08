@@ -207,6 +207,8 @@ mod resources;
 mod response;
 #[path = "proptest_steps.rs"]
 mod steps;
+#[path = "proptest_stream.rs"]
+mod stream;
 #[path = "proptest_tools.rs"]
 mod tools;
 #[path = "proptest_unknown_fields.rs"]
