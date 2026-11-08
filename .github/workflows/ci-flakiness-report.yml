@@ -80,12 +80,25 @@ jobs:
           LOGS_READ=0
           LOGS_MISSED=0
 
+          # The window's runs only, by creation date, up to what the API
+          # serves for a filtered listing (1,000; about 115 a week now). A
+          # listing that fills the limit may have left runs out, so the step
+          # fails rather than report on part of the week, and a failed
+          # listing fails it too: an empty week would read as "no live test
+          # runs".
+          RUN_LIMIT=1000
           echo "Fetching workflow runs..."
           RUNS_JSON=$(gh run list \
             --workflow "$WORKFLOW_NAME" \
-            --limit 200 \
-            --json databaseId,conclusion,createdAt,headBranch,event \
-            2>/dev/null || echo "[]")
+            --created ">=$START_DATE" \
+            --limit "$RUN_LIMIT" \
+            --json databaseId,conclusion,createdAt,headBranch,event)
+          LISTED=$(jq 'length' <<<"$RUNS_JSON")
+          echo "Listed $LISTED runs created since $START_DATE"
+          if [ "$LISTED" -ge "$RUN_LIMIT" ]; then
+            echo "::error::gh run list returned $LISTED runs, its limit, so the window may hold more and the report would leave them out. Raise RUN_LIMIT past the week's runs or shorten DAYS_BACK."
+            exit 1
+          fi
 
           while IFS= read -r run; do
             RUN_ID=$(echo "$run" | jq -r '.databaseId')
@@ -166,13 +179,19 @@ jobs:
           if [ "$LOGS_READ" -gt 0 ]; then
             .github/scripts/count_retried_flakes.sh "${LOG_DIR:?}"/*.log > retried.json
           else
-            echo '{"tests_run": 0, "flaky": 0, "tests": [], "examples_run": 0, "examples_retried": 0, "examples": []}' > retried.json
+            echo '{"tests_run": 0, "flaky": 0, "tests": [], "examples_run": 0, "examples_retried": 0, "examples": [], "skip_markers": 0, "skips": []}' > retried.json
           fi
           rm -rf "${LOG_DIR:?}"
           RETRIED_FLAKES=$(jq -r '.flaky' retried.json)
           LIVE_TEST_RUNS=$(jq -r '.tests_run' retried.json)
           EXAMPLES_RUN=$(jq -r '.examples_run // 0' retried.json)
           EXAMPLES_RETRIED=$(jq -r '.examples_retried // 0' retried.json)
+          # Skip markers across the week: each job budgets its own run's,
+          # and nothing else adds them up, so a test that skips its check in
+          # run after run would never show.
+          SKIP_MARKERS=$(jq -r '.skip_markers // 0' retried.json)
+          SKIPPED_TESTS=$(jq -c '[(.skips // [])[] | {name, markers, runs,
+            file: (if .binary == "lib" then "src/" elif .binary == "" then "unknown" else "tests/\(.binary).rs" end)}]' retried.json)
 
           # Flakes are named by test; nextest names the binary too, which
           # locates the file without a grep. An example is named for its
@@ -233,6 +252,8 @@ jobs:
             --argjson live_test_runs "$LIVE_TEST_RUNS" \
             --argjson examples_run "$EXAMPLES_RUN" \
             --argjson examples_retried "$EXAMPLES_RETRIED" \
+            --argjson skip_markers "$SKIP_MARKERS" \
+            --argjson skipped_tests "$SKIPPED_TESTS" \
             --argjson api_errors "$API_ERRORS" \
             --argjson rate_limit "$RATE_LIMIT" \
             --argjson assertion_failures "$ASSERTION_FAILURES" \
@@ -252,6 +273,8 @@ jobs:
               live_test_runs: $live_test_runs,
               examples_run: $examples_run,
               examples_retried: $examples_retried,
+              skip_markers: $skip_markers,
+              skipped_tests: $skipped_tests,
               api_errors: $api_errors,
               rate_limit: $rate_limit,
               assertion_failures: $assertion_failures,

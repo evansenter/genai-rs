@@ -103,6 +103,12 @@ LIVE_RUNS=$(current live_test_runs 0)
 # Examples the smoke loops retried to a pass, and the example runs.
 EXAMPLES_RUN=$(current examples_run 0)
 EXAMPLES_RETRIED=$(current examples_retried 0)
+# Skip markers across the week's live runs: tests that passed without
+# verifying (docs/TESTING.md, "Skip markers"). Each job budgets its own
+# run's; the week's total and the tests behind it are reported, not
+# enforced. Absent from summaries written before the field existed.
+SKIP_MARKERS=$(current skip_markers "")
+SKIPPED_TESTS=$(jq -c '.skipped_tests // []' <<<"$SUMMARY")
 # The weekly flake rate the Tests/CI bar holds under 1% (#504).
 FLAKE_TARGET_PCT=1
 # A test's own share of runs that needed a retry, past which it is a
@@ -229,6 +235,14 @@ echo "| Passed on retry | $RETRIED of $LIVE_RUNS live test runs ($FLAKE_RATE_CEL
 if [ "$EXAMPLES_RUN" -gt 0 ] || [ "$EXAMPLES_RETRIED" -gt 0 ]; then
   echo "| Examples passed on retry | $(share_cell "$EXAMPLES_RETRIED" "$EXAMPLES_RUN" 2 " example runs") | — | — |"
 fi
+if [ -n "$SKIP_MARKERS" ]; then
+  SKIPPING_TESTS=$(jq 'length' <<<"$SKIPPED_TESTS")
+  if [ "$SKIP_MARKERS" -gt 0 ]; then
+    echo "| Skip markers (passed without verifying) | $SKIP_MARKERS in $LIVE_RUNS live test runs, from $SKIPPING_TESTS test(s) | — | — |"
+  else
+    echo "| Skip markers (passed without verifying) | 0 in $LIVE_RUNS live test runs | — | — |"
+  fi
+fi
 
 BREACHES=0
 if [ "$OVER_TARGET" -eq 1 ]; then
@@ -310,6 +324,19 @@ Passed only on a retry in more than ${CHRONIC_PCT}% of the runs they ran in (and
 |------|-----------------|------|-------|------|
 EOF
   jq -r '.[] | "| `\(.name)` | \(.retried) | \(.runs) | \((.retried / .runs * 1000 | round) / 10)% | \(.file) |"' <<<"$CHRONIC"
+fi
+
+if [ "$(jq 'length' <<<"$SKIPPED_TESTS")" -gt 0 ]; then
+  cat <<EOF
+
+### Skip Markers
+
+Tests that printed \`SEMANTIC_VALIDATION_SKIPPED\` or \`LIVE_TOOL_EVIDENCE_SKIPPED\` this week: each passed at least once without verifying what it tests. One that marks most of its runs verifies nothing.
+
+| Test | Markers | Runs | File |
+|------|---------|------|------|
+EOF
+  jq -r 'sort_by(-.markers, .name) | .[:10][] | "| `\(if .name == "" then "(no test named)" else .name end)` | \(.markers) | \(.runs) | \(.file) |"' <<<"$SKIPPED_TESTS"
 fi
 
 TEST_COUNT=$(echo "$TESTS" | jq 'length')

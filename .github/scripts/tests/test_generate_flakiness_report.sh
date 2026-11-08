@@ -111,6 +111,22 @@ expect_rc "chronic example: exits 3" 3
 expect "chronic example: listed" '| `example streaming` | 2 | 30 | 6.7% | tests/x.rs |'
 expect "examples: their own row" '| Examples passed on retry | 2 of 30 example runs (6.67%) |'
 
+# --- Skip markers: the week's count as a row, and the tests behind it.
+#     Reported, never a breach. A summary from before the field has no row.
+render '{"skip_markers": 0, "skipped_tests": []}' '[]'
+expect_rc "no skip markers: exits 0" 0
+expect "no skip markers: the row says so" '| Skip markers (passed without verifying) | 0 in 500 live test runs | — | — |'
+refute "no skip markers: no section" '### Skip Markers'
+render '{"skip_markers": 5, "skipped_tests": [
+    {"name": "mcp::test_mcp", "file": "tests/tools_and_config_tests.rs", "markers": 4, "runs": 6},
+    {"name": "", "file": "tests/x.rs", "markers": 1, "runs": 0}]}' '[]'
+expect_rc "skip markers: reported, not a breach" 0
+expect "skip markers: the row" '| Skip markers (passed without verifying) | 5 in 500 live test runs, from 2 test(s) | — | — |'
+expect "skip markers: the test with the most first" '| `mcp::test_mcp` | 4 | 6 | tests/tools_and_config_tests.rs |'
+expect "skip markers: a marker with no test" '| `(no test named)` | 1 | 0 | tests/x.rs |'
+render '{}' '[]'
+refute "skip markers: no row for an older summary" 'Skip markers'
+
 # --- Failed runs by event, and a deterministic break as its own row.
 render '{"deterministic": 2}' \
     '[{"name": "crlf_test", "failures": 2, "retried": 0, "runs": 0, "category": "deterministic on windows", "file": "mod.rs"}]'
