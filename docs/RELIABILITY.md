@@ -83,12 +83,12 @@ use std::time::Duration;
 const MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// The wait before the next attempt, or `None` once the attempts are used
-/// up: the server's `Retry-After` when it sent one, but never past
-/// `MAX_DELAY`. `adjust` replaces backon's delay after `with_max_delay`
-/// has capped it, so without the `min` a server asking for an hour gets
-/// one.
+/// up: the server's `Retry-After` when it sent one, else backon's delay,
+/// but never past `MAX_DELAY`. `adjust` replaces backon's delay after
+/// `with_max_delay` has capped it and the jitter has added up to as much
+/// again, so without the `min` a server asking for an hour gets one.
 fn next_delay(e: &GenaiError, backoff: Option<Duration>) -> Option<Duration> {
-    backoff.map(|d| e.retry_after().map_or(d, |asked| asked.min(MAX_DELAY)))
+    backoff.map(|d| e.retry_after().unwrap_or(d).min(MAX_DELAY))
 }
 
 # async fn run(client: genai_rs::Client) -> Result<(), GenaiError> {
@@ -98,14 +98,17 @@ let request = client
     .with_text("Hello")
     .build()?;
 
+// backon's exponential backoff has no jitter unless asked for; without
+// it, clients that failed together retry together.
 let backoff = ExponentialBuilder::default()
-    .with_min_delay(Duration::from_millis(100))
+    .with_min_delay(Duration::from_millis(500))
     .with_max_delay(MAX_DELAY)
-    .with_max_times(3);
+    .with_max_times(3)
+    .with_jitter();
 
 let response = (|| async { client.execute(request.clone()).await })
     .retry(backoff)
-    .when(|e: &GenaiError| e.is_retryable())
+    .when(GenaiError::is_retryable)
     .adjust(next_delay)
     .await?;
 # let _ = response;
@@ -121,7 +124,10 @@ let response = (|| async { client.execute(request.clone()).await })
 #     let step = Some(Duration::from_millis(100));
 #     assert_eq!(next_delay(&asked(3600), step), Some(MAX_DELAY));
 #     assert_eq!(next_delay(&asked(2), step), Some(Duration::from_secs(2)));
-#     assert_eq!(next_delay(&GenaiError::InvalidInput(String::new()), step), step);
+#     let other = GenaiError::InvalidInput(String::new());
+#     assert_eq!(next_delay(&other, step), step);
+#     // A jittered step past the cap is cut back to it.
+#     assert_eq!(next_delay(&other, Some(MAX_DELAY * 2)), Some(MAX_DELAY));
 #     assert_eq!(next_delay(&asked(2), None), None);
 # }
 ```

@@ -2,9 +2,10 @@
 //!
 //! `InteractionBuilder::build()` produces an `InteractionRequest` that is
 //! `Clone`, so the same request can be re-sent with `Client::execute()`.
-//! `GenaiError::is_retryable()` picks out 429s, 5xx and timeouts, and
-//! `retry_after()` carries the server's suggested delay when it sends one,
-//! which this waits for up to the backoff's cap. See `docs/RELIABILITY.md`.
+//! `GenaiError::is_retryable()` picks out transport failures, timeouts, 408s,
+//! 429s and the 5xx a retry can fix, and `retry_after()` carries the
+//! server's suggested delay when it sends one, which this waits for up to
+//! the backoff's cap. See `docs/RELIABILITY.md`.
 //!
 //! Run with: `cargo run --example retry_with_backoff`
 
@@ -25,12 +26,13 @@ const MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// The wait before the next attempt, or `None` once the attempts are used
 /// up (keep it that way, so a server that keeps sending `Retry-After` can't
-/// extend the budget): the server's `Retry-After` when it sent one, but
-/// never past `MAX_DELAY`. `adjust` replaces backon's delay after
-/// `with_max_delay` has capped it, so without the `min` a server asking for
-/// an hour gets one.
+/// extend the budget): the server's `Retry-After` when it sent one, else
+/// backon's delay, but never past `MAX_DELAY`. `adjust` replaces backon's
+/// delay after `with_max_delay` has capped it and the jitter has added up
+/// to as much again, so without the `min` a server asking for an hour gets
+/// one.
 fn next_delay(e: &GenaiError, backoff: Option<Duration>) -> Option<Duration> {
-    backoff.map(|d| e.retry_after().map_or(d, |asked| asked.min(MAX_DELAY)))
+    backoff.map(|d| e.retry_after().unwrap_or(d).min(MAX_DELAY))
 }
 
 #[tokio::main]
