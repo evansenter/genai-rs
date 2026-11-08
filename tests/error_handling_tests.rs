@@ -18,7 +18,7 @@
 mod common;
 
 use common::{is_transient_error, is_transient_failure, retry_on_transient};
-use genai_rs::{GenaiError, InteractionResponse};
+use genai_rs::{AutoFunctionResult, GenaiError, InteractionResponse};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -464,6 +464,47 @@ async fn test_retry_on_transient_never_retries_a_failed_tool_call_loop() {
         call_count.load(Ordering::SeqCst),
         1,
         "a tool-call loop fails the test on its first attempt (D-052)"
+    );
+}
+
+/// An auto-function loop's result, ending in `response`.
+fn auto_function_result(response: &InteractionResponse) -> AutoFunctionResult {
+    serde_json::from_value(serde_json::json!({
+        "response": response,
+        "executions": [],
+    }))
+    .expect("an auto-function result parses")
+}
+
+/// `create_with_auto_functions()` returns an `AutoFunctionResult`, not an
+/// interaction: its final response is checked the same way.
+#[tokio::test(start_paused = true)]
+async fn test_retry_on_transient_retries_an_auto_function_loop_that_failed() {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+
+    let result = retry_on_transient(3, || {
+        let count = count.clone();
+        async move {
+            let mut response = failed_interaction("malformed_tool_call", MALFORMED_MESSAGE);
+            if count.fetch_add(1, Ordering::SeqCst) > 0 {
+                response.status = genai_rs::InteractionStatus::Completed;
+                response.errors = None;
+            }
+            Ok::<_, GenaiError>(auto_function_result(&response))
+        }
+    })
+    .await
+    .expect("no error");
+
+    assert_eq!(
+        result.response.status,
+        genai_rs::InteractionStatus::Completed
+    );
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        2,
+        "the loop whose final response failed was run again"
     );
 }
 
