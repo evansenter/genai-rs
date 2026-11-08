@@ -1744,12 +1744,13 @@ library needs its reason written down.
 `Client::new`'s documented panic, carries `#[expect(clippy::panic, reason
 = "...")]`, and the fuzz entry points' module-level `#![expect]` names
 `clippy::panic` beside `clippy::expect_used`. Tests are exempt as before:
-`clippy.toml`'s `allow-panic-in-tests`, and `clippy::panic` in every
+`clippy.toml`'s `allow-panic-in-tests`, and all four lints in every
 integration-test crate root's allow, for helpers outside a `#[test]`
-function. Clippy has no in-tests setting for the other three, so a test
-writes `panic!("...")` where it would have written `unreachable!()`, which
-says the same and names the case. An example that uses one adds it to its
-crate-root allow; none does today.
+function. Clippy has no in-tests setting for the other three, so each
+crate's `lib.rs` allows them under `#![cfg_attr(test, ...)]`: the
+unit-test build compiles `#[cfg(test)]` modules, and the library build,
+which `--all-targets` lints as well, still denies them. An example that
+uses one adds it to its crate-root allow; none does today.
 
 `clippy::allow_attributes_without_reason` is on as well, in tests too:
 every `#[allow]` and `#[expect]` says why in `reason = "..."`, not in a

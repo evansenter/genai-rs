@@ -5,6 +5,6 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 
 # The same exemption for `panic!` (clippy::panic, D-048). `unreachable!`,
-# `todo!` and `unimplemented!` have no such setting: a test that uses one
-# outside a `#[test]` function allows it where it does.
+# `todo!` and `unimplemented!` have no such setting: each crate's lib.rs
+# allows them under `cfg(test)`, and each test crate root allows all four.
 allow-panic-in-tests = true

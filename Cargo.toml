@@ -54,7 +54,8 @@ expect_used = "warn"
 # The same for the panicking macros: `panic!`, `unreachable!`, `todo!` and
 # `unimplemented!` in library code carry `#[expect(clippy::..., reason =
 # "...")]`. Tests are exempt as for `unwrap` (`clippy.toml`'s
-# `allow-panic-in-tests`, and the crate-root allow), D-048.
+# `allow-panic-in-tests`, a `cfg(test)` allow in each lib.rs for the other
+# three, and the test crate-root allow), D-048.
 panic = "warn"
 unreachable = "warn"
 todo = "warn"

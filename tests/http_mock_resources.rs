@@ -18,6 +18,9 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
