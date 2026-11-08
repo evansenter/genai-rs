@@ -482,6 +482,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field and the harness fell back to its environment's `GEMINI_API_KEY`.
   Code like `.with_api_key(env::var("X").unwrap_or_default())` hits this.
   Pass a real key, or leave out `with_api_key`.
+- **Breaking: `AntigravityError` has no `#[from]` conversions, and its
+  causes are explicit.** `Json` is removed. A harness message this client
+  cannot parse, which was `Json`, is now `Protocol`, as `Protocol`'s doc
+  always said, and `Protocol` is a struct variant,
+  `Protocol { message, source }`, whose `source` (also `source()`) is the
+  parse error when one caused it. `Io` is a struct variant,
+  `Io { message, source }`: `Media::from_file` names the path it could not
+  read in `message`. A `?` on a `serde_json::Error` or `std::io::Error` no
+  longer converts to `AntigravityError`. Migration: match
+  `AntigravityError::Protocol { message, .. }` for `Protocol(message)` and
+  `AntigravityError::Io { source, .. }` for `Io(source)`; drop `Json` arms
+  (a parse failure arrives as `Protocol`); and map your own `io` and
+  `serde_json` errors into your error type rather than through
+  `AntigravityError`.
 - **Breaking: a cut-off stream ends with the new
   `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
   the connection can end a stream body before `interaction.completed` or an
@@ -875,6 +889,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed
   harness was not found without `ANTIGRAVITY_HARNESS_PATH`.
+- On Windows, Antigravity harness discovery asks `python` for its
+  site-packages after `python3`. python.org's installer provides no
+  `python3` (often only the Microsoft Store's stub is there), so a wheel
+  installed with its `pip` was not found without `ANTIGRAVITY_HARNESS_PATH`.
+  `python` is started only when `python3`'s site-packages lack the harness.
+- Antigravity's `spawn()` no longer waits forever on a harness that
+  accepts the WebSocket connection but never answers the upgrade: each of
+  the 5 connect attempts gives up after 5 s and counts as failed, so
+  `spawn()` fails with `InitFailed` after about 26.5 s.
+- Antigravity's file watch (`triggers::on_file_change`): a poll that cannot
+  read a directory or entry under the watched path (a permission or I/O
+  error) is skipped, with one warning, instead of reporting every file
+  there deleted and then added back when it reads again; a directory the
+  watch skips anyway (`.git`, `node_modules`, …) still cannot fail a poll.
+  A watched path that is a symbolic link is followed, as `watchfiles`
+  follows its root (it read as an empty tree); links below it are still
+  not followed. A `poll_interval` under 10 ms, zero included, polls every
+  10 ms, as `PollOptions` does (D-047), rather than walking the tree back
+  to back.
+- `McpServer::with_timeout_seconds` said it bounds each call. On harness
+  0.1.23 it also bounds loading the server (connecting and listing its
+  tools, on the first turn), and a server slower than it fails that turn;
+  the rustdoc and `docs/ANTIGRAVITY.md` say so.
 - The `backon` retry snippet in `docs/RELIABILITY.md` and
   `examples/retry_with_backoff.rs` let a server's `Retry-After` bypass
   `with_max_delay`: `adjust` replaces backon's delay after the cap, so a

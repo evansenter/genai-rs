@@ -1886,3 +1886,90 @@ until they age out, and a test stays chronic while two of its retried runs
 are in it: the Antigravity test's are all from 2026-11-01, so it clears
 from the 2026-11-09 report, and the search test's second-to-last is from
 2026-11-05, so it clears from the 2026-11-13 report, with no new retry.
+
+---
+
+## D-NEXT-H2 — The file watch skips a poll it cannot fully read, and follows a symlinked root (2026-11-07)
+
+**Context.** `triggers::on_file_change` snapshots its tree each poll and
+diffs it against the last one. A snapshot whose root could not be read was
+already a failed poll (#504, C6), but below the root a directory that
+could not be listed, or an entry whose metadata or listing failed, was
+left out, so a transiently unreadable directory reported every file in it
+deleted, then added back. A watched path that was a symbolic link read as
+an empty tree (`symlink_metadata` on the root), where Python's `watchfiles`
+follows the root. A zero `poll_interval` walked the tree back to back.
+
+**Decision.** Any I/O or permission error other than not-found, on the
+root or below it (metadata, a listing, or an entry the listing yields),
+fails the snapshot: the poll is skipped, with a warning when such polls
+begin and a debug line for each one after. Not-found means the path went
+away, so what was there reads as deleted, as before. A directory in
+`IGNORED_DIRS` is never read, so it cannot fail a poll. The root is
+followed with `metadata`; entries below it keep `symlink_metadata`, so
+links there are still not followed. The interval is raised to
+`PollOptions::MIN_POLL_INTERVAL` (10 ms), as D-047 does for status polls.
+
+The alternative for an unreadable directory was to carry the last
+snapshot's entries under it forward, treating it as unchanged, which keeps
+reporting changes elsewhere while it stays unreadable. Skipping the poll
+is the narrower change and cannot invent or hide a change under the
+directory; carrying forward can be added if a permanently unreadable
+directory in a watched tree turns out to be common.
+
+**Consequences.** A directory that stays unreadable holds back every
+change under the watched path until it reads again; the rustdoc and
+`docs/ANTIGRAVITY.md` say to keep such directories out of the tree. A link
+to a file as the root is that file, and a dangling root link is an empty
+tree, like a missing path.
+
+---
+
+## D-NEXT-H2-a — `AntigravityError` names its causes: no `#[from]`, sources on `Protocol` and `Io` (2026-11-07)
+
+**Context.** `AntigravityError` had `Io(#[from] std::io::Error)` and
+`Json(#[from] serde_json::Error)`, so any `?` on either became one of
+them. An unparsable harness frame came out as `Json`, though `Protocol`'s
+doc claimed that case, and `Media::from_file` returned `Io` without the
+path it failed to read.
+
+**Decision.** Both `#[from]`s go, and `Json` with them. `Protocol` is
+`{ message, source: Option<Box<dyn Error + Send + Sync>> }`: an inbound
+parse failure carries the `serde_json` error as its source; a turn that
+ended without its final event has none; and an outbound message that would
+not encode (none can today) is a `Protocol` error too, since it is the
+same contract broken from this side. `Io` is `{ message, source }`, the
+shape `WebSocket` has, with the operation and path in `message`: a
+`Media::from_file` read, and the one other I/O failure left, harness
+discovery cut short by a runtime shutting down. A message the client
+sends is serialized in `session.rs` (`send_raw` takes the value), so the
+error mapping lives in one place.
+
+**Consequences.** Breaking, with a CHANGELOG migration. `agent.rs`, at 798
+of 800 lines, changes on three lines and grows by none: the two
+`Protocol(..)` constructions call `AntigravityError::protocol(..)`, and
+`initialize` passes the init event to `send_raw`. `Protocol`'s `Display`
+carries the parse error's text in `message`, so a printed error still
+says what failed.
+
+---
+
+## D-NEXT-H2-b — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
+
+**Context.** `Session::connect` retried up to 5 times with backoff, but an
+attempt had no bound: a harness that accepted the TCP connection and
+never answered the WebSocket upgrade held `spawn()` forever.
+
+**Decision.** Each attempt (the TCP connect and the upgrade) is bounded by
+`CONNECT_ATTEMPT_TIMEOUT`, 5 s, and a timeout counts as a failed attempt,
+with an `io::ErrorKind::TimedOut` error as the transport source. The
+harness is on localhost and has already written its port, so a healthy
+one answers in milliseconds; 5 s is a wide margin for a loaded CI runner
+while keeping the worst case, 5 attempts and 1.5 s of backoff, at about
+26.5 s, below the 30 s the conversation's initialization then gets. A
+bound on the whole connect instead would leave a slow first attempt no
+retry.
+
+**Consequences.** A wedged harness fails `spawn()` with `InitFailed` after
+about 26.5 s. The paused-clock test checks the attempts, the backoff and
+the source.
