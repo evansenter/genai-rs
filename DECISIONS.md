@@ -1884,3 +1884,48 @@ the last attempt as it came. As in the `400` form, a failure that names
 `too_many_tool_calls` is never retried. The search test's follow-up,
 the case that met it most, is fixed at its cause (it resends the tool);
 the retry is for the broken call a model makes now and then anywhere.
+
+## D-NEXT-H4 — CI measures what it reports: a coverage floor with the antigravity feature, skip markers across runs, and releases gated on the push run (2026-11-08)
+
+**Context.** The final #504 grading (2026-11-07) left Tests/CI at A with
+small gaps, none of them tracked. Code Coverage measured the crate without
+the `antigravity` feature, about 14k of its 62.5k lines, and had no floor,
+so a drop passed. Skip markers were budgeted run by run and never added
+up, and the Antigravity harness step neither kept nor budgeted them.
+`release.yml` validated on Ubuntu alone and never looked at the tagged
+commit's push run, where the Cross Platform legs ran. The flakiness report
+read the 200 newest runs and stopped there without a word, at about 115 a
+week.
+
+**Decision.**
+- Coverage runs the workspace with `--features antigravity` twice into one
+  report: the offline suite, then the key-free scripted harness suite,
+  which tests most of the feature. The live suites stay out: they need the
+  key, and what they cover moves with the model. A step after the summary
+  fails under `--fail-under-lines 94`: the job measured 94.48% of 27,879
+  lines on Linux when the floor was set (95.90% outside the feature, and
+  89% of its 5,700), and the half point between keeps run-to-run noise
+  from failing it. The floor is raised by hand as coverage grows and
+  lowered only with the reason in the commit;
+  `tests/ci_workflows/coverage.rs` rejects one under 90%.
+- The flakiness report counts skip markers across the week's runs, by the
+  test that printed them, as a row and a table. It is not a target: each
+  run already fails over its own budget, and a per-test threshold across
+  runs needs weeks of these counts to set.
+- Every live nextest step keeps passing output and fails over 3 markers
+  (10 for `release.yml`'s whole-workspace run).
+- `release.yml`'s `validate` passes only when the tagged commit's push run
+  of `rust.yml` on `main` passed every job (skipped allowed), with its
+  Cross Platform legs present and none skipped. It waits up to 45 minutes
+  for a run still going rather than failing at once, since the release
+  steps tag `origin/main` right after a merge, while its push run is still
+  going.
+- The report lists the window's runs by creation date, up to 1,000, the
+  API's ceiling for a filtered listing, and fails when the listing reaches
+  it or fails.
+
+**Consequences.** A coverage drop fails the Code Coverage job, which is
+not a required check, so it shows on the PR without blocking it; making it
+required is the owner's call. The job takes a few minutes longer for the
+antigravity build and the scripted suite. A release can wait on its push
+run, and a red leg there stops it before anything is published.

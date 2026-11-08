@@ -500,6 +500,17 @@ Keep both: the examples are documentation, and they run fast. Both take
 their expected shapes from the crate's own serde attributes, so neither can
 catch a wrong wire key; the coverage oracle below can.
 
+## Line coverage
+
+The Code Coverage job in `rust.yml` measures the workspace with the
+`antigravity` feature: the offline suite, then the key-free scripted
+harness suite, merged into one report that goes to the job summary on
+every run. The job then fails when line coverage is under its floor
+(`--fail-under-lines`), set just under the value measured when it was
+last raised (D-NEXT-H4): raise it in `rust.yml` as coverage grows, and
+lower it only with the reason in the commit. `tests/ci_workflows/coverage.rs`
+checks the job keeps all of this.
+
 ## Coverage oracle
 
 "Full Interactions API coverage" is checked offline against a committed

@@ -4,9 +4,13 @@
 //! `RETRY_JOBS` names exactly the `rust.yml` jobs that retry, both example
 //! loops print `EXAMPLE_RETRIED`, the report publishes before it fails and
 //! escalates, and a stub test with a millisecond timeout runs on the paused
-//! clock. `coverage` checks that the Code Coverage job writes its summary,
-//! over the packages it measured, on every run, and that a Codecov upload
-//! fails the job on an error.
+//! clock. Every live nextest step keeps its skip markers in the log and
+//! fails over a budget of them. `coverage` checks that the Code Coverage
+//! job writes its summary, over the packages it measured, on every run,
+//! measures the `antigravity` feature with its scripted suite, fails under
+//! a floor, and that a Codecov upload fails the job on an error. `release`
+//! checks that a release publishes only a commit whose main push run of
+//! `rust.yml` is green on every job.
 //!
 //! The workflows are YAML that only runs in CI, so a regression in how they
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a

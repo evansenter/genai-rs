@@ -638,10 +638,24 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: ./.github/actions/setup-mold
       - uses: taiki-e/install-action@cargo-nextest
+      # The scripted harness suite below drives the real harness. Version
+      # must match SUPPORTED_HARNESS_VERSION, as in test-antigravity.
+      - name: Install pinned localharness wheel
+        run: pip install google-antigravity==0.1.23
+      # nextest (process per test): several unit tests assume process
+      # isolation and flake under plain `cargo test` threads (#418). The
+      # antigravity feature is measured too (about a fifth of the source),
+      # with the key-free scripted harness suite that tests most of it; the
+      # key is blanked, as in test-antigravity. Both runs feed one report.
       - name: Generate coverage
-        # nextest (process per test): several unit tests assume process
-        # isolation and flake under plain `cargo test` threads (#418).
-        run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
+        env:
+          GEMINI_API_KEY: ""
+        run: |
+          set -euo pipefail
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov nextest --workspace --features antigravity --no-report
+          cargo llvm-cov nextest --workspace --features antigravity --no-report --run-ignored all -E 'binary(antigravity_scripted)'
+          cargo llvm-cov report --workspace --lcov --output-path lcov.info
       # Every run, token or not: with no Codecov upload, the job summary is
       # where the coverage is read. `--workspace` as above: without it the
       # report covers the root package only, not genai-rs-macros.
@@ -656,6 +670,12 @@ jobs:
             cat coverage-summary.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      # After the summary, so a drop below the floor is shown before it
+      # fails the job. The floor sits just under the line coverage measured
+      # when it was set (D-NEXT-H4): raise it as coverage grows, and lower
+      # it only with the reason in the commit.
+      - name: Enforce the coverage floor
+        run: cargo llvm-cov report --workspace --fail-under-lines 94
       # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,
       # and the summary above stands in; with one, a failed upload fails the
       # job instead of passing with nothing uploaded.
