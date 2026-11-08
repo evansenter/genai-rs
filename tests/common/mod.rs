@@ -199,6 +199,37 @@ pub async fn stored_echo(
     Ok(record.pointer(pointer).cloned())
 }
 
+/// How long [`stored_echo_when_present`] waits for a field to appear.
+#[allow(dead_code)]
+pub const STORED_ECHO_WAIT: Duration = Duration::from_secs(10);
+
+/// [`stored_echo`], read again until `pointer` holds a value, for up to
+/// [`STORED_ECHO_WAIT`]. A background run's record can lack a field for a
+/// moment after its create returned: while an Antigravity or Deep Research
+/// run starts, a read returns a sparse record without `agent_config`, and
+/// one read after the cancel still met it in three runs of one day (#504).
+/// The last read is returned as it came: still `None` after the wait, or an
+/// `Err` (not retried here; `stored_echo` already retries transients).
+#[allow(dead_code)]
+pub async fn stored_echo_when_present(
+    client: &Client,
+    interaction_id: &str,
+    pointer: &str,
+) -> Result<Option<serde_json::Value>, GenaiError> {
+    // tokio's clock, so a test on a paused one sees the wait in virtual time.
+    let deadline = tokio::time::Instant::now() + STORED_ECHO_WAIT;
+    let mut delay = Duration::from_millis(500);
+    loop {
+        let read = stored_echo(client, interaction_id, pointer).await;
+        if !matches!(read, Ok(None)) || tokio::time::Instant::now() + delay > deadline {
+            return read;
+        }
+        println!("{interaction_id}: nothing stored at {pointer} yet; reading again in {delay:?}");
+        sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_secs(2));
+    }
+}
+
 /// Asserts that a stored read-back holds everything that was sent: every
 /// key of `sent`, at every depth, with an equal value. The stored record may
 /// hold more (defaults the server fills in), which is not a mismatch. An
