@@ -1,0 +1,46 @@
+name: H4 coverage probe (temporary)
+
+# Temporary: measures the reworked Code Coverage job's numbers on Linux
+# to set its floor, then is removed in the next commit.
+on:
+  push:
+    branches: [ "aplus/h4-tests-ci" ]
+
+permissions:
+  contents: read
+
+jobs:
+  coverage-probe:
+    name: Coverage probe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: ./.github/actions/setup-mold
+      - uses: taiki-e/install-action@cargo-nextest
+      - name: Install pinned localharness wheel
+        run: pip install google-antigravity==0.1.23
+      - name: Generate coverage
+        env:
+          GEMINI_API_KEY: ""
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov nextest --workspace --features antigravity --no-report
+          mid=$(date +%s)
+          cargo llvm-cov nextest --workspace --features antigravity --no-report --run-ignored all -E 'binary(antigravity_scripted)'
+          end=$(date +%s)
+          echo "unit run $((mid - start))s, scripted run $((end - mid))s"
+      - name: Coverage summary
+        run: |
+          set -euo pipefail
+          echo "== all"
+          cargo llvm-cov report --workspace --summary-only | tail -3
+          echo "== without antigravity"
+          cargo llvm-cov report --workspace --summary-only --ignore-filename-regex 'src/antigravity' | tail -3
+          echo "== full table"
+          cargo llvm-cov report --workspace --summary-only
