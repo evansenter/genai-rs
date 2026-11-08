@@ -280,6 +280,11 @@ from here rather than repeated.
   declared on turn 1 and left off the follow-up was called anyway
   (`requires_action`, 3 of 3), never refused. The integration suite's
   `retry_request!` retries the `200` form as it did the `400` (#545).
+  The live jobs' logs of 112 CI runs from 2026-11-01 to 2026-11-07 show
+  the `400` form in this follow-up and once in
+  `test_structured_output_with_url_context`, last on 2026-11-04; after
+  that the only test to fail on a `failed` interaction was this
+  follow-up (4 runs), so no other test fails this way.
 - **Google Maps `latitude` / `longitude`** are accepted and used: asked
   for "a coffee shop near me" with Times Square's coordinates, the model
   answered with one on West 47th Street (2026-11-07).
