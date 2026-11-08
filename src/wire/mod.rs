@@ -272,8 +272,9 @@ const TRUNCATE_THRESHOLD: usize = 100;
 const RAW_BODY_LIMIT: usize = 1000;
 
 /// Truncates a string to at most `max_bytes` bytes on a UTF-8 character
-/// boundary, appending `"..."` when truncated.
-fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
+/// boundary, appending `"..."` when truncated. Also shortens the body
+/// previews in error messages (`http::error_helpers`).
+pub(crate) fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
     if s.len() <= max_bytes {
         Cow::Borrowed(s)
     } else {
