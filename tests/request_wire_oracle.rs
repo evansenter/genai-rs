@@ -29,6 +29,8 @@
 mod api_surface;
 mod common;
 mod live_verbs;
+#[path = "request_wire_oracle/query_options.rs"]
+mod query_options;
 
 use api_surface::Surface;
 use common::http_stub::{Recorded, Reply, Stub};
@@ -1513,9 +1515,9 @@ fn options_set(
 }
 
 /// Every verb of every resource handle is called by the query test above,
-/// and every option of every list builder is set there, so every query
-/// string the crate builds is checked. (A request type's own options, such
-/// as `EnvironmentFileUpload`'s, are set there by hand.)
+/// and every option of every list builder is set there, as is every query
+/// option of a request type (`WebhookUpdate::with_update_mask`, found by
+/// `query_options`), so every query string the crate builds is checked.
 #[test]
 fn every_verb_is_called_by_the_query_test() {
     const TEST: &str = "every_query_key_a_verb_sends_is_a_binding_query_parameter";
@@ -1542,7 +1544,8 @@ fn every_verb_is_called_by_the_query_test() {
         missing.join("\n  ")
     );
 
-    let builders = list_builder_options(&live_verbs::src_files(), &handles);
+    let src = live_verbs::src_files();
+    let builders = list_builder_options(&src, &handles);
     assert!(
         builders.len() >= 11,
         "found too few list builders: {:?}",
@@ -1559,6 +1562,31 @@ fn every_verb_is_called_by_the_query_test() {
         unset.is_empty(),
         "list builder options the query test does not set (set each on its verb's \
          builder there):\n  {}",
+        unset.join("\n  ")
+    );
+
+    let fields = query_options::query_fields(&src);
+    for (ty, field) in [
+        ("WebhookUpdate", "update_mask"),
+        ("CredentialUpdate", "update_mask"),
+        ("EnvironmentFileUpload", "overwrite"),
+        ("EnvironmentFileUpload", "extract"),
+    ] {
+        assert!(
+            fields.contains(&(ty.to_string(), field.to_string())),
+            "the query field discovery missed {ty}.{field}; it found {fields:?}"
+        );
+    }
+    let options = query_options::query_options(&src, &fields);
+    let set = query_options::query_options_set(&file, TEST, &src, &options);
+    let unset: Vec<String> = options
+        .difference(&set)
+        .map(|(ty, option)| format!("{ty}::{option}(..)"))
+        .collect();
+    assert!(
+        unset.is_empty(),
+        "request-type query options the query test does not set (call each on the \
+         value it passes to its verb there):\n  {}",
         unset.join("\n  ")
     );
 }

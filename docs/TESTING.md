@@ -528,8 +528,11 @@ checks on it:
 - **Query strings on the wire** (`tests/request_wire_oracle.rs`,
   `every_query_key_a_verb_sends_is_a_binding_query_parameter`). Every verb
   of every resource handle runs against the stub with every list builder
-  option set (`every_verb_is_called_by_the_query_test` fails on a verb not
-  called or an option not set on its verb's builder), and each request is
+  option and every request type's query option set
+  (`every_verb_is_called_by_the_query_test` fails on a verb not called, an
+  option not set on its verb's builder, or a `with_*` method not called
+  whose field a verb sends on the query string, such as
+  `WebhookUpdate::with_update_mask`), and each request is
   matched to its endpoint in `bindings.json`. A key the endpoint does not
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a
