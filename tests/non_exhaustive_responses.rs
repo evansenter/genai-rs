@@ -364,7 +364,8 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
 
 /// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
 const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \
-     the crate writes; the payload inside keeps its own `extra`";
+     the crate writes; the payload inside keeps its own `extra`, but the SSE event's \
+     envelope keys (`StreamChunk::extra`) are not passed on (D-034)";
 
 /// Why an `InputEvent` arm keeps no `extra`.
 const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \

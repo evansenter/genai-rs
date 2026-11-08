@@ -169,12 +169,12 @@ impl StreamChunk {
         }
     }
 
-    /// The event's keys this chunk does not read, kept for round trip:
-    /// a key the API adds beside the payload, a key this crate reads on
-    /// another event type, and what is left of a `metadata` or `error`
-    /// object beside the fields read from it, under that key. Empty when
-    /// there are none; `None` for an `Unknown` chunk, whose `data` keeps
-    /// the whole event.
+    /// The event's keys this chunk does not read, kept as they came for
+    /// round trip: a key the API adds beside the payload, a key this crate
+    /// reads on another event type, and what is left of a `metadata` or
+    /// `error` object beside the fields read from it, under that key. Empty
+    /// when there are none; `None` for an `Unknown` chunk, whose `data`
+    /// keeps the whole event.
     #[must_use]
     pub fn extra(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
         match self {
@@ -427,55 +427,11 @@ pub(crate) struct InteractionStreamEvent {
     /// `None` for the known types, which are parsed by value (#498).
     pub raw: Option<serde_json::Value>,
 
-    /// The event's keys none of the fields above models, which the chunk
-    /// keeps in its `extra` (#538).
+    /// The event's keys its type does not read, as they came: a key none
+    /// of the fields above models, and a modeled key this event type does
+    /// not read (left unparsed, so the fields above hold only what the
+    /// type reads). The chunk keeps them in its `extra` (#538).
     pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-impl InteractionStreamEvent {
-    /// The `extra` of a chunk that reads the fields `reads` names: this
-    /// event's [`extra`](Self::extra), and every other modeled field
-    /// present, written back as JSON. Takes them all; the fields `reads`
-    /// names are left for the chunk.
-    pub(crate) fn unread(&mut self, reads: &[&str]) -> serde_json::Map<String, serde_json::Value> {
-        fn put<T: Serialize>(
-            unread: &mut serde_json::Map<String, serde_json::Value>,
-            reads: &[&str],
-            key: &str,
-            field: &mut Option<T>,
-        ) {
-            if reads.contains(&key) {
-                return;
-            }
-            // A modeled value always serializes; `ok()` keeps this total.
-            if let Some(value) = field.take().and_then(|v| serde_json::to_value(v).ok()) {
-                unread.insert(key.to_string(), value);
-            }
-        }
-        let mut unread = std::mem::take(&mut self.extra);
-        put(&mut unread, reads, "interaction", &mut self.interaction);
-        put(
-            &mut unread,
-            reads,
-            "interaction_id",
-            &mut self.interaction_id,
-        );
-        put(&mut unread, reads, "status", &mut self.status);
-        put(&mut unread, reads, "index", &mut self.index);
-        put(&mut unread, reads, "step", &mut self.step);
-        put(&mut unread, reads, "delta", &mut self.delta);
-        put(&mut unread, reads, "usage", &mut self.usage);
-        put(&mut unread, reads, "step_usage", &mut self.step_usage);
-        put(&mut unread, reads, "metadata", &mut self.metadata);
-        put(&mut unread, reads, "error", &mut self.error);
-        put(
-            &mut unread,
-            reads,
-            "continuation_token",
-            &mut self.continuation_token,
-        );
-        unread
-    }
 }
 
 /// Keeps `rest`, the unread part of the object at `key`, in `extra` under
@@ -490,17 +446,37 @@ pub(crate) fn keep_rest(
     }
 }
 
-/// The event types `dispatch_stream_event` handles, whose raw JSON is not
-/// kept.
-const KNOWN_EVENT_TYPES: &[&str] = &[
-    "interaction.created",
-    "interaction.status_update",
-    "step.start",
-    "step.delta",
-    "step.stop",
-    "interaction.completed",
+/// Every event key a field of [`InteractionStreamEvent`] models, beside
+/// `event_type` and `event_id`.
+const MODELED_KEYS: &[&str] = &[
+    "interaction",
+    "interaction_id",
+    "status",
+    "index",
+    "step",
+    "delta",
+    "usage",
+    "step_usage",
+    "metadata",
     "error",
+    "continuation_token",
 ];
+
+/// The modeled keys a known event type's chunk reads, exactly the fields
+/// `dispatch_stream_event` reads for it; `None` for a type it does not
+/// dispatch, whose raw JSON is kept instead.
+fn event_reads(event_type: &str) -> Option<&'static [&'static str]> {
+    Some(match event_type {
+        "interaction.created" => &["interaction"],
+        "interaction.status_update" => &["interaction_id", "status", "usage", "continuation_token"],
+        "step.start" => &["index", "step"],
+        "step.delta" => &["index", "delta", "metadata"],
+        "step.stop" => &["index", "usage", "step_usage"],
+        "interaction.completed" => &["interaction", "metadata"],
+        "error" => &["error"],
+        _ => return None,
+    })
+}
 
 impl<'de> Deserialize<'de> for InteractionStreamEvent {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -523,13 +499,19 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
 
         let raw = serde_json::Value::deserialize(deserializer)?;
 
+        // A bare `{"error": {...}}` line (see `http::sse_parser`) carries no
+        // event_type; it is the stream's error event.
+        let bare_error = raw.get("event_type").is_none_or(serde_json::Value::is_null)
+            && raw.get("error").is_some_and(|error| !error.is_null());
+        let reads = match raw.get("event_type").and_then(serde_json::Value::as_str) {
+            Some(event_type) => event_reads(event_type),
+            None if bare_error => event_reads("error"),
+            None => None,
+        };
+
         // A known event is parsed by value; only an unknown one keeps a copy
         // of its JSON for `StreamChunk::Unknown`.
-        let known = raw
-            .get("event_type")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|event_type| KNOWN_EVENT_TYPES.contains(&event_type));
-        let (object, raw) = if known {
+        let (object, raw) = if reads.is_some() {
             (raw, None)
         } else {
             (raw.clone(), Some(raw))
@@ -539,26 +521,42 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
                 "an SSE event must be a JSON object, got {object}"
             )));
         };
+        let reads = reads.unwrap_or_default();
 
         let event_type: Option<String> = take(&mut object, "event_type")?;
-        let interaction = take(&mut object, "interaction")?;
-        let interaction_id = take(&mut object, "interaction_id")?;
-        let status = take(&mut object, "status")?;
-        let index = take(&mut object, "index")?;
-        let step = take(&mut object, "step")?;
-        let delta = take(&mut object, "delta")?;
-        let usage = take(&mut object, "usage")?;
-        let step_usage = take(&mut object, "step_usage")?;
-        let metadata = take(&mut object, "metadata")?;
-        let error: Option<StreamError> = take(&mut object, "error")?;
-        let continuation_token = take(&mut object, "continuation_token")?;
         let event_id = take(&mut object, "event_id")?;
+        // A modeled key this event type does not read stays in the object,
+        // as it came, for the chunk's `extra` (#538); a null one is dropped,
+        // as an absent one would be.
+        object.retain(|key, value| {
+            !(value.is_null()
+                && MODELED_KEYS.contains(&key.as_str())
+                && !reads.contains(&key.as_str()))
+        });
+        macro_rules! read {
+            ($key:literal) => {
+                if reads.contains(&$key) {
+                    take(&mut object, $key)?
+                } else {
+                    None
+                }
+            };
+        }
+        let interaction = read!("interaction");
+        let interaction_id = read!("interaction_id");
+        let status = read!("status");
+        let index = read!("index");
+        let step = read!("step");
+        let delta = read!("delta");
+        let usage = read!("usage");
+        let step_usage = read!("step_usage");
+        let metadata = read!("metadata");
+        let error: Option<StreamError> = read!("error");
+        let continuation_token = read!("continuation_token");
 
-        // A bare `{"error": {...}}` line (see `http::sse_parser`) carries no
-        // event_type; it is the stream's error event.
         let event_type = match event_type {
             Some(event_type) => event_type,
-            None if error.is_some() => "error".to_string(),
+            None if bare_error => "error".to_string(),
             None => {
                 tracing::warn!("SSE event missing event_type field.");
                 "<missing event_type>".to_string()
@@ -589,7 +587,7 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
 /// Error details from SSE streaming.
 ///
 /// Represents error information sent in "error" type SSE events.
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 pub(crate) struct StreamError {
     /// Human-readable error message
     #[serde(default)]
@@ -597,7 +595,7 @@ pub(crate) struct StreamError {
 
     /// Error code from the API (if provided). Per spec this is a URI that
     /// identifies the error type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub code: Option<String>,
 
     /// Its other keys, which `StreamChunk::Error` keeps under `error` in its
@@ -1160,16 +1158,12 @@ mod tests {
             event.step_usage.as_ref().unwrap().total_output_tokens,
             Some(9)
         );
+        // A step.stop does not read `metadata` (the spec's StepStop has
+        // none): it is left as it came, for the chunk's `extra` (#538).
+        assert!(event.metadata.is_none());
         assert_eq!(
-            event
-                .metadata
-                .as_ref()
-                .unwrap()
-                .total_usage
-                .as_ref()
-                .unwrap()
-                .total_tokens,
-            Some(30)
+            event.extra.get("metadata"),
+            Some(&serde_json::json!({"total_usage": {"total_tokens": 30}}))
         );
     }
 }

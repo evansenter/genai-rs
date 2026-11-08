@@ -1255,7 +1255,11 @@ its reason in the guard:
   `FunctionResultPayload`.
 - The known `AutoFunctionStreamChunk` variants: the crate's own
   `{chunk_type, data}` log form, which only the crate writes. The payload
-  inside keeps its own `extra`.
+  inside keeps its own `extra`, but no chunk's `extra` (D-NEXT-H3) is
+  passed on: `Delta` carries the `StepDelta` alone, and the stream reads
+  the other events without yielding them. A key the API adds to an SSE
+  event's envelope reaches `execute_stream()`'s `StreamChunk::extra`
+  only.
 - The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
   crate only sends to the harness. A payload struct keeps its own `extra`;
   a bool or string payload has no fields.
@@ -1931,16 +1935,20 @@ not read:
 
 - a key the crate models on no event type;
 - a modeled key on an event type that does not read it (an `index` on a
-  `status_update`), written back as JSON;
+  `status_update`), as it came: the parser reads only the keys the
+  event's type reads, so it neither writes such a key back through the
+  crate's type (which would not reproduce it) nor fails the event on a
+  value that type could not read;
 - what is left of `metadata` beside the `total_usage` a `step.delta` or
   `interaction.completed` reads from it, and of `error` beside its
   `message` and `code`, under that key.
 
 `event_type` is the variant, and `event_id` is on `StreamEvent`, so neither
-is in it. A known event is still parsed by value (#498): each modeled key
-is moved out of the object and read, and what is left is the `extra`. The
-crate's `{chunk_type, data}` log form writes a non-empty `extra` beside
-`data` and reads it back.
+is in it. A known event is still parsed by value (#498): each key its type
+reads is moved out of the object and read, a null modeled key is dropped
+as an absent one is, and what is left is the `extra`. The crate's
+`{chunk_type, data}` log form writes a non-empty `extra` beside `data` and
+reads it back.
 
 Rejected: the raw event JSON on every chunk. It would copy each event
 before parsing it, the cost #498 removed from the delta path (a streamed
@@ -1951,5 +1959,8 @@ union's variants, and a chunk is often handled without its event.
 **Consequences.** Breaking (D-007): a pattern on `Completed(response)`
 becomes `Completed { interaction, .. }`, a pattern listing every field of
 a known variant needs `..`, and a struct literal needs `extra`. The
-guard's `StreamChunk` exemption and D-034's uncovered bullet are gone.
+guard's `StreamChunk` exemption and D-034's uncovered bullet are gone. The
+auto-function stream passes on no chunk's `extra` (D-034's
+`AutoFunctionStreamChunk` bullet), so an envelope key reaches only a
+caller of `execute_stream()`.
 

@@ -77,9 +77,11 @@ fn drop_transport_keys(request: &mut InteractionRequest) {
 /// accumulator. Shared by the create and get streaming paths.
 ///
 /// Each known chunk keeps the event's keys it does not read in its `extra`
-/// (#538): the unmodeled ones, a modeled key this event type does not read,
-/// and the rest of a `metadata` or `error` object beside the fields read
-/// from it.
+/// (#538): the event's own `extra` (the unmodeled keys, and a modeled key
+/// this event type does not read, as they came), and the rest of a
+/// `metadata` or `error` object beside the fields read from it. Each arm
+/// reads exactly the fields `wire_streaming::event_reads` names for its
+/// type; the parser leaves the others unset.
 ///
 /// Returns `Some(chunk)` for events that should be surfaced to the consumer;
 /// `None` for events that were dropped (with a warning).
@@ -89,7 +91,7 @@ pub(crate) fn dispatch_stream_event(
 ) -> Option<StreamChunk> {
     match event.event_type.as_str() {
         "interaction.created" => {
-            let extra = event.unread(&["interaction"]);
+            let extra = std::mem::take(&mut event.extra);
             // Interaction accepted - provides early access to interaction ID
             if let Some(interaction) = event.interaction {
                 Some(StreamChunk::Created {
@@ -104,7 +106,7 @@ pub(crate) fn dispatch_stream_event(
         // No interaction_id on a `store: false` stream (live 2026-11-01),
         // so only the status is required.
         "interaction.status_update" => {
-            let extra = event.unread(&["interaction_id", "status", "usage", "continuation_token"]);
+            let extra = std::mem::take(&mut event.extra);
             match event.status {
                 Some(status) => Some(StreamChunk::StatusUpdate {
                     interaction_id: event.interaction_id,
@@ -120,7 +122,7 @@ pub(crate) fn dispatch_stream_event(
             }
         }
         "step.start" => {
-            let extra = event.unread(&["index", "step"]);
+            let extra = std::mem::take(&mut event.extra);
             match (event.index, event.step) {
                 (Some(index), Some(step)) => {
                     accumulator.start(index, step.clone());
@@ -137,7 +139,7 @@ pub(crate) fn dispatch_stream_event(
             }
         }
         "step.delta" => {
-            let mut extra = event.unread(&["index", "delta", "metadata"]);
+            let mut extra = std::mem::take(&mut event.extra);
             match (event.index, event.delta) {
                 (Some(index), Some(delta)) => {
                     accumulator.apply_delta(index, &delta);
@@ -167,7 +169,7 @@ pub(crate) fn dispatch_stream_event(
             }
         }
         "step.stop" => {
-            let extra = event.unread(&["index", "usage", "step_usage"]);
+            let extra = std::mem::take(&mut event.extra);
             if let Some(index) = event.index {
                 accumulator.stop(index);
                 // Retain the cumulative interaction usage as a fallback for
@@ -187,7 +189,7 @@ pub(crate) fn dispatch_stream_event(
             }
         }
         "interaction.completed" => {
-            let mut extra = event.unread(&["interaction", "metadata"]);
+            let mut extra = std::mem::take(&mut event.extra);
             if let Some(mut interaction) = event.interaction {
                 let metadata = event.metadata.unwrap_or_default();
                 keep_rest(&mut extra, "metadata", metadata.extra);
@@ -217,7 +219,7 @@ pub(crate) fn dispatch_stream_event(
             }
         }
         "error" => {
-            let mut extra = event.unread(&["error"]);
+            let mut extra = std::mem::take(&mut event.extra);
             // Error occurred during streaming
             if let Some(error) = event.error {
                 keep_rest(&mut extra, "error", error.extra);
@@ -824,6 +826,33 @@ mod tests {
                 serde_json::from_value(serde_json::to_value(&streamed).unwrap()).unwrap();
             assert_eq!(back.chunk.extra(), Some(&expected), "{event}");
             assert_eq!(back.event_id.as_deref(), Some("e7"));
+        }
+    }
+
+    /// A modeled key on an event type that does not read it reaches the
+    /// chunk's `extra` as it came: not re-serialized through the crate's
+    /// type (a `StreamError` would add `"message": ""`), and not parsed at
+    /// all, so a value that type could not read does not fail the event.
+    #[test]
+    fn test_dispatch_keeps_an_unread_modeled_key_as_it_came() {
+        let cases = [
+            (
+                r#"{"event_type":"interaction.status_update","status":"failed","error":{"code":"c"}}"#,
+                json!({"error": {"code": "c"}}),
+            ),
+            (
+                r#"{"event_type":"step.delta","index":0,"delta":{"type":"text","text":"Hi"},"usage":{"total_tokens":"many"},"step":7}"#,
+                json!({"usage": {"total_tokens": "many"}, "step": 7}),
+            ),
+            (
+                r#"{"event_type":"error","error":{"message":"boom"},"interaction":"not an interaction"}"#,
+                json!({"interaction": "not an interaction"}),
+            ),
+        ];
+        for (event, expected) in cases {
+            let chunk = dispatch_stream_event(parse_event(event), &mut StepAccumulator::new())
+                .unwrap_or_else(|| panic!("dropped: {event}"));
+            assert_eq!(chunk.extra(), expected.as_object(), "{event}");
         }
     }
 

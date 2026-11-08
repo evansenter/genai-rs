@@ -267,10 +267,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StreamChunk::Completed` is a struct variant,
   `Completed { interaction, extra }`** (#538). `extra` is a
   `serde_json::Map<String, serde_json::Value>` holding the SSE event's keys
-  the variant does not read, such as a key the API adds beside the payload,
-  which the stream used to drop; `StreamChunk::extra()` reads it, and the
-  chunk's serialized `{chunk_type, data}` form writes and reads it as
-  `extra`. It is empty for every event the API sends today. Migration:
+  the variant does not read, as they came, such as a key the API adds
+  beside the payload, which a `StreamChunk` used to drop;
+  `StreamChunk::extra()` reads it, and the chunk's serialized
+  `{chunk_type, data}` form writes and reads it as `extra`. It is empty for
+  every event the API sends today. A key the crate reads on another event
+  type is no longer parsed on one that does not read it, so a value the
+  crate could not read there no longer fails the event. The auto-function
+  stream passes on no chunk's `extra`: `AutoFunctionStreamChunk::Delta`
+  still carries the `StepDelta` alone. Migration:
   `StreamChunk::Completed(response)` becomes
   `StreamChunk::Completed { interaction: response, .. }` (or
   `Completed { interaction, .. }`); a pattern that lists every field of a
