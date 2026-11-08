@@ -122,7 +122,19 @@ jobs:
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"
             exit 1
           fi
-          cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
+          # As in test-integration: --success-output=final keeps passing
+          # tests' *_SKIPPED markers in the log, and more than 3 fails the
+          # step. rc is captured so the marker check runs on a failure too.
+          rc=0
+          cargo nextest run --features antigravity --run-ignored all --no-fail-fast --success-output=final -E 'binary(antigravity_harness)' 2>&1 | tee /tmp/antigravity_harness.log || rc=$?
+          skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/antigravity_harness.log || true)
+          if [ "${skips:-0}" -gt 3 ]; then
+            echo "::error::antigravity_harness: $skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+            if [ "$rc" -eq 0 ]; then rc=1; fi
+          elif [ "${skips:-0}" -gt 0 ]; then
+            echo "::warning::antigravity_harness: $skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+          fi
+          exit "$rc"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           # Retries for the shared key's occasional 429s; retried tests show

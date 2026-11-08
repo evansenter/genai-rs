@@ -902,8 +902,12 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
         .collect();
     if selected.is_empty() {
         // No multiple-choice question to check against; the freeform arm
-        // of the hook ran instead.
-        println!("note: no choice-bearing question, skipping the choice check");
+        // of the hook ran instead. Whether the answer landed went
+        // unverified, so CI counts it (docs/TESTING.md, "Skip markers").
+        println!(
+            "SEMANTIC_VALIDATION_SKIPPED (no-choice-question): the model asked no \
+             multiple-choice question, so the choice check did not run"
+        );
     } else {
         let client = genai_rs::Client::builder(key_for_validation)
             .build()

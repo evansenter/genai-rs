@@ -39,7 +39,17 @@ jobs:
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip"
             exit 1
           fi
-          cargo nextest run --features antigravity --run-ignored all --no-fail-fast -E 'binary(antigravity_harness)'
+          # Markers kept and budgeted as in rust.yml's harness step.
+          rc=0
+          cargo nextest run --features antigravity --run-ignored all --no-fail-fast --success-output=final -E 'binary(antigravity_harness)' 2>&1 | tee /tmp/antigravity_harness.log || rc=$?
+          skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/antigravity_harness.log || true)
+          if [ "${skips:-0}" -gt 3 ]; then
+            echo "::error::antigravity_harness: $skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+            if [ "$rc" -eq 0 ]; then rc=1; fi
+          elif [ "${skips:-0}" -gt 0 ]; then
+            echo "::warning::antigravity_harness: $skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+          fi
+          exit "$rc"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           # As in rust.yml: retries in the env, where the log echoes them.

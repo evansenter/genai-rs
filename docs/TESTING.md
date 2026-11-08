@@ -369,6 +369,13 @@ when the week breaches a target (D-046):
   each with its share. A low rate across the suite can hide one test that
   needs a retry every few runs.
 
+The report lists the week's runs by creation date, up to 1,000 (about 115
+a week now); a listing that reaches the limit fails the report rather than
+leave runs out. It also adds up the [skip markers](#skip-markers) the retry
+jobs printed across the week, with the tests that printed them: each job
+budgets only its own run's, so a test that skips its check in run after
+run shows only here. That row is reported, not a target.
+
 Failed runs are split by event. Only main's (push, schedule, dispatch) are
 categorized; a pull request's red run is usually the change under review,
 so it is counted, not called a flake. A test counts as failed only when its
@@ -463,12 +470,16 @@ Two printed markers mean "passed without verifying":
 
 | Marker | Meaning |
 |--------|---------|
-| `SEMANTIC_VALIDATION_SKIPPED` | The validator failed transiently (or returned no usable verdict), so the verdict was never obtained |
+| `SEMANTIC_VALIDATION_SKIPPED` | The validator failed transiently (or returned no usable verdict), so the verdict was never obtained, or the test had nothing to check it against (the Antigravity question test, when the model asked no multiple-choice question) |
 | `LIVE_TOOL_EVIDENCE_SKIPPED` | The interaction produced no evidence the tool ran, for a reason the test can't tell apart from a regression |
 
-The `test-integration` job keeps passing-test output
-(`--success-output=final`) and counts both markers per binary. Any marker
-gives a warning; more than 3 fails the step (`release.yml` does the same).
+Every live nextest step keeps passing-test output
+(`--success-output=final`) and counts both markers: the `test-integration`
+job per binary, and the Antigravity harness step in `test-antigravity` and
+in `release.yml`. Any marker gives a warning; more than 3 fails the step
+(10 for `release.yml`'s whole-workspace run). `tests/ci_workflows/` checks
+that every live step does this, and the flakiness report adds the markers
+up across the week.
 
 A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether

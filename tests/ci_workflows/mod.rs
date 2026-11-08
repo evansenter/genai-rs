@@ -329,6 +329,55 @@ fn nextest_retries_are_set_in_the_step_env() {
     );
 }
 
+/// A live test that passes without verifying prints a skip marker
+/// (`docs/TESTING.md`, "Skip markers"). Every live nextest step keeps
+/// passing tests' output (`--success-output=final`), where the markers
+/// are, and fails over a budget of them: the Antigravity harness step once
+/// had neither, so its skips were invisible (#504).
+#[test]
+fn live_nextest_steps_keep_and_budget_skip_markers() {
+    let mut live = 0;
+    let mut problems = Vec::new();
+    for (name, text) in workflows() {
+        for (job, body) in jobs(&text) {
+            for step in steps(&body)
+                .iter()
+                .filter(|step| is_live_nextest_step(step))
+            {
+                live += 1;
+                let title = step.lines().next().unwrap_or("").trim().to_string();
+                let lines: Vec<&str> = command_lines(step).collect();
+                let keeps_output = lines.iter().any(|line| {
+                    line.contains("nextest run") && line.contains("--success-output=final")
+                });
+                let counts = lines.iter().any(|line| {
+                    line.contains("grep -cE")
+                        && line.contains("SEMANTIC_VALIDATION_SKIPPED")
+                        && line.contains("LIVE_TOOL_EVIDENCE_SKIPPED")
+                });
+                let budgets = lines
+                    .iter()
+                    .any(|line| line.contains("\"${skips:-0}\" -gt") && !line.contains("-gt 0"));
+                for (ok, what) in [
+                    (keeps_output, "no --success-output=final on its nextest run"),
+                    (counts, "does not count both skip markers"),
+                    (budgets, "has no budget over which the markers fail it"),
+                ] {
+                    if !ok {
+                        problems.push(format!("{name} job {job}, step `{title}`: {what}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(live >= 4, "found only {live} live nextest steps");
+    assert!(
+        problems.is_empty(),
+        "live nextest steps must keep and budget their skip markers:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
 #[test]
 fn the_step_parser_finds_live_steps_and_their_env() {
     let job = "    runs-on: x\n    steps:\n      - uses: actions/checkout@v4\n      # The live step.\n      - name: Unit\n        run: cargo nextest run --workspace\n      - name: Live\n        run: |\n          cargo nextest run \\\n            --run-ignored all\n        env:\n          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n          NEXTEST_RETRIES: 2\n      - name: Scripted\n        run: cargo nextest run -E 'binary(x)'\n        env:\n          GEMINI_API_KEY: \"\"\n";
