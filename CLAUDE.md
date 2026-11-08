@@ -319,11 +319,13 @@ wheel's protos with `python3`).
    D-009):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
 2. `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z" && git push origin vX.Y.Z`.
-   `release.yml` validates (including the live suite), publishes
+   `release.yml` validates (including the live suite, and that the
+   tagged commit's main push run of `rust.yml` passed every job), publishes
    `genai-rs-macros` then `genai-rs`, and creates the GitHub release from the
    `## [X.Y.Z]` CHANGELOG section. Never `cargo publish` or
    `gh release create` by hand.
-3. On failure: `validate` → re-run (the live suite can flake); tag/version
+3. On failure: `validate` → re-run (the live suite can flake; a red push
+   run → re-run its failed jobs, or fix main and tag the fix); tag/version
    mismatch → delete the tag, fix, re-tag; failed after `genai-rs-macros`
    published → bump the patch version and release again; `github-release` →
    re-run.

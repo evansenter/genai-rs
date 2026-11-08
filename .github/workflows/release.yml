@@ -13,8 +13,13 @@ jobs:
     name: Validate Release
     runs-on: ubuntu-latest
     # The live suite takes ~20 minutes; a hung test is killed by
-    # .config/nextest.toml after 10.
+    # .config/nextest.toml after 10. The push-run check below may wait up to
+    # 45 more for that run to finish.
     timeout-minutes: 120
+    # `actions: read` for the push-run check's `gh run` calls.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -98,6 +103,15 @@ jobs:
         run: cargo doc --workspace --no-deps --features antigravity
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
+      # The checks above run on Ubuntu only. The tagged commit's push run
+      # of rust.yml on main is where the rest of CI ran on it, the Cross
+      # Platform legs included: every job there must be green (or skipped)
+      # before anything publishes. Last of the stable checks, so the push
+      # run has usually finished; the script waits if not.
+      - name: Check the tagged commit's main push run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check_release_push_run.sh "$GITHUB_SHA"
       # docs.rs builds on nightly rustdoc. Checked here, the last gate before
       # crates.io, so nightly churn can't redden PRs. No -D warnings: docs.rs
       # fails only on hard errors. Keep last: it changes the rustup default.
