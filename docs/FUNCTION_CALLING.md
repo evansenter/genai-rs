@@ -396,8 +396,8 @@ let builder = client.interaction()
 ## Streaming function-call arguments
 
 When streaming, arguments arrive incrementally as `StepDelta::ArgumentsDelta`
-JSON fragments. The completed `StreamChunk::Completed(response)` has them
-assembled and parsed, so `response.function_calls()` works after streaming
+JSON fragments. The completed `StreamChunk::Completed { interaction, .. }` has
+them assembled and parsed, so `interaction.function_calls()` works after streaming
 exactly as it does after `create()`. See [Streaming API](STREAMING_API.md).
 
 ## Examples

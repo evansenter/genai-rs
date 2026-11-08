@@ -41,9 +41,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Lifecycle events go to stderr so stdout carries only the model's text.
     while let Some(event) = stream.next().await {
         match event?.chunk {
-            StreamChunk::Created { interaction } => eprintln!("[created] id={:?}", interaction.id),
+            StreamChunk::Created { interaction, .. } => {
+                eprintln!("[created] id={:?}", interaction.id)
+            }
             StreamChunk::StatusUpdate { status, .. } => eprintln!("[status] {status:?}"),
-            StreamChunk::StepStart { index, step } => {
+            StreamChunk::StepStart { index, step, .. } => {
                 eprintln!("[step {index} start] {}", step.step_type());
             }
             StreamChunk::StepDelta { delta, .. } => {
@@ -53,15 +55,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             StreamChunk::StepStop { index, .. } => eprintln!("\n[step {index} stop]"),
-            StreamChunk::Completed(response) => {
-                let total = response.usage.as_ref().and_then(|u| u.total_tokens);
+            StreamChunk::Completed { interaction, .. } => {
+                let total = interaction.usage.as_ref().and_then(|u| u.total_tokens);
                 eprintln!(
                     "[completed] status={:?} total_tokens={total:?}",
-                    response.status
+                    interaction.status
                 );
             }
             // Terminal: the API reports a failure inside an otherwise healthy stream.
-            StreamChunk::Error { message, code } => {
+            StreamChunk::Error { message, code, .. } => {
                 return Err(format!("stream error ({code:?}): {message}").into());
             }
             // `StreamChunk` is non-exhaustive; new event types land here.
@@ -89,14 +91,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             last_event_id.clone_from(&event.event_id);
         }
         match event.chunk {
-            StreamChunk::Created { interaction } => interaction_id = interaction.id,
+            StreamChunk::Created { interaction, .. } => interaction_id = interaction.id,
             StreamChunk::StepDelta { delta, .. } => {
                 if let Some(text) = delta.as_text() {
                     print!("{text}");
                     io::stdout().flush()?;
                 }
             }
-            StreamChunk::Error { message, code } => {
+            StreamChunk::Error { message, code, .. } => {
                 return Err(format!("stream error ({code:?}): {message}").into());
             }
             _ => {}
@@ -124,11 +126,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     io::stdout().flush()?;
                 }
             }
-            StreamChunk::Completed(response) => {
-                eprintln!("\n[completed] status={:?}", response.status);
+            StreamChunk::Completed { interaction, .. } => {
+                eprintln!("\n[completed] status={:?}", interaction.status);
                 completed = true;
             }
-            StreamChunk::Error { message, code } => {
+            StreamChunk::Error { message, code, .. } => {
                 return Err(format!("resumed stream error ({code:?}): {message}").into());
             }
             _ => {}

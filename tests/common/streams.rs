@@ -88,8 +88,11 @@ pub async fn consume_stream(
                     result.saw_thought = true;
                 }
             }
-            StreamChunk::Completed(response) => result.final_response = Some(*response),
-            StreamChunk::Error { message, code } => panic!(
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => result.final_response = Some(*response),
+            StreamChunk::Error { message, code, .. } => panic!(
                 "stream sent an error event after {} delta(s): {message} (code {code:?})",
                 result.delta_count
             ),

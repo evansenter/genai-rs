@@ -99,7 +99,10 @@ async fn canary_streaming_interaction() {
                     unknown_types_found.push(delta_type.clone());
                 }
             }
-            genai_rs::StreamChunk::Completed(response) => {
+            genai_rs::StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => {
                 assert_no_unknown_steps(&response, "streaming completed response");
             }
             // A new SSE event type is the drift this canary exists for.
@@ -109,7 +112,7 @@ async fn canary_streaming_interaction() {
                     unknown_types_found.push(event_type);
                 }
             }
-            genai_rs::StreamChunk::Error { message, code } => {
+            genai_rs::StreamChunk::Error { message, code, .. } => {
                 panic!("stream sent an error event: {message} (code {code:?})")
             }
             _ => {}

@@ -331,8 +331,8 @@ impl<'a> InteractionBuilder<'a> {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Completed(response) => {
-    ///             println!("\nFinal response ID: {:?}", response.id);
+    ///         StreamChunk::Completed { interaction, .. } => {
+    ///             println!("\nFinal response ID: {:?}", interaction.id);
     ///         }
     ///         _ => {} // Handle unknown future variants
     ///     }

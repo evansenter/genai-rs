@@ -137,8 +137,8 @@ impl Interactions<'_> {
     /// while let Some(result) = stream.next().await {
     ///     let event = result?;
     ///     println!("Event ID: {:?}", event.event_id);
-    ///     if let StreamChunk::Completed(response) = event.chunk {
-    ///         println!("Done! Status: {:?}", response.status);
+    ///     if let StreamChunk::Completed { interaction, .. } = event.chunk {
+    ///         println!("Done! Status: {:?}", interaction.status);
     ///     }
     /// }
     /// # Ok(())
@@ -178,8 +178,8 @@ impl Interactions<'_> {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Completed(response) => {
-    ///             println!("\nDone! Status: {:?}", response.status);
+    ///         StreamChunk::Completed { interaction, .. } => {
+    ///             println!("\nDone! Status: {:?}", interaction.status);
     ///         }
     ///         _ => {}
     ///     }

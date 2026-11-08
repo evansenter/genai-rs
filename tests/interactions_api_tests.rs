@@ -461,7 +461,7 @@ mod streaming {
                         status,
                         ..
                     } => updates.push((interaction_id, status)),
-                    StreamChunk::Completed(_) => completed = true,
+                    StreamChunk::Completed { .. } => completed = true,
                     StreamChunk::Error { message, .. } => panic!("stream error event: {message}"),
                     _ => {}
                 }
@@ -522,7 +522,7 @@ mod streaming {
                             delta_texts.push(text.to_string());
                         }
                     }
-                    StreamChunk::Completed(response) => id = response.id,
+                    StreamChunk::Completed { interaction: response, .. } => id = response.id,
                     StreamChunk::Error { message, .. } => panic!("stream error event: {message}"),
                     _ => {}
                 }

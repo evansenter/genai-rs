@@ -263,6 +263,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: every known `StreamChunk` variant has an `extra` field, and
+  `StreamChunk::Completed` is a struct variant,
+  `Completed { interaction, extra }`** (#538). `extra` is a
+  `serde_json::Map<String, serde_json::Value>` holding the SSE event's keys
+  the variant does not read, such as a key the API adds beside the payload,
+  which the stream used to drop; `StreamChunk::extra()` reads it, and the
+  chunk's serialized `{chunk_type, data}` form writes and reads it as
+  `extra`. It is empty for every event the API sends today. Migration:
+  `StreamChunk::Completed(response)` becomes
+  `StreamChunk::Completed { interaction: response, .. }` (or
+  `Completed { interaction, .. }`); a pattern that lists every field of a
+  known variant adds `..` (`StreamChunk::Error { message, code, .. }`); a
+  struct literal adds `extra: Default::default()`.
 - **Breaking: `FunctionDeclarationBuilder::add_parameter` takes the name as
   `impl Into<String>`, and `InteractionBuilder::add_functions` takes
   `impl IntoIterator<Item = FunctionDeclaration>`**, as the crate's other

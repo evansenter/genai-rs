@@ -595,8 +595,8 @@ impl Client {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Completed(response) => {
-    ///             println!("\nDone! ID: {:?}", response.id);
+    ///         StreamChunk::Completed { interaction, .. } => {
+    ///             println!("\nDone! ID: {:?}", interaction.id);
     ///         }
     ///         _ => {} // Handle unknown future variants
     ///     }
@@ -687,7 +687,7 @@ impl Client {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Completed(response) => {
+    ///         StreamChunk::Completed { .. } => {
     ///             println!("\nDone!");
     ///         }
     ///         _ => {}

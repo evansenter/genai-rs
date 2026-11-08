@@ -40,8 +40,8 @@ while let Some(result) = stream.next().await {
     if let Some(text) = event.chunk.delta_text() {
         print!("{text}");
     }
-    if let StreamChunk::Completed(response) = &event.chunk {
-        println!("\n\nDone! Tokens: {:?}", response.usage);
+    if let StreamChunk::Completed { interaction, .. } = &event.chunk {
+        println!("\n\nDone! Tokens: {:?}", interaction.usage);
     }
 }
 # Ok(())
@@ -57,14 +57,19 @@ Under API revision 2026-05-20 the server emits this lifecycle:
 
 | SSE event type | `StreamChunk` variant | Notes |
 |----------------|------------------------|-------|
-| `interaction.created` | `Created { interaction }` | First event; carries the interaction id |
+| `interaction.created` | `Created { interaction, .. }` | First event; carries the interaction id |
 | `interaction.status_update` | `StatusUpdate { interaction_id, status, usage, .. }` | Background/agent progress. `interaction_id` is `None` on a `store: false` stream; background streams carry `usage` mid-run |
-| `step.start` | `StepStart { index, step }` | A step begins; it may be partial (a `FunctionCall` with empty arguments) |
-| `step.delta` | `StepDelta { index, delta, total_usage }` | Incremental payload for that step. `total_usage` is the event's cumulative `metadata.total_usage`; in the bindings and the spec, but no text, TTS or agent stream has sent it |
-| `step.stop` | `StepStop { index, usage, step_usage }` | `usage` is cumulative; `step_usage` is this step's alone |
-| `interaction.completed` | `Completed(response)` | Terminal: the full response |
-| `error` | `Error { message, code }` | Terminal |
+| `step.start` | `StepStart { index, step, .. }` | A step begins; it may be partial (a `FunctionCall` with empty arguments) |
+| `step.delta` | `StepDelta { index, delta, total_usage, .. }` | Incremental payload for that step. `total_usage` is the event's cumulative `metadata.total_usage`; in the bindings and the spec, but no text, TTS or agent stream has sent it |
+| `step.stop` | `StepStop { index, usage, step_usage, .. }` | `usage` is cumulative; `step_usage` is this step's alone |
+| `interaction.completed` | `Completed { interaction, .. }` | Terminal: the full response |
+| `error` | `Error { message, code, .. }` | Terminal |
 | anything else | `Unknown { chunk_type, data }` | Preserved (Evergreen) |
+
+Every known variant also has an `extra` map (`chunk.extra()`): the event's
+keys the variant does not read, such as a key the API adds beside the
+payload, kept as they came and written back when the chunk is serialized.
+It is empty for every event the API sends today.
 
 `chunk.is_terminal()` (also on the event) is true for `Completed` and
 `Error`. `StreamEvent` has `is_delta()`, `is_complete()`, `interaction_id()`
@@ -222,10 +227,10 @@ while let Some(result) = stream.next().await {
                 streamed_args.push_str(fragment);
             }
         }
-        StreamChunk::Completed(response) => {
+        StreamChunk::Completed { interaction, .. } => {
             // The streamed steps were assembled into the final response,
             // including the parsed function-call arguments:
-            for call in response.function_calls() {
+            for call in interaction.function_calls() {
                 println!("Call: {}({}) [id={}]", call.name, call.args, call.id);
             }
         }

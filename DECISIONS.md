@@ -1253,14 +1253,16 @@ its reason in the guard:
   do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
   `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
   `FunctionResultPayload`.
-- The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
-  stream events that nothing sends back, serialized only in the crate's own
-  `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
-  a key the API adds to an SSE event's envelope itself is dropped (tracked
-  in #538).
+- The known `AutoFunctionStreamChunk` variants: the crate's own
+  `{chunk_type, data}` log form, which only the crate writes. The payload
+  inside keeps its own `extra`.
 - The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
   crate only sends to the harness. A payload struct keeps its own `extra`;
   a bool or string payload has no fields.
+
+*Amended 2026-11-07 (#538).* The known `StreamChunk` variants left the
+list above: each keeps the SSE event's keys it does not read in an `extra`
+map (D-NEXT-H3), and the guard no longer exempts them.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1905,3 +1907,48 @@ until they age out, and a test stays chronic while two of its retried runs
 are in it: the Antigravity test's are all from 2026-11-01, so it clears
 from the 2026-11-09 report, and the search test's second-to-last is from
 2026-11-05, so it clears from the 2026-11-13 report, with no new retry.
+
+---
+
+## D-NEXT-H3 — Known `StreamChunk` variants keep the event's unread keys; `Completed` is a struct variant (2026-11-07)
+
+**Context.** #538: a stream's known events kept only their modeled fields,
+so a key the API adds beside an event's payload was dropped. The payloads
+kept their own `extra` (D-034), but the envelope did not, and the
+Evergreen guard exempted all seven known variants for it. The issue named
+two shapes: an `extra` map on each known variant, or the raw event JSON,
+as `InteractionStreamEvent` keeps for an unknown type.
+
+**Decision.** Each known variant has an `extra` map, read by
+`StreamChunk::extra()`, which is what the guard's enum arm checks and how
+`Step`, `Tool` and `ToolChoice::AllowedTools` already keep theirs.
+`Completed(Box<InteractionResponse>)` becomes
+`Completed { interaction, extra }`: a newtype variant has nowhere to put
+the map, and the guard needs a named reason for every newtype, which this
+one no longer has. A chunk's `extra` holds every key of its event it does
+not read:
+
+- a key the crate models on no event type;
+- a modeled key on an event type that does not read it (an `index` on a
+  `status_update`), written back as JSON;
+- what is left of `metadata` beside the `total_usage` a `step.delta` or
+  `interaction.completed` reads from it, and of `error` beside its
+  `message` and `code`, under that key.
+
+`event_type` is the variant, and `event_id` is on `StreamEvent`, so neither
+is in it. A known event is still parsed by value (#498): each modeled key
+is moved out of the object and read, and what is left is the `extra`. The
+crate's `{chunk_type, data}` log form writes a non-empty `extra` beside
+`data` and reads it back.
+
+Rejected: the raw event JSON on every chunk. It would copy each event
+before parsing it, the cost #498 removed from the delta path (a streamed
+image delta is the whole base64 image), and would hold every payload
+twice. Rejected too: one map on `StreamEvent`. The guard checks the
+union's variants, and a chunk is often handled without its event.
+
+**Consequences.** Breaking (D-007): a pattern on `Completed(response)`
+becomes `Completed { interaction, .. }`, a pattern listing every field of
+a known variant needs `..`, and a struct literal needs `extra`. The
+guard's `StreamChunk` exemption and D-034's uncovered bullet are gone.
+

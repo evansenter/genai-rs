@@ -340,10 +340,6 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         AUTO_FUNCTION_CHUNK,
     ),
     (
-        "src/wire_streaming/mod.rs:StreamChunk::Completed",
-        STREAM_CHUNK,
-    ),
-    (
         "src/content/video_processing.rs:VideoProcessing::Static",
         "the bare string `\"static\"`, which has no fields; the object form \
          is `StaticSegment`, which keeps its `extra`",
@@ -361,35 +357,7 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         "read only when `allowlist` is the object's one key: with another key \
          beside it, the object is kept whole as `NetworkConfig::Unknown`",
     ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::Created",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StatusUpdate",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StepStart",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StepDelta",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StepStop",
-        STREAM_CHUNK,
-    ),
-    ("src/wire_streaming/mod.rs:StreamChunk::Error", STREAM_CHUNK),
 ];
-
-/// Why a known `StreamChunk` keeps no `extra`.
-const STREAM_CHUNK: &str = "a parsed SSE event, serialized only in the crate's own \
-     `{chunk_type, data}` log form; nothing sends one back to the API, and the \
-     payloads inside (`InteractionResponse`, `Step`, `StepDelta`, \
-     `UsageMetadata`) keep their own `extra`. A key the API adds to the event \
-     envelope itself is not kept (D-034; tracked in #538)";
 
 /// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
 const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \

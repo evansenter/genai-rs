@@ -202,7 +202,7 @@ async fn execute_stream_sends_stream_true() {
     let events: Vec<_> = client.execute_stream(request).collect().await;
     assert!(matches!(
         events.as_slice(),
-        [Ok(event)] if matches!(event.chunk, StreamChunk::Completed(_))
+        [Ok(event)] if matches!(event.chunk, StreamChunk::Completed { .. })
     ));
 
     let [request] = stub.requests().try_into().unwrap();
@@ -249,12 +249,12 @@ async fn create_stream_can_be_spawned() {
 
     let create = tokio::spawn(create.collect::<Vec<_>>()).await.unwrap();
     assert!(
-        matches!(create.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed(_))),
+        matches!(create.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed { .. })),
         "{create:?}"
     );
     let execute = tokio::spawn(execute.collect::<Vec<_>>()).await.unwrap();
     assert!(
-        matches!(execute.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed(_))),
+        matches!(execute.as_slice(), [Ok(e)] if matches!(e.chunk, StreamChunk::Completed { .. })),
         "{execute:?}"
     );
     let auto = tokio::spawn(auto.collect::<Vec<_>>()).await.unwrap();
@@ -376,7 +376,10 @@ async fn stream_texts(chunks: &[&str]) -> Vec<String> {
                 StreamChunk::StepDelta { delta, .. } => {
                     delta.as_text().unwrap_or_default().to_string()
                 }
-                StreamChunk::Completed(response) => format!("<completed {}>", response.all_text()),
+                StreamChunk::Completed {
+                    interaction: response,
+                    ..
+                } => format!("<completed {}>", response.all_text()),
                 other => format!("<{other:?}>"),
             }),
         })
@@ -448,7 +451,7 @@ async fn bare_json_error_line_is_a_stream_error_event() {
         panic!("expected a delta then the error, got {events:?}");
     };
     match &last.chunk {
-        StreamChunk::Error { message, code } => {
+        StreamChunk::Error { message, code, .. } => {
             assert!(message.starts_with("Request blocked"), "{message}");
             assert_eq!(code.as_deref(), Some("recitation"));
         }
@@ -512,7 +515,10 @@ async fn completed_from(chunks: &[String]) -> genai_rs::InteractionResponse {
         .await
         .into_iter()
         .find_map(|event| match event.expect("stream event").chunk {
-            StreamChunk::Completed(response) => Some(response),
+            StreamChunk::Completed {
+                interaction: response,
+                ..
+            } => Some(response),
             _ => None,
         })
         .expect("a completed response")

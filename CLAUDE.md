@@ -153,7 +153,9 @@ stored interaction and the types read from the Antigravity harness (D-034);
 and reasoned. The known
 variants of `Step`, `StepDelta`, `Content`, `Annotation`, `Tool`,
 `ResponseFormat` and `TranscriptionMode` (and `ToolChoice::AllowedTools`) do
-the same with an `extra` field, through `src/wire_fields.rs` (#491). The
+the same with an `extra` field, through `src/wire_fields.rs` (#491), and so
+do the known `StreamChunk` variants, with the SSE event's keys they do not
+read (#538). The
 guard's enum arm checks every deserializable union for an `Unknown` arm and
 an `extra` field on each known variant; a newtype variant, whose wrapper
 keys it cannot see, needs a named reason. Polling
