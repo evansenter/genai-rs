@@ -1897,9 +1897,16 @@ or above is a server error. The private `is_retryable_status` in
 `src/errors.rs` gives each code's reason.
 
 **Consequences.** The deny-list is the conservative reading: it changes
-only the codes a retry provably cannot fix and keeps the old answer for
-every other 5xx, where google-genai's older allow-list would have stopped
+only the codes whose definition a retry cannot fix and keeps the old answer
+for every other 5xx, where google-genai's older allow-list would have stopped
 retrying unregistered codes. The cost is that a misbehaving proxy's
 permanent unregistered 5xx is retried until the caller's budget runs out,
-as before. The crate's own waits (`wait_until_active`, an import's wait)
-poll through what `is_retryable()` accepts, so they follow this list.
+as before. One 501 can pass: the API also sends it when a remote MCP
+server returns an error, which `classify_mcp_create_error` in
+`tests/tools_and_config_tests.rs` counts as that server's availability. The
+status cannot tell it from a URL that is no MCP server, which fails every
+time, and `is_retryable()` does not match message text (the transient 400s
+are left out for the same reason), so 501 stays permanent and the docs
+tell a caller who wants that one retried to match its message first. The
+crate's own waits (`wait_until_active`, an import's wait) poll through
+what `is_retryable()` accepts, so they follow this list.
