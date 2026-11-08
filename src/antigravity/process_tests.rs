@@ -6,8 +6,10 @@ use std::collections::BTreeMap;
 const SITE_PACKAGES_SUFFIX: &str = "google/antigravity/bin/localharness";
 
 /// A `site_dirs` source that must never be consulted.
-fn no_python() -> Vec<PathBuf> {
-    panic!("discovery asked python3 for site-packages it did not need")
+fn no_python() -> impl Iterator<Item = Vec<PathBuf>> {
+    std::iter::from_fn(|| {
+        panic!("discovery asked an interpreter for site-packages it did not need")
+    })
 }
 
 fn touch_executable(path: &Path) {
@@ -31,7 +33,7 @@ fn test_discovery_prefers_explicit_path() {
         HARNESS_FILE_NAMES,
         Some(&explicit),
         Some(&env),
-        no_python,
+        no_python(),
         None,
     )
     .unwrap();
@@ -45,7 +47,7 @@ fn test_discovery_env_var_beats_site_packages() {
     let site = dir.path().join("site");
     touch_executable(&env);
     touch_executable(&site.join(SITE_PACKAGES_SUFFIX));
-    let found = discover_in(HARNESS_FILE_NAMES, None, Some(&env), no_python, None).unwrap();
+    let found = discover_in(HARNESS_FILE_NAMES, None, Some(&env), no_python(), None).unwrap();
     assert_eq!(found, env);
 }
 
@@ -60,7 +62,7 @@ fn test_discovery_site_packages_beats_path() {
         HARNESS_FILE_NAMES,
         None,
         None,
-        || vec![site.clone()],
+        [vec![site.clone()]],
         Some(path_dir.as_os_str()),
     )
     .unwrap();
@@ -78,18 +80,66 @@ fn test_harness_file_names_add_the_exe_on_windows() {
 }
 
 #[test]
+fn test_python_interpreters_add_python_on_windows() {
+    // python.org's Windows installer has no `python3`.
+    assert_eq!(python_interpreters(true), ["python3", "python"]);
+    assert_eq!(python_interpreters(false), ["python3"]);
+    assert_eq!(PYTHONS, python_interpreters(cfg!(windows)));
+}
+
+#[test]
+fn test_discovery_asks_the_next_interpreter_only_while_the_harness_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty_site = dir.path().join("empty-site");
+    let site = dir.path().join("site");
+    touch_executable(&site.join(SITE_PACKAGES_SUFFIX));
+    // The first interpreter's site-packages lack the harness: the second's
+    // are searched.
+    let found = discover_in(
+        HARNESS_FILE_NAMES,
+        None,
+        None,
+        [vec![empty_site.clone()], vec![site.clone()]],
+        None,
+    )
+    .unwrap();
+    assert_eq!(found, site.join(SITE_PACKAGES_SUFFIX));
+    // The first interpreter's hold it: the second is never started.
+    let found = discover_in(
+        HARNESS_FILE_NAMES,
+        None,
+        None,
+        std::iter::once(vec![site.clone()]).chain(no_python()),
+        None,
+    )
+    .unwrap();
+    assert_eq!(found, site.join(SITE_PACKAGES_SUFFIX));
+    // Neither answers: the error names every interpreter tried.
+    let err = discover_in(HARNESS_FILE_NAMES, None, None, [vec![], vec![]], None).unwrap_err();
+    let AntigravityError::HarnessNotFound { searched } = &err else {
+        panic!("{err:?}");
+    };
+    assert!(
+        searched
+            .iter()
+            .any(|entry| entry.starts_with(&format!("{} site-packages", PYTHONS.join(" or ")))),
+        "{searched:?}"
+    );
+}
+
+#[test]
 fn test_discovery_finds_the_windows_exe_in_site_packages_and_on_path() {
     let windows = harness_file_names(true);
     let dir = tempfile::tempdir().unwrap();
     let site = dir.path().join("site");
     let exe = site.join("google/antigravity/bin/localharness.exe");
     touch_executable(&exe);
-    let found = discover_in(windows, None, None, || vec![site.clone()], None).unwrap();
+    let found = discover_in(windows, None, None, [vec![site.clone()]], None).unwrap();
     assert_eq!(found, exe);
 
     let path_dir = dir.path().join("bin");
     touch_executable(&path_dir.join("localharness.exe"));
-    let found = discover_in(windows, None, None, Vec::new, Some(path_dir.as_os_str())).unwrap();
+    let found = discover_in(windows, None, None, [], Some(path_dir.as_os_str())).unwrap();
     assert_eq!(found, path_dir.join("localharness.exe"));
 
     // Off Windows only the bare name counts.
@@ -97,7 +147,7 @@ fn test_discovery_finds_the_windows_exe_in_site_packages_and_on_path() {
         harness_file_names(false),
         None,
         None,
-        || vec![site.clone()],
+        [vec![site.clone()]],
         Some(path_dir.as_os_str()),
     )
     .unwrap_err();
@@ -116,7 +166,7 @@ fn test_discovery_falls_back_to_path() {
         HARNESS_FILE_NAMES,
         None,
         None,
-        Vec::new,
+        [],
         Some(path_dir.as_os_str()),
     )
     .unwrap();
@@ -133,7 +183,7 @@ fn test_discovery_missing_explicit_falls_through() {
         HARNESS_FILE_NAMES,
         Some(&missing),
         None,
-        Vec::new,
+        [],
         Some(path_dir.as_os_str()),
     )
     .unwrap();
@@ -177,8 +227,14 @@ async fn test_handshake_frame_truncated_payload_is_io_error() {
 /// A stand-in `python3`: a shell script running `body`.
 #[cfg(unix)]
 fn stub_interpreter(dir: &Path, body: &str) -> PathBuf {
+    stub_named_interpreter(dir, "python3", body)
+}
+
+/// A stand-in interpreter called `name`: a shell script running `body`.
+#[cfg(unix)]
+fn stub_named_interpreter(dir: &Path, name: &str, body: &str) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
-    let path = dir.join("python3");
+    let path = dir.join(name);
     std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -199,6 +255,41 @@ fn test_python_site_dirs_reads_the_interpreters_answer() {
     assert!(python_site_dirs(failing.as_os_str(), Duration::from_secs(10)).is_empty());
     let missing = dir.path().join("no-such-python");
     assert!(python_site_dirs(missing.as_os_str(), Duration::from_secs(10)).is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_discovery_finds_and_versions_a_wheel_only_python_has() {
+    // Windows' order, where `python3` is the Microsoft Store's stub and
+    // python.org's interpreter is `python`.
+    let dir = tempfile::tempdir().unwrap();
+    let site = dir.path().join("site");
+    let binary = wheel_install(&site, &["0.1.23"]);
+    let python3 = stub_named_interpreter(
+        &dir.path().join("store"),
+        "python3",
+        "echo 'Python was not found' >&2; exit 9009",
+    );
+    let python = stub_named_interpreter(
+        &dir.path().join("python-org"),
+        "python",
+        &format!("echo '{}'", site.display()),
+    );
+    let found = discover(
+        None,
+        None,
+        None,
+        vec![python3.into_os_string(), python.into_os_string()],
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(found, binary);
+    // The version check reads the wheel it was found in, as through python3.
+    assert_eq!(
+        harness_version(HARNESS_FILE_NAMES, &found).as_deref(),
+        Some("0.1.23")
+    );
 }
 
 #[cfg(unix)]
@@ -247,7 +338,7 @@ async fn test_discovery_runs_off_the_runtime_and_bounds_the_interpreter() {
         None,
         None,
         Some(path_dir.clone().into_os_string()),
-        python.into_os_string(),
+        vec![python.into_os_string()],
         Duration::from_millis(500),
     )
     .await
@@ -515,7 +606,7 @@ fn test_discovery_error_lists_searched_locations() {
         HARNESS_FILE_NAMES,
         Some(&missing),
         None,
-        || vec![site.clone()],
+        [vec![site.clone()]],
         Some(std::ffi::OsStr::new("/definitely/not/a/dir")),
     )
     .unwrap_err();

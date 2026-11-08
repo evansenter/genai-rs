@@ -1776,6 +1776,20 @@ Windows) is not part of this; `docs/ANTIGRAVITY.md` states that scope.
 **Consequences.** A Windows search that misses lists both names for each
 site-packages directory.
 
+**Amendment (#504, H2): the interpreter too.** python.org's Windows
+installer provides `python.exe` and no `python3`, which on Windows is
+often only the Microsoft Store's stub (it exits with an error). So the
+site-packages step asks each of `python_interpreters(cfg!(windows))` in
+turn: `python3`, then `python` on Windows, and `python3` alone elsewhere,
+where `python` may be Python 2 or absent and adds nothing. The next
+interpreter is started only when the ones before it gave no site-packages
+holding the harness, so a working `python3` costs no second start-up, and
+each gets the full discovery timeout. A harness found through `python` is
+version-checked as any other: the check reads the wheel metadata beside
+the binary, not the interpreter. The `py` launcher is not tried; it needs
+its own arguments (`py -3`), and `ANTIGRAVITY_HARNESS_PATH` covers an
+install found neither way.
+
 ---
 
 ## D-051 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
