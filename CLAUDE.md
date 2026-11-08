@@ -341,10 +341,11 @@ wheel's protos with `python3`).
   replays the fresh copies, and fails once the committed ones are over 90
   days old), fmt, shell-scripts (the script harnesses,
   shellcheck, the workflow parse check and actionlint over every workflow),
-  clippy (also the library without default features, as `make clippy`
+  clippy (also every target without default features, as `make clippy`
   does), doc, msrv, cross-platform (offline; stable and beta on Linux, macOS
   and Windows, but only Windows stable on a PR; checks the `antigravity`
-  feature off Linux; trybuild's `ui_tests` are skipped on beta), coverage,
+  feature off Linux, and runs clippy over it, every target, on Windows
+  stable; trybuild's `ui_tests` are skipped on beta), coverage,
   build-metrics, main-push-status, scheduled-run-status. Live
   jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each

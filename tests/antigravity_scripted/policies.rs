@@ -189,7 +189,9 @@ async fn test_scripted_a_question_is_gated_like_any_tool_call() {
 /// A scripted model for the auto policy: the agent asks for a destructive
 /// command; the harness's assessor (the request declaring `vet_*` tools)
 /// vets it, and its follow-up analysis gets an answer it cannot parse, so
-/// the harness asks this client (verified on 0.1.23, 2026-11-05).
+/// the harness asks this client (verified on 0.1.23, 2026-11-05). Unix only,
+/// as the test that uses it is.
+#[cfg(unix)]
 async fn auto_policy_model(command: String, cwd: String) -> FakeGemini {
     let vetted = Arc::new(AtomicUsize::new(0));
     FakeGemini::routed(move |request, _| {

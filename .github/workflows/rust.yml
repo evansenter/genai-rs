@@ -527,11 +527,12 @@ jobs:
         env:
           RUSTFLAGS: --cfg genai_strict_unknown
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # The library a consumer gets with `default-features = false`, which
-      # compiles code the all-features run never sees (the plain wire printer
-      # without `wire-color`). Same command as `make clippy`.
+      # Every target without default features, as a consumer with
+      # `default-features = false` builds it: code the all-features run never
+      # sees (the plain wire printer without `wire-color`), and the tests and
+      # examples against it. Same command as `make clippy`.
       - name: Run clippy (no default features)
-        run: cargo clippy --lib --no-default-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
   doc:
     name: Documentation
@@ -583,6 +584,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
+          components: clippy
       - uses: taiki-e/install-action@cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
@@ -613,6 +615,13 @@ jobs:
       - name: Check the antigravity feature
         if: ${{ !cancelled() && runner.os != 'Linux' }}
         run: cargo check --features antigravity
+      # The Clippy job runs on Linux, so it never sees the `cfg(not(unix))`
+      # code, or the tests and helpers a Windows build leaves out: lint them
+      # here, on the leg a PR runs. Stable only, as the Clippy job is: a beta
+      # lint is not yet the bar.
+      - name: Run clippy (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' && matrix.rust == 'stable' }}
+        run: cargo clippy --features antigravity --all-targets -- -D warnings
 
   coverage:
     name: Code Coverage

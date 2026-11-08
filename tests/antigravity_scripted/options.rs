@@ -241,7 +241,9 @@ async fn test_scripted_retry_config_decides_whether_a_503_ends_the_turn() {
     agent.shutdown().await.expect("shutdown");
 }
 
-/// A `run_command` call as the model makes it.
+/// A `run_command` call as the model makes it. Unix only, as the tests that
+/// use it are.
+#[cfg(unix)]
 fn run_command(command: &str, cwd: &std::path::Path, wait_ms: u64) -> ModelTurn {
     ModelTurn::call(
         "run_command",
