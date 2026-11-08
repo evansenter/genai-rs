@@ -109,12 +109,29 @@ fn should_retry(err: &GenaiError) -> bool {
 }
 
 fn should_retry_response(response: &InteractionResponse) -> bool {
-    let codes = || response.errors.iter().flatten().filter_map(|e| e.code.as_deref());
+    let errors = response.errors.as_deref().unwrap_or_default();
+    // A loop is turned away wherever an error names it, code or message,
+    // as `should_retry` does for the 400.
+    let names_loop = errors.iter().any(|e| {
+        [e.code.as_deref(), e.message.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|text| text.to_lowercase().contains("too_many_tool_calls"))
+    });
     response.status == InteractionStatus::Failed
-        && codes().any(|code| code == "malformed_tool_call")
-        && !codes().any(|code| code == "too_many_tool_calls")
+        && errors.iter().any(|e| e.code.as_deref() == Some("malformed_tool_call"))
+        && !names_loop
 }
-# let _ = (should_retry, should_retry_response);
+# let _ = should_retry;
+# let failed = |message: &str| -> InteractionResponse {
+#     serde_json::from_value(serde_json::json!({
+#         "id": "x", "status": "failed", "steps": [],
+#         "errors": [{"code": "malformed_tool_call", "message": message}],
+#     }))
+#     .unwrap()
+# };
+# assert!(should_retry_response(&failed("Please retry the request.")));
+# assert!(!should_retry_response(&failed("Stopped after 60 calls: TOO_MANY_TOOL_CALLS")));
 ```
 
 Keep the retry budget small: these matches are on message text, so an API
