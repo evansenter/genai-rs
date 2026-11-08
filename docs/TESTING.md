@@ -532,7 +532,9 @@ checks on it:
   (`every_verb_is_called_by_the_query_test` fails on a verb not called, an
   option not set on its verb's builder, or a `with_*` method not called
   whose field a verb sends on the query string, such as
-  `WebhookUpdate::with_update_mask`), and each request is
+  `WebhookUpdate::with_update_mask`; those fields are found by tracing each
+  `with_query` value back through `src/`, and a value the trace cannot
+  follow fails the test too), and each request is
   matched to its endpoint in `bindings.json`. A key the endpoint does not
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a

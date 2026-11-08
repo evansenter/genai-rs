@@ -1566,7 +1566,20 @@ fn every_verb_is_called_by_the_query_test() {
         unset.join("\n  ")
     );
 
-    let fields = query_options::query_fields(&src);
+    let trace = query_options::query_fields(&src);
+    assert!(
+        trace.unmodeled.is_empty(),
+        "query values the trace cannot follow to a field, so an option they carry \
+         would go unchecked (teach tests/request_wire_oracle/query_options.rs the \
+         shape):\n  {}",
+        trace
+            .unmodeled
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+    let fields = trace.fields;
     for (ty, field) in [
         ("WebhookUpdate", "update_mask"),
         ("CredentialUpdate", "update_mask"),
@@ -1578,7 +1591,13 @@ fn every_verb_is_called_by_the_query_test() {
             "the query field discovery missed {ty}.{field}; it found {fields:?}"
         );
     }
-    let options = query_options::query_options(&src, &fields);
+    let (options, unassigned) = query_options::query_options(&src, &fields);
+    assert!(
+        unassigned.is_empty(),
+        "query fields no public `with_*` option of their type assigns as \
+         `self.<field> = ..`, so the test cannot find the option that sets them:\n  {}",
+        unassigned.join("\n  ")
+    );
     let set = query_options::query_options_set(&file, TEST, &src, &options);
     let unset: Vec<String> = options
         .difference(&set)
