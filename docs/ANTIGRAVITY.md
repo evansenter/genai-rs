@@ -304,12 +304,13 @@ let builder = AntigravityAgent::builder().with_capabilities(caps);
 # let _ = builder;
 ```
 
-That set deliberately differs from the Python SDK's 0.1.18 `read_only()`
-(`view_file`, `read_url_content`, `schedule`, `finish`). The Python SDK
-now calls the three local finders deprecated, but the harness still serves
-them and a read-only agent without them can only open files by guessing
-paths; `read_url_content` is network egress, so it is write-capable here
-(like `search_web`); and `schedule` is not offered at all:
+That set deliberately differs from the Python SDK's `read_only()` in
+0.1.23 (`view_file`, `read_url_content`, `schedule`, `finish`). The Python
+SDK now calls the three local finders deprecated, but the harness still
+serves them and a read-only agent without them can only open files by
+guessing paths; `read_url_content` is network egress, so it is
+write-capable here (like `search_web`); and `schedule` is not offered at
+all:
 
 - **`schedule`** lets the agent schedule its own future turns. This client
   drives one turn at a time and cannot observe a turn it did not start, so
@@ -1078,10 +1079,11 @@ let builder = AntigravityAgent::builder()
 - **Image model**: with `BuiltinTool::GenerateImage` enabled the bridge
   configures `DEFAULT_IMAGE_MODEL` unless `with_image_model` names another.
   Without an image model the harness fails every `generate_image` call.
-- **Budgets** cap model calls, tool calls and tokens for the session
-  (`BudgetScope::Lifetime`, the default) or from the session's start
-  (`ForwardLooking`). A turn that reaches one ends early with its
-  `stop_reason`.
+- **Budgets** cap model calls, tool calls and tokens counted from the
+  start of the conversation, a resumed one included
+  (`BudgetScope::Lifetime`, the default), or from when this session
+  started or was resumed (`ForwardLooking`). A turn that reaches one ends
+  early with its `stop_reason`.
 - **Retries**: `RetryConfig::new().with_max_api_retries(0)` fails a turn on
   the first 503; `RetryConfig::benchmark()` is the Python SDK's preset for
   long evaluation runs.
