@@ -333,10 +333,10 @@ const IGNORED_DIRS: &[&str] = &[
 ///
 /// A poll that cannot read part of the tree (a permission or I/O error on a
 /// directory or entry under `path`, not a skipped one) is skipped, with a
-/// warning when such polls begin, so files there are never reported deleted
-/// for being unreadable. A directory that stays unreadable therefore holds
-/// back every change under `path` until it can be read again: keep such
-/// directories out of the watched tree.
+/// warning naming what could not be read when such polls begin, so files
+/// there are never reported deleted for being unreadable. A directory that
+/// stays unreadable therefore holds back every change under `path` until it
+/// can be read again: keep such directories out of the watched tree.
 ///
 /// Changes that happen while a turn runs are held until the agent is idle,
 /// then handed to `on_change` as one batch: the net change since the last
@@ -352,9 +352,9 @@ const IGNORED_DIRS: &[&str] = &[
 /// The baseline is the state of `path` when `on_file_change` is called, so
 /// a change made during `spawn()` or just after it is reported, with no
 /// wait for the watch to start. Taking it reads the tree once, on the
-/// calling thread. If `path` exists but cannot be read then, the first
-/// snapshot that reads it becomes the baseline instead, and is not
-/// reported.
+/// calling thread. If part of the tree cannot be read then (as above), the
+/// first snapshot that reads all of it becomes the baseline instead, with a
+/// warning: changes made before that snapshot are not reported.
 pub fn on_file_change(
     path: impl Into<PathBuf>,
     poll_interval: Duration,
@@ -364,7 +364,7 @@ pub fn on_file_change(
 }
 
 /// Takes the snapshots of a watch: [`snapshot`], or a stand-in in tests.
-type Snapshotter = fn(&Path) -> Option<BTreeMap<PathBuf, Stamp>>;
+type Snapshotter = fn(&Path) -> Result<BTreeMap<PathBuf, Stamp>, Unreadable>;
 
 /// [`on_file_change`] with the snapshot function given.
 fn watch_files(
@@ -376,18 +376,29 @@ fn watch_files(
     // A zero interval would walk the tree back to back, for as long as the
     // agent lives (D-047's floor, for the same reason).
     let poll_interval = poll_interval.max(crate::PollOptions::MIN_POLL_INTERVAL);
-    // `None` when the path exists but could not be read: the first
-    // snapshot that reads it becomes the baseline, unreported, rather than
-    // every file in it reading as added. (A missing path is an empty
+    // `None` when part of the tree exists but could not be read: the first
+    // snapshot that reads it all becomes the baseline, unreported, rather
+    // than every file there reading as added. (A missing path is an empty
     // baseline, so files created in it are reported.)
-    let baseline = take_snapshot(&path);
+    let baseline = match take_snapshot(&path) {
+        Ok(snapshot) => Some(snapshot),
+        Err(unreadable) => {
+            tracing::warn!(
+                "The file watch on {} could not read {unreadable}; changes made before it \
+                 reads are not reported",
+                path.display()
+            );
+            None
+        }
+    };
     move |context: TriggerContext| {
         Box::pin(async move {
+            // Whether the last snapshot failed: a tree that stays
+            // unreadable warns once, not on every poll. The baseline's
+            // failure has warned already.
+            let mut failing = baseline.is_none();
             // The state the last batch was reported against.
             let mut reported = baseline;
-            // Whether the last poll's snapshot failed: a tree that stays
-            // unreadable warns once, not on every poll.
-            let mut failing = false;
             loop {
                 tokio::time::sleep(poll_interval).await;
                 // Hold changes while a turn runs: the next idle poll diffs
@@ -438,6 +449,22 @@ fn watch_files(
 /// A file's modification time and size.
 type Stamp = (Option<SystemTime>, u64);
 
+/// Why a snapshot failed: something under the watched tree, or its root,
+/// that exists but could not be read.
+#[derive(Debug)]
+pub(crate) struct Unreadable {
+    /// The entry whose metadata, or the directory whose listing, failed.
+    pub(crate) path: PathBuf,
+    /// The error reading it.
+    pub(crate) error: std::io::Error,
+}
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.path.display(), self.error)
+    }
+}
+
 /// Takes a snapshot of `path` off the runtime's worker threads. An error,
 /// saying why, when part of the tree could not be read or the snapshot task
 /// failed (it panicked, or the runtime is shutting down): the caller skips
@@ -448,9 +475,9 @@ async fn snapshot_of(
 ) -> Result<BTreeMap<PathBuf, Stamp>, String> {
     let owned = path.to_path_buf();
     match tokio::task::spawn_blocking(move || take_snapshot(&owned)).await {
-        Ok(Some(snapshot)) => Ok(snapshot),
-        Ok(None) => Err(format!(
-            "The file watch could not read all of {}",
+        Ok(Ok(snapshot)) => Ok(snapshot),
+        Ok(Err(unreadable)) => Err(format!(
+            "The file watch on {} could not read {unreadable}",
             path.display()
         )),
         Err(e) => Err(format!(
@@ -464,17 +491,21 @@ async fn snapshot_of(
 /// stamp. A missing path is empty, and so is a path removed while it is
 /// read: what is gone is reported deleted.
 ///
-/// `None` when anything that exists could not be read: `path` or an entry
-/// below it whose metadata or listing failed with an I/O or permission
-/// error, other than not found. Leaving it out instead would report every
-/// file under it deleted, and the next readable snapshot every one added. A
-/// directory in [`IGNORED_DIRS`] is never read, so it cannot fail the
-/// snapshot.
+/// [`Unreadable`], naming it, when anything that exists could not be read:
+/// `path` or an entry below it whose metadata or listing failed with an I/O
+/// or permission error, other than not found. Leaving it out instead would
+/// report every file under it deleted, and the next readable snapshot every
+/// one added. A directory in [`IGNORED_DIRS`] is never read, so it cannot
+/// fail the snapshot.
 ///
 /// `path` itself is followed when it is a symbolic link, as `watchfiles`
 /// follows its root; links below it are not followed.
-pub(crate) fn snapshot(path: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
+pub(crate) fn snapshot(path: &Path) -> Result<BTreeMap<PathBuf, Stamp>, Unreadable> {
     let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    let unreadable = |at: &Path, error| Unreadable {
+        path: at.to_path_buf(),
+        error,
+    };
     let mut files = BTreeMap::new();
     let mut pending = vec![path.to_path_buf()];
     while let Some(next) = pending.pop() {
@@ -486,7 +517,7 @@ pub(crate) fn snapshot(path: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
         let metadata = match metadata {
             Ok(metadata) => metadata,
             Err(e) if gone(&e) => continue,
-            Err(_) => return None,
+            Err(e) => return Err(unreadable(&next, e)),
         };
         if metadata.is_file() {
             files.insert(next, (metadata.modified().ok(), metadata.len()));
@@ -502,18 +533,18 @@ pub(crate) fn snapshot(path: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
             let entries = match std::fs::read_dir(&next) {
                 Ok(entries) => entries,
                 Err(e) if gone(&e) => continue,
-                Err(_) => return None,
+                Err(e) => return Err(unreadable(&next, e)),
             };
             for entry in entries {
                 match entry {
                     Ok(entry) => pending.push(entry.path()),
                     Err(e) if gone(&e) => break,
-                    Err(_) => return None,
+                    Err(e) => return Err(unreadable(&next, e)),
                 }
             }
         }
     }
-    Some(files)
+    Ok(files)
 }
 
 /// The changes from `before` to `after`, ordered by path.

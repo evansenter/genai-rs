@@ -251,7 +251,10 @@ fn test_snapshot_diff_reports_added_modified_and_deleted_files() {
     assert!(diff_snapshots(&after, &after).is_empty());
     // A single file can be watched too; a missing path is empty.
     assert_eq!(snapshot(&keep).unwrap().len(), 1);
-    assert_eq!(snapshot(&dir.path().join("missing")), Some(BTreeMap::new()));
+    assert_eq!(
+        snapshot(&dir.path().join("missing")).unwrap(),
+        BTreeMap::new()
+    );
 }
 
 /// Restores a directory's permissions when dropped, so a failed assertion
@@ -269,7 +272,7 @@ impl Drop for Unlocked<'_> {
 
 #[cfg(unix)]
 #[test]
-fn test_snapshot_of_a_tree_with_an_unreadable_directory_is_none() {
+fn test_snapshot_of_a_tree_with_an_unreadable_directory_fails_naming_it() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
@@ -296,14 +299,21 @@ fn test_snapshot_of_a_tree_with_an_unreadable_directory_is_none() {
         // unreadable directory to test with.
         return;
     }
-    // Below the root, an unreadable directory fails the snapshot: leaving it
-    // out would report `b.txt` deleted.
-    assert_eq!(snapshot(&root), None);
+    // Below the root, an unreadable directory fails the snapshot, naming
+    // that directory (the warning shows it): leaving it out would report
+    // `b.txt` deleted.
+    let failed = snapshot(&root).unwrap_err();
+    assert_eq!(failed.path, locked);
+    assert_eq!(failed.error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(
+        failed.to_string().contains(&locked.display().to_string()),
+        "{failed}"
+    );
     // The root itself unreadable: no snapshot, rather than an empty one.
-    assert_eq!(snapshot(&locked), None);
+    assert_eq!(snapshot(&locked).unwrap_err().path, locked);
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o000)).unwrap();
-    assert_eq!(snapshot(&root), None);
+    assert_eq!(snapshot(&root).unwrap_err().path, root);
 }
 
 #[cfg(unix)]
@@ -376,7 +386,7 @@ fn test_snapshot_follows_a_symlinked_root_but_no_link_below_it() {
     // A dangling root is a missing path: empty.
     let dangling = dir.path().join("dangling");
     std::os::unix::fs::symlink(dir.path().join("nothing"), &dangling).unwrap();
-    assert_eq!(snapshot(&dangling), Some(BTreeMap::new()));
+    assert_eq!(snapshot(&dangling).unwrap(), BTreeMap::new());
 }
 
 #[tokio::test]
@@ -456,24 +466,32 @@ async fn test_on_file_change_holds_changes_during_a_turn_and_sends_one_batch() {
     handle.abort();
 }
 
+/// A failed snapshot, for the stand-ins below.
+fn scripted_unreadable() -> Unreadable {
+    Unreadable {
+        path: PathBuf::from("/watched/locked"),
+        error: std::io::ErrorKind::PermissionDenied.into(),
+    }
+}
+
 /// Calls to [`flaky_snapshot`].
 static FLAKY_SNAPSHOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A watched tree as a script: `a.txt` throughout, a failed snapshot task
 /// on the first poll, an unreadable root on the second, `b.txt` added from
 /// the fourth.
-fn flaky_snapshot(_: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
+fn flaky_snapshot(_: &Path) -> Result<BTreeMap<PathBuf, Stamp>, Unreadable> {
     let call = FLAKY_SNAPSHOTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut files = BTreeMap::from([(PathBuf::from("a.txt"), (None, 1))]);
     match call {
         1 => panic!("the snapshot task failed (scripted)"),
-        2 => return None,
+        2 => return Err(scripted_unreadable()),
         0 | 3 => {}
         _ => {
             files.insert(PathBuf::from("b.txt"), (None, 1));
         }
     }
-    Some(files)
+    Ok(files)
 }
 
 #[tokio::test]
@@ -514,17 +532,17 @@ static LATE_SNAPSHOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::Atomi
 
 /// A watched tree as a script: unreadable when the baseline is taken, then
 /// `a.txt`, with `b.txt` added from the third call.
-fn late_snapshot(_: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
+fn late_snapshot(_: &Path) -> Result<BTreeMap<PathBuf, Stamp>, Unreadable> {
     let call = LATE_SNAPSHOTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut files = BTreeMap::from([(PathBuf::from("a.txt"), (None, 1))]);
     match call {
-        0 => return None,
+        0 => return Err(scripted_unreadable()),
         1 => {}
         _ => {
             files.insert(PathBuf::from("b.txt"), (None, 1));
         }
     }
-    Some(files)
+    Ok(files)
 }
 
 #[tokio::test]
@@ -563,9 +581,9 @@ async fn test_on_file_change_takes_its_baseline_once_the_path_reads() {
 static CHANGING_SNAPSHOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A watched tree whose one file changes on every snapshot.
-fn changing_snapshot(_: &Path) -> Option<BTreeMap<PathBuf, Stamp>> {
+fn changing_snapshot(_: &Path) -> Result<BTreeMap<PathBuf, Stamp>, Unreadable> {
     let call = CHANGING_SNAPSHOTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    Some(BTreeMap::from([(
+    Ok(BTreeMap::from([(
         PathBuf::from("a.txt"),
         (None, call as u64),
     )]))

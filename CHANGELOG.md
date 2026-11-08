@@ -900,9 +900,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `spawn()` fails with `InitFailed` after about 26.5 s.
 - Antigravity's file watch (`triggers::on_file_change`): a poll that cannot
   read a directory or entry under the watched path (a permission or I/O
-  error) is skipped, with one warning, instead of reporting every file
-  there deleted and then added back when it reads again; a directory the
-  watch skips anyway (`.git`, `node_modules`, …) still cannot fail a poll.
+  error) is skipped, with one warning naming what could not be read,
+  instead of reporting every file there deleted and then added back when
+  it reads again; a directory the watch skips anyway (`.git`,
+  `node_modules`, …) still cannot fail a poll.
   A watched path that is a symbolic link is followed, as `watchfiles`
   follows its root (it read as an empty tree); links below it are still
   not followed. A `poll_interval` under 10 ms, zero included, polls every

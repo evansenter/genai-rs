@@ -1152,9 +1152,12 @@ directories the Python SDK's `watchfiles` filter skips (`.git`,
 `node_modules`, virtualenvs, caches). A watched path that is a symbolic
 link is followed, as `watchfiles` follows its root; links below it are
 not. A poll that cannot read part of the tree (a permission error on a
-directory under the path) is skipped rather than reporting the files there
-deleted, so a directory that stays unreadable holds every change back
-until it reads again. Changes made while a turn runs are held until the
+directory under the path) is skipped, with a warning naming that
+directory, rather than reporting the files there deleted, so a directory
+that stays unreadable holds every change back until it reads again. If
+part of the tree cannot be read when `on_file_change` is called, the first
+poll that reads all of it becomes the baseline, and changes made before it
+are not reported. Changes made while a turn runs are held until the
 agent is idle and handed to the callback as one batch, the net change
 since the last batch.
 

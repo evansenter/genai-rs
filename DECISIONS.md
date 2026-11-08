@@ -1919,9 +1919,13 @@ directory in a watched tree turns out to be common.
 
 **Consequences.** A directory that stays unreadable holds back every
 change under the watched path until it reads again; the rustdoc and
-`docs/ANTIGRAVITY.md` say to keep such directories out of the tree. A link
-to a file as the root is that file, and a dangling root link is an empty
-tree, like a missing path.
+`docs/ANTIGRAVITY.md` say to keep such directories out of the tree, and
+the warning names the entry or directory that failed and its error, so
+the user can find it. The baseline taken in `on_file_change` follows the
+same rule: when part of the tree cannot be read then, it warns, and the
+first snapshot that reads all of it becomes the baseline, so changes made
+before that are not reported. A link to a file as the root is that file,
+and a dangling root link is an empty tree, like a missing path.
 
 ---
 
