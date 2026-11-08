@@ -256,7 +256,7 @@ impl AntigravityAgent {
                 Some(AgentEvent::Finished(response)) => return Ok(*response),
                 Some(_) => {}
                 None => {
-                    return Err(AntigravityError::Protocol(
+                    return Err(AntigravityError::protocol(
                         "turn ended without a Finished event".to_string(),
                     ));
                 }
@@ -408,7 +408,7 @@ impl AntigravityAgent {
                 Some(AgentEvent::Finished(response)) => return Ok(Some(*response)),
                 Some(_) => {}
                 None => {
-                    return Err(AntigravityError::Protocol(
+                    return Err(AntigravityError::protocol(
                         "trigger turn ended without a Finished event".to_string(),
                     ));
                 }
@@ -529,7 +529,7 @@ impl AntigravityAgent {
         &mut self,
         init: protocol::InitializeConversationEvent,
     ) -> Result<(), AntigravityError> {
-        self.session.send_raw(serde_json::to_value(&init)?).await?;
+        self.session.send_raw(&init).await?;
 
         let deadline = tokio::time::Instant::now() + INIT_TIMEOUT;
         loop {

@@ -5,9 +5,10 @@
 //! endings that no other leg sees. So a PR runs the Windows stable leg, the
 //! full matrix also runs on the schedule, every text file checks out with LF,
 //! the Windows doctests run even after a failing unit test, the antigravity
-//! feature compiles off Linux, clippy lints the Windows-only code on the
-//! leg a PR runs, and clippy lints every target without default features,
-//! in CI and in `make clippy`.
+//! feature compiles off Linux, its process-tree tests run on macOS (whose
+//! libproc path no other job reaches), clippy lints the Windows-only code
+//! on the leg a PR runs, and clippy lints every target without default
+//! features, in CI and in `make clippy`.
 
 use super::{jobs, read, root, steps};
 
@@ -92,6 +93,20 @@ const ANTIGRAVITY_CONDITION_TERMS: [&str; 5] = [
     "runner.os == 'Windows'",
 ];
 
+/// The step that runs the antigravity process-tree tests on macOS.
+const PROCESS_TREE_TESTS: &str = "cargo nextest run --features antigravity --cargo-profile release \
+                                  --lib -E 'test(/process_tree/)'";
+
+/// The `&&` terms the process-tree step's `if:` may have. Each keeps the
+/// step on the macOS legs; anything else is refused rather than read.
+const PROCESS_TREE_CONDITION_TERMS: [&str; 5] = [
+    "!cancelled()",
+    "always()",
+    "success()",
+    "runner.os == 'macOS'",
+    "runner.os != 'Linux'",
+];
+
 /// A matrix value written `${{ github.event_name == 'pull_request' &&
 /// fromJSON('[..]') || fromJSON('[..]') }}`, as `(the PR's values, every
 /// other trigger's values)`; `None` for any other shape.
@@ -111,8 +126,9 @@ fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
 /// `if:`); a PR's matrix is the Windows stable leg and every other trigger's
 /// is the full matrix, none of it excluded; the doctests run after a failed
 /// unit-test step; the antigravity feature is checked on every Windows
-/// leg; and clippy lints it, every target, on the Windows stable leg, with
-/// the toolchain's clippy component installed.
+/// leg; clippy lints it, every target, on the Windows stable leg, with
+/// the toolchain's clippy component installed; and the antigravity
+/// process-tree tests run on every macOS leg.
 fn cross_platform_problems(workflow: &str) -> Vec<String> {
     let body = job(workflow, "cross-platform");
     let mut problems = Vec::new();
@@ -196,6 +212,18 @@ fn cross_platform_problems(workflow: &str) -> Vec<String> {
             "the toolchain step does not install clippy (`components: clippy`): found \
              {components:?}"
         ));
+    }
+    match step_running(&body, PROCESS_TREE_TESTS) {
+        Some(step) => {
+            let unknown = unknown_condition_terms(&step, &PROCESS_TREE_CONDITION_TERMS);
+            if !unknown.is_empty() {
+                problems.push(format!(
+                    "the process-tree tests must run on every macOS leg: their `if:` has \
+                     {unknown:?}, not only terms from {PROCESS_TREE_CONDITION_TERMS:?}"
+                ));
+            }
+        }
+        None => problems.push(format!("no step running `{PROCESS_TREE_TESTS}`")),
     }
     problems
 }
@@ -300,6 +328,14 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
         ),
         // ... or with no clippy to run.
         workflow.replace("          components: clippy\n      - uses: taiki-e/install-action@cargo-nextest", "      - uses: taiki-e/install-action@cargo-nextest"),
+        // The macOS process-tree tests gone, widened to every test, or
+        // moved off macOS.
+        workflow.replace(&format!("        run: {PROCESS_TREE_TESTS}\n"), ""),
+        workflow.replace("-E 'test(/process_tree/)'", "-E 'all()'"),
+        workflow.replace(
+            &format!("runner.os == 'macOS' }}}}\n        run: {PROCESS_TREE_TESTS}"),
+            &format!("runner.os == 'Linux' }}}}\n        run: {PROCESS_TREE_TESTS}"),
+        ),
     ];
     for (i, text) in broken.iter().enumerate() {
         assert_ne!(text, &workflow, "mutation {i} did not apply");

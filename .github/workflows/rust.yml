@@ -622,6 +622,12 @@ jobs:
       - name: Run clippy (Windows)
         if: ${{ !cancelled() && runner.os == 'Windows' && matrix.rust == 'stable' }}
         run: cargo clippy --features antigravity --all-targets -- -D warnings
+      # The forced kill's reach on macOS (process_tree.rs's libproc lookup of
+      # the harness's child groups) runs only here: test-antigravity is
+      # Linux's /proc path. Its unit tests alone, on the release build above.
+      - name: Test the antigravity process tree
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo nextest run --features antigravity --cargo-profile release --lib -E 'test(/process_tree/)'
 
   coverage:
     name: Code Coverage

@@ -236,7 +236,8 @@ impl Media {
     /// # Errors
     ///
     /// [`AntigravityError::Config`] when the extension names no known type,
-    /// and [`AntigravityError::Io`] when the file cannot be read.
+    /// and [`AntigravityError::Io`], naming the path, when the file cannot
+    /// be read.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, AntigravityError> {
         let path = path.as_ref();
         let mime_type = crate::detect_mime_type(path).ok_or_else(|| {
@@ -246,7 +247,10 @@ impl Media {
                 path.display()
             ))
         })?;
-        let data = std::fs::read(path)?;
+        let data = std::fs::read(path).map_err(|source| AntigravityError::Io {
+            message: format!("could not read media file {}", path.display()),
+            source,
+        })?;
         Ok(Self::new(data, mime_type))
     }
 

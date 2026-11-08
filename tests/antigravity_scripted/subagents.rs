@@ -116,6 +116,36 @@ async fn test_scripted_subagent_runs_on_its_model_without_define_subagent() {
 
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
+async fn test_scripted_a_start_subagent_policy_judges_invoke_subagent() {
+    // `start_subagent`, the builtin's old name, still targets the call.
+    let fake = delegating_model().await;
+    let mut agent = delegating_agent(&fake, vec![helper()])
+        .add_policy(policy::deny("start_subagent"))
+        .with_ungated_subagents(true)
+        .spawn()
+        .await
+        .expect("spawn");
+    let (actions, _, response) = streamed_turn(&mut agent, "delegate").await;
+    assert_eq!(response.text(), "delegated");
+    assert!(
+        matches!(
+            actions.as_slice(),
+            [(name, ToolDecision::Denied { .. })] if name == "invoke_subagent"
+        ),
+        "{actions:?}"
+    );
+    assert!(
+        !fake
+            .requests()
+            .iter()
+            .any(|r| r.target.contains(HELPER_MODEL)),
+        "the denied subagent ran"
+    );
+    agent.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
 async fn test_scripted_allowed_subagents_limit_what_the_root_agent_is_offered() {
     let subagents = || {
         vec![

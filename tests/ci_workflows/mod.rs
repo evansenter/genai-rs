@@ -190,8 +190,9 @@ fn nextest_runs_do_not_fail_fast() {
 /// trybuild's `ui_tests` compare rustc's exact diagnostics with `.stderr`
 /// snapshots, and the beta toolchain rewords them. A job that runs a beta
 /// toolchain therefore filters every nextest run through a
-/// `NEXTEST_FILTER` that drops `ui_tests` on beta, and runs `cargo test`
-/// only for doctests.
+/// `NEXTEST_FILTER` that drops `ui_tests` on beta, unless the run is the
+/// library's own unit tests (`--lib`), which cannot reach `ui_tests`, and
+/// runs `cargo test` only for doctests.
 #[test]
 fn ui_tests_do_not_run_on_beta() {
     let mut beta_jobs = 0;
@@ -219,7 +220,10 @@ fn ui_tests_do_not_run_on_beta() {
                 ));
             }
             for line in command_lines(&body) {
-                if line.contains("cargo nextest run") && !line.contains("-E \"$NEXTEST_FILTER\"") {
+                if line.contains("cargo nextest run")
+                    && !line.contains("-E \"$NEXTEST_FILTER\"")
+                    && !line.split_whitespace().any(|word| word == "--lib")
+                {
                     problems.push(format!("{name} {job}: unfiltered `{line}`"));
                 }
                 if line.contains("cargo test") && !line.contains("--doc") {

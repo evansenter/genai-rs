@@ -40,10 +40,24 @@ const fn harness_file_names(windows: bool) -> &'static [&'static str] {
     }
 }
 
-/// The interpreter discovery asks for its site-packages directories.
-const PYTHON: &str = "python3";
+/// The interpreters discovery asks for their site-packages directories, in
+/// order, on this platform.
+const PYTHONS: &[&str] = python_interpreters(cfg!(windows));
 
-/// How long discovery waits for [`PYTHON`] to list its site-packages, and
+/// The interpreters, on Windows or elsewhere. python.org's Windows
+/// installer provides `python.exe` and no `python3`, which there is often
+/// only the Microsoft Store's stub (it fails and prints how to install
+/// Python), so Windows asks `python` after `python3`.
+const fn python_interpreters(windows: bool) -> &'static [&'static str] {
+    if windows {
+        &["python3", "python"]
+    } else {
+        &["python3"]
+    }
+}
+
+/// How long discovery waits for each of [`PYTHONS`] to list its
+/// site-packages, and
 /// `spawn()` for the wheel's version metadata, before going on without
 /// them: a hung interpreter or a stalled read of the metadata must not hold
 /// `spawn()` forever. Discovery's own file checks and the exec of the
@@ -76,36 +90,39 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 /// 1. Explicit path from the builder.
 /// 2. `ANTIGRAVITY_HARNESS_PATH` environment variable.
 /// 3. `google/antigravity/bin/localharness` inside `python3`'s
-///    site-packages directories.
+///    site-packages directories, then (on Windows) `python`'s
+///    ([`PYTHONS`]).
 /// 4. `localharness` on `PATH`.
 ///
 /// On Windows steps 3 and 4 look for `localharness.exe` first
 /// ([`HARNESS_FILE_NAMES`]).
 ///
-/// `python3` is asked for its site-packages only when the first two steps
-/// find nothing, so an explicit path costs no interpreter start-up.
+/// An interpreter is asked for its site-packages only when the steps
+/// before it find nothing, so an explicit path costs no interpreter
+/// start-up, and `python` none when `python3`'s site-packages hold the
+/// harness.
 ///
 /// The search runs on tokio's blocking pool, not on the caller's runtime
-/// thread: it checks files and may start `python3`, which gets
-/// [`DISCOVERY_TIMEOUT`] to answer before the search moves on to `PATH`.
+/// thread: it checks files and may start the interpreters, each of which
+/// gets [`DISCOVERY_TIMEOUT`] to answer before the search moves on.
 pub(crate) async fn discover_harness(explicit: Option<&Path>) -> Result<PathBuf, AntigravityError> {
     discover(
         explicit.map(Path::to_path_buf),
         std::env::var_os(HARNESS_PATH_ENV).map(PathBuf::from),
         std::env::var_os("PATH"),
-        OsString::from(PYTHON),
+        PYTHONS.iter().map(OsString::from).collect(),
         DISCOVERY_TIMEOUT,
     )
     .await
 }
 
-/// [`discover_harness`] with its inputs and the interpreter's bound
+/// [`discover_harness`] with its inputs and the interpreters' bound
 /// given, for tests.
 async fn discover(
     explicit: Option<PathBuf>,
     env_path: Option<PathBuf>,
     path_var: Option<OsString>,
-    interpreter: OsString,
+    interpreters: Vec<OsString>,
     interpreter_timeout: Duration,
 ) -> Result<PathBuf, AntigravityError> {
     off_runtime(move || {
@@ -113,11 +130,17 @@ async fn discover(
             HARNESS_FILE_NAMES,
             explicit.as_deref(),
             env_path.as_deref(),
-            || python_site_dirs(&interpreter, interpreter_timeout),
+            interpreters
+                .iter()
+                .map(|interpreter| python_site_dirs(interpreter, interpreter_timeout)),
             path_var.as_deref(),
         )
     })
-    .await?
+    .await
+    .map_err(|source| AntigravityError::Io {
+        message: "harness discovery was cancelled".to_string(),
+        source,
+    })?
 }
 
 /// Runs blocking work (a filesystem walk, an interpreter's start-up) on
@@ -136,13 +159,15 @@ async fn off_runtime<T: Send + 'static>(
 }
 
 /// Pure discovery core, separated for unit testing. `names` are the binary's
-/// file names to look for in site-packages and on `PATH`. `site_dirs` is
-/// called only when the explicit path and the environment variable miss.
+/// file names to look for in site-packages and on `PATH`. `site_dirs` yields
+/// each interpreter's site-packages directories in turn; it is advanced only
+/// while the explicit path, the environment variable and the interpreters
+/// before miss.
 fn discover_in(
     names: &[&str],
     explicit: Option<&Path>,
     env_path: Option<&Path>,
-    site_dirs: impl FnOnce() -> Vec<PathBuf>,
+    site_dirs: impl IntoIterator<Item = Vec<PathBuf>>,
     path_var: Option<&std::ffi::OsStr>,
 ) -> Result<PathBuf, AntigravityError> {
     let mut searched = Vec::new();
@@ -163,18 +188,24 @@ fn discover_in(
         searched.push(format!("{HARNESS_PATH_ENV} (unset)"));
     }
 
-    let site_dirs = site_dirs();
-    for dir in &site_dirs {
-        for name in names {
-            let candidate = dir.join(format!("{SITE_PACKAGES_BIN_DIR}/{name}"));
-            if candidate.is_file() {
-                return Ok(candidate);
+    let mut any_site_dirs = false;
+    for site_dirs in site_dirs {
+        for dir in &site_dirs {
+            any_site_dirs = true;
+            for name in names {
+                let candidate = dir.join(format!("{SITE_PACKAGES_BIN_DIR}/{name}"));
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+                searched.push(candidate.display().to_string());
             }
-            searched.push(candidate.display().to_string());
         }
     }
-    if site_dirs.is_empty() {
-        searched.push("python3 site-packages (python3 not found or no site dirs)".to_string());
+    if !any_site_dirs {
+        searched.push(format!(
+            "{} site-packages (not found, or no site dirs)",
+            PYTHONS.join(" or ")
+        ));
     }
 
     if let Some(path_var) = path_var {
@@ -197,8 +228,8 @@ fn discover_in(
 
 /// Asks `interpreter` for its site-packages directories, giving it
 /// `timeout` to answer. Returns an empty list when it is unavailable,
-/// fails, or does not answer in time (it is then killed): discovery falls
-/// through to `PATH`.
+/// fails, or does not answer in time (it is then killed): discovery moves
+/// on to the next interpreter, then to `PATH`.
 ///
 /// Blocking: call it off the runtime ([`discover`] does). Its stdout is
 /// read on a thread of its own, so the bound holds even if something the
@@ -255,8 +286,8 @@ fn python_site_dirs(interpreter: &OsStr, timeout: Duration) -> Vec<PathBuf> {
             .collect(),
         (_, None) => {
             tracing::warn!(
-                "{} did not list its site-packages within {timeout:?}; looking for \
-                 localharness on PATH instead",
+                "{} did not list its site-packages within {timeout:?}; discovery goes on \
+                 without them",
                 interpreter.to_string_lossy()
             );
             Vec::new()
@@ -476,8 +507,9 @@ impl HarnessProcess {
         self.version.as_deref()
     }
 
-    /// Kills the harness and, on Unix, every process it started, then reaps
-    /// it (init-failure path). See [`Self::signal`] for the reach.
+    /// Kills the harness and, on Linux and macOS, every process it started,
+    /// then reaps it (init-failure path). See [`Self::signal`] for the
+    /// reach.
     pub(crate) async fn kill(&mut self) {
         self.signal(Signal::Kill);
         self.wait_for_exit(KILL_GRACE).await;
@@ -549,10 +581,11 @@ impl HarnessProcess {
     /// Signals the harness's process tree. Nothing is sent once the child
     /// has been reaped: its group id may no longer be ours.
     ///
-    /// On Unix that is the harness's process group and the group of each
-    /// of its children (`process_tree`). Elsewhere (Windows) there are no
-    /// groups and no SIGTERM: either signal terminates the harness process
-    /// alone, and the `run_command` commands it started keep running.
+    /// On Unix that is the harness's process group and, on Linux and macOS,
+    /// the group of each of its children (`process_tree`). Elsewhere
+    /// (Windows) there are no groups and no SIGTERM: either signal
+    /// terminates the harness process alone, and the `run_command` commands
+    /// it started keep running.
     /// (Stdio MCP servers exit either way, at the end of their stdin.)
     fn signal(&mut self, signal: Signal) {
         let Some(child) = self.child.as_mut() else {
@@ -575,10 +608,10 @@ impl HarnessProcess {
     }
 }
 
-/// Dropping a harness that was never shut down kills it, and on Unix every
-/// process it started (stdio MCP servers, `run_command` commands), without
-/// the graceful exit's trajectory persistence. Elsewhere (Windows) only the
-/// harness process is ended, and its commands keep running (see
+/// Dropping a harness that was never shut down kills it, and on Linux and
+/// macOS every process it started (stdio MCP servers, `run_command`
+/// commands), without the graceful exit's trajectory persistence. On other
+/// Unixes and on Windows its `run_command` commands keep running (see
 /// [`HarnessProcess::signal`]). Signal only: `Drop` cannot wait, so the
 /// reap is left to tokio's orphan reaper.
 impl Drop for HarnessProcess {

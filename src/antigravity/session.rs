@@ -25,6 +25,15 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const CONNECT_ATTEMPTS: u32 = 5;
 const CONNECT_BASE_DELAY: Duration = Duration::from_millis(100);
 
+/// How long one connect attempt (the TCP connect and the WebSocket upgrade)
+/// may take before it counts as failed. Both go to a harness on localhost
+/// that has already written its port, so a healthy one answers in
+/// milliseconds; 5 s leaves room for a loaded CI runner. A harness that
+/// accepts the connection but never answers the upgrade then fails
+/// `spawn()` after about 26.5 s (5 attempts and the backoff between them)
+/// instead of holding it forever.
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// How long to wait for the WebSocket close handshake during shutdown (the
 /// harness does not reply with a close frame).
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -100,7 +109,8 @@ impl std::fmt::Debug for Session {
 
 impl Session {
     /// Connects to `ws://localhost:{port}/` with the per-process token in
-    /// the `x-goog-api-key` header, retrying with exponential backoff.
+    /// the `x-goog-api-key` header, retrying with exponential backoff. An
+    /// attempt that takes over [`CONNECT_ATTEMPT_TIMEOUT`] counts as failed.
     pub(crate) async fn connect(
         port: i32,
         api_key: &str,
@@ -115,7 +125,19 @@ impl Session {
 
         let mut attempt = 0;
         loop {
-            match tokio_tungstenite::connect_async(request.clone()).await {
+            let connected = tokio::time::timeout(
+                CONNECT_ATTEMPT_TIMEOUT,
+                tokio_tungstenite::connect_async(request.clone()),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("no WebSocket upgrade within {CONNECT_ATTEMPT_TIMEOUT:?}"),
+                )
+                .into())
+            });
+            match connected {
                 Ok((ws, _response)) => {
                     let (sink, stream) = ws.split();
                     return Ok(Self {
@@ -156,20 +178,24 @@ impl Session {
 
     /// Sends one [`InputEvent`] as proto-JSON text.
     pub(crate) async fn send(&self, event: &InputEvent) -> Result<(), AntigravityError> {
-        send_json(&self.sink, &self.wire, serde_json::to_value(event)?).await
+        send_json(&self.sink, &self.wire, encode(event)?).await
     }
 
-    /// Sends a raw JSON value (used for the `InitializeConversationEvent`,
-    /// which is not an `InputEvent`).
-    pub(crate) async fn send_raw(&self, value: serde_json::Value) -> Result<(), AntigravityError> {
-        send_json(&self.sink, &self.wire, value).await
+    /// Sends any other message as proto-JSON text (the
+    /// `InitializeConversationEvent`, which is not an `InputEvent`).
+    pub(crate) async fn send_raw(
+        &self,
+        message: &impl serde::Serialize,
+    ) -> Result<(), AntigravityError> {
+        send_json(&self.sink, &self.wire, encode(message)?).await
     }
 
     /// Reads the next [`OutputEvent`]. Returns `Ok(None)` when the harness
     /// closes the connection.
     ///
     /// Non-text frames are skipped (tungstenite answers pings internally);
-    /// unparseable text frames are an error, since every harness message is
+    /// an unparsable text frame is an [`AntigravityError::Protocol`] error
+    /// with the parse error as its source, since every harness message is
     /// proto-JSON.
     pub(crate) async fn next_event(&mut self) -> Result<Option<OutputEvent>, AntigravityError> {
         loop {
@@ -187,8 +213,12 @@ impl Session {
                         payload: serde_json::from_str(&text)
                             .unwrap_or_else(|_| serde_json::Value::String(text.to_string())),
                     });
-                    let event: OutputEvent = serde_json::from_str(&text)?;
-                    return Ok(Some(event));
+                    return serde_json::from_str(&text).map(Some).map_err(|e| {
+                        AntigravityError::protocol_from(
+                            "could not parse a message from the harness",
+                            e,
+                        )
+                    });
                 }
                 Message::Close(_) => return Ok(None),
                 _ => {
@@ -206,6 +236,13 @@ impl Session {
     }
 }
 
+/// A message for the harness as a JSON value.
+fn encode(message: &impl serde::Serialize) -> Result<serde_json::Value, AntigravityError> {
+    serde_json::to_value(message).map_err(|e| {
+        AntigravityError::protocol_from("could not encode a message for the harness", e)
+    })
+}
+
 async fn send_json(
     sink: &tokio::sync::Mutex<SplitSink<WsStream, Message>>,
     wire: &WireContext,
@@ -215,7 +252,7 @@ async fn send_json(
         id: wire.id(),
         payload: redact_for_inspection(value.clone()),
     });
-    let text = serde_json::to_string(&value)?;
+    let text = value.to_string();
     sink.lock()
         .await
         .send(Message::Text(text.into()))
@@ -283,7 +320,7 @@ impl std::fmt::Debug for SinkHandle {
 
 impl SinkHandle {
     pub(crate) async fn send(&self, event: &InputEvent) -> Result<(), AntigravityError> {
-        send_json(&self.sink, &self.wire, serde_json::to_value(event)?).await
+        send_json(&self.sink, &self.wire, encode(event)?).await
     }
 }
 
@@ -315,6 +352,83 @@ mod tests {
         let chained = std::error::Error::source(&error).expect("source() is the transport error");
         assert_eq!(chained.to_string(), source.to_string());
         assert!(error.to_string().ends_with(&source.to_string()), "{error}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_a_connect_the_harness_never_answers_times_out_each_attempt() {
+        // Accepts TCP (the kernel completes the handshake) but never answers
+        // the WebSocket upgrade: each attempt used to wait forever.
+        let listener = std::net::TcpListener::bind("localhost:0").expect("bind a local port");
+        let port = i32::from(listener.local_addr().expect("local address").port());
+
+        let started = tokio::time::Instant::now();
+        let connect = Session::connect(port, "token", WireContext::new(Vec::new()));
+        let error = tokio::time::timeout(Duration::from_secs(120), connect)
+            .await
+            .expect("connect gives up rather than hanging")
+            .expect_err("nothing answers the upgrade");
+        let AntigravityError::WebSocket { message, source } = &error else {
+            panic!("expected a WebSocket error: {error:?}");
+        };
+        assert!(
+            message.contains(&format!("after {CONNECT_ATTEMPTS} attempts")),
+            "{message}"
+        );
+        let Some(tokio_tungstenite::tungstenite::Error::Io(io)) = source.downcast_ref() else {
+            panic!("the last attempt's timeout is the source: {source:?}");
+        };
+        assert_eq!(io.kind(), std::io::ErrorKind::TimedOut, "{io}");
+        // Every attempt waited its timeout, then the backoff.
+        let backoff: Duration = (0..CONNECT_ATTEMPTS - 1)
+            .map(|n| CONNECT_BASE_DELAY * 2u32.pow(n))
+            .sum();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= CONNECT_ATTEMPT_TIMEOUT * CONNECT_ATTEMPTS + backoff,
+            "gave up after {elapsed:?}"
+        );
+        assert!(
+            elapsed < CONNECT_ATTEMPT_TIMEOUT * (CONNECT_ATTEMPTS + 1) + backoff,
+            "{elapsed:?}"
+        );
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn test_an_unparsable_harness_frame_is_a_protocol_error_with_its_cause() {
+        let listener = tokio::net::TcpListener::bind("localhost:0")
+            .await
+            .expect("bind a local port");
+        let port = i32::from(listener.local_addr().expect("local address").port());
+        let harness = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("accept");
+            let mut ws = tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("upgrade");
+            ws.send(Message::Text("not proto-json".into()))
+                .await
+                .expect("send");
+            ws
+        });
+        let mut session = Session::connect(port, "token", WireContext::new(Vec::new()))
+            .await
+            .expect("connect");
+        let error = session
+            .next_event()
+            .await
+            .expect_err("the frame is not JSON");
+        let AntigravityError::Protocol { message, source } = &error else {
+            panic!("expected a protocol error: {error:?}");
+        };
+        assert!(message.contains("could not parse"), "{message}");
+        let cause = source.as_ref().expect("the parse error is the source");
+        assert!(
+            cause.downcast_ref::<serde_json::Error>().is_some(),
+            "{cause:?}"
+        );
+        let chained = std::error::Error::source(&error).expect("source() is the parse error");
+        assert_eq!(chained.to_string(), cause.to_string());
+        drop(harness.await);
     }
 
     #[test]
