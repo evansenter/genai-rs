@@ -23,8 +23,9 @@ name: API Surface Sweep
 # Search Store, Document and Operation modules: their endpoints, and the
 # classes in `types.py` their methods' signatures name.
 #
-# Every run also probes the published OpenAPI spec URLs and logs what each
-# serves (their record is in the gap tracker).
+# Every run also compares the published OpenAPI specs with the committed
+# snapshots and opens an issue when one drifts or its URL stops serving
+# (the URLs' record is in the gap tracker).
 #
 # The same dump, resolved (`--json`), is the coverage oracle's snapshot in
 # `tests/fixtures/api_surface/`. Each run checks that the committed copy
@@ -456,24 +457,22 @@ jobs:
           gh issue close "$EXISTING" --reason completed
           echo "Closed issue #$EXISTING"
 
-      # The published OpenAPI spec URLs are the `source` each committed spec
-      # snapshot records; their state is recorded in
+      # The published OpenAPI specs are the `source` each committed spec
+      # snapshot records; the URLs' state is recorded in
       # docs/INTERACTIONS_API_GAP.md ("How to verify API surface"). This
-      # probes them every day and logs what each serves; a dead URL is not a
-      # failure. While SPEC_URL_ISSUE is open, it also comments there once
-      # per URL that serves an OpenAPI document, with the commands that
-      # refresh the snapshot from it. #511, which tracked the URLs' outage,
-      # closed once both served again and the snapshots were refreshed, so
-      # the step now only logs. `!cancelled()`: it does not depend on the
-      # PyPI diff above.
-      - name: Probe the published OpenAPI spec URLs
+      # reduces what each URL serves with snapshot_openapi.py and compares
+      # it with the committed snapshot. A drift, or a URL that stops
+      # serving the spec, opens or updates its own rolling `api-sweep`
+      # issue and leaves the run green, as new bindings do; a clean run
+      # closes it (D-040). `!cancelled()`: it does not depend on the PyPI
+      # diff above.
+      - name: Compare the published OpenAPI specs with their snapshots
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SPEC_URL_ISSUE: '511'
         run: |
           set -euo pipefail
-          .github/scripts/watch_spec_urls.sh "$SPEC_URL_ISSUE" \
+          .github/scripts/watch_spec_urls.sh \
             tests/fixtures/api_surface/openapi-v1beta.json \
             tests/fixtures/api_surface/openapi-v1.json
 
@@ -518,7 +517,7 @@ jobs:
           reported on the sweep's own \`api-sweep\` issue and leave this run
           green. A red run means the sweep could not complete: PyPI or the wheel
           download failed, the bindings dump could not read a wheel, the spec
-          URL probe could not read or comment on its issue, or the committed
+          watch could not read a snapshot or update its issue, or the committed
           snapshot no longer matches the baseline release (the last step names
           it). Check the run log."
 

@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # Exercises watch_spec_urls.sh against a local HTTP server (the published
-# spec URLs, alive or dead) and a stubbed `gh` (the tracking issue), so the
-# branches that decide whether to comment are asserted here rather than on
-# the first morning a URL comes back.
+# spec URLs: matching, drifted, redirected or dead) and a stubbed `gh` (the
+# rolling issue), so the branches that decide whether to open, update,
+# comment on or close the issue are asserted here rather than on the first
+# morning a spec drifts.
 #
 # Run directly: .github/scripts/tests/test_watch_spec_urls.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(dirname "$(dirname "$(dirname "$HERE")")")"
 SCRIPT="$(dirname "$HERE")/watch_spec_urls.sh"
+SNAPSHOT_SCRIPT="$(dirname "$HERE")/snapshot_openapi.py"
 WORKFLOW="$(dirname "$(dirname "$HERE")")/workflows/api-surface-sweep.yml"
 SERVER="$HERE/fake_api_server.py"
+TITLE='API surface sweep: a published OpenAPI spec drifted or stopped serving'
 WORK="$(mktemp -d)"
 SERVER_PID=""
 stop_server() {
@@ -28,14 +32,38 @@ fail() {
     failures=$((failures + 1))
 }
 
-# The spec URLs: one serves a spec, one redirects to it, one is a 404, one
-# serves JSON that is not a spec.
+# The spec as committed, and as served after a field was added and a
+# description reworded (prose the snapshot drops, so it alone is no drift).
+cat >"$WORK/served-spec.json" <<'EOF'
+{"openapi": "3.0.3", "info": {"version": "v1beta"},
+ "paths": {"/v1beta/things": {"get": {}}},
+ "components": {"schemas": {"Thing": {"type": "object", "description": "A thing.",
+   "properties": {"id": {"type": "string"}}}}}}
+EOF
+cat >"$WORK/served-reworded.json" <<'EOF'
+{"openapi": "3.0.3", "info": {"version": "v1beta"},
+ "paths": {"/v1beta/things": {"get": {}}},
+ "components": {"schemas": {"Thing": {"type": "object", "description": "Some thing.",
+   "properties": {"id": {"type": "string"}}}}}}
+EOF
+cat >"$WORK/served-drifted.json" <<'EOF'
+{"openapi": "3.0.3", "info": {"version": "v1beta"},
+ "paths": {"/v1beta/things": {"get": {}}},
+ "components": {"schemas": {"Thing": {"type": "object",
+   "properties": {"id": {"type": "string"}, "size_bytes": {"type": "string"}}}}}}
+EOF
+cat >"$WORK/served-no-schemas.json" <<'EOF'
+{"openapi": "3.0.3", "info": {"version": "v1"}, "paths": {"/a": {}}}
+EOF
 cat >"$WORK/routes.json" <<'EOF'
 {
-  "GET /live/spec.json": {"body": {"openapi": "3.0.3", "info": {"version": "v1beta"},
-                                   "paths": {"/a": {}, "/b": {}}}},
-  "GET /old/spec-v1.json": {"status": 302, "headers": {"Location": "/live/spec.json"}},
-  "GET /not-a-spec.json": {"body": {"error": {"code": 404}}}
+  "GET /same/spec.json": {"body": "served-spec.json"},
+  "GET /reworded/spec.json": {"body": "served-reworded.json"},
+  "GET /drifted/spec.json": {"body": "served-drifted.json"},
+  "GET /old/spec.json": {"status": 302, "headers": {"Location": "/drifted/spec.json"}},
+  "GET /no-schemas.json": {"body": "served-no-schemas.json"},
+  "GET /not-a-spec.json": {"body": {"error": {"code": 404}}},
+  "GET /flaky/spec.json": [{"status": 503, "body": {}}, {"body": "served-spec.json"}]
 }
 EOF
 python3 "$SERVER" "$WORK/routes.json" "$WORK" "$WORK/port" "$WORK/requests" &
@@ -50,22 +78,30 @@ done
 }
 BASE="http://127.0.0.1:$(cat "$WORK/port")"
 
-# A spec snapshot recording where it came from.
+# A committed snapshot of spec.json, recording `$2` as where it came from.
 snapshot() {
-    printf '{"source": "%s", "version": "%s", "fetched": "2026-11-01"}\n' "$2" "$3" >"$WORK/$1"
+    python3 "$SNAPSHOT_SCRIPT" "$WORK/served-spec.json" "$2" 2026-11-01 >"$WORK/$1"
 }
 
-# A `gh` that answers `issue view` from $GH_VIEW (or fails when it is
-# `fail`), and logs every call, with a comment's body, to $WORK/gh.log.
+# A `gh` that answers `issue list` from $GH_LIST and `issue view` from
+# $GH_VIEW (either fails when it is `fail`), and logs every call, with a
+# body file's text, to $WORK/gh.log.
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$GH_LOG"
-if [ "$1 $2" = "issue view" ]; then
-    [ "$GH_VIEW" = fail ] && { echo "HTTP 502" >&2; exit 1; }
-    printf '%s\n' "$GH_VIEW"
-    exit 0
-fi
+case "$1 $2" in
+    "issue list")
+        [ "$GH_LIST" = fail ] && { echo "HTTP 502" >&2; exit 1; }
+        printf '%s\n' "$GH_LIST"
+        exit 0
+        ;;
+    "issue view")
+        [ "$GH_VIEW" = fail ] && { echo "HTTP 502" >&2; exit 1; }
+        printf '%s\n' "$GH_VIEW"
+        exit 0
+        ;;
+esac
 prev=""
 for arg in "$@"; do
     if [ "$prev" = "--body-file" ]; then
@@ -76,12 +112,12 @@ done
 EOF
 chmod +x "$WORK/bin/gh"
 
-OPEN='{"state": "OPEN", "comments": []}'
-
+NO_BODY='{"body": ""}'
 run() {
     : >"$WORK/gh.log"
     rc=0
-    out=$(PATH="$WORK/bin:$PATH" GH_LOG="$WORK/gh.log" GH_VIEW="${GH_VIEW:-$OPEN}" \
+    out=$(PATH="$WORK/bin:$PATH" GH_LOG="$WORK/gh.log" GH_LIST="${GH_LIST:-[]}" \
+        GH_VIEW="${GH_VIEW:-$NO_BODY}" SPEC_WATCH_RETRY_DELAY=0 \
         bash "$SCRIPT" "$@" 2>&1) || rc=$?
 }
 
@@ -91,71 +127,126 @@ expect_rc() {
     fi
 }
 
-comments() { grep -c '^gh issue comment' "$WORK/gh.log" || true; }
+calls() { grep -c "^gh issue $1" "$WORK/gh.log" || true; }
+logged() { grep -qF -- "$1" "$WORK/gh.log"; }
 
-# Every URL dead: exit 0, and the issue is not even read.
-snapshot dead.json "$BASE/dead/spec.json" v1beta
-snapshot notspec.json "$BASE/not-a-spec.json" v1
-run 511 "$WORK/dead.json" "$WORK/notspec.json"
-expect_rc "all dead" 0
-grep -q "HTTP 404" <<<"$out" || fail "a 404 was not reported: $out"
-grep -q "not an OpenAPI document" <<<"$out" || fail "JSON that is not a spec was not reported: $out"
-[ -s "$WORK/gh.log" ] && fail "all dead, but gh was called: $(cat "$WORK/gh.log")"
+ours() { jq -n --arg t "$TITLE" --arg s "$1" '[{number: 544, title: $t, state: $s}]'; }
+OTHER=$(jq -n '[{number: 7, title: "API surface sweep: google-genai has new Interactions bindings", state: "OPEN"}]')
 
-# One serves through a redirect: one comment, naming both URLs, with the
-# marker and the refresh command for its API version.
-snapshot v1.json "$BASE/old/spec-v1.json" v1
-run 511 "$WORK/dead.json" "$WORK/v1.json"
-expect_rc "one serves" 0
-[ "$(comments)" = 1 ] || fail "expected one comment, got: $(cat "$WORK/gh.log")"
-grep -q "^gh issue comment 511 --body-file" "$WORK/gh.log" || fail "not a comment on #511: $(cat "$WORK/gh.log")"
-for want in "$BASE/old/spec-v1.json, served from $BASE/live/spec.json" \
-    "<!-- spec-url-serves: $BASE/old/spec-v1.json -->" \
-    "refresh_api_snapshot.sh --spec-v1 spec-v1.json --spec-source '$BASE/old/spec-v1.json'" \
-    '`info.version` v1beta, 2 paths'; do
-    grep -qF -- "$want" "$WORK/gh.log" || fail "the comment lacks: $want"$'\n'"$(cat "$WORK/gh.log")"
+snapshot same.json "$BASE/same/spec.json"
+snapshot reworded.json "$BASE/reworded/spec.json"
+snapshot drifted.json "$BASE/drifted/spec.json"
+snapshot redirected.json "$BASE/old/spec.json"
+snapshot dead.json "$BASE/dead/spec.json"
+snapshot notspec.json "$BASE/not-a-spec.json"
+snapshot unreadable.json "$BASE/no-schemas.json"
+snapshot flaky.json "$BASE/flaky/spec.json"
+
+# Every spec matches (prose changes included): no issue is opened, and the
+# bindings sweep's issue under the same label is left alone.
+GH_LIST=$OTHER run "$WORK/same.json" "$WORK/reworded.json"
+expect_rc "all match" 0
+grep -q "Every published spec matches" <<<"$out" ||
+    fail "a clean run did not say so: $out"
+for verb in create edit comment close reopen; do
+    [ "$(calls "$verb")" = 0 ] || fail "a clean run called gh issue $verb: $(cat "$WORK/gh.log")"
 done
-grep -qF "dead/spec.json" "$WORK/gh.log" && fail "the comment names the dead URL"
 
-# Already announced: the marker is in a comment, so no second comment.
-GH_VIEW=$(jq -n --arg m "<!-- spec-url-serves: $BASE/old/spec-v1.json -->" \
-    '{state: "OPEN", comments: [{body: ("served again\n" + $m)}]}') \
-    run 511 "$WORK/v1.json"
-expect_rc "already announced" 0
-[ "$(comments)" = 0 ] || fail "commented twice on one URL: $(cat "$WORK/gh.log")"
+# A clean run closes our open issue, with a comment.
+GH_LIST=$(ours OPEN) run "$WORK/same.json"
+expect_rc "clean, issue open" 0
+[ "$(calls "comment 544")" = 1 ] || fail "no closing comment: $(cat "$WORK/gh.log")"
+[ "$(calls "close 544")" = 1 ] || fail "the issue was not closed: $(cat "$WORK/gh.log")"
 
-# A closed issue gets no comment.
-GH_VIEW='{"state": "CLOSED", "comments": []}' run 511 "$WORK/v1.json"
-expect_rc "closed issue" 0
-[ "$(comments)" = 0 ] || fail "commented on a closed issue: $(cat "$WORK/gh.log")"
+# A closed issue stays closed on a clean run.
+GH_LIST=$(ours CLOSED) run "$WORK/same.json"
+expect_rc "clean, issue closed" 0
+[ "$(calls close)" = 0 ] || fail "closed a closed issue: $(cat "$WORK/gh.log")"
+
+# A drifted spec, reached through a redirect, with no issue yet: one issue,
+# with the diff, the URLs, the refresh command and the marker.
+GH_LIST=$OTHER run "$WORK/same.json" "$WORK/redirected.json"
+expect_rc "drift, no issue" 0
+[ "$(calls create)" = 1 ] || fail "expected one new issue: $(cat "$WORK/gh.log")"
+logged "--title $TITLE --label api-sweep" || fail "the issue lacks its title or label: $(cat "$WORK/gh.log")"
+for want in "$BASE/old/spec.json (served from $BASE/drifted/spec.json) has drifted" \
+    '+    "size_bytes": {' \
+    "refresh_api_snapshot.sh --spec-v1beta spec-2.json --spec-source '$BASE/old/spec.json'" \
+    "<!-- spec-watch: "; do
+    logged "$want" || fail "the issue lacks: $want"$'\n'"$(cat "$WORK/gh.log")"
+done
+logged "$BASE/same/spec.json" && fail "the issue names the matching URL"
+[ "$(calls "edit 7")" = 0 ] || fail "edited the bindings sweep's issue"
+
+# The same findings on an open issue whose body carries their marker: the
+# body is refreshed, with no comment.
+marker=$(grep -o '<!-- spec-watch: [0-9]* -->' "$WORK/gh.log")
+GH_LIST=$(ours OPEN) GH_VIEW=$(jq -n --arg b "old body $marker" '{body: $b}') \
+    run "$WORK/same.json" "$WORK/redirected.json"
+expect_rc "drift, already reported" 0
+[ "$(calls "edit 544")" = 1 ] || fail "the body was not refreshed: $(cat "$WORK/gh.log")"
+[ "$(calls comment)" = 0 ] || fail "commented on findings already reported: $(cat "$WORK/gh.log")"
+[ "$(calls create)" = 0 ] || fail "filed a duplicate: $(cat "$WORK/gh.log")"
+
+# New findings on a closed issue: reopened, refreshed and commented on.
+GH_LIST=$(ours CLOSED) GH_VIEW=$(jq -n --arg b "old body $marker" '{body: $b}') \
+    run "$WORK/drifted.json" "$WORK/dead.json"
+expect_rc "new findings, issue closed" 0
+[ "$(calls "reopen 544")" = 1 ] || fail "the closed issue was not reopened: $(cat "$WORK/gh.log")"
+[ "$(calls "edit 544")" = 1 ] || fail "the body was not refreshed: $(cat "$WORK/gh.log")"
+[ "$(calls "comment 544")" = 1 ] || fail "new findings were not announced: $(cat "$WORK/gh.log")"
+
+# Dead URLs: a 404, JSON that is not a spec, and a spec the snapshot script
+# cannot reduce are each reported, after a second try.
+: >"$WORK/requests"
+run "$WORK/dead.json" "$WORK/notspec.json" "$WORK/unreadable.json"
+expect_rc "dead URLs" 0
+for want in "$BASE/dead/spec.json stopped serving the spec" "HTTP 404" \
+    "not an OpenAPI document" "$BASE/no-schemas.json serves a spec the snapshot script cannot read" \
+    "no components.schemas"; do
+    logged "$want" || fail "the issue lacks: $want"$'\n'"$(cat "$WORK/gh.log")"
+done
+[ "$(grep -c "^GET /dead/spec.json" "$WORK/requests")" = 2 ] ||
+    fail "a dead URL was not tried twice: $(cat "$WORK/requests")"
+logged "refresh_api_snapshot.sh" && fail "a dead URL got a refresh command"
+
+# A URL that fails once and then serves is not dead.
+run "$WORK/flaky.json"
+expect_rc "flaky URL" 0
+[ "$(calls create)" = 0 ] || fail "a URL that served on the retry was reported: $(cat "$WORK/gh.log")"
 
 # A snapshot with no URL for a source is skipped, not probed.
 : >"$WORK/requests"
-snapshot manual.json manual v1beta
-run 511 "$WORK/manual.json"
+python3 "$SNAPSHOT_SCRIPT" "$WORK/served-spec.json" manual 2026-11-01 >"$WORK/manual.json"
+run "$WORK/manual.json"
 expect_rc "manual source" 0
 [ -s "$WORK/requests" ] && fail "a manual source was probed: $(cat "$WORK/requests")"
 
 # A failed gh call fails the run, rather than reading as "no issue".
-GH_VIEW=fail run 511 "$WORK/v1.json"
+GH_LIST=fail run "$WORK/drifted.json"
+expect_rc "gh list fails" 1
+GH_LIST=$(ours OPEN) GH_VIEW=fail run "$WORK/drifted.json"
 expect_rc "gh view fails" 1
 
 # Bad usage and unreadable snapshots.
 run
 expect_rc "no arguments" 2
-run 511
-expect_rc "no snapshot" 2
-run "#511" "$WORK/v1.json"
-expect_rc "not an issue number" 2
-run 511 "$WORK/missing.json"
+run "$WORK/missing.json"
 expect_rc "missing snapshot" 2
+printf '{"source": "%s"}\n' "$BASE/same/spec.json" >"$WORK/undated.json"
+run "$WORK/undated.json"
+expect_rc "no fetch date" 2
 
-# The sweep runs it on both committed snapshots.
-grep -q 'watch_spec_urls.sh "$SPEC_URL_ISSUE"' "$WORKFLOW" ||
+# The sweep runs it on both committed snapshots, and the committed ones are
+# what the script compares (each records its source and fetch date).
+grep -q '\.github/scripts/watch_spec_urls\.sh \\$' "$WORKFLOW" ||
     fail "api-surface-sweep.yml does not run watch_spec_urls.sh"
 for spec in openapi-v1beta.json openapi-v1.json; do
     grep -q "tests/fixtures/api_surface/$spec" "$WORKFLOW" ||
-        fail "api-surface-sweep.yml does not watch $spec's URL"
+        fail "api-surface-sweep.yml does not watch $spec"
+    committed="$REPO/tests/fixtures/api_surface/$spec"
+    jq -e '(.source | startswith("https://")) and (.fetched | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))' \
+        "$committed" >/dev/null || fail "$spec records no source URL and fetch date"
 done
 
 if [ "$failures" -gt 0 ]; then

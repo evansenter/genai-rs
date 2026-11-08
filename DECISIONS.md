@@ -1439,6 +1439,17 @@ comments only on an open issue, so the sweep's step now probes the URLs
 and logs what each serves. Nothing yet compares a served spec with its
 committed snapshot; that watch is left to the owner.
 
+**Amended 2026-11-08 (#504's H1; #544, #541).** The sweep watches the
+specs themselves now. `watch_spec_urls.sh` reduces what each snapshot's
+URL serves with `snapshot_openapi.py`, with the snapshot's own source and
+fetch date, and compares the result with the committed file. A drift, or
+a URL that stops serving the spec on a second try, opens or updates one
+rolling `api-sweep` issue, which comments only when the findings change;
+a clean run closes it. It still leaves the refresh to a person, for the
+reason above. The store and document listings now send the camelCase
+pair, as the Files API does, so the eight reasoned paging entries are
+gone.
+
 ---
 
 ## D-041 — The next turn halts an abandoned Antigravity turn; dropping it sends nothing (2026-11-07)
