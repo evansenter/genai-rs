@@ -21,7 +21,8 @@
 #                  A freshly downloaded OpenAPI spec to snapshot. Downloading
 #                  it is manual (the URL's state is recorded in
 #                  docs/INTERACTIONS_API_GAP.md, "How to verify API surface",
-#                  and the daily sweep probes it with watch_spec_urls.sh):
+#                  and the daily sweep's watch_spec_urls.sh opens an issue
+#                  when it drifts from its snapshot or stops serving):
 #                  without these flags the committed spec snapshots are kept.
 # --spec-fetched   The download date recorded with the spec (default today).
 # --spec-source    Where the spec came from, recorded with it (default

@@ -505,7 +505,10 @@ checks on it:
   populated (the agent configs, whose fields are private, through each
   type's `fully_populated()` literal beside it, and
   `agent_configs_set_every_field` fails on a field there that sends no
-  key), plus proptest samples for the union arms and enum values. An
+  key), plus proptest samples for the union arms and enum values.
+  `request_values_are_full_literals` (`request/fills.rs`) fails on a
+  `default()` fill, other than a whole `extra` map, in those literals and
+  in every strategy the oracle samples. An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
