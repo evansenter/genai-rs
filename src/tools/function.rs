@@ -157,9 +157,9 @@ impl FunctionDeclarationBuilder {
     /// Adds a parameter to the function schema (replacing one of the same
     /// name).
     #[must_use]
-    pub fn add_parameter(mut self, name: &str, schema: serde_json::Value) -> Self {
+    pub fn add_parameter(mut self, name: impl Into<String>, schema: serde_json::Value) -> Self {
         if let serde_json::Value::Object(ref mut map) = self.properties {
-            map.insert(name.to_string(), schema);
+            map.insert(name.into(), schema);
         }
         self
     }

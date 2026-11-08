@@ -26,6 +26,30 @@ fn test_interaction_builder_with_function() {
 }
 
 #[test]
+fn test_add_functions_takes_any_iterator_of_declarations() {
+    let client = create_test_client();
+    let declaration = |name: &str| FunctionDeclaration::builder(name).build();
+    // An array, and a mapped iterator, with no `Vec` in between (#504).
+    let builder = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .add_functions([declaration("a"), declaration("b")])
+        .add_functions(["c", "d"].into_iter().map(declaration));
+
+    let names: Vec<&str> = builder
+        .tools
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|tool| match tool {
+            Tool::Function { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, ["a", "b", "c", "d"]);
+}
+
+#[test]
 fn test_interaction_builder_add_mcp_server() {
     let client = create_test_client();
     let builder = client

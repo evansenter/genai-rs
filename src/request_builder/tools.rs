@@ -98,7 +98,8 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Adds multiple function declarations to the request at once.
+    /// Adds multiple function declarations to the request at once: a `Vec`,
+    /// an array, or any other iterator of them.
     ///
     /// This is a convenience method equivalent to calling [`add_function`] multiple times.
     ///
@@ -123,7 +124,10 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// [`add_function`]: InteractionBuilder::add_function
     #[must_use]
-    pub fn add_functions(mut self, functions: Vec<FunctionDeclaration>) -> Self {
+    pub fn add_functions(
+        mut self,
+        functions: impl IntoIterator<Item = FunctionDeclaration>,
+    ) -> Self {
         for func in functions {
             self.push_tool(func.into_tool());
         }

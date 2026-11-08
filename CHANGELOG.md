@@ -260,6 +260,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: `FunctionDeclarationBuilder::add_parameter` takes the name as
+  `impl Into<String>`, and `InteractionBuilder::add_functions` takes
+  `impl IntoIterator<Item = FunctionDeclaration>`**, as the crate's other
+  setters do, in place of `&str` and `Vec<FunctionDeclaration>`. A
+  `String` name or an array of declarations no longer needs a `&` or a
+  `vec!`. Migration: none for a `&str`, `String` or `Vec` argument; a call
+  that relied on the old types to infer something (passing the method as a
+  function pointer, say) names the new ones.
 - **Breaking: `TranscriptionMode::Smart` is a struct variant,
   `Smart { source_text: Option<String> }`**, for google-genai 3.0.0's
   `SmartTranscriptionMode.source_text`: the text the audio is expected to

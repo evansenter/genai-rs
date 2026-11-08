@@ -25,3 +25,20 @@ fn test_serialize_function_declaration() {
         "Get the current weather in a given location"
     );
 }
+
+#[test]
+fn test_add_parameter_takes_an_owned_or_borrowed_name() {
+    // A name built at run time is passed as is, with no `&` (#504).
+    let names: Vec<String> = (1..=2).map(|i| format!("param{i}")).collect();
+    let mut builder = FunctionDeclaration::builder("f");
+    for name in names {
+        builder = builder.add_parameter(name, serde_json::json!({"type": "string"}));
+    }
+    let function = builder
+        .add_parameter("literal", serde_json::json!({"type": "number"}))
+        .build();
+    let properties = function.parameters().properties();
+    assert_eq!(properties["param1"], serde_json::json!({"type": "string"}));
+    assert_eq!(properties["param2"], serde_json::json!({"type": "string"}));
+    assert_eq!(properties["literal"], serde_json::json!({"type": "number"}));
+}
