@@ -28,7 +28,7 @@ mod response_minimal;
 #[cfg(not(genai_strict_unknown))]
 mod response_targets;
 
-use api_surface::{Finding, Surface};
+use api_surface::{Finding, Surface, undated_live_claim};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -369,33 +369,9 @@ fn reasons() -> Vec<(&'static str, &'static str, &'static str)> {
         .collect()
 }
 
-/// Whether a reason states what the API did, or does (a word like
-/// "served", "rejected", "accepted" or "live", or an HTTP error status),
-/// without the `YYYY-MM` date of the observation (D-010): a live fact goes
-/// stale, and the date says how stale.
-fn undated_live_claim(reason: &str) -> bool {
-    const STEMS: &[&str] = &[
-        "live", "serv", "reject", "accept", "ignor", "observ", "seen", "probe",
-    ];
-    let lower = reason.to_lowercase();
-    let claims = lower
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|word| {
-            STEMS.iter().any(|stem| word.starts_with(stem))
-                || (word.len() == 3
-                    && word.starts_with(['4', '5'])
-                    && word.bytes().all(|b| b.is_ascii_digit()))
-        });
-    let dated = reason.as_bytes().windows(7).any(|w| {
-        w.starts_with(b"20")
-            && w[2..4].iter().all(u8::is_ascii_digit)
-            && w[4] == b'-'
-            && w[5..7].iter().all(u8::is_ascii_digit)
-    });
-    claims && !dated
-}
-
-/// Every reason that states a live fact dates it.
+/// Every reason that states a live fact dates it
+/// (`tests/api_surface/claims.rs`; the wire oracle and `tests/ci_coverage.rs`
+/// hold their own lists to it).
 #[test]
 fn live_claims_are_dated() {
     let undated: Vec<String> = reasons()

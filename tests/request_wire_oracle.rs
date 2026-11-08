@@ -628,9 +628,9 @@ fn verbs_with_a_body_are_found_through_methods() {
 /// `alt` is a Google API system parameter, accepted on every method and
 /// listed in no method's request class.
 const ALT: &str = "`alt` is a Google API system parameter, which every method takes and no \
-     request class lists: `alt=sse` asks for server-sent events (the live stream, resume and \
-     create-stream tests read them) and `alt=media` for a file's bytes \
-     (`EnvironmentFiles::download`, live in environment_files_tests).";
+     request class lists: `alt=sse` asks for an SSE stream (the stream, resume and \
+     create-stream tests read one) and `alt=media` for a file's bytes \
+     (`EnvironmentFiles::download`, read back in environment_files_tests).";
 
 /// Query keys the crate sends that its endpoint's binding request does not
 /// list, each with its reason, by site (`METHOD /path?key`).
@@ -697,8 +697,8 @@ const FULL_NAMES: &[(&str, &[&str], &str)] = &[
     (
         "{clean_id}",
         &["fileSearchStores/{}/media/{}"],
-        "file_search_stores.download_media's media ID: google-genai rejects one \
-         without `/media/`, and names the route `GET /{name=fileSearchStores/*/media/*}`.",
+        "file_search_stores.download_media's media ID: google-genai's client refuses \
+         one without `/media/`, and names the route `GET /{name=fileSearchStores/*/media/*}`.",
     ),
     (
         "{operationName}",
@@ -706,10 +706,32 @@ const FULL_NAMES: &[(&str, &[&str], &str)] = &[
             "fileSearchStores/{}/operations/{}",
             "fileSearchStores/{}/upload/operations/{}",
         ],
-        "The operations the API serves: an import's and a store upload's \
-         (docs/ENUM_WIRE_FORMATS.md, \"File Search\").",
+        "The operations the API serves: an import's and a store upload's (live \
+         2026-11-05, docs/ENUM_WIRE_FORMATS.md \"File Search\").",
     ),
 ];
+
+/// Every reason in this file's lists that states a live fact dates it
+/// (D-010), as the in-crate oracle's do (`tests/api_surface/claims.rs`).
+#[test]
+fn live_claims_are_dated() {
+    let full_names = FULL_NAMES
+        .iter()
+        .map(|(name, _, reason)| (*name, *reason))
+        .collect();
+    let undated = api_surface::undated_live_claims(&[
+        ("ALLOWED", ALLOWED.to_vec()),
+        ("NO_JSON_BODY", NO_JSON_BODY.to_vec()),
+        ("QUERY_ALLOWED", QUERY_ALLOWED.to_vec()),
+        ("NOT_SENT", NOT_SENT.to_vec()),
+        ("FULL_NAMES", full_names),
+    ]);
+    assert!(
+        undated.is_empty(),
+        "Reasons that state a live fact without its YYYY-MM date (D-010):\n  {}",
+        undated.join("\n  ")
+    );
+}
 
 /// How a template segment matches a request path's segments, with the
 /// number of literal segments it matched; `None` when it does not.

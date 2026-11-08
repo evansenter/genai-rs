@@ -30,6 +30,8 @@
 )]
 
 mod ci_workflows;
+#[path = "api_surface/claims.rs"]
+mod claims;
 mod live_verbs;
 
 use std::collections::BTreeSet;
@@ -597,9 +599,27 @@ const ENDPOINTS_WITHOUT_A_VERB: &[(&str, &str)] = &[
     (
         "POST /{}/interactions",
         "Sent by `client.interaction()...create()` / `create_stream()` \
-         (`InteractionBuilder`, not a handle), which every live interaction test calls.",
+         (`InteractionBuilder`, not a handle), which every interaction test calls.",
     ),
 ];
+
+/// Every reason in the endpoint map's lists that states a live fact dates
+/// it (D-010), as the coverage oracle's do (`tests/api_surface/claims.rs`).
+#[test]
+fn live_claims_are_dated() {
+    let undated = claims::undated_live_claims(&[
+        (
+            "ENDPOINTS_WITHOUT_A_VERB",
+            ENDPOINTS_WITHOUT_A_VERB.to_vec(),
+        ),
+        ("EXEMPT", EXEMPT.to_vec()),
+    ]);
+    assert!(
+        undated.is_empty(),
+        "Reasons that state a live fact without its YYYY-MM date (D-010):\n  {}",
+        undated.join("\n  ")
+    );
+}
 
 /// `/{api_version}/agents/{agentsId}` -> `/{}/agents/{}`, the form the
 /// bindings dump writes.
