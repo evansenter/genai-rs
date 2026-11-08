@@ -599,6 +599,13 @@ Streams borrowing the client would avoid those clones, but switching to
 owned streams afterwards would change the handle types, so owned streams
 were chosen up front.
 
+*Amended 2026-11-07 (#504).* Rules 2 and 6 are checked on every handle,
+not only the sampled verbs the compile guard calls: a source scan in
+`tests/http_mock_resources/paging.rs` fails on a public handle method that
+takes anything but `self` or `mut self`, or returns a value that is
+neither `#[must_use]` itself (a `Result`, a handle, a list builder) nor
+marked on the method.
+
 ---
 
 ## D-017 — Interaction methods move to `src/interactions.rs` (2026-09-27)
