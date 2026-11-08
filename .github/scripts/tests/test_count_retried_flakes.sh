@@ -222,6 +222,47 @@ LOG
         '[["repo_auditor",1,2,1],["streaming",1,1,1]]'
     expect_json "examples: not live test runs" '[.tests_run, .flaky]' '[0,0]'
 
+    # --- Skip markers: counted in the retried step's test output, each on
+    #     the test whose status line precedes it (nextest prints a passing
+    #     test's output after its line with --success-output=final). The
+    #     step header's script and the loop's own warning name the markers
+    #     too, and are not markers; neither is one in a step without
+    #     retries. A marker before any status line has no test.
+    cat > "$WORK/markers.log" <<'LOG'
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:00.0Z ##[group]Run set -eo pipefail
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:00.1Z ^[[36;1m  skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' "/tmp/$test.log" || true)^[[0m
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:00.2Z   NEXTEST_RETRIES: 2
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:00.3Z ##[endgroup]
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.0Z     Starting 2 tests across 1 binary
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.1Z ^[[32;1m        PASS^[[0m [   1.000s] (1/2) ^[[35;1mgenai-rs::tools_and_config_tests^[[0m ^[[36mmcp^[[0m^[[36m::^[[0m^[[34;1mtest_mcp^[[0m
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.2Z ^[[32;1m        PASS^[[0m [   1.000s] (2/2) ^[[35;1mgenai-rs::tools_and_config_tests^[[0m ^[[34;1mtest_other^[[0m
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.3Z ^[[32;1m     Summary^[[0m [   2.000s] 2 tests run: 2 passed, 0 skipped
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.4Z ^[[32;1m        PASS^[[0m [   1.000s] (1/2) ^[[35;1mgenai-rs::tools_and_config_tests^[[0m ^[[36mmcp^[[0m^[[36m::^[[0m^[[34;1mtest_mcp^[[0m
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.5Z ^[[32;1m ^[[0m ^[[32;1mstdout^[[0m ^[[32;1m───^[[0m
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.6Z     running 1 test
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.7Z     LIVE_TOOL_EVIDENCE_SKIPPED: the MCP server could not be reached
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.8Z     SEMANTIC_VALIDATION_SKIPPED (transient validator error): Api 503
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:01.9Z ^[[32;1m        PASS^[[0m [   1.000s] (2/2) ^[[35;1mgenai-rs::tools_and_config_tests^[[0m ^[[34;1mtest_other^[[0m
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:02.0Z ##[warning]tools_and_config_tests: 2 unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:03.0Z     Starting 1 test across 1 binary
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:03.1Z     SEMANTIC_VALIDATION_SKIPPED (missing-verdict): printed before any test
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:03.2Z ^[[32;1m        PASS^[[0m [   1.000s] (1/1) ^[[35;1mgenai-rs::tools_and_config_tests^[[0m ^[[36mmcp^[[0m^[[36m::^[[0m^[[34;1mtest_mcp^[[0m
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:03.3Z     LIVE_TOOL_EVIDENCE_SKIPPED: again
+Integration Tests (tools)	Run integration tests (tools)	2026-11-05T10:00:03.4Z ^[[32;1m     Summary^[[0m [   1.000s] 1 test run: 1 passed, 0 skipped
+Test Suite	Run unit tests	2026-11-05T10:00:04.0Z ##[group]Run cargo nextest run --workspace
+Test Suite	Run unit tests	2026-11-05T10:00:04.1Z ##[endgroup]
+Test Suite	Run unit tests	2026-11-05T10:00:05.0Z     Starting 1 test across 1 binary
+Test Suite	Run unit tests	2026-11-05T10:00:05.1Z         PASS [   0.010s] (1/1) genai-rs::voices_tests test_voice_list
+Test Suite	Run unit tests	2026-11-05T10:00:05.2Z     LIVE_TOOL_EVIDENCE_SKIPPED: not a retried step
+LOG
+    out=$("$SCRIPT" "$WORK/markers.log")
+    expect_json "markers: every marker line in the retried step, none from its script or warning" \
+        .skip_markers 4
+    expect_json "markers: by the test that printed them, with its runs" \
+        '[.skips[] | [.binary, .name, .markers, .runs]]' \
+        '[["tools_and_config_tests","mcp::test_mcp",3,2],["","",1,0]]'
+    expect_json "markers: not flakes" '[.tests_run, .flaky]' '[3,0]'
+
     # --- Nothing to count: a clean run, and no input at all.
     printf '     Summary [   1.000s] 7 tests run: 7 passed, 0 skipped\n' > "$WORK/clean.log"
     out=$("$SCRIPT" "$WORK/clean.log")
@@ -229,6 +270,7 @@ LOG
     out=$("$SCRIPT" < /dev/null)
     expect_json "empty input: zeros, not an error" '[.tests_run, .flaky, (.tests | length)]' '[0,0,0]'
     expect_json "empty input: no examples" '[.examples_run, .examples_retried, (.examples | length)]' '[0,0,0]'
+    expect_json "empty input: no skip markers" '[.skip_markers, (.skips | length)]' '[0,0]'
 done
 
 unset AWK

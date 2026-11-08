@@ -1,6 +1,23 @@
-//! The Code Coverage job reports somewhere every run (#504).
+//! The Code Coverage job reports somewhere every run, measures the
+//! `antigravity` feature with its scripted suite, and fails under a floor
+//! (#504).
 
 use super::{command_lines, jobs, read, root, steps};
+
+/// The Code Coverage job's steps.
+fn coverage_steps() -> Vec<String> {
+    let rust = read(&root().join(".github/workflows/rust.yml"));
+    let (_, job) = jobs(&rust)
+        .into_iter()
+        .find(|(id, _)| id == "coverage")
+        .expect("rust.yml has a coverage job");
+    steps(&job)
+}
+
+/// The lowest floor the guard accepts: well under the measured value, so
+/// only a floor dropped by mistake (or removed by setting it to 0) trips
+/// it, not the floor's own small moves.
+const MIN_FLOOR: f64 = 90.0;
 
 /// With no `CODECOV_TOKEN` the Codecov upload used to fail quietly under
 /// `fail_ci_if_error: false`, so the job passed with coverage reported
@@ -8,12 +25,7 @@ use super::{command_lines, jobs, read, root, steps};
 /// run, and the upload, when it runs, fails the job on an error.
 #[test]
 fn code_coverage_reports_a_summary_and_fails_a_failed_upload() {
-    let rust = read(&root().join(".github/workflows/rust.yml"));
-    let (_, job) = jobs(&rust)
-        .into_iter()
-        .find(|(id, _)| id == "coverage")
-        .expect("rust.yml has a coverage job");
-    let all = steps(&job);
+    let all = coverage_steps();
 
     let report_line = |step: &String| {
         command_lines(step)
@@ -62,4 +74,99 @@ fn code_coverage_reports_a_summary_and_fails_a_failed_upload() {
             "the upload runs only when the token is set:\n{upload}"
         );
     }
+}
+
+/// Coverage once left out the `antigravity` feature, about a fifth of the
+/// source, and had no floor, so a drop passed (#504). The job measures the
+/// feature in both of its runs, the unit tests and the key-free scripted
+/// harness suite (which tests most of it), and then fails under a floor
+/// near the measured value, in a step after the summary and with no `if:`.
+#[test]
+fn code_coverage_measures_antigravity_and_holds_a_floor() {
+    let all = coverage_steps();
+    let lines: Vec<String> = all
+        .iter()
+        .flat_map(|step| command_lines(step).map(str::to_owned).collect::<Vec<_>>())
+        .collect();
+
+    let runs: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains("cargo llvm-cov nextest"))
+        .collect();
+    assert!(
+        runs.len() >= 2,
+        "the coverage job runs the unit tests and the scripted suite: {runs:?}"
+    );
+    for run in &runs {
+        assert!(
+            run.contains("--workspace") && run.contains("--features antigravity"),
+            "every coverage run measures the workspace with the antigravity feature: {run}"
+        );
+        assert!(
+            run.contains("--no-report"),
+            "the runs feed one report, so each is --no-report: {run}"
+        );
+    }
+    assert!(
+        runs.iter()
+            .any(|run| run.contains("--run-ignored all")
+                && run.contains("binary(antigravity_scripted)")),
+        "the scripted harness suite runs under coverage: {runs:?}"
+    );
+    let scripted = all
+        .iter()
+        .find(|step| step.contains("binary(antigravity_scripted)"))
+        .expect("a step runs the scripted suite");
+    assert!(
+        scripted.contains("GEMINI_API_KEY: \"\""),
+        "the scripted suite runs with the key blanked:\n{scripted}"
+    );
+    assert!(
+        all.iter().any(|step| command_lines(step)
+            .any(|line| line.contains("pip install google-antigravity=="))),
+        "the coverage job installs the pinned harness the scripted suite drives"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("cargo llvm-cov clean --workspace")),
+        "the job starts from a clean profile, so a cached run cannot merge into this one"
+    );
+
+    let summary_at = all
+        .iter()
+        .position(|step| step.contains("--summary-only"))
+        .expect("a summary step");
+    let (floor_at, floor) = all
+        .iter()
+        .enumerate()
+        .find_map(|(i, step)| {
+            command_lines(step)
+                .find_map(|line| line.split("--fail-under-lines ").nth(1))
+                .map(|rest| (i, rest.split_whitespace().next().unwrap_or("").to_owned()))
+        })
+        .expect("a step runs `cargo llvm-cov report --fail-under-lines <N>`");
+    let floor: f64 = floor
+        .parse()
+        .unwrap_or_else(|e| panic!("the floor `{floor}` is not a number: {e}"));
+    assert!(
+        floor >= MIN_FLOOR,
+        "the coverage floor is {floor}%, under {MIN_FLOOR}%: was it lowered by mistake?"
+    );
+    assert!(
+        floor_at > summary_at,
+        "the floor is checked after the summary, so a drop is shown before it fails"
+    );
+    assert!(
+        !all[floor_at].contains("        if:"),
+        "the floor runs on every run:\n{}",
+        all[floor_at]
+    );
+    let floor_line = command_lines(&all[floor_at])
+        .find(|line| line.contains("--fail-under-lines"))
+        .unwrap_or_default();
+    assert!(
+        floor_line.contains("--workspace"),
+        "the floor reads the packages the runs measured: {floor_line}"
+    );
 }

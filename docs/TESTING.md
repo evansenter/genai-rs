@@ -296,7 +296,7 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 |--------|---------|
 | `get_client()` | `Some(Client)` when `GEMINI_API_KEY` is set |
 | `interaction_builder(&client)`, `stateful_builder(&client)` | Builders preset with `DEFAULT_MODEL` (the latter with storage on) |
-| `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`) and the model-side flakes in `is_transient_error` |
+| `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`), the model-side flakes in `is_transient_error`, and an interaction `is_transient_failure` matches |
 | `with_timeout(test_timeout(), ..)`, `extended_test_timeout()` | Bound a test |
 | `consume_stream(..)`, `consume_auto_function_stream(..)` | Collect a stream's text and final response; they panic on the first stream error |
 | `poll_until_done(..)` | Poll a background interaction |
@@ -310,8 +310,15 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 json syntax`, `there was a problem processing your request`, and `please
 retry the request`, the API's advice on `malformed_tool_call`), but never
 `too_many_tool_calls`, the url_context loop, whatever its message says; see
-[Error Handling](ERROR_HANDLING.md#known-transient-errors). A validation
-rejection still fails on the first attempt.
+[Error Handling](ERROR_HANDLING.md#known-transient-errors). A broken tool
+call now usually comes back as a `200` instead: an interaction whose
+`status` is `failed` and whose `errors` carry `malformed_tool_call`
+([live record](INTERACTIONS_API_GAP.md#tools)). `retry_on_transient`, and
+so `retry_request!`, retries that too (`is_transient_failure`), when the
+operation returns an `InteractionResponse` or an `AutoFunctionResult`, and
+never when an error names `too_many_tool_calls`; after the last attempt it
+returns the failed interaction, for the test's own status check to report.
+A validation rejection still fails on the first attempt.
 
 For the auto-function loop, assert that executions **succeeded**, not just
 that they happened: `result.all_executions_succeeded()`, with
@@ -361,6 +368,13 @@ when the week breaches a target (D-046):
   than 5% of the runs it ran in, and in at least two. The report lists
   each with its share. A low rate across the suite can hide one test that
   needs a retry every few runs.
+
+The report lists the week's runs by creation date, up to 1,000 (about 115
+a week now); a listing that reaches the limit fails the report rather than
+leave runs out. It also adds up the [skip markers](#skip-markers) the retry
+jobs printed across the week, with the tests that printed them: each job
+budgets only its own run's, so a test that skips its check in run after
+run shows only here. That row is reported, not a target.
 
 Failed runs are split by event. Only main's (push, schedule, dispatch) are
 categorized; a pull request's red run is usually the change under review,
@@ -456,12 +470,16 @@ Two printed markers mean "passed without verifying":
 
 | Marker | Meaning |
 |--------|---------|
-| `SEMANTIC_VALIDATION_SKIPPED` | The validator failed transiently (or returned no usable verdict), so the verdict was never obtained |
+| `SEMANTIC_VALIDATION_SKIPPED` | The validator failed transiently (or returned no usable verdict), so the verdict was never obtained, or the test had nothing to check it against (the Antigravity question test, when the model asked no multiple-choice question) |
 | `LIVE_TOOL_EVIDENCE_SKIPPED` | The interaction produced no evidence the tool ran, for a reason the test can't tell apart from a regression |
 
-The `test-integration` job keeps passing-test output
-(`--success-output=final`) and counts both markers per binary. Any marker
-gives a warning; more than 3 fails the step (`release.yml` does the same).
+Every live nextest step keeps passing-test output
+(`--success-output=final`) and counts both markers: the `test-integration`
+job per binary, and the Antigravity harness step in `test-antigravity` and
+in `release.yml`. Any marker gives a warning; more than 3 fails the step
+(10 for `release.yml`'s whole-workspace run). `tests/ci_workflows/` checks
+that every live step does this, and the flakiness report adds the markers
+up across the week.
 
 A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
@@ -475,12 +493,23 @@ Serialization is tested twice, on purpose:
 
 | Layer | Where | Purpose |
 |-------|-------|---------|
-| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491); it does the same over a whole generated `InteractionResponse`, reaching every known `Tool`, `ResponseFormat`, `TranscriptionMode` and `ToolChoice` variant a stored interaction serves back, except under the keys `NOT_INJECTED_UNDER` lists with their reasons (#504) |
+| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_stream.rs` streams every step with a delta form (its `step.start`, the step split over `step.delta` events, `step.stop`) through `dispatch_stream_event` and checks the completed response carries the step a non-streamed one would, so a stream accumulator arm that drops what its delta carries fails offline. `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491); it does the same over a whole generated `InteractionResponse`, reaching every known `Tool`, `ResponseFormat`, `TranscriptionMode` and `ToolChoice` variant a stored interaction serves back, except under the keys `NOT_INJECTED_UNDER` lists with their reasons (#504) |
 | Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
 Keep both: the examples are documentation, and they run fast. Both take
 their expected shapes from the crate's own serde attributes, so neither can
 catch a wrong wire key; the coverage oracle below can.
+
+## Line coverage
+
+The Code Coverage job in `rust.yml` measures the workspace with the
+`antigravity` feature: the offline suite, then the key-free scripted
+harness suite, merged into one report that goes to the job summary on
+every run. The job then fails when line coverage is under its floor
+(`--fail-under-lines`), set just under the value measured when it was
+last raised (D-NEXT-H4): raise it in `rust.yml` as coverage grows, and
+lower it only with the reason in the commit. `tests/ci_workflows/coverage.rs`
+checks the job keeps all of this.
 
 ## Coverage oracle
 

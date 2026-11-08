@@ -75,10 +75,20 @@ status (`tests/common/retry.rs`, `is_transient_error`):
 | `Api` 400 containing `there was a problem processing your request` | Server-side bursts that pass on re-run |
 | `Api` 400 containing `please retry the request`, unless it names `too_many_tool_calls` | The API says so itself after a broken tool call (`malformed_tool_call`). A tool-call loop (`too_many_tool_calls`) is not retried whatever its message says: the same request loops again (see the [gap tracker](INTERACTIONS_API_GAP.md)), and each attempt runs to the 60-call limit |
 
-If you want the same behavior, compose the two predicates:
+A broken tool call is now usually not an error at all: the API answers
+`200` with an interaction whose `status` is `failed` and whose `errors`
+carry the code `malformed_tool_call`, with the same advice to retry
+([live record](INTERACTIONS_API_GAP.md#tools)). Neither predicate sees a
+response, so check it too; the integration suite retries it
+(`is_transient_failure`), and still not a `too_many_tool_calls`. A
+streamed request that fails this way ends with a `failed` interaction
+that carries no `errors`.
+
+If you want the same behavior, compose the two predicates, and check a
+response the same way:
 
 ```rust
-use genai_rs::GenaiError;
+use genai_rs::{GenaiError, InteractionResponse, InteractionStatus};
 
 fn should_retry(err: &GenaiError) -> bool {
     if err.is_retryable() {
@@ -99,7 +109,31 @@ fn should_retry(err: &GenaiError) -> bool {
         _ => false,
     }
 }
+
+fn should_retry_response(response: &InteractionResponse) -> bool {
+    let errors = response.errors.as_deref().unwrap_or_default();
+    // A loop is turned away wherever an error names it, code or message,
+    // as `should_retry` does for the 400.
+    let names_loop = errors.iter().any(|e| {
+        [e.code.as_deref(), e.message.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|text| text.to_lowercase().contains("too_many_tool_calls"))
+    });
+    response.status == InteractionStatus::Failed
+        && errors.iter().any(|e| e.code.as_deref() == Some("malformed_tool_call"))
+        && !names_loop
+}
 # let _ = should_retry;
+# let failed = |message: &str| -> InteractionResponse {
+#     serde_json::from_value(serde_json::json!({
+#         "id": "x", "status": "failed", "steps": [],
+#         "errors": [{"code": "malformed_tool_call", "message": message}],
+#     }))
+#     .unwrap()
+# };
+# assert!(should_retry_response(&failed("Please retry the request.")));
+# assert!(!should_retry_response(&failed("Stopped after 60 calls: TOO_MANY_TOOL_CALLS")));
 ```
 
 Keep the retry budget small: these matches are on message text, so an API

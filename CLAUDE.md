@@ -116,7 +116,7 @@ there (`docs/LOGGING_STRATEGY.md` has the snippet).
 | `src/errors.rs`, `src/multimodal.rs`, `src/safety.rs`, `src/response_format.rs` | `GenaiError`; the `*_from_file` helpers and MIME detection; safety settings; the typed `response_format` union |
 | `src/wire_enum.rs`, `src/wire_fields.rs`, `src/serde_util.rs` | Crate-private serde machinery: the `wire_enum!` string enums, the `extra` maps of the known variants (#491), and the protobuf-JSON int64 and lenient-timestamp helpers |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
-| `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `request`, `tools`, `response`, `resources`, `unknown_fields`). Past failures replay from `proptest-regressions/<source file>.txt`, so a property's seeds move with it |
+| `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `stream`, `request`, `tools`, `response`, `resources`, `unknown_fields`). Past failures replay from `proptest-regressions/<source file>.txt`, so a property's seeds move with it |
 | `fuzz/`, `src/fuzzing.rs` | cargo-fuzz targets (own workspace and lockfile, nightly; `fuzz/README.md`) and their entry points, the `#[doc(hidden)] __fuzz` module, compiled only under `cfg(fuzzing)` and in tests (`fuzzing_tests.rs` replays past crashes) |
 | `src/coverage_oracle/`, `tests/request_wire_oracle.rs`, `tests/ci_coverage.rs`, `tests/api_surface/`, `tests/live_verbs/` | The coverage oracle (test-only): request keys, response fields and binding classes against the committed snapshot, and live coverage per handle verb (see "Sources of truth" above and `docs/TESTING.md`) |
 
@@ -325,11 +325,13 @@ wheel's protos with `python3`).
    D-009):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
 2. `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z" && git push origin vX.Y.Z`.
-   `release.yml` validates (including the live suite), publishes
+   `release.yml` validates (including the live suite, and that the
+   tagged commit's main push run of `rust.yml` passed every job), publishes
    `genai-rs-macros` then `genai-rs`, and creates the GitHub release from the
    `## [X.Y.Z]` CHANGELOG section. Never `cargo publish` or
    `gh release create` by hand.
-3. On failure: `validate` → re-run (the live suite can flake); tag/version
+3. On failure: `validate` → re-run (the live suite can flake; a red push
+   run → re-run its failed jobs, or fix main and tag the fix); tag/version
    mismatch → delete the tag, fix, re-tag; failed after `genai-rs-macros`
    published → bump the patch version and release again; `github-release` →
    re-run.
@@ -349,7 +351,9 @@ wheel's protos with `python3`).
   and Windows, but only Windows stable on a PR; checks the `antigravity`
   feature off Linux, and runs clippy over it, every target, on Windows
   stable; trybuild's `ui_tests` are skipped on beta), coverage,
-  build-metrics, main-push-status, scheduled-run-status. Live
+  build-metrics, main-push-status, scheduled-run-status. The coverage job
+  measures the `antigravity` feature too, with its scripted suite, and
+  fails under a line-coverage floor (`docs/TESTING.md`, "Line coverage"). Live
   jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each
   integration group runs every binary and lists the failures;

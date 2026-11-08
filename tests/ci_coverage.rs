@@ -52,17 +52,33 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `(binary name, source)` for every top-level test file.
+/// `(binary name, source)` for every test binary: a top-level test file
+/// and every module file it compiles in (see [`module_files`]), so a live
+/// test in a submodule makes its binary live.
 fn test_sources() -> Vec<(String, String)> {
-    let dir = root().join("tests");
-    let mut sources: Vec<(String, String)> = std::fs::read_dir(&dir)
+    test_sources_in(&root().join("tests"))
+        .into_iter()
+        .map(|(name, files)| {
+            let text = files
+                .iter()
+                .map(|path| std::fs::read_to_string(path).expect("read test source"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (name, text)
+        })
+        .collect()
+}
+
+/// `(binary name, files)` for every top-level test file in `dir`: the file
+/// and the module files it reaches.
+fn test_sources_in(dir: &std::path::Path) -> Vec<(String, Vec<PathBuf>)> {
+    let mut sources: Vec<(String, Vec<PathBuf>)> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
         .map(|entry| entry.expect("dir entry").path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
         .map(|path| {
             let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-            let text = std::fs::read_to_string(&path).expect("read test source");
-            (name, text)
+            (name, module_files(&path))
         })
         .collect();
     sources.sort();
@@ -72,6 +88,82 @@ fn test_sources() -> Vec<(String, String)> {
         dir.display()
     );
     sources
+}
+
+/// `root` and every file module it declares, recursively, as rustc
+/// resolves them: `mod name;` (any visibility) loads a `#[path = "..."]`
+/// attribute's file, relative to the declaring file's directory, or else
+/// `name.rs` or `name/mod.rs` in the declaring file's directory when that
+/// file is a crate root, a `mod.rs` or loaded by `#[path]`, and in its
+/// `<stem>/` subdirectory otherwise. Inline modules (`mod name { ... }`)
+/// are part of their file already. A declared module whose file is missing
+/// fails, rather than leaving a binary's tests out.
+fn module_files(root: &std::path::Path) -> Vec<PathBuf> {
+    // Each file, and whether its nested modules resolve beside it.
+    let mut files = vec![(root.to_path_buf(), true)];
+    let mut next = 0;
+    while next < files.len() {
+        let (file, owns_dir) = files[next].clone();
+        next += 1;
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+        let dir = file.parent().expect("a file has a directory").to_path_buf();
+        let owns_dir = owns_dir || file.file_name().is_some_and(|name| name == "mod.rs");
+        let own_dir = if owns_dir {
+            dir.clone()
+        } else {
+            dir.join(file.file_stem().expect("a file has a stem"))
+        };
+        // Declarations at the start of a line only: an indented `mod x;`
+        // is in an inline module or, as in the scans that test themselves,
+        // a string literal.
+        let mut path_attr: Option<String> = None;
+        for line in text.lines().map(str::trim_end) {
+            // Attributes before the declaration, on its line or the ones
+            // above; `#[path]` is the one that matters.
+            let mut rest = line;
+            while let Some(attr) = rest.strip_prefix("#[") {
+                let Some(end) = attr.find(']') else { break };
+                if let Some(path) = attr[..end].strip_prefix("path = \"") {
+                    path_attr = path.strip_suffix('"').map(str::to_string);
+                }
+                rest = attr[end + 1..].trim_start();
+            }
+            if rest.is_empty() && rest.len() != line.len() {
+                continue;
+            }
+            let declared = ["mod ", "pub mod ", "pub(crate) mod ", "pub(super) mod "]
+                .iter()
+                .find_map(|prefix| rest.strip_prefix(prefix))
+                .and_then(|rest| rest.strip_suffix(';'))
+                .filter(|name| name.chars().all(|c| c.is_alphanumeric() || c == '_'));
+            let attr = path_attr.take();
+            let Some(name) = declared else {
+                continue;
+            };
+            let (found, by_path) = match attr {
+                Some(path) => (dir.join(path), true),
+                None => {
+                    let flat = own_dir.join(format!("{name}.rs"));
+                    if flat.exists() {
+                        (flat, false)
+                    } else {
+                        (own_dir.join(name).join("mod.rs"), false)
+                    }
+                }
+            };
+            assert!(
+                found.exists(),
+                "{} declares `mod {name};`, but {} does not exist",
+                file.display(),
+                found.display()
+            );
+            if !files.iter().any(|(known, _)| *known == found) {
+                files.push((found, by_path));
+            }
+        }
+    }
+    files.into_iter().map(|(file, _)| file).collect()
 }
 
 /// Binaries named in the matrix's `tests: "…"` lines.
@@ -134,6 +226,104 @@ fn every_live_test_binary_is_in_the_ci_matrix() {
     assert!(
         missing.is_empty(),
         "these binaries have live tests but no test-integration matrix group: {missing:?}"
+    );
+}
+
+/// The matrix guard reads a binary's submodules, not only its top-level
+/// file: a live test in `tests/<binary>/<module>.rs` makes the binary live.
+#[test]
+fn a_live_test_in_a_submodule_makes_its_binary_live() {
+    let dir = std::env::temp_dir().join(format!("ci_coverage_modules_{}", std::process::id()));
+    let nested = dir.join("tests");
+    std::fs::create_dir_all(nested.join("wired")).unwrap();
+    std::fs::create_dir_all(nested.join("shared")).unwrap();
+    std::fs::write(
+        nested.join("wired.rs"),
+        "mod shared;\n#[path = \"wired/calls.rs\"]\nmod calls;\nmod inline {\n}\n",
+    )
+    .unwrap();
+    std::fs::write(nested.join("shared/mod.rs"), "pub mod helpers;\n").unwrap();
+    std::fs::write(nested.join("shared/helpers.rs"), "// helpers\n").unwrap();
+    // A file loaded by `#[path]` resolves its own modules beside it.
+    std::fs::write(
+        nested.join("wired/calls.rs"),
+        "mod deeper;\n#[tokio::test]\n#[ignore = \"Requires API key\"]\nasync fn live() {}\n",
+    )
+    .unwrap();
+    std::fs::write(nested.join("wired/deeper.rs"), "// deeper\n").unwrap();
+
+    let sources = test_sources_in(&nested);
+    let text: String = sources[0]
+        .1
+        .iter()
+        .map(|f| std::fs::read_to_string(f).unwrap())
+        .collect();
+    std::fs::remove_dir_all(&dir).ok();
+    let (name, files) = &sources[0];
+    assert_eq!(name, "wired");
+    assert!(
+        ignore_reasons(&text).any(|reason| reason == LIVE_REASON),
+        "the submodule's live test was not read"
+    );
+    let relative: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.strip_prefix(&nested)
+                .unwrap()
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(
+        relative,
+        [
+            "wired.rs",
+            "shared/mod.rs",
+            "wired/calls.rs",
+            "shared/helpers.rs",
+            "wired/deeper.rs"
+        ]
+    );
+}
+
+/// Every module file under `tests/` is compiled into some test binary, so
+/// the guards above read it (trybuild's `ui/` cases and the fixtures are
+/// not modules).
+#[test]
+fn every_test_module_file_belongs_to_a_binary() {
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let tests = root().join("tests");
+    let reached: BTreeSet<PathBuf> = test_sources_in(&tests)
+        .into_iter()
+        .flat_map(|(_, files)| files)
+        .collect();
+    let mut all = Vec::new();
+    for entry in std::fs::read_dir(&tests).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if path.is_dir() && name != "ui" && name != "fixtures" {
+            rust_files(&path, &mut all);
+        }
+    }
+    assert!(all.len() > 20, "found too few module files: {all:?}");
+    let orphans: Vec<String> = all
+        .iter()
+        .filter(|path| !reached.contains(*path))
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(
+        orphans.is_empty(),
+        "no test binary compiles these files: {orphans:?}"
     );
 }
 

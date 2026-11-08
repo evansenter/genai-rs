@@ -272,6 +272,19 @@ from here rather than repeated.
   malformed_tool_call` through 2026-11-04, as `status: "failed"` from
   2026-11-05, and twice as `requires_action`. Sent with the tool again, 6
   of 6 completed, answering from the history without a second search.
+  On 2026-11-08 a follow-up without the tool that asked for a search
+  again failed in 4 of 4: each a `200` with `status: "failed"`, no steps,
+  and that one `malformed_tool_call` error, its message unchanged.
+  Streamed, the same request ended in an `interaction.completed` whose
+  interaction had `status: "failed"` and no `errors` (1 of 1). A function
+  declared on turn 1 and left off the follow-up was called anyway
+  (`requires_action`, 3 of 3), never refused. The integration suite's
+  `retry_request!` retries the `200` form as it did the `400` (#545).
+  The live jobs' logs of 112 CI runs from 2026-11-01 to 2026-11-07 show
+  the `400` form in this follow-up and once in
+  `test_structured_output_with_url_context`, last on 2026-11-04; after
+  that the only test to fail on a `failed` interaction was this
+  follow-up (4 runs), so no other test fails this way.
 - **Google Maps `latitude` / `longitude`** are accepted and used: asked
   for "a coffee shop near me" with Times Square's coordinates, the model
   answered with one on West 47th Street (2026-11-07).
