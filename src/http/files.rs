@@ -240,23 +240,42 @@ pub async fn upload_path(
     finish_upload(ctx, request_id, &upload_url, file_size, file_body(file)).await
 }
 
+/// Validates a `<collection>/<id>` resource name (`files/abc`,
+/// `fileSearchStores/abc`) and rebuilds it with the ID percent-encoded.
+///
+/// A name of any other shape could never have addressed the resource, so
+/// rejecting it locally turns a silent misfire into a loud one. `what` names
+/// the resource in the error, and `returned_by` the response that hands out
+/// the full name.
+pub(super) fn one_segment_name(
+    name: &str,
+    collection: &str,
+    what: &str,
+    returned_by: &str,
+) -> Result<String, GenaiError> {
+    let Some(id) = name
+        .strip_prefix(collection)
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
+        return Err(GenaiError::InvalidInput(format!(
+            "{what} name must be a full `{collection}/<id>` resource name \
+             (the form {returned_by} responses return); got {name:?}"
+        )));
+    };
+    require_id(id, what)?;
+    if id.contains('/') {
+        return Err(GenaiError::InvalidInput(format!(
+            "{what} name must contain exactly one segment after `{collection}/`; \
+             got {name:?}"
+        )));
+    }
+    Ok(format!("{collection}/{}", path_segment(id)))
+}
+
 /// Validates a `files/<id>` resource name and rebuilds it with the ID
 /// percent-encoded.
 fn file_resource_path(file_name: &str) -> Result<String, GenaiError> {
-    let Some(id) = file_name.strip_prefix("files/") else {
-        return Err(GenaiError::InvalidInput(format!(
-            "file name must be a full `files/<id>` resource name \
-             (the form upload responses return); got {file_name:?}"
-        )));
-    };
-    require_id(id, "file")?;
-    if id.contains('/') {
-        return Err(GenaiError::InvalidInput(format!(
-            "file name must contain exactly one segment after `files/`; \
-             got {file_name:?}"
-        )));
-    }
-    Ok(format!("files/{}", path_segment(id)))
+    one_segment_name(file_name, "files", "file", "upload")
 }
 
 /// Gets metadata for a file by its full resource name (`files/abc123`).
@@ -273,16 +292,27 @@ pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata
     Ok(file)
 }
 
-/// The list URL. The Files API spells its paging params in camelCase.
-fn list_files_url(ctx: &HttpContext, page_size: Option<u32>, page_token: Option<&str>) -> String {
+/// Appends the camelCase paging pair, `pageSize` and `pageToken`, as the
+/// Files and File Search Store APIs spell it (the Interactions family's
+/// snake_case pair is `common::with_paging`).
+pub(super) fn with_camel_case_paging(
+    url: String,
+    page_size: Option<u32>,
+    page_token: Option<&str>,
+) -> String {
     let page_size = page_size.map(|size| size.to_string());
     with_query(
-        ctx.api_url("files"),
+        url,
         &[
             ("pageSize", page_size.as_deref()),
             ("pageToken", page_token),
         ],
     )
+}
+
+/// The list URL.
+fn list_files_url(ctx: &HttpContext, page_size: Option<u32>, page_token: Option<&str>) -> String {
+    with_camel_case_paging(ctx.api_url("files"), page_size, page_token)
 }
 
 /// Lists uploaded files.

@@ -36,7 +36,7 @@ async fn file_search_store_endpoints_send_the_documented_requests() {
             ),
             wire(
                 "GET",
-                "/v1beta/fileSearchStores?page_size=20&page_token=t",
+                "/v1beta/fileSearchStores?pageSize=20&pageToken=t",
                 None,
                 c.file_search_stores()
                     .list()
@@ -58,7 +58,7 @@ async fn file_search_store_endpoints_send_the_documented_requests() {
             ),
             wire(
                 "GET",
-                "/v1beta/fileSearchStores/abc/documents?page_size=2",
+                "/v1beta/fileSearchStores/abc/documents?pageSize=2",
                 None,
                 c.file_search_stores()
                     .documents()
@@ -68,7 +68,7 @@ async fn file_search_store_endpoints_send_the_documented_requests() {
             ),
             wire(
                 "GET",
-                "/v1beta/fileSearchStores/abc/documents?page_token=d2",
+                "/v1beta/fileSearchStores/abc/documents?pageToken=d2",
                 None,
                 c.file_search_stores()
                     .documents()
@@ -218,8 +218,8 @@ async fn file_search_store_list_items_follow_every_page_with_the_page_size() {
     assert_eq!(
         targets(&stub),
         [
-            "/v1beta/fileSearchStores?page_size=1",
-            "/v1beta/fileSearchStores?page_size=1&page_token=cjEKD4IBDAi07uHVBhColM-EAQoeQhxnZW5haXJzcHJvYmVjODEtMHBrNmx4MG94Z2c1",
+            "/v1beta/fileSearchStores?pageSize=1",
+            "/v1beta/fileSearchStores?pageSize=1&pageToken=cjEKD4IBDAi07uHVBhColM-EAQoeQhxnZW5haXJzcHJvYmVjODEtMHBrNmx4MG94Z2c1",
         ]
     );
 }
@@ -271,9 +271,9 @@ async fn file_search_document_items_resend_the_store_and_page_size_on_every_page
     assert_eq!(
         targets(&stub),
         [
-            "/v1beta/fileSearchStores/abc/documents?page_size=1",
-            "/v1beta/fileSearchStores/abc/documents?page_size=1&page_token=cigKD4IBDAjO7uHVBhCQ0MCZAwoVQhN1cGxvYWQtMDh2emdrdmdhcmhq",
-            "/v1beta/fileSearchStores/abc/documents?page_size=1&page_token=p%2B3",
+            "/v1beta/fileSearchStores/abc/documents?pageSize=1",
+            "/v1beta/fileSearchStores/abc/documents?pageSize=1&pageToken=cigKD4IBDAjO7uHVBhCQ0MCZAwoVQhN1cGxvYWQtMDh2emdrdmdhcmhq",
+            "/v1beta/fileSearchStores/abc/documents?pageSize=1&pageToken=p%2B3",
         ]
     );
 }
@@ -302,8 +302,8 @@ async fn file_search_document_pages_resume_from_with_page_token() {
     assert_eq!(
         targets(&stub),
         [
-            "/v1beta/fileSearchStores/abc/documents?page_token=p2",
-            "/v1beta/fileSearchStores/abc/documents?page_token=p3"
+            "/v1beta/fileSearchStores/abc/documents?pageToken=p2",
+            "/v1beta/fileSearchStores/abc/documents?pageToken=p3"
         ]
     );
 }

@@ -16,7 +16,8 @@ order (D-004):
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
    releases to find new surface). The OpenAPI specs (v1beta and v1) are
    the same surface in machine-readable form. The oracle reads their
-   committed snapshots, and the daily sweep probes the published URLs
+   committed snapshots, and the daily sweep compares what the published
+   URLs serve with them, opening an issue on a drift or a dead URL
    (`watch_spec_urls.sh`); their state is recorded in
    `docs/INTERACTIONS_API_GAP.md` ("How to verify API surface").
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
@@ -170,7 +171,7 @@ date, in `docs/ENUM_WIRE_FORMATS.md` (D-032).
 
 - Interactions API field names are **snake_case**; send snake_case even if
   camelCase is also accepted. (The Files and File Search Store APIs are
-  camelCase.)
+  camelCase, paging included: `pageSize` and `pageToken`.)
 - Fields the endpoint rejects as *Vertex-only* are kept and documented;
   fields rejected as *Unknown parameter* are removed (D-005).
 

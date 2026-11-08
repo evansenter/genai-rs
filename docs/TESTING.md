@@ -490,7 +490,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -505,7 +505,10 @@ checks on it:
   populated (the agent configs, whose fields are private, through each
   type's `fully_populated()` literal beside it, and
   `agent_configs_set_every_field` fails on a field there that sends no
-  key), plus proptest samples for the union arms and enum values. An
+  key), plus proptest samples for the union arms and enum values.
+  `request_values_are_full_literals` (`request/fills.rs`) fails on a
+  `default()` fill, other than a whole `extra` map, in those literals and
+  in every strategy the oracle samples. An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
@@ -528,8 +531,13 @@ checks on it:
 - **Query strings on the wire** (`tests/request_wire_oracle.rs`,
   `every_query_key_a_verb_sends_is_a_binding_query_parameter`). Every verb
   of every resource handle runs against the stub with every list builder
-  option set (`every_verb_is_called_by_the_query_test` fails on a verb not
-  called or an option not set on its verb's builder), and each request is
+  option and every request type's query option set
+  (`every_verb_is_called_by_the_query_test` fails on a verb not called, an
+  option not set on its verb's builder, or a `with_*` method not called
+  whose field a verb sends on the query string, such as
+  `WebhookUpdate::with_update_mask`; those fields are found by tracing each
+  `with_query` value back through `src/`, and a value the trace cannot
+  follow fails the test too), and each request is
   matched to its endpoint in `bindings.json`. A key the endpoint does not
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a
@@ -610,8 +618,11 @@ reason to the list that fits:
 | `QUERY_ALLOWED`, `NOT_SENT` (`tests/request_wire_oracle.rs`, by `METHOD /path?key`) | A query key the crate sends that its endpoint does not list (the `alt` system parameter); a binding query parameter no verb sends |
 
 Date every live fact in a reason (D-010): `live_claims_are_dated` fails on
-a reason in the in-crate lists that says what the API served, rejected or
-accepted, or quotes an error status, without a `YYYY-MM` date. An entry
+a reason that says what the API served, rejected or accepted, or quotes an
+error status, without a `YYYY-MM` date. The in-crate oracle holds its lists
+to it, and `tests/ci_coverage.rs` every reasoned list in `tests/` (each
+`const` slice of tuples ending in a `&str` reason), so a list a test adds
+is checked too. An entry
 that matches nothing fails the test, so the lists only shrink when the
 crate catches up. A `values()` override in `response.rs` replaces a
 synthesized value where the snapshot's type is looser than what the API

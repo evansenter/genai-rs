@@ -21,12 +21,15 @@
 //!   crate does not model.
 //!
 //! Shared by the in-crate oracle (`src/coverage_oracle/`, through `#[path]`)
-//! and `tests/request_wire_oracle.rs`. Not a test target itself: Cargo only
-//! builds `tests/*.rs` and `tests/*/main.rs`.
+//! and `tests/request_wire_oracle.rs`, along with the date check on reasoned
+//! exceptions ([`undated_live_claim`]), which `tests/ci_coverage.rs`
+//! includes on its own to hold every list in `tests/` to it. Not a test target itself: Cargo only builds
+//! `tests/*.rs` and `tests/*/main.rs`.
 
 #![allow(dead_code)]
 
 mod check;
+mod claims;
 mod readback;
 mod synth;
 
@@ -37,6 +40,8 @@ use std::path::PathBuf;
 // Each includer uses a different part.
 #[allow(unused_imports)]
 pub use check::Finding;
+#[allow(unused_imports)]
+pub use claims::{undated_live_claim, undated_live_claims};
 #[allow(unused_imports)]
 pub use readback::{debug_extra_keys, debug_unknown_values, key_paths, remove_path, string_values};
 #[allow(unused_imports)]

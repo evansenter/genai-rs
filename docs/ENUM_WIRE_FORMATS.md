@@ -648,7 +648,7 @@ Interactions API.
 
 - List envelopes are `{"fileSearchStores": [...]}` and `{"documents": [...]}`.
   An empty store list, or an empty store's document list, is a bare `{}`.
-  `page_size` and `pageSize` are both accepted; the crate sends `page_size`.
+  `page_size` and `pageSize` are both accepted; the crate sends `pageSize`.
 - Document `sizeBytes` is a JSON **string** (`"27"`).
 - `DocumentState` is `STATE_PENDING` / `STATE_ACTIVE` / `STATE_FAILED`,
   prefixed, unlike the Files API's bare `PROCESSING` / `ACTIVE` / `FAILED`.

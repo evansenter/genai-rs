@@ -56,7 +56,7 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             allowed_tools: AllowedTools {
                 mode: Some(FunctionCallingMode::Any),
                 tools: vec!["get_weather".into()],
-                ..Default::default()
+                extra: Default::default(),
             },
             extra: Default::default(),
         }),
@@ -64,18 +64,18 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             voice: Some("Kore".into()),
             language: Some("en-US".into()),
             speaker: Some("Joe".into()),
-            ..Default::default()
+            extra: Default::default(),
         }]),
         // The caller's keys, not the crate's (see `cases`).
         extra: serde_json::Map::new(),
         image_config: Some(ImageConfig {
             aspect_ratio: Some(ImageAspectRatio::Square),
             image_size: Some(ImageSize::Hd1k),
-            ..Default::default()
+            extra: Default::default(),
         }),
         video_config: Some(VideoConfig {
             task: Some(VideoTask::TextToVideo),
-            ..Default::default()
+            extra: Default::default(),
         }),
         transcription_config: Some(TranscriptionConfig {
             adaptation_phrases: Some(vec!["genai".into()]),
@@ -88,17 +88,22 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
                 timestamp_granularities: Some(vec!["word".into()]),
                 extra: Default::default(),
             }),
-            ..Default::default()
+            extra: Default::default(),
         }),
     };
     let mut modes = full.clone();
     modes.tool_choice = Some(ToolChoice::Mode(FunctionCallingMode::Auto));
     modes.transcription_config = Some(TranscriptionConfig {
+        adaptation_phrases: None,
+        custom_vocabulary: None,
+        diarization_mode: None,
+        language_codes: None,
+        timestamp_granularities: None,
         mode: Some(TranscriptionMode::Smart {
             source_text: Some("Hello there.".into()),
             extra: Default::default(),
         }),
-        ..Default::default()
+        extra: Default::default(),
     });
     vec![full, modes]
 }
@@ -244,7 +249,7 @@ pub(super) fn webhook_config() -> WebhookConfig {
     WebhookConfig {
         uris: Some(vec!["https://example.com/hook".into()]),
         user_metadata: Some(json!({"k": "v"})),
-        ..Default::default()
+        extra: Default::default(),
     }
 }
 
@@ -340,7 +345,11 @@ pub(super) fn webhooks() -> Vec<Value> {
         name: Some("hook".into()),
         id: Some("wh-1".into()),
         state: Some(WebhookState::Enabled),
-        signing_secrets: Some(vec![SigningSecret::default()]),
+        signing_secrets: Some(vec![SigningSecret {
+            truncated_secret: Some("abc".into()),
+            expire_time: Some(chrono::DateTime::UNIX_EPOCH),
+            extra: serde_json::Map::new(),
+        }]),
         new_signing_secret: Some("secret".into()),
         create_time: Some(chrono::DateTime::UNIX_EPOCH),
         update_time: Some(chrono::DateTime::UNIX_EPOCH),

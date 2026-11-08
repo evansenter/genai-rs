@@ -30,6 +30,8 @@
 )]
 
 mod ci_workflows;
+#[path = "api_surface/claims.rs"]
+mod claims;
 mod live_verbs;
 
 use std::collections::BTreeSet;
@@ -597,9 +599,240 @@ const ENDPOINTS_WITHOUT_A_VERB: &[(&str, &str)] = &[
     (
         "POST /{}/interactions",
         "Sent by `client.interaction()...create()` / `create_stream()` \
-         (`InteractionBuilder`, not a handle), which every live interaction test calls.",
+         (`InteractionBuilder`, not a handle), which every interaction test calls.",
     ),
 ];
+
+/// A reasoned list in `tests/`: `(file:LIST, [(entry, reason)])`.
+type ReasonedList = (String, Vec<(String, String)>);
+
+/// The reason [`reasoned_lists`] gives an entry whose reason is neither a
+/// string literal nor a `&str` constant, which the date check cannot read.
+const UNREADABLE: &str = "<a reason the scan cannot read>";
+
+/// Every reasoned list in the test sources under `dir`: each `const` or
+/// `static` slice of tuples whose last element is a `&str`, at any depth
+/// (inside a function or module too), as `(file:LIST, [(entry, reason)])`.
+/// A reason is a string literal or a `&str` constant of the same file; an
+/// entry is its tuple's first element. Trybuild's `ui/` sources and the
+/// fixtures hold no lists and are not read.
+fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
+    use syn::visit::Visit;
+
+    fn files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                if !path.ends_with("ui") && !path.ends_with("fixtures") {
+                    files(&path, out);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    fn last_is_str(ty: &syn::Type) -> bool {
+        let syn::Type::Reference(slice) = ty else {
+            return false;
+        };
+        let syn::Type::Slice(slice) = &*slice.elem else {
+            return false;
+        };
+        let syn::Type::Tuple(tuple) = &*slice.elem else {
+            return false;
+        };
+        tuple.elems.len() >= 2
+            && matches!(tuple.elems.last(), Some(syn::Type::Reference(r))
+                if matches!(&*r.elem, syn::Type::Path(p) if p.path.is_ident("str")))
+    }
+    #[derive(Default)]
+    struct Consts<'a> {
+        strings: std::collections::HashMap<String, String>,
+        lists: Vec<(String, &'a syn::Expr)>,
+    }
+    impl<'a> Visit<'a> for Consts<'a> {
+        fn visit_item_const(&mut self, item: &'a syn::ItemConst) {
+            self.found(&item.ident, &item.ty, &item.expr);
+        }
+        fn visit_item_static(&mut self, item: &'a syn::ItemStatic) {
+            self.found(&item.ident, &item.ty, &item.expr);
+        }
+    }
+    impl<'a> Consts<'a> {
+        fn found(&mut self, name: &syn::Ident, ty: &syn::Type, expr: &'a syn::Expr) {
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(text),
+                ..
+            }) = expr
+            {
+                self.strings.insert(name.to_string(), text.value());
+            } else if last_is_str(ty) {
+                self.lists.push((name.to_string(), expr));
+            }
+        }
+        /// A string literal's text, or a `&str` constant's of this file.
+        fn text(&self, expr: &syn::Expr) -> Option<String> {
+            match expr {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(text),
+                    ..
+                }) => Some(text.value()),
+                syn::Expr::Path(p) => p
+                    .path
+                    .get_ident()
+                    .and_then(|name| self.strings.get(&name.to_string()).cloned()),
+                _ => None,
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    files(dir, &mut paths);
+    paths.sort();
+    let mut out = Vec::new();
+    for path in paths {
+        let text = std::fs::read_to_string(&path).expect("read test source");
+        let file = syn::parse_file(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut consts = Consts::default();
+        consts.visit_file(&file);
+        let relative = path
+            .strip_prefix(root())
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        for (name, expr) in &consts.lists {
+            let syn::Expr::Reference(array) = expr else {
+                continue;
+            };
+            let syn::Expr::Array(array) = &*array.expr else {
+                continue;
+            };
+            let entries = array
+                .elems
+                .iter()
+                .filter_map(|elem| match elem {
+                    syn::Expr::Tuple(tuple) => {
+                        let (entry, reason) = (tuple.elems.first()?, tuple.elems.last()?);
+                        Some((
+                            consts.text(entry).unwrap_or_else(|| "?".to_string()),
+                            consts
+                                .text(reason)
+                                .unwrap_or_else(|| UNREADABLE.to_string()),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect();
+            out.push((format!("{relative}:{name}"), entries));
+        }
+    }
+    out
+}
+
+/// Every reason in a reasoned list anywhere in `tests/` that states a live
+/// fact dates it (D-010), as the coverage oracle's do
+/// (`tests/api_surface/claims.rs`): the wire oracle's lists, the endpoint
+/// map's, the response guard's and the live-verb map's, and any list a
+/// test adds.
+#[test]
+fn live_claims_are_dated() {
+    let lists = reasoned_lists(&root().join("tests"));
+    let names: BTreeSet<&str> = lists
+        .iter()
+        .filter_map(|(name, _)| name.rsplit(':').next())
+        .collect();
+    for known in [
+        "ALLOWED",
+        "NOT_SENT",
+        "FULL_NAMES",
+        "ENDPOINTS_WITHOUT_A_VERB",
+        "SENT_ONLY",
+        "VARIANTS_WITHOUT_EXTRA",
+        "NOT_HANDLES",
+    ] {
+        assert!(
+            names.contains(known),
+            "the scan missed the reasoned list {known}; it found {names:?}"
+        );
+    }
+    let borrowed: Vec<(&str, Vec<(&str, &str)>)> = lists
+        .iter()
+        .map(|(name, entries)| {
+            let entries = entries
+                .iter()
+                .map(|(entry, reason)| (entry.as_str(), reason.as_str()))
+                .collect();
+            (name.as_str(), entries)
+        })
+        .collect();
+    let unreadable: Vec<String> = lists
+        .iter()
+        .flat_map(|(name, entries)| {
+            entries
+                .iter()
+                .filter(|(_, reason)| reason == UNREADABLE)
+                .map(move |(entry, _)| format!("{name}: {entry}"))
+        })
+        .collect();
+    assert!(
+        unreadable.is_empty(),
+        "Reasons that are neither a string literal nor a `&str` constant of their \
+         file, which the date check cannot read:\n  {}",
+        unreadable.join("\n  ")
+    );
+    let undated = claims::undated_live_claims(&borrowed);
+    assert!(
+        undated.is_empty(),
+        "Reasons that state a live fact without its YYYY-MM date (D-010):\n  {}",
+        undated.join("\n  ")
+    );
+}
+
+/// The scan finds a list inside a function, reads a reason held in a
+/// constant, and leaves a slice whose last element is not a `&str` alone.
+#[test]
+fn reasoned_lists_are_found_wherever_they_are_declared() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    std::fs::create_dir_all(dir.join("ui")).unwrap();
+    std::fs::write(
+        dir.join("a.rs"),
+        r#"
+        const WHY: &str = "Rejected live.";
+        const TOP: &[(&str, &str)] = &[("a", "Served (live 2026-11-01)."), ("b", WHY)];
+        const MAP: &[(&str, &[&str])] = &[("x", &["y"])];
+        fn f() {
+            const INNER: &[(&str, &[&str], &str)] = &[("c", &[], "Ignored live.")];
+        }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("ui/broken.rs"), "fn {").unwrap();
+    let lists = reasoned_lists(dir);
+    let names: Vec<&str> = lists
+        .iter()
+        .map(|(name, _)| name.rsplit(':').next().unwrap())
+        .collect();
+    assert_eq!(names, ["TOP", "INNER"]);
+    assert_eq!(
+        lists[0].1,
+        [
+            ("a".to_string(), "Served (live 2026-11-01).".to_string()),
+            ("b".to_string(), "Rejected live.".to_string()),
+        ]
+    );
+    let borrowed: Vec<(&str, Vec<(&str, &str)>)> = lists
+        .iter()
+        .map(|(name, entries)| {
+            let entries = entries
+                .iter()
+                .map(|(entry, reason)| (entry.as_str(), reason.as_str()))
+                .collect();
+            (name.as_str(), entries)
+        })
+        .collect();
+    assert_eq!(claims::undated_live_claims(&borrowed).len(), 2);
+}
 
 /// `/{api_version}/agents/{agentsId}` -> `/{}/agents/{}`, the form the
 /// bindings dump writes.

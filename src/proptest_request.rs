@@ -105,7 +105,7 @@ pub(super) fn arb_image_config() -> impl Strategy<Value = ImageConfig> {
         .prop_map(|(aspect_ratio, image_size)| ImageConfig {
             aspect_ratio,
             image_size,
-            ..Default::default()
+            extra: serde_json::Map::new(),
         })
 }
 
@@ -152,7 +152,7 @@ pub(crate) fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
             voice,
             language,
             speaker,
-            ..Default::default()
+            extra: serde_json::Map::new(),
         })
 }
 
@@ -203,7 +203,7 @@ pub(crate) fn arb_transcription_config() -> impl Strategy<Value = TranscriptionC
                 language_codes,
                 timestamp_granularities,
                 mode,
-                ..Default::default()
+                extra: serde_json::Map::new(),
             },
         )
 }
@@ -275,7 +275,7 @@ pub(super) fn arb_video_task() -> impl Strategy<Value = VideoTask> {
 pub(super) fn arb_video_config() -> impl Strategy<Value = VideoConfig> {
     proptest::option::of(arb_video_task()).prop_map(|task| VideoConfig {
         task,
-        ..Default::default()
+        extra: serde_json::Map::new(),
     })
 }
 
