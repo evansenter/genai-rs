@@ -170,7 +170,7 @@ date, in `docs/ENUM_WIRE_FORMATS.md` (D-032).
 
 - Interactions API field names are **snake_case**; send snake_case even if
   camelCase is also accepted. (The Files and File Search Store APIs are
-  camelCase.)
+  camelCase, paging included: `pageSize` and `pageToken`.)
 - Fields the endpoint rejects as *Vertex-only* are kept and documented;
   fields rejected as *Unknown parameter* are removed (D-005).
 

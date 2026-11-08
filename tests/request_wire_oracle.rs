@@ -632,29 +632,12 @@ const ALT: &str = "`alt` is a Google API system parameter, which every method ta
      create-stream tests read them) and `alt=media` for a file's bytes \
      (`EnvironmentFiles::download`, live in environment_files_tests).";
 
-/// The store and document listings take the snake_case paging pair.
-const SNAKE_PAGING: &str = "The store and document listings take `page_size` and `page_token` \
-     as well as the bindings' `pageSize` and `pageToken` (live 2026-09-27, \
-     docs/ENUM_WIRE_FORMATS.md \"File Search\"), and the crate sends the snake_case pair \
-     through the shared `with_paging`; the live paging tests in file_search_stores_tests read \
-     the pages back.";
-
 /// Query keys the crate sends that its endpoint's binding request does not
 /// list, each with its reason, by site (`METHOD /path?key`).
 const QUERY_ALLOWED: &[(&str, &str)] = &[
     ("GET /{}/environments/{}/files/{}?alt", ALT),
     ("GET /{}/interactions/{}?alt", ALT),
     ("POST /{}/interactions?alt", ALT),
-    ("GET /{}/fileSearchStores?page_size", SNAKE_PAGING),
-    ("GET /{}/fileSearchStores?page_token", SNAKE_PAGING),
-    (
-        "GET /{}/fileSearchStores/{}/documents?page_size",
-        SNAKE_PAGING,
-    ),
-    (
-        "GET /{}/fileSearchStores/{}/documents?page_token",
-        SNAKE_PAGING,
-    ),
 ];
 
 /// Binding query parameters no verb sends, each with its reason, by site.
@@ -664,16 +647,6 @@ const NOT_SENT: &[(&str, &str)] = &[
         "Not modeled: the API parses the filter, but every expression tried is a \
          `400 Invalid filter expression` and the syntax is undocumented (live \
          2026-11-05, docs/INTERACTIONS_API_GAP.md \"Resource residue\").",
-    ),
-    ("GET /{}/fileSearchStores?pageSize", SNAKE_PAGING),
-    ("GET /{}/fileSearchStores?pageToken", SNAKE_PAGING),
-    (
-        "GET /{}/fileSearchStores/{}/documents?pageSize",
-        SNAKE_PAGING,
-    ),
-    (
-        "GET /{}/fileSearchStores/{}/documents?pageToken",
-        SNAKE_PAGING,
     ),
     (
         "GET /{}/files/{}:download?alt",

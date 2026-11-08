@@ -868,6 +868,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   history (verified live 2026-11-06).
 - `detect_mime_type` is `#[must_use]`, so a call that discards the result
   warns.
+- The file search store and document listings page with `pageSize` and
+  `pageToken`, the camelCase pair the Files API and google-genai's bindings
+  use (#541); they sent `page_size` and `page_token`, which the API also
+  accepts, so paging behaves as before.
 
 ### Fixed
 
