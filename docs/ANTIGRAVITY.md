@@ -1134,17 +1134,24 @@ while let Some(response) = agent.next_trigger_turn(Duration::from_secs(60)).awai
 # }
 ```
 
-The file watch polls every `poll_interval`, comparing each file's size and
+The file watch polls every `poll_interval` (an interval under 10 ms, zero
+included, polls every 10 ms), comparing each file's size and
 modification time (no OS watcher, so no extra dependency), and skips the
 directories the Python SDK's `watchfiles` filter skips (`.git`,
-`node_modules`, virtualenvs, caches). Changes made while a turn runs are
-held until the agent is idle and handed to the callback as one batch, the
-net change since the last batch.
+`node_modules`, virtualenvs, caches). A watched path that is a symbolic
+link is followed, as `watchfiles` follows its root; links below it are
+not. A poll that cannot read part of the tree (a permission error on a
+directory under the path) is skipped rather than reporting the files there
+deleted, so a directory that stays unreadable holds every change back
+until it reads again. Changes made while a turn runs are held until the
+agent is idle and handed to the callback as one batch, the net change
+since the last batch.
 
 Delivery semantics (see `antigravity::triggers` for details):
 
 - The first firing happens after the first interval elapses, not
-  immediately. Intervals must be non-zero (`spawn()` validates).
+  immediately. A `TriggerConfig` interval must be non-zero (`spawn()`
+  validates); a file watch's `poll_interval` is raised to 10 ms instead.
 - A trigger can fire before the first turn on harness 0.1.23, which runs it
   as a normal turn. Harnesses 0.1.10 and 0.1.18 aborted the agent run
   instead (`earliest step index is out of bounds: 0 vs 0`) and closed the
