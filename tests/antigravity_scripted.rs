@@ -114,6 +114,8 @@ fn function_response_text(fake: &FakeGemini, n: usize) -> String {
 mod cancel;
 #[path = "antigravity_scripted/hooks.rs"]
 mod hooks;
+#[path = "antigravity_scripted/mcp.rs"]
+mod mcp;
 #[path = "antigravity_scripted/options.rs"]
 mod options;
 #[path = "antigravity_scripted/parity.rs"]

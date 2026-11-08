@@ -540,10 +540,21 @@ type, helper module or exported function cannot go unlisted. A harness
 bump updates the table with the wheel; the release watch's issue shows
 the new wheel's keys against the pin's.
 
-"Not modeled" rows give the reason. Each modeled option is shown changing
-the harness's behavior by a test in `tests/antigravity_scripted/` (D-010):
-the model request it sends, the tools it declares, a tool's result, or the
-turn's outcome.
+"Not modeled" rows give the reason, and
+`every_parity_row_maps_its_keys_and_gives_a_reason_when_not_modeled`
+(`parity.rs`, key-free) fails on a row that maps nothing or is not
+modeled with an empty Notes cell. Each modeled setting is shown changing
+the harness's behavior by a test in `tests/antigravity_scripted/`
+(D-010): the model request it sends, the tools it declares, a tool's
+result, the turn's outcome, or what it writes to disk. Three kinds of row
+have no such test of their own, by nature. A constructor or preset that
+only builds a value the harness never sees as such (`Media::from_file`,
+`RetryConfig::benchmark`, `Capabilities::none` and `all`) is unit-tested
+on the value, whose setting is scripted. A response accessor (`text`,
+`thoughts`, `usage`, `conversation_id()`, …) reads what the tests assert
+on rather than changing it. And `Media::with_description` changes
+nothing: harness 0.1.23 does not pass it to the model, which the media
+test asserts so that the day it does is noticed.
 
 ### Agent and session
 
@@ -664,7 +675,7 @@ turn's outcome.
 | `McpStreamableHttpServer.headers` | `McpServer::add_header` | |
 | `BaseMcpServerConfig.name` | `McpServer::with_name` | Defaults from the command or host. |
 | `BaseMcpServerConfig.enabled_tools`, `BaseMcpServerConfig.disabled_tools` | `with_enabled_tools`, `with_disabled_tools` | |
-| `BaseMcpServerConfig.timeout_seconds` | `with_timeout_seconds` | |
+| `BaseMcpServerConfig.timeout_seconds` | `with_timeout_seconds` | Bounds loading the server (connecting and listing its tools; a slower server fails the turn that loads it) and, on 0.1.23, each call (a slower one returns an error to the model). |
 | `BaseMcpServerConfig.force_all_tools_eager` | `with_force_all_tools_eager` | Tools declared by name instead of behind `call_mcp_tool`. |
 | `McpStreamableHttpServer.timeout`, `McpStreamableHttpServer.sse_read_timeout`, `McpStreamableHttpServer.terminate_on_close` | Not modeled | The Python SDK does not send them to the harness either (its `_to_mcp_server_proto` drops them), so they change nothing on the local harness. |
 | `AgentConfig.budget_config`, `BudgetConfig.max_model_calls`, `BudgetConfig.max_tool_calls`, `BudgetConfig.max_input_tokens`, `BudgetConfig.max_output_tokens`, `BudgetConfig.max_total_tokens`, `BudgetConfig.scope`, `BudgetScope.LIFETIME`, `BudgetScope.FORWARD_LOOKING` | `with_budget(Budget)` | A reached cap surfaces as `ChatResponse::stop_reason`. |

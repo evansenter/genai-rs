@@ -727,6 +727,12 @@ them by name instead. `with_mcp_max_output_bytes(n)` sets the size past
 which the harness writes an MCP tool's output to a file and gives the model
 the path (harness default 4096 bytes).
 
+The harness connects to a server and lists its tools on the first turn,
+not in `spawn()`. `McpServer::with_timeout_seconds(n)` bounds that load,
+and a server slower than it fails the turn (`AntigravityError::Turn`,
+`MCP load failed for <server>`). On harness 0.1.23 it bounds each tool
+call too, and a slower call comes back to the model as an error.
+
 ## Subagents
 
 Static subagents run in their own trajectory with their own instructions and
