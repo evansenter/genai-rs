@@ -687,7 +687,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       # After the summary, so a drop below the floor is shown before it
       # fails the job. The floor sits just under the line coverage measured
-      # when it was set (D-NEXT-H4): raise it as coverage grows, and lower
+      # when it was set (D-058): raise it as coverage grows, and lower
       # it only with the reason in the commit.
       - name: Enforce the coverage floor
         run: cargo llvm-cov report --workspace --fail-under-lines 94

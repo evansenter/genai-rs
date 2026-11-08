@@ -1255,7 +1255,7 @@ its reason in the guard:
   `FunctionResultPayload`.
 - The known `AutoFunctionStreamChunk` variants: the crate's own
   `{chunk_type, data}` log form, which only the crate writes. The payload
-  inside keeps its own `extra`, but no chunk's `extra` (D-NEXT-H3) is
+  inside keeps its own `extra`, but no chunk's `extra` (D-054) is
   passed on: `Delta` carries the `StepDelta` alone, and the stream reads
   the other events without yielding them. A key the API adds to an SSE
   event's envelope reaches `execute_stream()`'s `StreamChunk::extra`
@@ -1266,7 +1266,7 @@ its reason in the guard:
 
 *Amended 2026-11-07 (#538).* The known `StreamChunk` variants left the
 list above: each keeps the SSE event's keys it does not read in an `extra`
-map (D-NEXT-H3), and the guard no longer exempts them.
+map (D-054), and the guard no longer exempts them.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1950,7 +1950,7 @@ the last attempt as it came. As in the `400` form, a failure that names
 the case that met it most, is fixed at its cause (it resends the tool);
 the retry is for the broken call a model makes now and then anywhere.
 
-## D-NEXT-H5 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
+## D-053 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
 
 **Context.** `is_retryable()` called every 5xx transient and every 4xx but
 429 permanent (#504, Reliability). So a 408, which google-genai retries,
@@ -1990,7 +1990,7 @@ what `is_retryable()` accepts, so they follow this list.
 
 ---
 
-## D-NEXT-H3 — Known `StreamChunk` variants keep the event's unread keys; `Completed` is a struct variant (2026-11-07)
+## D-054 — Known `StreamChunk` variants keep the event's unread keys; `Completed` is a struct variant (2026-11-07)
 
 **Context.** #538: a stream's known events kept only their modeled fields,
 so a key the API adds beside an event's payload was dropped. The payloads
@@ -2041,7 +2041,7 @@ caller of `execute_stream()`.
 
 ---
 
-## D-NEXT-H2 — The file watch skips a poll it cannot fully read, and follows a symlinked root (2026-11-07)
+## D-055 — The file watch skips a poll it cannot fully read, and follows a symlinked root (2026-11-07)
 
 **Context.** `triggers::on_file_change` snapshots its tree each poll and
 diffs it against the last one. A snapshot whose root could not be read was
@@ -2081,7 +2081,7 @@ and a dangling root link is an empty tree, like a missing path.
 
 ---
 
-## D-NEXT-H2-a — `AntigravityError` names its causes: no `#[from]`, sources on `Protocol` and `Io` (2026-11-07)
+## D-056 — `AntigravityError` names its causes: no `#[from]`, sources on `Protocol` and `Io` (2026-11-07)
 
 **Context.** `AntigravityError` had `Io(#[from] std::io::Error)` and
 `Json(#[from] serde_json::Error)`, so any `?` on either became one of
@@ -2110,7 +2110,7 @@ says what failed.
 
 ---
 
-## D-NEXT-H2-b — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
+## D-057 — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
 
 **Context.** `Session::connect` retried up to 5 times with backoff, but an
 attempt had no bound: a harness that accepted the TCP connection and
@@ -2130,7 +2130,7 @@ retry.
 about 26.5 s. The paused-clock test checks the attempts, the backoff and
 the source.
 
-## D-NEXT-H4 — CI measures what it reports: a coverage floor with the antigravity feature, skip markers across runs, and releases gated on the push run (2026-11-08)
+## D-058 — CI measures what it reports: a coverage floor with the antigravity feature, skip markers across runs, and releases gated on the push run (2026-11-08)
 
 **Context.** The final #504 grading (2026-11-07) left Tests/CI at A with
 small gaps, none of them tracked. Code Coverage measured the crate without

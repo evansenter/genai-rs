@@ -507,7 +507,7 @@ The Code Coverage job in `rust.yml` measures the workspace with the
 harness suite, merged into one report that goes to the job summary on
 every run. The job then fails when line coverage is under its floor
 (`--fail-under-lines`), set just under the value measured when it was
-last raised (D-NEXT-H4): raise it in `rust.yml` as coverage grows, and
+last raised (D-058): raise it in `rust.yml` as coverage grows, and
 lower it only with the reason in the commit. `tests/ci_workflows/coverage.rs`
 checks the job keeps all of this.
 

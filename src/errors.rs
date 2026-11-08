@@ -366,7 +366,7 @@ impl GenaiError {
 /// request meets again. google-genai's Interactions client retries every
 /// 5xx and 409 as well; a 409 here is the request's (`ALREADY_EXISTS` never
 /// passes, and `ABORTED` wants a fresh read, not the same request again).
-/// See D-NEXT-H5.
+/// See D-053.
 const fn is_retryable_status(status_code: u16) -> bool {
     match status_code {
         // Request Timeout: the server stopped waiting before the request
