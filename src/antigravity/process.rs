@@ -507,8 +507,9 @@ impl HarnessProcess {
         self.version.as_deref()
     }
 
-    /// Kills the harness and, on Unix, every process it started, then reaps
-    /// it (init-failure path). See [`Self::signal`] for the reach.
+    /// Kills the harness and, on Linux and macOS, every process it started,
+    /// then reaps it (init-failure path). See [`Self::signal`] for the
+    /// reach.
     pub(crate) async fn kill(&mut self) {
         self.signal(Signal::Kill);
         self.wait_for_exit(KILL_GRACE).await;
@@ -580,10 +581,11 @@ impl HarnessProcess {
     /// Signals the harness's process tree. Nothing is sent once the child
     /// has been reaped: its group id may no longer be ours.
     ///
-    /// On Unix that is the harness's process group and the group of each
-    /// of its children (`process_tree`). Elsewhere (Windows) there are no
-    /// groups and no SIGTERM: either signal terminates the harness process
-    /// alone, and the `run_command` commands it started keep running.
+    /// On Unix that is the harness's process group and, on Linux and macOS,
+    /// the group of each of its children (`process_tree`). Elsewhere
+    /// (Windows) there are no groups and no SIGTERM: either signal
+    /// terminates the harness process alone, and the `run_command` commands
+    /// it started keep running.
     /// (Stdio MCP servers exit either way, at the end of their stdin.)
     fn signal(&mut self, signal: Signal) {
         let Some(child) = self.child.as_mut() else {
@@ -606,10 +608,10 @@ impl HarnessProcess {
     }
 }
 
-/// Dropping a harness that was never shut down kills it, and on Unix every
-/// process it started (stdio MCP servers, `run_command` commands), without
-/// the graceful exit's trajectory persistence. Elsewhere (Windows) only the
-/// harness process is ended, and its commands keep running (see
+/// Dropping a harness that was never shut down kills it, and on Linux and
+/// macOS every process it started (stdio MCP servers, `run_command`
+/// commands), without the graceful exit's trajectory persistence. On other
+/// Unixes and on Windows its `run_command` commands keep running (see
 /// [`HarnessProcess::signal`]). Signal only: `Drop` cannot wait, so the
 /// reap is left to tokio's orphan reaper.
 impl Drop for HarnessProcess {

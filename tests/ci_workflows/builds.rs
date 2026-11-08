@@ -5,8 +5,9 @@
 //! endings that no other leg sees. So a PR runs the Windows stable leg, the
 //! full matrix also runs on the schedule, every text file checks out with LF,
 //! the Windows doctests run even after a failing unit test, the antigravity
-//! feature compiles off Linux, and clippy lints the library without default
-//! features, in CI and in `make clippy`.
+//! feature compiles off Linux, its process-tree tests run on macOS (whose
+//! libproc path no other job reaches), and clippy lints the library without
+//! default features, in CI and in `make clippy`.
 
 use super::{jobs, read, root, steps};
 
@@ -58,6 +59,33 @@ const ANTIGRAVITY_CONDITION_TERMS: [&str; 5] = [
     "runner.os == 'Windows'",
 ];
 
+/// The step that runs the antigravity process-tree tests on macOS.
+const PROCESS_TREE_TESTS: &str = "cargo nextest run --features antigravity --cargo-profile release \
+                                  --lib -E 'test(/process_tree/)'";
+
+/// The `&&` terms the process-tree step's `if:` may have. Each keeps the
+/// step on the macOS legs; anything else is refused rather than read.
+const PROCESS_TREE_CONDITION_TERMS: [&str; 5] = [
+    "!cancelled()",
+    "always()",
+    "success()",
+    "runner.os == 'macOS'",
+    "runner.os != 'Linux'",
+];
+
+/// The `&&` terms of a step's `if:` that are not in `allowed`.
+fn unknown_terms<'a>(condition: &'a str, allowed: &[&str]) -> Vec<&'a str> {
+    let expression = condition
+        .strip_prefix("${{")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .unwrap_or(condition);
+    expression
+        .split("&&")
+        .map(str::trim)
+        .filter(|term| !allowed.contains(term))
+        .collect()
+}
+
 /// A matrix value written `${{ github.event_name == 'pull_request' &&
 /// fromJSON('[..]') || fromJSON('[..]') }}`, as `(the PR's values, every
 /// other trigger's values)`; `None` for any other shape.
@@ -76,8 +104,8 @@ fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
 /// every `rust.yml` trigger, the weekly schedule included (no job-level
 /// `if:`); a PR's matrix is the Windows stable leg and every other trigger's
 /// is the full matrix, none of it excluded; the doctests run after a failed
-/// unit-test step; and the antigravity feature is checked on every Windows
-/// leg.
+/// unit-test step; the antigravity feature is checked on every Windows
+/// leg; and the antigravity process-tree tests run on every macOS leg.
 fn cross_platform_problems(workflow: &str) -> Vec<String> {
     let body = job(workflow, "cross-platform");
     let mut problems = Vec::new();
@@ -128,15 +156,7 @@ fn cross_platform_problems(workflow: &str) -> Vec<String> {
     match step_running(&body, "cargo check --features antigravity") {
         Some(step) => {
             if let Some(condition) = step_condition(&step) {
-                let expression = condition
-                    .strip_prefix("${{")
-                    .and_then(|rest| rest.strip_suffix("}}"))
-                    .unwrap_or(condition);
-                let unknown: Vec<&str> = expression
-                    .split("&&")
-                    .map(str::trim)
-                    .filter(|term| !ANTIGRAVITY_CONDITION_TERMS.contains(term))
-                    .collect();
+                let unknown = unknown_terms(condition, &ANTIGRAVITY_CONDITION_TERMS);
                 if !unknown.is_empty() {
                     problems.push(format!(
                         "`cargo check --features antigravity` must run on every Windows leg, \
@@ -147,6 +167,20 @@ fn cross_platform_problems(workflow: &str) -> Vec<String> {
             }
         }
         None => problems.push("no `cargo check --features antigravity` step".into()),
+    }
+    match step_running(&body, PROCESS_TREE_TESTS) {
+        Some(step) => {
+            let unknown = step_condition(&step).map_or_else(Vec::new, |condition| {
+                unknown_terms(condition, &PROCESS_TREE_CONDITION_TERMS)
+            });
+            if !unknown.is_empty() {
+                problems.push(format!(
+                    "the process-tree tests must run on every macOS leg: their `if:` has \
+                     {unknown:?}, not only terms from {PROCESS_TREE_CONDITION_TERMS:?}"
+                ));
+            }
+        }
+        None => problems.push(format!("no step running `{PROCESS_TREE_TESTS}`")),
     }
     problems
 }
@@ -234,6 +268,14 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
         workflow.replace(
             "!cancelled() && runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
             "runner.os == 'macOS' || runner.os == 'Linux' }}\n        run: cargo check --features antigravity",
+        ),
+        // The macOS process-tree tests gone, widened to every test, or
+        // moved off macOS.
+        workflow.replace(&format!("        run: {PROCESS_TREE_TESTS}\n"), ""),
+        workflow.replace("-E 'test(/process_tree/)'", "-E 'all()'"),
+        workflow.replace(
+            &format!("runner.os == 'macOS' }}}}\n        run: {PROCESS_TREE_TESTS}"),
+            &format!("runner.os == 'Linux' }}}}\n        run: {PROCESS_TREE_TESTS}"),
         ),
     ];
     for (i, text) in broken.iter().enumerate() {

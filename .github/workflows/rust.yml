@@ -613,6 +613,12 @@ jobs:
       - name: Check the antigravity feature
         if: ${{ !cancelled() && runner.os != 'Linux' }}
         run: cargo check --features antigravity
+      # The forced kill's reach on macOS (process_tree.rs's libproc lookup of
+      # the harness's child groups) runs only here: test-antigravity is
+      # Linux's /proc path. Its unit tests alone, on the release build above.
+      - name: Test the antigravity process tree
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo nextest run --features antigravity --cargo-profile release --lib -E 'test(/process_tree/)'
 
   coverage:
     name: Code Coverage

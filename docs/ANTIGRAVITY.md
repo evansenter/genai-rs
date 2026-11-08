@@ -156,16 +156,19 @@ SIGTERM/SIGKILL only if it lingers. Dropping the agent without `shutdown()`
 kills the harness immediately — no zombie, but no trajectory persistence
 either.
 
-On Unix every kill reaches the processes the harness started, not just
-the harness: it runs in its own process group, and the forced paths (drop,
-an init failure, the shutdown escalation) signal that group *and* the
-process group of each of its children. The second part matters because the
-harness gives every `run_command` command a process group of its own
-(0.1.23), so a kill of the harness or its group alone left those commands
-running. A command that detaches itself (`setsid`, a double-forked daemon)
-is still out of reach. Because the harness is in its own group, a
-terminal's Ctrl-C reaches only your process; when it exits, the harness
-sees stdin close and shuts down gracefully.
+On Linux and macOS every kill reaches the processes the harness started,
+not just the harness: it runs in its own process group, and the forced
+paths (drop, an init failure, the shutdown escalation) signal that group
+*and* the process group of each of its children. The second part matters
+because the harness gives every `run_command` command a process group of
+its own (0.1.23), so a kill of the harness or its group alone left those
+commands running. A command that detaches itself (`setsid`, a
+double-forked daemon) is still out of reach. Other Unixes get the first
+part only: the harness's children are listed through `/proc` on Linux and
+libproc on macOS, so elsewhere the kill reaches the harness's group, and
+the `run_command` commands keep running. On every Unix the harness is in
+its own group, so a terminal's Ctrl-C reaches only your process; when it
+exits, the harness sees stdin close and shuts down gracefully.
 
 On Windows the forced paths end the harness process only: there are no
 process groups to signal, so the `run_command` commands it started keep
