@@ -90,10 +90,10 @@ impl PollOptions {
     /// cuts off is reported as cut off, not as failed: with a timeout
     /// shorter than one round trip, that is how every wait ends.
     ///
-    /// A retryable error (a 5xx, a 429, a dropped connection) is logged and
-    /// polled through rather than ending a long wait; any other error returns
-    /// at once. When that error carries a `Retry-After`, the next poll waits
-    /// at least that long.
+    /// A retryable error (a 408, a 429, most 5xx, a dropped connection; see
+    /// [`GenaiError::is_retryable`]) is logged and polled through rather
+    /// than ending a long wait; any other error returns at once. When that
+    /// error carries a `Retry-After`, the next poll waits at least that long.
     ///
     /// Time is tokio time, so the wait runs under a paused test clock. The
     /// deadline error is [`GenaiError::PollTimeout`], whose `is_retryable()`
