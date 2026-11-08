@@ -16,9 +16,10 @@
 //! or listed in [`QUERY_ALLOWED`], and every binding query parameter is sent
 //! by some verb or listed in [`NOT_SENT`], each with its reason. The test
 //! calls every verb of every resource handle, with every list builder
-//! option set (both are checked), so a misspelled key, a key the API
-//! dropped, and a parameter a new release adds all fail it, and so does a
-//! request to a path no endpoint takes.
+//! option and every request type's query option set (all three are
+//! checked; the last through `query_options`), so a misspelled key, a key
+//! the API dropped, and a parameter a new release adds all fail it, and so
+//! does a request to a path no endpoint takes.
 
 #![allow(
     clippy::unwrap_used,
