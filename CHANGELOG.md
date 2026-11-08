@@ -283,12 +283,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   struct literal adds `extra: Default::default()`.
 - **Breaking: `FunctionDeclarationBuilder::add_parameter` takes the name as
   `impl Into<String>`, and `InteractionBuilder::add_functions` takes
-  `impl IntoIterator<Item = FunctionDeclaration>`**, as the crate's other
-  setters do, in place of `&str` and `Vec<FunctionDeclaration>`. A
-  `String` name or an array of declarations no longer needs a `&` or a
-  `vec!`. Migration: none for a `&str`, `String` or `Vec` argument; a call
-  that relied on the old types to infer something (passing the method as a
-  function pointer, say) names the new ones.
+  `impl IntoIterator<Item = FunctionDeclaration>`**, in place of `&str`
+  and `Vec<FunctionDeclaration>`. The name takes what the builder's `new`
+  and `with_description` take, so a `String` needs no `&`, and an array or
+  a mapped iterator of declarations needs no `vec!` or `collect()`.
+  Migration: a `&str`, `&String`, `String` or `Vec` argument compiles
+  unchanged. A `&&str` name (what iterating over `&["a", "b"]` yields), a
+  `&Box<str>` or a `&Cow<str>` has no `Into<String>`: dereference it
+  (`*name`) or pass `name.to_string()`. A `collect()` passed straight to
+  `add_functions` can no longer infer its collection (E0283): pass the
+  iterator without it, or write `collect::<Vec<_>>()`.
 - **Breaking: `TranscriptionMode::Smart` is a struct variant,
   `Smart { source_text: Option<String> }`**, for google-genai 3.0.0's
   `SmartTranscriptionMode.source_text`: the text the audio is expected to
