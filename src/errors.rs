@@ -179,14 +179,25 @@ impl GenaiError {
     ///
     /// This helper identifies errors that are typically recoverable:
     /// - **HTTP errors**: Network issues, connection resets, TLS errors
+    /// - **Request timeouts (408)**: the server stopped waiting before the
+    ///   request arrived whole, so it acted on nothing
     /// - **Rate limits (429)**: Temporary throttling, retry after backoff
-    /// - **Server errors (5xx)**: Temporary server issues
+    /// - **Server errors (5xx)**: Temporary server issues, except the six
+    ///   below
     /// - **Timeouts**: Request took too long but may succeed with retry
     /// - **Cut-off streams** ([`StreamInterrupted`](Self::StreamInterrupted)):
     ///   the body ended before the terminal event
     ///
     /// Errors that return `false` are typically permanent and retrying won't help:
-    /// - **Client errors (4xx except 429)**: Bad request, unauthorized, not found
+    /// - **Client errors (4xx except 408 and 429)**: Bad request, unauthorized, not found
+    /// - **The 5xx a retry cannot fix**: 501 Not Implemented (the API's
+    ///   `UNIMPLEMENTED`, for a method or feature it does not support), 505
+    ///   HTTP Version Not Supported, 506 Variant Also Negotiates, 508 Loop
+    ///   Detected, 510 Not Extended and 511 Network Authentication Required.
+    ///   Each names a condition the same request meets on every attempt.
+    ///   Every other 5xx is retryable, including 507 Insufficient Storage
+    ///   (temporary, per RFC 4918) and codes no RFC registers, such as a
+    ///   proxy's 520 to 599.
     /// - **Invalid input**: Request validation failures
     /// - **Malformed response**: API contract violations, including a
     ///   stream event that does not parse
@@ -272,8 +283,7 @@ impl GenaiError {
             // time, so retrying it only burns the retry budget.
             GenaiError::Http(e) => !(e.is_builder() || e.is_redirect()),
 
-            // API errors: 429 (rate limit) and 5xx (server errors) are retryable
-            GenaiError::Api { status_code, .. } => *status_code == 429 || *status_code >= 500,
+            GenaiError::Api { status_code, .. } => is_retryable_status(*status_code),
 
             // Timeouts may succeed on retry
             GenaiError::Timeout(_) => true,
@@ -340,6 +350,48 @@ impl GenaiError {
             GenaiError::Api { retry_after, .. } => *retry_after,
             _ => None,
         }
+    }
+}
+
+/// Whether an API error's HTTP status can pass on a retry of the same
+/// request ([`GenaiError::is_retryable`]).
+///
+/// Every 5xx is the server's trouble, a proxy's unregistered ones included,
+/// except the registered codes whose definition is a condition the same
+/// request meets again. google-genai's Interactions client retries every
+/// 5xx and 409 as well; a 409 here is the request's (`ALREADY_EXISTS` never
+/// passes, and `ABORTED` wants a fresh read, not the same request again).
+/// See D-NEXT-H5.
+const fn is_retryable_status(status_code: u16) -> bool {
+    match status_code {
+        // Request Timeout: the server stopped waiting before the request
+        // arrived whole, so it acted on nothing, and the same request can
+        // arrive in time.
+        408
+        // Too Many Requests: throttling that passes with time.
+        | 429 => true,
+        // Not Implemented: the server does not support the method or
+        // feature (Google's `UNIMPLEMENTED`), and that does not change
+        // between attempts.
+        501
+        // HTTP Version Not Supported: every attempt uses the same version.
+        | 505
+        // Variant Also Negotiates: a server misconfiguration in content
+        // negotiation, not a passing state.
+        | 506
+        // Loop Detected: the same request loops again.
+        | 508
+        // Not Extended: the request lacks an extension the server requires.
+        | 510
+        // Network Authentication Required: a captive portal wants a
+        // sign-in, which no retry provides.
+        | 511 => false,
+        // Every other 5xx: a failure on the server's side, which can pass.
+        // 507 Insufficient Storage is one: RFC 4918 calls it temporary.
+        500..=599 => true,
+        // Every other 4xx is the request's fault; any other status is no
+        // server error at all.
+        _ => false,
     }
 }
 
@@ -552,35 +604,79 @@ mod tests {
         assert!(error.is_retryable(), "429 errors should be retryable");
     }
 
+    fn api_error(status_code: u16) -> GenaiError {
+        GenaiError::Api {
+            status_code,
+            message: "error".to_string(),
+            request_id: None,
+            retry_after: None,
+        }
+    }
+
+    /// The server stopped waiting before the request arrived whole, so it
+    /// acted on nothing; google-genai retries a 408 too.
+    #[test]
+    fn test_is_retryable_request_timeout_408() {
+        assert!(api_error(408).is_retryable());
+    }
+
     #[test]
     fn test_is_retryable_server_errors_5xx() {
-        for status_code in [500, 502, 503, 504] {
-            let error = GenaiError::Api {
-                status_code,
-                message: "Server error".to_string(),
-                request_id: None,
-                retry_after: None,
-            };
+        // google-genai's four, 507 (temporary per RFC 4918), and codes no RFC
+        // registers: a proxy's 509, 520-529 and 598-599.
+        for status_code in [500, 502, 503, 504, 507, 509, 520, 524, 529, 598, 599] {
             assert!(
-                error.is_retryable(),
+                api_error(status_code).is_retryable(),
                 "{status_code} errors should be retryable"
+            );
+        }
+    }
+
+    /// Each names a condition the same request meets on every attempt.
+    #[test]
+    fn test_is_retryable_5xx_a_retry_cannot_fix() {
+        for (status_code, why) in [
+            (501, "Not Implemented: the method or feature is unsupported"),
+            (
+                505,
+                "HTTP Version Not Supported: the same version every time",
+            ),
+            (506, "Variant Also Negotiates: a server misconfiguration"),
+            (508, "Loop Detected: the same request loops again"),
+            (510, "Not Extended: the request lacks a required extension"),
+            (511, "Network Authentication Required: a captive portal"),
+        ] {
+            assert!(
+                !api_error(status_code).is_retryable(),
+                "{status_code} {why}"
             );
         }
     }
 
     #[test]
     fn test_is_retryable_client_errors_4xx_not_retryable() {
-        // Client errors (except 429) should NOT be retryable
-        for status_code in [400, 401, 403, 404, 422] {
-            let error = GenaiError::Api {
-                status_code,
-                message: "Client error".to_string(),
-                request_id: None,
-                retry_after: None,
-            };
+        // Client errors (except 408 and 429) should NOT be retryable
+        for status_code in [400, 401, 403, 404, 409, 413, 422, 425, 499] {
             assert!(
-                !error.is_retryable(),
+                !api_error(status_code).is_retryable(),
                 "{status_code} errors should NOT be retryable"
+            );
+        }
+    }
+
+    /// The whole table: 408, 429, and every 5xx but the six above. A status
+    /// past 599 is no server error, whatever a nonstandard server means by
+    /// it.
+    #[test]
+    fn test_is_retryable_status_table() {
+        const PERMANENT_5XX: [u16; 6] = [501, 505, 506, 508, 510, 511];
+        for status_code in 0..=999u16 {
+            let expected = matches!(status_code, 408 | 429)
+                || ((500..=599).contains(&status_code) && !PERMANENT_5XX.contains(&status_code));
+            assert_eq!(
+                api_error(status_code).is_retryable(),
+                expected,
+                "{status_code}"
             );
         }
     }

@@ -511,6 +511,47 @@ async fn test_retry_on_transient_retries_plain_5xx() {
     );
 }
 
+/// Counts the attempts `retry_on_transient` makes at a request that fails
+/// once with `status_code` and then succeeds.
+async fn attempts_after_one(status_code: u16) -> u32 {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+    let _ = retry_on_transient(1, || {
+        let count = count.clone();
+        async move {
+            if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(GenaiError::Api {
+                    status_code,
+                    message: "error".to_string(),
+                    request_id: None,
+                    retry_after: None,
+                })
+            } else {
+                Ok(())
+            }
+        }
+    })
+    .await;
+    call_count.load(Ordering::SeqCst)
+}
+
+/// A 408 means the server stopped waiting before the request arrived whole,
+/// so it acted on nothing: a retry loop built on `is_retryable` re-sends it,
+/// as google-genai does.
+#[tokio::test(start_paused = true)]
+async fn test_retry_on_transient_retries_a_408() {
+    assert_eq!(attempts_after_one(408).await, 2);
+}
+
+/// The 5xx that a retry cannot fix fail on the first attempt, rather than
+/// spending the budget on the same answer.
+#[tokio::test(start_paused = true)]
+async fn test_retry_on_transient_does_not_retry_a_5xx_a_retry_cannot_fix() {
+    for status_code in [501, 505, 506, 508, 510, 511] {
+        assert_eq!(attempts_after_one(status_code).await, 1, "{status_code}");
+    }
+}
+
 /// A 400 invalid_request (e.g. a rejected fixture) carries neither
 /// transient marker, so it must fail on the first attempt — the property
 /// the retry-then-assert-strictly sweep depends on.

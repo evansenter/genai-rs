@@ -512,6 +512,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StreamInterrupted { source: None, .. }` where you matched that
   `MalformedResponse`; a retry loop built on `is_retryable()` now retries
   it. See "An unrecognized last event" in `docs/RELIABILITY.md`.
+- **Breaking: `GenaiError::is_retryable()` is true for a 408 and false for
+  the 5xx a retry cannot fix: 501, 505, 506, 508, 510 and 511.** A 408
+  means the server stopped waiting before the request arrived whole, so it
+  acted on nothing and the same request can succeed; google-genai retries
+  it too. Each of the six names a condition the same request meets on every
+  attempt (501 is Google's `UNIMPLEMENTED`), so a retry loop spent its
+  budget on them. Every other 5xx stays retryable, including 507 and the
+  unregistered codes some proxies send; a status of 600 or more is no
+  longer retryable, as `docs/RELIABILITY.md` already said. The crate's own
+  waits follow: `wait_until_active` and a file search store import's wait
+  now poll through a 408 and end at once on the six. Migration: a retry
+  loop built on `is_retryable()` needs no change. To keep retrying the six,
+  test `matches!(e, GenaiError::Api { status_code: 501 | 505 | 506 | 508 |
+  510 | 511, .. })` before `is_retryable()`; to stop retrying a 408, test
+  `GenaiError::Api { status_code: 408, .. }` first.
 - **Breaking: `Client::new` and `ClientBuilder::build` set a 30 s connect
   timeout.** `DEFAULT_CONNECT_TIMEOUT` covers DNS, TCP and TLS. Before,
   there was none, so a black-holed route waited for the OS's timeout (about

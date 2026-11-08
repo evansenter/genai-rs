@@ -12,7 +12,7 @@ wildcard arm.
 
 | Variant | Meaning | `is_retryable()` |
 |---------|---------|------------------|
-| `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 429 and 5xx only |
+| `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 408, 429 and 5xx, except 501, 505, 506, 508, 510 and 511 ([why](RELIABILITY.md#genaierroris_retryable)) |
 | `Http(reqwest::Error)` | Network, connect (including the default 30 s connect timeout), TLS, or a client-level timeout before the response headers | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
 | `StreamInterrupted { message, source }` | A stream's body ended before its terminal event: the server closed early, or the transport failed mid-body (`source` holds that `reqwest::Error`). Also an auto-function round that ends on an event this crate doesn't recognize, with `source` `None` ([An unrecognized last event](RELIABILITY.md#an-unrecognized-last-event)) | Yes; see [Cut-off streams](RELIABILITY.md#cut-off-streams) |
@@ -53,15 +53,17 @@ visible with `LOUD_WIRE=1` (see [Logging](LOGGING_STRATEGY.md)).
 | 400 | Invalid request: a bad field, an unsupported combination, a field the Gemini API rejects as Vertex-only | Read `message`; it usually names the field |
 | 401 / 403 | Missing, invalid or unauthorized API key, or a feature not enabled for the key | Check `GEMINI_API_KEY` and access |
 | 404 | Unknown model, agent, file or interaction id | Use the constants in `genai_rs` (`DEFAULT_MODEL`, ...) rather than typed ids |
+| 408 | The server stopped waiting before the request arrived whole | Retry with backoff |
 | 429 | Rate limited | Back off; honor `retry_after()` when set |
-| 5xx | Server error | Retry with backoff |
+| 501 | The server does not implement the method or feature (`UNIMPLEMENTED`) | Don't retry; the same request gets the same answer |
+| Other 5xx | Server error | Retry with backoff, except 505, 506, 508, 510 and 511 ([why](RELIABILITY.md#genaierroris_retryable)) |
 
 `request_id` comes from the `x-goog-request-id` response header. Log it; it is
 what Google support needs to find a specific failed request.
 
 ## Known transient errors
 
-`is_retryable()` covers transport errors, timeouts, 429 and 5xx. The
+`is_retryable()` covers transport errors, timeouts, 408, 429 and most 5xx. The
 integration suite also retries four error classes that `is_retryable()`
 deliberately leaves out, because they are matched on message text rather than
 status (`tests/common/retry.rs`, `is_transient_error`):
