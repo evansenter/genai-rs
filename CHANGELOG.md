@@ -257,6 +257,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content type); a directory comes back as a tar archive
   (`is_tar_archive()`). It is `GET` on the listing's path with `alt=media`
   (verified live 2026-11-05).
+- `ConversationBuilder` implements `Debug`, as every other public type
+  does: it prints the parent `InteractionBuilder` (without the client, so
+  without the API key) and the steps so far.
 
 ### Changed
 
