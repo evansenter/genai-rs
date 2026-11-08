@@ -101,15 +101,30 @@ pub enum AntigravityError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
-    /// The harness sent something this client could not parse.
-    #[error("protocol error: {0}")]
-    Protocol(String),
-    /// I/O error.
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    /// JSON (de)serialization error.
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
+    /// The harness broke the protocol: it sent a message this client could
+    /// not parse, or ended a turn without its final event. A message this
+    /// client could not encode for the harness is reported here too.
+    #[error("protocol error: {message}")]
+    Protocol {
+        /// What went wrong.
+        message: String,
+        /// The parse or encode error, when one caused it, also returned by
+        /// [`source()`](std::error::Error::source).
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    },
+    /// A local I/O operation failed: reading a file
+    /// ([`Media::from_file`](super::Media::from_file)), or harness
+    /// discovery cut short by the runtime shutting down.
+    #[error("I/O error: {message}: {source}")]
+    Io {
+        /// What was being done, naming the path when there is one.
+        message: String,
+        /// The I/O error, also returned by
+        /// [`source()`](std::error::Error::source).
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 fn exit_description(code: Option<i32>) -> String {
@@ -117,6 +132,26 @@ fn exit_description(code: Option<i32>) -> String {
 }
 
 impl AntigravityError {
+    /// A [`Protocol`](Self::Protocol) error with no underlying cause.
+    pub(crate) fn protocol(message: impl Into<String>) -> Self {
+        Self::Protocol {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// A [`Protocol`](Self::Protocol) error caused by `source`, a parse or
+    /// encode error; `message` says what was being done.
+    pub(crate) fn protocol_from(
+        message: &str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Protocol {
+            message: format!("{message}: {source}"),
+            source: Some(Box::new(source)),
+        }
+    }
+
     /// Appends a known harness version mismatch to an init failure's
     /// message: a harness that rejects this build's config at init (0.1.18
     /// refusing 0.1.23's `runWorkflow`) says so only on stderr, and the

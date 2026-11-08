@@ -117,7 +117,11 @@ async fn discover(
             path_var.as_deref(),
         )
     })
-    .await?
+    .await
+    .map_err(|source| AntigravityError::Io {
+        message: "harness discovery was cancelled".to_string(),
+        source,
+    })?
 }
 
 /// Runs blocking work (a filesystem walk, an interpreter's start-up) on

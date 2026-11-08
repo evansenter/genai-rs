@@ -1352,7 +1352,10 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 `HarnessExited` (a failed exit on `shutdown()`, with `stderr`),
 `Config` (spawn-time validation, including the safety gate), `Turn`
 (cancellation, pre-turn denial, fatal model-backend errors), `Timeout`,
-`ToolDispatch`, `WebSocket`, `Protocol`, `Io`, `Json`.
+`ToolDispatch`, `WebSocket` (with the transport error as its source),
+`Protocol` (a harness message this client could not parse, with the parse
+error as its source, or a turn that ended without its final event) and
+`Io` (a file `Media::from_file` could not read, named in its message).
 
 A fatal model-backend error (an HTTP 400 from the model endpoint) fails the
 turn with `Turn` and, on harness 0.1.23, ends the session as well: the
