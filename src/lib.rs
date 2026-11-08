@@ -310,6 +310,7 @@ pub mod __private {
 
     /// A `#[tool]` function's registration, collected by `inventory` into
     /// the registry `create_with_auto_functions` consults.
+    #[derive(Debug)]
     pub struct CallableFunctionFactory {
         pub(crate) factory_fn: fn() -> Box<dyn crate::CallableFunction>,
     }

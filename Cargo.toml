@@ -24,6 +24,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)", 
 # `#[allow(unreachable_patterns)]` cannot switch the check back off. The
 # lint does not see a `_ =>` after a partial list, which stays reachable.
 unreachable_patterns = "forbid"
+# Every public type can be printed with `{:?}` (a type holding a secret
+# prints it redacted, as `Client` does its key).
+missing_debug_implementations = "warn"
 
 # Pedantic lints chosen one by one, beyond clippy's defaults (#501).
 # `make clippy` and CI run with `-D warnings`, so each is enforced in src/,
