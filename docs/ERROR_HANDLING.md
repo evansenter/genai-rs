@@ -73,10 +73,20 @@ status (`tests/common/retry.rs`, `is_transient_error`):
 | `Api` 400 containing `there was a problem processing your request` | Server-side bursts that pass on re-run |
 | `Api` 400 containing `please retry the request`, unless it names `too_many_tool_calls` | The API says so itself after a broken tool call (`malformed_tool_call`). A tool-call loop (`too_many_tool_calls`) is not retried whatever its message says: the same request loops again (see the [gap tracker](INTERACTIONS_API_GAP.md)), and each attempt runs to the 60-call limit |
 
-If you want the same behavior, compose the two predicates:
+A broken tool call is now usually not an error at all: the API answers
+`200` with an interaction whose `status` is `failed` and whose `errors`
+carry the code `malformed_tool_call`, with the same advice to retry
+([live record](INTERACTIONS_API_GAP.md#tools)). Neither predicate sees a
+response, so check it too; the integration suite retries it
+(`is_transient_failure`), and still not a `too_many_tool_calls`. A
+streamed request that fails this way ends with a `failed` interaction
+that carries no `errors`.
+
+If you want the same behavior, compose the two predicates, and check a
+response the same way:
 
 ```rust
-use genai_rs::GenaiError;
+use genai_rs::{GenaiError, InteractionResponse, InteractionStatus};
 
 fn should_retry(err: &GenaiError) -> bool {
     if err.is_retryable() {
@@ -97,7 +107,14 @@ fn should_retry(err: &GenaiError) -> bool {
         _ => false,
     }
 }
-# let _ = should_retry;
+
+fn should_retry_response(response: &InteractionResponse) -> bool {
+    let codes = || response.errors.iter().flatten().filter_map(|e| e.code.as_deref());
+    response.status == InteractionStatus::Failed
+        && codes().any(|code| code == "malformed_tool_call")
+        && !codes().any(|code| code == "too_many_tool_calls")
+}
+# let _ = (should_retry, should_retry_response);
 ```
 
 Keep the retry budget small: these matches are on message text, so an API

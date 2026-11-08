@@ -1872,3 +1872,15 @@ until they age out, and a test stays chronic while two of its retried runs
 are in it: the Antigravity test's are all from 2026-11-01, so it clears
 from the 2026-11-09 report, and the search test's second-to-last is from
 2026-11-05, so it clears from the 2026-11-13 report, with no new retry.
+
+**Amended 2026-11-08 (#545).** `malformed_tool_call`, the broken tool
+call the API itself asks to be retried, stays one of `retry_request!`'s
+transient errors in its new form. The API now reports it in a `200`, as
+an interaction whose `status` is `failed` and whose `errors` carry that
+code (4 of 4 live, recorded in the gap tracker), where it used to be a
+`400`, so `retry_on_transient` retries an interaction it returns, or an
+auto-function loop's final response, that failed that way, and returns
+the last attempt as it came. As in the `400` form, a failure that names
+`too_many_tool_calls` is never retried. The search test's follow-up,
+the case that met it most, is fixed at its cause (it resends the tool);
+the retry is for the broken call a model makes now and then anywhere.

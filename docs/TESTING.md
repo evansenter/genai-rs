@@ -296,7 +296,7 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 |--------|---------|
 | `get_client()` | `Some(Client)` when `GEMINI_API_KEY` is set |
 | `interaction_builder(&client)`, `stateful_builder(&client)` | Builders preset with `DEFAULT_MODEL` (the latter with storage on) |
-| `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`) and the model-side flakes in `is_transient_error` |
+| `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`), the model-side flakes in `is_transient_error`, and an interaction `is_transient_failure` matches |
 | `with_timeout(test_timeout(), ..)`, `extended_test_timeout()` | Bound a test |
 | `consume_stream(..)`, `consume_auto_function_stream(..)` | Collect a stream's text and final response; they panic on the first stream error |
 | `poll_until_done(..)` | Poll a background interaction |
@@ -310,8 +310,15 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 json syntax`, `there was a problem processing your request`, and `please
 retry the request`, the API's advice on `malformed_tool_call`), but never
 `too_many_tool_calls`, the url_context loop, whatever its message says; see
-[Error Handling](ERROR_HANDLING.md#known-transient-errors). A validation
-rejection still fails on the first attempt.
+[Error Handling](ERROR_HANDLING.md#known-transient-errors). A broken tool
+call now usually comes back as a `200` instead: an interaction whose
+`status` is `failed` and whose `errors` carry `malformed_tool_call`
+([live record](INTERACTIONS_API_GAP.md#tools)). `retry_on_transient`, and
+so `retry_request!`, retries that too (`is_transient_failure`), when the
+operation returns an `InteractionResponse` or an `AutoFunctionResult`, and
+never when an error names `too_many_tool_calls`; after the last attempt it
+returns the failed interaction, for the test's own status check to report.
+A validation rejection still fails on the first attempt.
 
 For the auto-function loop, assert that executions **succeeded**, not just
 that they happened: `result.all_executions_succeeded()`, with

@@ -17,8 +17,8 @@
 
 mod common;
 
-use common::{is_transient_error, retry_on_transient};
-use genai_rs::GenaiError;
+use common::{is_transient_error, is_transient_failure, retry_on_transient};
+use genai_rs::{GenaiError, InteractionResponse};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -336,6 +336,135 @@ fn test_is_transient_error_never_retries_a_tool_call_loop() {
             "a tool-call loop must fail, not retry: {looped:?}"
         );
     }
+}
+
+/// A failed interaction as the API reports one in a `200`: `status:
+/// failed`, no steps, and the error it ended with (the gap tracker's Tools
+/// section records the live shape).
+fn failed_interaction(code: &str, message: &str) -> InteractionResponse {
+    serde_json::from_value(serde_json::json!({
+        "id": "failed",
+        "status": "failed",
+        "steps": [],
+        "errors": [{"code": code, "message": message}],
+    }))
+    .expect("a failed interaction parses")
+}
+
+const MALFORMED_MESSAGE: &str = "Model generated invalid JSON syntax and the output could not be \
+     parsed. Please retry the request. If the issue persists, include this error message in the \
+     retry prompt to instruct the model to produce valid JSON.";
+
+/// `malformed_tool_call` now arrives as a failed interaction, not a 400
+/// (#545), and is retried as the 400 was; a tool-call loop is not, in
+/// either form (D-052).
+#[test]
+fn test_is_transient_failure_matches_a_failed_malformed_tool_call() {
+    assert!(is_transient_failure(&failed_interaction(
+        "malformed_tool_call",
+        MALFORMED_MESSAGE
+    )));
+    assert!(!is_transient_failure(&failed_interaction(
+        "too_many_tool_calls",
+        "Model generated too many tool calls. Please retry the request."
+    )));
+    // An error naming the loop beside the broken call is the loop.
+    let mut both = failed_interaction("malformed_tool_call", MALFORMED_MESSAGE);
+    both.errors.as_mut().unwrap().extend(
+        failed_interaction("too_many_tool_calls", "60 URL context calls")
+            .errors
+            .unwrap(),
+    );
+    assert!(!is_transient_failure(&both));
+    // Another failure, or the code on an interaction that did not fail, is
+    // not retried.
+    assert!(!is_transient_failure(&failed_interaction(
+        "INVALID_ARGUMENT",
+        "Please retry the request."
+    )));
+    let mut completed = failed_interaction("malformed_tool_call", MALFORMED_MESSAGE);
+    completed.status = genai_rs::InteractionStatus::Completed;
+    assert!(!is_transient_failure(&completed));
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_retry_on_transient_retries_a_failed_malformed_tool_call() {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+
+    let result = retry_on_transient(3, || {
+        let count = count.clone();
+        async move {
+            if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(failed_interaction("malformed_tool_call", MALFORMED_MESSAGE))
+            } else {
+                let mut answered = failed_interaction("none", "");
+                answered.status = genai_rs::InteractionStatus::Completed;
+                answered.errors = None;
+                Ok(answered)
+            }
+        }
+    })
+    .await
+    .expect("no error");
+
+    assert_eq!(result.status, genai_rs::InteractionStatus::Completed);
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        2,
+        "one retry, then the answer"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_retry_on_transient_returns_the_last_failed_attempt() {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+
+    // A malformed call on every attempt: retried to the limit, then the
+    // failed interaction itself comes back for the test to report.
+    let result = retry_on_transient(2, || {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, GenaiError>(failed_interaction("malformed_tool_call", MALFORMED_MESSAGE))
+        }
+    })
+    .await
+    .expect("a failed interaction is not an error");
+
+    assert_eq!(result.status, genai_rs::InteractionStatus::Failed);
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        3,
+        "every attempt was made"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_retry_on_transient_never_retries_a_failed_tool_call_loop() {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+
+    let result = retry_on_transient(3, || {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, GenaiError>(failed_interaction(
+                "too_many_tool_calls",
+                "Model generated too many tool calls. Please retry the request.",
+            ))
+        }
+    })
+    .await
+    .expect("a failed interaction is not an error");
+
+    assert_eq!(result.status, genai_rs::InteractionStatus::Failed);
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        1,
+        "a tool-call loop fails the test on its first attempt (D-052)"
+    );
 }
 
 // =============================================================================
