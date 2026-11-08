@@ -11,9 +11,10 @@
 #     and each flake carries the runs it ran in;
 #   - their skip markers are added up across runs, with the tests that
 #     printed them, and reach the report;
-#   - the week is listed by creation date, and a listing that fills the
-#     run limit, or fails, fails the step instead of reporting on part of
-#     the week;
+#   - the week is listed by creation date, at the API's ceiling for a
+#     filtered listing (1,000, which a larger --limit does not raise), and
+#     a listing that reaches it, or fails, fails the step instead of
+#     reporting on part of the week, with a fix that works;
 #   - a breached target finishes the report and records `breach=true`
 #     instead of stopping the step before the baseline marker is written.
 
@@ -216,7 +217,7 @@ check "collect: example runs and retries" summary.json '[.examples_run, .example
 check "collect: skip markers across the week" summary.json '.skip_markers' 1
 check "collect: the test that printed one, with its file" summary.json \
     '.skipped_tests' '[{"name":"semantic::test_answer","markers":1,"runs":1,"file":"tests/interactions_api_tests.rs"}]'
-if grep -qE -- "run list .*--created >=[0-9]{4}-[0-9]{2}-[0-9]{2} .*--limit 1000" "$STUB/calls.log"; then
+if grep -qE -- "run list .*--created >=[0-9]{4}-[0-9]{2}-[0-9]{2} .*--limit 1000( |$)" "$STUB/calls.log"; then
     echo "ok   - collect: the week's runs are listed by creation date, up to 1000"
 else
     echo "FAIL - collect: run list was not filtered to the window"
@@ -248,8 +249,9 @@ check_text "report: the week's skip markers have a row" "$RUN_DIR/flakiness_repo
 check_text "report: and the test that printed one" "$RUN_DIR/flakiness_report.md" \
     '| `semantic::test_answer` | 1 | 1 | tests/interactions_api_tests.rs |'
 
-# --- A listing that fills its limit may have dropped runs; a failed one
-#     would read as an empty week. Either fails the step, loudly.
+# --- A listing that reaches the ceiling may have dropped runs; a failed
+#     one would read as an empty week. Either fails the step, loudly, and
+#     the first names a fix that works (raising --limit does not).
 expect_step_failure() { # label, needle
     local rc=0
     : > "$WORK/github_output"
@@ -264,8 +266,16 @@ expect_step_failure() { # label, needle
     fi
 }
 touch "$STUB/list-fills"
-expect_step_failure "collect: a listing at the run limit fails the step" \
-    "::error::gh run list returned 1000 runs, its limit"
+expect_step_failure "collect: a listing at the API's ceiling fails the step" \
+    "::error::gh run list returned 1000 runs, the most the API lists for a filtered listing"
+if grep -qF "Shorten DAYS_BACK, or list the window in date-bounded parts" "$WORK/collect.out" \
+    && ! grep -qi "raise" "$WORK/collect.out"; then
+    echo "ok   - collect: the ceiling's error names a fix that works"
+else
+    echo "FAIL - collect: the ceiling's error should point at DAYS_BACK or date-bounded listings"
+    sed 's/^/         /' "$WORK/collect.out"
+    failures=$((failures + 1))
+fi
 rm "$STUB/list-fills"
 touch "$STUB/list-fails"
 expect_step_failure "collect: a failed listing fails the step" ""

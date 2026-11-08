@@ -1922,7 +1922,8 @@ week.
   going.
 - The report lists the window's runs by creation date, up to 1,000, the
   API's ceiling for a filtered listing, and fails when the listing reaches
-  it or fails.
+  it or fails. A larger `--limit` lists no more, so a week past 1,000 runs
+  needs a shorter window or date-bounded listings joined together.
 
 **Consequences.** A coverage drop fails the Code Coverage job, which is
 not a required check, so it shows on the PR without blocking it; making it

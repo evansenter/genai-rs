@@ -81,22 +81,23 @@ jobs:
           LOGS_MISSED=0
 
           # The window's runs only, by creation date, up to what the API
-          # serves for a filtered listing (1,000; about 115 a week now). A
-          # listing that fills the limit may have left runs out, so the step
+          # serves for a filtered listing (1,000; about 115 a week now). That
+          # is a ceiling, not a setting: a larger --limit lists no more. A
+          # listing that reaches it may have left runs out, so the step
           # fails rather than report on part of the week, and a failed
           # listing fails it too: an empty week would read as "no live test
           # runs".
-          RUN_LIMIT=1000
+          LIST_CEILING=1000
           echo "Fetching workflow runs..."
           RUNS_JSON=$(gh run list \
             --workflow "$WORKFLOW_NAME" \
             --created ">=$START_DATE" \
-            --limit "$RUN_LIMIT" \
+            --limit "$LIST_CEILING" \
             --json databaseId,conclusion,createdAt,headBranch,event)
           LISTED=$(jq 'length' <<<"$RUNS_JSON")
           echo "Listed $LISTED runs created since $START_DATE"
-          if [ "$LISTED" -ge "$RUN_LIMIT" ]; then
-            echo "::error::gh run list returned $LISTED runs, its limit, so the window may hold more and the report would leave them out. Raise RUN_LIMIT past the week's runs or shorten DAYS_BACK."
+          if [ "$LISTED" -ge "$LIST_CEILING" ]; then
+            echo "::error::gh run list returned $LISTED runs, the most the API lists for a filtered listing, so the window may hold more and the report would leave them out. Shorten DAYS_BACK, or list the window in date-bounded parts (--created ranges) and join them."
             exit 1
           fi
 
