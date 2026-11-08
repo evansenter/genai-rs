@@ -3,26 +3,39 @@
 //! observation (D-010), since a live fact goes stale and the date says how
 //! stale.
 //!
-//! Shared by the in-crate oracle's lists (`src/coverage_oracle/`), the wire
-//! oracle's (`tests/request_wire_oracle.rs`) and the endpoint map's
-//! (`tests/ci_coverage.rs`, which includes this file alone).
+//! Shared by the in-crate oracle's lists (`src/coverage_oracle/`) and
+//! `tests/ci_coverage.rs`, which includes this file alone and holds every
+//! reasoned list in `tests/` to it (the wire oracle's, the endpoint map's,
+//! the response guard's, the live-verb map's).
 
 /// Whether a reason states what the API did, or does (a word like
 /// "served", "rejected", "accepted" or "live", or an HTTP error status),
-/// without the `YYYY-MM` date of the observation.
+/// without the `YYYY-MM` date of the observation. A number after `#` is an
+/// issue (`#538`), not a status.
 pub fn undated_live_claim(reason: &str) -> bool {
     const STEMS: &[&str] = &[
         "live", "serv", "reject", "accept", "ignor", "observ", "seen", "probe",
     ];
     let lower = reason.to_lowercase();
-    let claims = lower
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|word| {
-            STEMS.iter().any(|stem| word.starts_with(stem))
-                || (word.len() == 3
-                    && word.starts_with(['4', '5'])
-                    && word.bytes().all(|b| b.is_ascii_digit()))
-        });
+    let mut words = Vec::new();
+    let mut start = None;
+    for (i, c) in lower.char_indices().chain([(lower.len(), ' ')]) {
+        match (c.is_ascii_alphanumeric(), start) {
+            (true, None) => start = Some(i),
+            (false, Some(from)) => {
+                words.push((lower[..from].ends_with('#'), &lower[from..i]));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    let claims = words.iter().any(|&(issue, word)| {
+        STEMS.iter().any(|stem| word.starts_with(stem))
+            || (!issue
+                && word.len() == 3
+                && word.starts_with(['4', '5'])
+                && word.bytes().all(|b| b.is_ascii_digit()))
+    });
     let dated = reason.as_bytes().windows(7).any(|w| {
         w.starts_with(b"20")
             && w[2..4].iter().all(u8::is_ascii_digit)

@@ -54,7 +54,7 @@ pub const LIVE_REASON: &str = "Requires API key";
 pub const NOT_HANDLES: &[(&str, &str)] = &[(
     "InteractionBuilder",
     "A request builder, not a resource handle: `client.interaction()` builds \
-     the request `create()` sends, which every live interaction test does.",
+     the request `create()` sends, which every interaction test that calls the API does.",
 )];
 
 fn root() -> PathBuf {

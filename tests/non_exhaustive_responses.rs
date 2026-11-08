@@ -114,7 +114,7 @@ const CRATE_MADE: &[(&str, &str)] = &[
     (
         "src/streaming.rs:AutoFunctionStreamEvent",
         "the crate's envelope around an auto-function chunk; the wire's \
-         unmodeled fields live in the chunk's response and steps",
+         unmodeled fields are kept in the chunk's response and steps",
     ),
     (
         "src/wire_streaming/mod.rs:StreamEvent",
@@ -138,35 +138,35 @@ const SENT_ONLY: &[(&str, &str)] = &[
     ),
     (
         "src/tools/retrieval.rs:ExaAiSearchConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:ParallelAiSearchConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagStoreConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagResource",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagRetrievalConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:HybridSearchConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagFilter",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagRanking",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/webhooks.rs:WebhookUpdate",

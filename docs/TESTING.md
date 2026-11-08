@@ -615,8 +615,11 @@ reason to the list that fits:
 | `QUERY_ALLOWED`, `NOT_SENT` (`tests/request_wire_oracle.rs`, by `METHOD /path?key`) | A query key the crate sends that its endpoint does not list (the `alt` system parameter); a binding query parameter no verb sends |
 
 Date every live fact in a reason (D-010): `live_claims_are_dated` fails on
-a reason in the in-crate lists that says what the API served, rejected or
-accepted, or quotes an error status, without a `YYYY-MM` date. An entry
+a reason that says what the API served, rejected or accepted, or quotes an
+error status, without a `YYYY-MM` date. The in-crate oracle holds its lists
+to it, and `tests/ci_coverage.rs` every reasoned list in `tests/` (each
+`const` slice of tuples ending in a `&str` reason), so a list a test adds
+is checked too. An entry
 that matches nothing fails the test, so the lists only shrink when the
 crate catches up. A `values()` override in `response.rs` replaces a
 synthesized value where the snapshot's type is looser than what the API

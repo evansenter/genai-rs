@@ -370,8 +370,8 @@ fn reasons() -> Vec<(&'static str, &'static str, &'static str)> {
 }
 
 /// Every reason that states a live fact dates it
-/// (`tests/api_surface/claims.rs`; the wire oracle and `tests/ci_coverage.rs`
-/// hold their own lists to it).
+/// (`tests/api_surface/claims.rs`; `tests/ci_coverage.rs` holds every list
+/// in `tests/` to it).
 #[test]
 fn live_claims_are_dated() {
     let undated: Vec<String> = reasons()
@@ -404,6 +404,7 @@ fn an_undated_live_claim_is_rejected() {
         "Served on function_call steps (live 2026-07).",
         "Empty; `Voices::delete` reads no body.",
         "The SDK's sentinel for an unset field, not API surface.",
+        "A key the envelope adds is not kept (D-034; tracked in #538).",
     ] {
         assert!(!undated_live_claim(fine), "{fine}");
     }

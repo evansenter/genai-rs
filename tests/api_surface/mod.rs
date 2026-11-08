@@ -21,9 +21,9 @@
 //!   crate does not model.
 //!
 //! Shared by the in-crate oracle (`src/coverage_oracle/`, through `#[path]`)
-//! and `tests/request_wire_oracle.rs`, along with the date check on their
-//! reasoned exceptions ([`undated_live_claim`]), which `tests/ci_coverage.rs`
-//! includes on its own. Not a test target itself: Cargo only builds
+//! and `tests/request_wire_oracle.rs`, along with the date check on reasoned
+//! exceptions ([`undated_live_claim`]), which `tests/ci_coverage.rs`
+//! includes on its own to hold every list in `tests/` to it. Not a test target itself: Cargo only builds
 //! `tests/*.rs` and `tests/*/main.rs`.
 
 #![allow(dead_code)]

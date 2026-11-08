@@ -714,28 +714,6 @@ const FULL_NAMES: &[(&str, &[&str], &str)] = &[
     ),
 ];
 
-/// Every reason in this file's lists that states a live fact dates it
-/// (D-010), as the in-crate oracle's do (`tests/api_surface/claims.rs`).
-#[test]
-fn live_claims_are_dated() {
-    let full_names = FULL_NAMES
-        .iter()
-        .map(|(name, _, reason)| (*name, *reason))
-        .collect();
-    let undated = api_surface::undated_live_claims(&[
-        ("ALLOWED", ALLOWED.to_vec()),
-        ("NO_JSON_BODY", NO_JSON_BODY.to_vec()),
-        ("QUERY_ALLOWED", QUERY_ALLOWED.to_vec()),
-        ("NOT_SENT", NOT_SENT.to_vec()),
-        ("FULL_NAMES", full_names),
-    ]);
-    assert!(
-        undated.is_empty(),
-        "Reasons that state a live fact without its YYYY-MM date (D-010):\n  {}",
-        undated.join("\n  ")
-    );
-}
-
 /// How a template segment matches a request path's segments, with the
 /// number of literal segments it matched; `None` when it does not.
 ///
