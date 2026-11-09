@@ -1049,8 +1049,11 @@ fn retry_loop_problems(block: &DocBlock) -> Option<Vec<&'static str>> {
     })?;
     let body = &code[opens..];
     let mut problems = Vec::new();
-    let compares =
-        |line: &str| [">=", "<=", " > ", " < "].iter().any(|op| line.contains(op));
+    let compares = |line: &str| {
+        [">=", "<=", " > ", " < "]
+            .iter()
+            .any(|op| line.contains(op))
+    };
     // `for attempt in 0..MAX`, or a count checked and incremented.
     let ranged = body[0].starts_with("for ") && body[0].contains("..");
     let counted = ranged
