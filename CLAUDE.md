@@ -365,8 +365,8 @@ wheel's protos with `python3`).
   integration group runs every binary and lists the failures;
   `.config/nextest.toml` turns fail-fast off for every run and kills a test
   hung past 10 minutes. Every live nextest step keeps passing tests'
-  output and fails on more than 3 skip markers (`docs/TESTING.md`, "Skip
-  markers"). A red scheduled run opens a `ci-health-escalation`
+  output and fails on more than 3 skip markers (10 for `release.yml`'s
+  whole-workspace run; `docs/TESTING.md`, "Skip markers"). A red scheduled run opens a `ci-health-escalation`
   issue (`scheduled-run-status`), as every scheduled workflow's does, and a
   red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
   checks both, along with fail-fast, beta, the Windows PR leg and the
