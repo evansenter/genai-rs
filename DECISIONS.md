@@ -2285,3 +2285,26 @@ the evaluators do not know counts as left out, so an include behind one
 fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
+
+---
+
+## D-NEXT-I3 — The Antigravity session's start and end move to `agent/session_lifecycle.rs` (2026-11-09)
+
+**Context.** `src/antigravity/agent.rs` held 798 of D-014's 800 lines,
+and bounding the harness WebSocket sends by the turn and halt deadlines
+(#504, I-7) adds to its turn methods.
+
+**Decision.** Moved, per D-011, with no behavior change:
+
+| From | To |
+|------|----|
+| `initialize`, `start_session` and `end_session`, with `INIT_TIMEOUT` and `SESSION_END_TIMEOUT`, in `src/antigravity/agent.rs` | `src/antigravity/agent/session_lifecycle.rs`, a child module of `agent` |
+
+`agent.rs` keeps the agent's public methods, the turn loop and the
+halt-and-drain. A child module rather than a sibling keeps
+`src/antigravity/mod.rs` unchanged: the three methods are reached only
+through the agent.
+
+**Consequences.** Links to `src/antigravity/agent.rs:<line>` for the
+initialization exchange or the session hooks, written before 2026-11-09,
+point at the old layout.
