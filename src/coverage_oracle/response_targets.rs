@@ -23,8 +23,11 @@ pub(super) fn probe<T: DeserializeOwned + Serialize + Debug>(
 
 /// A stream event the way the streaming path reads it: parsed as the wire
 /// event, then dispatched to the public [`StreamEvent`]. Serialized again,
-/// a `StreamEvent` uses the crate's own `{chunk_type, data}` envelope, which
-/// is mapped back to the wire shape for the comparison.
+/// a `StreamEvent` uses the crate's own `{chunk_type, data, extra}`
+/// envelope, which is mapped back to the wire shape for the comparison:
+/// the chunk's `extra` (the event's keys it does not read) goes back beside
+/// the payload, and what it kept of a `metadata` or `error` object back
+/// into that object, so a key the chunk kept is not reported dropped.
 pub(super) fn probe_stream_event(value: Value) -> Result<(String, Value), String> {
     use crate::http::interactions::dispatch_stream_event;
     use crate::steps::StepAccumulator;
@@ -57,6 +60,20 @@ pub(super) fn probe_stream_event(value: Value) -> Result<(String, Value), String
         data["metadata"] = json!({ "total_usage": usage });
     }
     let mut wire = data.as_object().cloned().unwrap_or_default();
+    if let Some(Value::Object(extra)) = envelope.get("extra") {
+        for (key, kept) in extra {
+            match (wire.get_mut(key), kept) {
+                (Some(Value::Object(read)), Value::Object(rest)) => {
+                    read.extend(rest.iter().map(|(k, v)| (k.clone(), v.clone())));
+                }
+                // The chunk read this key whole; its value is the one to keep.
+                (Some(_), _) => {}
+                (None, _) => {
+                    wire.insert(key.clone(), kept.clone());
+                }
+            }
+        }
+    }
     wire.insert("event_type".into(), json!(event_type));
     if let Some(id) = envelope.get("event_id") {
         wire.insert("event_id".into(), id.clone());
