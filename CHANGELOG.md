@@ -977,6 +977,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_max_delay`: `adjust` replaces backon's delay after the cap, so a
   429 asking for an hour slept for an hour. Both cap it at the backoff's
   maximum now; copy the change into a loop built from either.
+- The retry loop in `InteractionRequest`'s rustdoc had no bound and no
+  delay, so a 429 or 503 was retried as fast as the network allowed, and
+  `Client::execute`'s had no jitter and ignored `retry_after()`. The
+  recipe, now on `InteractionRequest` alone, bounds its attempts and waits
+  with jitter or for the server's `Retry-After`, capped, as
+  `docs/RELIABILITY.md` does. The background poll in
+  `docs/AGENTS_AND_BACKGROUND.md` ended on the first transient error and
+  checked its deadline only between requests; it now polls through a
+  retryable error, honoring `Retry-After`, and bounds each request by the
+  time left. Copy the change into a loop built from either.
 - Docs that said more than holds: `with_labels` said labels are echoed on
   the response, but only a stored interaction read back with
   `interactions().get` carries them; the retry predicate in

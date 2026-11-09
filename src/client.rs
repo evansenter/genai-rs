@@ -605,34 +605,14 @@ impl Client {
     /// # }
     /// ```
     ///
-    /// # Retry Example
+    /// # Retrying
     ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    /// use std::time::Duration;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api_key".to_string());
-    /// let request = client.interaction()
-    ///     .with_model(genai_rs::DEFAULT_MODEL)
-    ///     .with_text("Hello!")
-    ///     .build()?;
-    ///
-    /// // Retry loop with exponential backoff
-    /// let mut attempts = 0;
-    /// let response = loop {
-    ///     match client.execute(request.clone()).await {
-    ///         Ok(r) => break r,
-    ///         Err(e) if e.is_retryable() && attempts < 3 => {
-    ///             attempts += 1;
-    ///             tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempts))).await;
-    ///         }
-    ///         Err(e) => return Err(e.into()),
-    ///     }
-    /// };
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// The request is `Clone`, so a retry re-sends a clone. Bound the
+    /// attempts and wait between them, with jitter, or for the server's
+    /// [`retry_after`](GenaiError::retry_after), both capped:
+    /// [`InteractionRequest`](crate::InteractionRequest#retrying-requests)
+    /// has the loop, and `docs/RELIABILITY.md` the same policy built on the
+    /// `backon` crate.
     #[tracing::instrument(skip_all, fields(model = ?request.model, agent = ?request.agent))]
     pub async fn execute(
         &self,
