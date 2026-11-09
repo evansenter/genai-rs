@@ -1,4 +1,5 @@
 use super::{AllowedTools, Tool};
+use crate::redact;
 use crate::wire_enum::wire_enum;
 use std::collections::HashMap;
 
@@ -140,12 +141,33 @@ impl From<GoogleMapsConfig> for Tool {
 ///         ("Authorization".to_string(), "Bearer token".to_string()),
 ///     ]));
 /// ```
-#[derive(Clone, Debug)]
+///
+/// `Debug` prints the header names with every value as `[REDACTED]`, as
+/// `LOUD_WIRE` does.
+#[derive(Clone)]
 pub struct McpServerConfig {
     name: String,
     url: String,
     allowed_tools: Option<Vec<AllowedTools>>,
     headers: Option<HashMap<String, String>>,
+}
+
+// Header values are secrets, such as an `Authorization` token (D-NEXT-I4-a).
+impl std::fmt::Debug for McpServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            name,
+            url,
+            allowed_tools,
+            headers,
+        } = self;
+        f.debug_struct("McpServerConfig")
+            .field("name", name)
+            .field("url", url)
+            .field("allowed_tools", allowed_tools)
+            .field("headers", &headers.as_ref().map(redact::values))
+            .finish()
+    }
 }
 
 impl McpServerConfig {

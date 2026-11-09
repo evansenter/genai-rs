@@ -41,6 +41,11 @@ mod claims;
 mod doc_guards;
 mod live_verbs;
 
+// The shared walker, through `live_verbs`, which includes it for both of
+// its binaries (a second `mod` of the file would be clippy's
+// `duplicate_mod`).
+use live_verbs::source_scan;
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -295,16 +300,6 @@ fn a_live_test_in_a_submodule_makes_its_binary_live() {
 /// not modules).
 #[test]
 fn every_test_module_file_belongs_to_a_binary() {
-    fn rust_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                rust_files(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
-            }
-        }
-    }
     let tests = root().join("tests");
     let reached: BTreeSet<PathBuf> = test_sources_in(&tests)
         .into_iter()
@@ -315,7 +310,7 @@ fn every_test_module_file_belongs_to_a_binary() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         if path.is_dir() && name != "ui" && name != "fixtures" {
-            rust_files(&path, &mut all);
+            all.extend(source_scan::rust_files(&path));
         }
     }
     assert!(all.len() > 20, "found too few module files: {all:?}");
@@ -818,18 +813,6 @@ const UNREADABLE: &str = "<a reason the scan cannot read>";
 fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
     use syn::visit::Visit;
 
-    fn files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
-            let path = entry.expect("dir entry").path();
-            if path.is_dir() {
-                if !path.ends_with("ui") && !path.ends_with("fixtures") {
-                    files(&path, out);
-                }
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
-            }
-        }
-    }
     fn last_is_str(ty: &syn::Type) -> bool {
         let syn::Type::Reference(slice) = ty else {
             return false;
@@ -885,9 +868,18 @@ fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
         }
     }
 
-    let mut paths = Vec::new();
-    files(dir, &mut paths);
-    paths.sort();
+    // Every `.rs` file but those under a `ui/` or `fixtures/` directory.
+    let paths = source_scan::rust_files(dir).into_iter().filter(|path| {
+        !path
+            .strip_prefix(dir)
+            .unwrap_or(path)
+            .parent()
+            .is_some_and(|parent| {
+                parent
+                    .components()
+                    .any(|c| c.as_os_str() == "ui" || c.as_os_str() == "fixtures")
+            })
+    });
     let mut out = Vec::new();
     for path in paths {
         let text = std::fs::read_to_string(&path).expect("read test source");

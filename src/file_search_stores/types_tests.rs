@@ -216,7 +216,7 @@ fn create_request_flattens_extra_beside_modeled_fields() {
 /// that form at all on a `#[non_exhaustive]` type, so nothing outside
 /// the crate would notice them drifting.
 ///
-/// Doctests cover `with_extra`'s serialization, but doctests run only in
+/// Doctests cover `add_extra`'s serialization, but doctests run only in
 /// CI — not under `make test` / `make test-all` — so this is what the
 /// repo's own default test commands exercise.
 #[test]
@@ -232,12 +232,28 @@ fn builders_match_the_struct_literal_form() {
     let built = CreateFileSearchStoreRequest::new()
         .with_display_name("my-docs")
         .with_embedding_model("models/gemini-embedding-001")
-        .with_extra("someNewField", 7);
+        .add_extra("someNewField", 7);
 
     assert_eq!(built, literal);
     assert_eq!(
         serde_json::to_value(&built).unwrap(),
         serde_json::to_value(&literal).unwrap()
+    );
+}
+
+/// `add_extra` adds one keyed entry, as the `add_*` convention says
+/// (docs/BUILDER_API.md): entries added earlier stay, and a repeated key
+/// replaces its value.
+#[test]
+fn add_extra_adds_an_entry_and_replaces_a_repeated_key() {
+    let request = CreateFileSearchStoreRequest::new()
+        .add_extra("first", 1)
+        .add_extra("second", 2)
+        .add_extra("first", 3);
+
+    assert_eq!(
+        serde_json::to_value(&request).unwrap(),
+        serde_json::json!({"first": 3, "second": 2})
     );
 }
 

@@ -5,6 +5,10 @@
 use super::files::file_names;
 use super::*;
 
+// The handle discovery `tests/live_verbs/` uses too.
+#[path = "../common/source_scan.rs"]
+mod source_scan;
+
 fn agents_page(ids: &[&str], next: Option<&str>) -> Reply {
     let agents: Vec<Value> = ids.iter().map(|id| json!({"id": id})).collect();
     let mut body = json!({"agents": agents});
@@ -230,12 +234,9 @@ async fn handle_futures_and_list_streams_outlive_their_temporaries() {
 // D-016's receiver rule, on every handle
 // =============================================================================
 
-/// The attribute that marks a resource handle (as `tests/live_verbs/` finds
-/// them; `ci_coverage`'s `resource_handles_carry_the_marker` checks that
-/// every handle carries it).
-const HANDLE_MARKER: &str = "a resource handle does nothing until you call one of its methods";
-
 /// The handles the scan must find, so a renamed marker cannot empty it.
+/// (`ci_coverage`'s `resource_handles_carry_the_marker` checks that every
+/// handle carries `source_scan::HANDLE_MARKER`.)
 const HANDLES: [&str; 11] = [
     "Agents",
     "Credentials",
@@ -249,42 +250,6 @@ const HANDLES: [&str; 11] = [
     "Voices",
     "Webhooks",
 ];
-
-/// Every `.rs` file under `dir`, parsed.
-fn parse_tree(dir: &std::path::Path, out: &mut Vec<syn::File>) {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    entries.sort();
-    for path in entries {
-        if path.is_dir() {
-            parse_tree(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            let text = std::fs::read_to_string(&path).unwrap();
-            out.push(syn::parse_file(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display())));
-        }
-    }
-}
-
-/// Every item, inline modules' included.
-fn all_items(files: &[syn::File]) -> Vec<&syn::Item> {
-    fn walk<'a>(items: &'a [syn::Item], out: &mut Vec<&'a syn::Item>) {
-        for item in items {
-            if let syn::Item::Mod(module) = item
-                && let Some((_, inner)) = &module.content
-            {
-                walk(inner, out);
-            }
-            out.push(item);
-        }
-    }
-    let mut out = Vec::new();
-    for file in files {
-        walk(&file.items, &mut out);
-    }
-    out
-}
 
 /// A type's name for a report: a path's last segment, `&` before a
 /// reference, `_` for anything else.
@@ -304,8 +269,8 @@ fn has_must_use(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| attr.path().is_ident("must_use"))
 }
 
-/// The handle structs (those carrying [`HANDLE_MARKER`]), and every
-/// D-016 problem with their public methods: a receiver other than `self` or
+/// The handle structs (those carrying `source_scan::HANDLE_MARKER`), and
+/// every D-016 problem with their public methods: a receiver other than `self` or
 /// `mut self` (an `&self` verb's future borrows the temporary handle, E0515),
 /// no receiver at all, or a returned value that is not `#[must_use]`. A
 /// value is `#[must_use]` when the method says so, or its type is a `Result`
@@ -316,27 +281,15 @@ fn handle_receiver_problems(
 ) -> (std::collections::BTreeSet<String>, Vec<String>) {
     use std::collections::BTreeSet;
 
-    let items = all_items(files);
-    let mut handles = BTreeSet::new();
+    let items = source_scan::all_items(files);
+    let handles = source_scan::handles(&items);
     let mut must_use_types: BTreeSet<String> = BTreeSet::from(["Result".to_string()]);
     let mut list_builders = BTreeSet::new();
     let mut builder_template_must_use = false;
     for item in &items {
         match item {
-            syn::Item::Struct(s) => {
-                let marked = s.attrs.iter().any(|attr| {
-                    matches!(&attr.meta, syn::Meta::NameValue(nv)
-                        if nv.path.is_ident("must_use")
-                            && matches!(&nv.value, syn::Expr::Lit(syn::ExprLit {
-                                lit: syn::Lit::Str(text), ..
-                            }) if text.value() == HANDLE_MARKER))
-                });
-                if marked {
-                    handles.insert(s.ident.to_string());
-                }
-                if has_must_use(&s.attrs) {
-                    must_use_types.insert(s.ident.to_string());
-                }
+            syn::Item::Struct(s) if has_must_use(&s.attrs) => {
+                must_use_types.insert(s.ident.to_string());
             }
             syn::Item::Enum(e) if has_must_use(&e.attrs) => {
                 must_use_types.insert(e.ident.to_string());
@@ -375,25 +328,9 @@ fn handle_receiver_problems(
     }
 
     let mut problems = Vec::new();
-    for item in &items {
-        let syn::Item::Impl(imp) = item else { continue };
-        if imp.trait_.is_some() {
-            continue;
-        }
-        let syn::Type::Path(owner) = &*imp.self_ty else {
-            continue;
-        };
-        let Some(owner) = owner.path.segments.last().map(|s| s.ident.to_string()) else {
-            continue;
-        };
-        if !handles.contains(&owner) {
-            continue;
-        }
-        for item in &imp.items {
-            let syn::ImplItem::Fn(f) = item else { continue };
-            if !matches!(f.vis, syn::Visibility::Public(_)) {
-                continue;
-            }
+    let methods = source_scan::public_methods(&items);
+    for owner in &handles {
+        for f in methods.get(owner).into_iter().flatten() {
             let verb = format!("{owner}::{}", f.sig.ident);
             match f.sig.receiver() {
                 None => problems.push(format!("{verb} takes no `self`")),
@@ -433,11 +370,10 @@ fn handle_receiver_problems(
 /// covers sampled verbs; this covers them all.
 #[test]
 fn every_handle_method_takes_self_and_its_value_is_must_use() {
-    let mut files = Vec::new();
-    parse_tree(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
+    let files: Vec<syn::File> = source_scan::rust_files(&source_scan::root().join("src"))
+        .iter()
+        .map(|path| source_scan::parse_file(path))
+        .collect();
     let (handles, problems) = handle_receiver_problems(&files);
     let missing: Vec<&str> = HANDLES
         .into_iter()

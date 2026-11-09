@@ -23,8 +23,9 @@ use std::time::Duration;
 use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
-    AutoFunctionStreamChunk, CallableFunction, Client, FileUpload, FunctionDeclaration,
-    FunctionFuture, GenaiError, PollOptions, StreamChunk, StreamEvent, ToolService,
+    AutoFunctionStreamChunk, AutoFunctionStreamEvent, CallableFunction, Client, FileUpload,
+    FunctionDeclaration, FunctionFuture, GenaiError, PollOptions, StreamChunk, StreamEvent,
+    ToolService,
 };
 use serde_json::{Value, json};
 
@@ -1175,6 +1176,74 @@ async fn streaming_auto_functions_surface_in_stream_errors() {
             |e| !matches!(e, Ok(ev) if matches!(ev.chunk, AutoFunctionStreamChunk::Complete(_)))
         ),
     );
+}
+
+/// The auto-function stream passes on a `step.delta` event's unread keys
+/// in its `Delta` chunk's `extra`, and an event of a type the crate does
+/// not know as an `Unknown` chunk with its JSON and id, then goes on to the
+/// round's completion (#504 I-11).
+#[tokio::test]
+async fn streaming_auto_functions_pass_on_delta_extra_and_unknown_events() {
+    let stub = Stub::replying(vec![Reply::sse(&[
+        "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"Hi\"},\"future_key\":{\"a\":1},\"event_id\":\"evt-1\"}\n\n",
+        "data: {\"event_type\":\"interaction.paused\",\"reason\":\"maintenance\",\"event_id\":\"evt-2\"}\n\n",
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n",
+    ])])
+    .await;
+
+    let events: Vec<_> = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .create_stream_with_auto_functions()
+        .collect()
+        .await;
+
+    let events: Vec<&AutoFunctionStreamEvent> =
+        events.iter().map(|e| e.as_ref().unwrap()).collect();
+    let [delta, unknown, complete] = events.as_slice() else {
+        panic!("expected a delta, the unknown event and the completion: {events:?}");
+    };
+    let AutoFunctionStreamChunk::Delta {
+        delta: payload,
+        extra,
+    } = &delta.chunk
+    else {
+        panic!("{delta:?}");
+    };
+    assert_eq!(payload.as_text(), Some("Hi"));
+    assert_eq!(extra.get("future_key"), Some(&json!({"a": 1})), "{extra:?}");
+    assert_eq!(unknown.unknown_chunk_type(), Some("interaction.paused"));
+    assert_eq!(unknown.unknown_data().unwrap()["reason"], "maintenance");
+    assert_eq!(unknown.event_id.as_deref(), Some("evt-2"));
+    assert!(complete.is_complete(), "{complete:?}");
+}
+
+/// The live tests' `consume_auto_function_stream` records an unknown event
+/// and reads on, as `consume_stream` does. The auto-function stream passes
+/// one on now, so a helper that panicked on it would fail every live
+/// auto-function test the day the API sends a new event type mid-round.
+#[tokio::test]
+async fn the_live_auto_function_helper_records_an_unknown_event() {
+    let stub = Stub::replying(vec![Reply::sse(&[
+        "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"Hi\"}}\n\n",
+        "data: {\"event_type\":\"interaction.paused\",\"reason\":\"maintenance\"}\n\n",
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n",
+    ])])
+    .await;
+
+    let stream = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .create_stream_with_auto_functions();
+    let result = common::consume_auto_function_stream(stream).await;
+
+    assert_eq!(result.unknown_event_types, ["interaction.paused"]);
+    assert_eq!(result.collected_text, "Hi");
+    assert!(result.final_response.is_some(), "{result:?}");
 }
 
 /// `with_read_timeout` ends a stream whose connection goes quiet: the first

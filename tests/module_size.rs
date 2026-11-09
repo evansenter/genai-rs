@@ -32,7 +32,8 @@
     reason = "a test reports a failure by panicking"
 )]
 
-use std::path::{Path, PathBuf};
+#[path = "common/source_scan.rs"]
+mod source_scan;
 
 /// Which bar a file is held to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,40 +135,19 @@ fn test_module_end(lines: &[&str], start: usize) -> Option<usize> {
         .map(|close| mod_line + 1 + close)
 }
 
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()))
-        .map(|entry| entry.expect("dir entry").path())
-        .collect();
-    entries.sort();
-    for path in entries {
-        if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
-        }
-    }
-}
-
 /// `(repo-relative path, kind, measured lines)` for every file the bars
 /// cover.
 fn measure() -> Vec<(String, Kind, usize)> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    for dir in ["src", "genai-rs-macros/src", "tests"] {
-        let dir = root.join(dir);
-        // A root that cannot be read must not read as a tree that is small.
-        assert!(dir.is_dir(), "scan root {} does not exist", dir.display());
-        rust_files(&dir, &mut files);
-    }
+    // A root that cannot be read fails in the walk, rather than reading as
+    // a tree that is small.
+    let files: Vec<_> = ["src", "genai-rs-macros/src", "tests"]
+        .into_iter()
+        .flat_map(|dir| source_scan::rust_files(&source_scan::root().join(dir)))
+        .collect();
     files
         .iter()
         .map(|path| {
-            let rel = path
-                .strip_prefix(&root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
+            let rel = source_scan::repo_relative(path);
             let text = std::fs::read_to_string(path)
                 .unwrap_or_else(|e| panic!("could not read {rel}: {e}"));
             let kind = classify(&rel);

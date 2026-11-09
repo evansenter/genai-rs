@@ -251,9 +251,10 @@ async fn transport_failure_mid_body_is_interrupted_with_its_source() {
 
 /// The one exception: a body that ends right after an event this crate
 /// doesn't recognize, which may be a new terminal event (Evergreen). The
-/// plain stream ends cleanly. The auto-function loop can't go on without
-/// the round's `Completed`, so that round ends as a cut-off one does,
-/// retryable; it used to be a permanent `MalformedResponse`.
+/// plain stream ends cleanly. The auto-function loop passes the event on,
+/// but can't go on without the round's `Completed`, so that round ends as a
+/// cut-off one does, retryable; it used to be a permanent
+/// `MalformedResponse`.
 #[tokio::test]
 async fn stream_ending_on_an_unknown_event_is_clean_but_interrupts_an_auto_function_round() {
     let body = || {
@@ -280,12 +281,16 @@ async fn stream_ending_on_an_unknown_event_is_clean_but_interrupts_an_auto_funct
         .create_stream_with_auto_functions()
         .collect()
         .await;
-    let [Ok(first), Err(err)] = events.as_slice() else {
-        panic!("expected the delta, then the error: {events:?}");
+    let [Ok(first), Ok(unknown), Err(err)] = events.as_slice() else {
+        panic!("expected the delta, the unknown event, then the error: {events:?}");
     };
     assert!(
-        matches!(first.chunk, AutoFunctionStreamChunk::Delta(_)),
+        matches!(first.chunk, AutoFunctionStreamChunk::Delta { .. }),
         "{first:?}"
+    );
+    assert_eq!(
+        unknown.unknown_chunk_type(),
+        Some("interaction.brand_new_end")
     );
     assert!(
         matches!(err, GenaiError::StreamInterrupted { source: None, .. }),

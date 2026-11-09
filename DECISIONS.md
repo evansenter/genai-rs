@@ -1289,6 +1289,27 @@ its reason in the guard:
 list above: each keeps the SSE event's keys it does not read in an `extra`
 map (D-054), and the guard no longer exempts them.
 
+*Amended 2026-11-09 (I-11).* `AutoFunctionStreamChunk::Delta` left the
+list above too: it is `Delta { delta, extra }`, with the `step.delta`
+event's `extra` (D-054), and the auto-function stream passes on an event of
+a type the crate does not know as `AutoFunctionStreamChunk::Unknown`, where
+it dropped it with a warning. The guard's `AUTO_FUNCTION_CHUNK` exemption
+is gone. Four chunks keep a row, under two narrower reasons.
+`FunctionResults` and `MaxLoopsReached` are made by the loop with no SSE
+event behind them (`LOOP_MADE`): its executions, and its verdict once the
+rounds run out. `ExecutingFunctions` and `Complete` are its verdict on one
+round's `interaction.completed` event (`ROUND_VERDICT`): the interaction
+keeps its own `extra`, but the keys beside it in the event are not passed
+on, nor are the round's `interaction.created`, `status_update`,
+`step.start` and `step.stop` events, which the loop reads without yielding.
+Those reach `execute_stream()` only. That line is scope, not principle:
+the completed event's map is empty on every event the API sends today, as
+`step.delta`'s is, and `Delta` carries its own because I-11 named it.
+Carrying the completed event's would make `ExecutingFunctions` and
+`Complete(response)`, the pattern every auto-function caller writes for the
+stream's last chunk, take an `extra` too: two more breaking changes,
+left for the owner to ask for.
+
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
 
@@ -2082,6 +2103,16 @@ auto-function stream passes on no chunk's `extra` (D-034's
 `AutoFunctionStreamChunk` bullet), so an envelope key reaches only a
 caller of `execute_stream()`.
 
+*Amended 2026-11-09 (I-11).* The auto-function stream passes on a delta's
+`extra`: `AutoFunctionStreamChunk::Delta { delta, extra }`, whose
+`{chunk_type, data}` form writes and reads it as `StreamChunk`'s does. An
+unknown event is passed on as `AutoFunctionStreamChunk::Unknown`, which
+writes the `"unknown": true` marker when its type is spelled like a known
+`chunk_type`, as `StreamChunk::Unknown` does. The loop's match lists every
+`StreamChunk` variant, with no wildcard, so a new one fails to compile
+there. The other events' envelope keys still reach only `execute_stream()`
+(D-034).
+
 ---
 
 ## D-055 — The file watch skips a poll it cannot fully read, and follows a symlinked root (2026-11-07)
@@ -2614,3 +2645,114 @@ session-end request (`agent_tests.rs`). `session.rs`'s tests check the
 send bound, a send bounded by a later deadline alone, the close bound and
 a dropped connection, and the scripted `lifecycle.rs` kills the harness
 mid-turn and while `next_trigger_turn` waits.
+
+## D-NEXT-I4-a — `Debug` redacts the secrets `LOUD_WIRE` redacts, outside unmodeled JSON (2026-11-09)
+
+**Context.** The crate's rule is that a type holding a secret prints it
+redacted (the `Cargo.toml` lint comment, `CredentialConfig`'s `Debug`,
+`docs/LOGGING_STRATEGY.md`), and `Client`, the credential bodies and the
+webhook secrets kept it. #504's final grade found six types that derived
+`Debug` over one: `ExaAiSearchConfig` and `ParallelAiSearchConfig` printed
+their `api_key`, and through `Tool::Retrieval` so did `InteractionBuilder`'s
+and `InteractionRequest`'s `Debug`; and the Antigravity endpoints and MCP
+servers printed keys, headers and environment values. The sweep this
+decision came with found three more outside Antigravity: `McpServerConfig`
+and `Tool::McpServer` printed their header values, `AllowlistEntry` its
+`transform` header values, and `EnvVar` its plain value. Its review found
+three more: `WireEvent`'s derived `Debug` printed every request and
+response body whole, a retrieval config's `custom_config` a key nested in
+it, and `RemoteEnvironment` an `env` it could not read, which it keeps
+whole in `extra`. So `dbg!(builder)`, `tracing::debug!(?request)` or an
+inspector logging `{event:?}` undid the redaction `LOUD_WIRE` applies to
+the same fields.
+
+**Decision.** The secrets are the fields `LOUD_WIRE` redacts
+(`src/wire/mod.rs`): an `api_key`, a webhook signing secret, credential
+material, an environment variable's value, and every value under an MCP
+server's `headers` or an allowlist entry's `transform`. Each type that
+holds one in a modeled field has a hand-written `Debug` that prints
+`[REDACTED]` in the secret's place, `Some("[REDACTED]")` for an optional one that is set, and
+keeps the names: the field's, and each header's or variable's, ordered by
+name. The impls share `src/redact.rs`, and each destructures its type
+without `..`, so a field added later fails to compile until the impl
+prints or redacts it. `Tool`'s whole `Debug` is hand-written for
+`McpServer`'s headers; its other arms print what the derive did. So the
+list is written twice, as the wire's `REDACT_FIELDS` and as these impls: a
+name added to one does not reach the other, and the sentinel test is what
+holds them together. JSON that carries these secrets by design goes through
+the wire's own walk instead (`redact::json`, which redacts and truncates
+nothing), so there the one list serves both: a `WireEvent`'s bodies and
+payloads (an error body or an SSE frame's `data` is parsed first, and
+printed as it is when it holds no secret or is not JSON), and a retrieval
+config's `custom_config`. An `env` that `RemoteEnvironment` could not read
+prints every string beneath it redacted, since a value cannot be told from
+a name there. One unit test, `redact_tests.rs`, formats every type that holds a secret with a
+sentinel value, alone and inside the builder, request, response, trigger,
+agent and environment that carry it, and fails if the sentinel shows or
+the placeholder does not. The types that redacted before are in it, so it
+lists the whole set.
+
+Not secrets, and printed as they are: a credential's ID (on an `EnvVar` or
+an allowlist entry, which is what the egress proxy looks up), an MCP
+server's URL, a decode's `continuation_token`, a webhook's
+`truncated_secret` (shown to identify it), and a replicated voice's `key`,
+which the API returns in place of an id and a request sends as a voice
+name, in the clear on the wire too. Any other free-form JSON prints as it
+is, every `extra` map and `Unknown` payload among them: a secret nested
+there under a name the wire redacts (an `api_key` in an `extra`) shows in
+`Debug` though `LOUD_WIRE` hides it. Redacting it would mean a hand-written
+`Debug` on every type with an `extra` map.
+
+Rejected: a newtype for secret strings and header maps. It would change
+the type of public fields callers build and match on, for a `Debug` the
+impls give without it. Rejected: a derive helper crate (`educe`,
+`derivative`) for per-field `Debug` attributes: a dependency for eight
+impls. Rejected: leaving `WireEvent`'s `Debug` raw because a custom
+inspector receives the bodies raw. It still does, through the fields and
+the serialized form; `Debug` is what a log line prints.
+
+**Consequences.** Not breaking: `Debug` output is not a stable format.
+The Antigravity types that hold one (`GeminiApiEndpoint`,
+`VertexEndpoint`, `McpHttpTransport`, `McpStdioTransport`, `McpServer`,
+and the harness options `AgentBuilder`'s `Debug` prints) are the other
+half of I-9 in #504. A new type that holds one of these secrets needs its own
+`Debug` and a row in the sentinel test; nothing finds it by itself.
+
+## D-NEXT-I4-b — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
+
+**Context.** #504's final grade found the recursive `.rs` walker written
+five times (`tests/module_size.rs`, `tests/live_verbs/mod.rs`,
+`tests/non_exhaustive_responses.rs`, `tests/ci_coverage.rs` and
+`tests/http_mock_resources/paging.rs`; `ci_coverage.rs` held a sixth, in
+its reasoned-list scan), and the resource handles found twice: by
+`live_verbs`'s `handles_in`, for the live-verb coverage, and by
+`paging.rs`'s D-016 receiver scan, each with its own copy of the marker
+string and its own walk over inherent `impl` blocks. Each copy could drift
+from the others, as the walkers had (one sorted per directory, one after
+every directory, one not at all).
+
+**Decision.** A structural move (D-011): `tests/common/source_scan.rs`
+holds `rust_files` (every `.rs` file under a root, sorted, failing on a
+root that is gone or a directory it cannot read), `parse_file`,
+`repo_relative`, `all_items`, `HANDLE_MARKER`, and the discovery:
+`structs` (each struct and whether it carries the marker), `handles` and
+`public_methods` (each type's public inherent methods in declaration
+order). Every walker above and both handle scans use it; what each guard
+does with the result, and its floor, stay in the guard (`module_size`'s
+more than three files of each kind, `non_exhaustive_responses`'s
+non-empty source list and expected test modules, `paging.rs`'s eleven
+`HANDLES`, `live_verbs`'s more than fifty live tests). Breaking the shared walker or the handle filter once
+failed every one of them.
+
+The file is not declared in `common/mod.rs`, which every integration test
+compiles: `module_size.rs` and `non_exhaustive_responses.rs` include it by
+`#[path]`, `live_verbs/mod.rs` includes it for `ci_coverage` and
+`request_wire_oracle`, and `ci_coverage` reaches it through `live_verbs`,
+since a second `mod` of one file in a binary is clippy's `duplicate_mod`.
+`paging.rs` includes it for `http_mock_resources`.
+
+**Consequences.** A new guard that walks the source or finds the handles
+includes this file rather than writing its own. Two walkers outside the
+guards stay: `tests/model_literals.rs` (which also tolerates an unreadable
+entry) and `tests/temp_file_tests.rs`'s scan of `examples/` for media
+constants.

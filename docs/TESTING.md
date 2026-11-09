@@ -302,6 +302,11 @@ async fn test_feature_name() {
 `mod.rs` re-exports its submodules, so every helper is `common::<name>`:
 the retry helpers are in `retry.rs`, the stream consumers in `streams.rs`,
 the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
+`source_scan.rs` is not part of `common`: it holds the recursive `.rs`
+walker and the resource-handle discovery the guards share
+(`module_size`, `non_exhaustive_responses`, `ci_coverage` with
+`live_verbs/`, and `http_mock_resources`'s paging scan), and each of them
+includes it by `#[path]`.
 
 | Helper | Purpose |
 |--------|---------|

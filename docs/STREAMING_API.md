@@ -268,7 +268,7 @@ while let Some(result) = stream.next().await {
     let event = result?;
 
     match &event.chunk {
-        AutoFunctionStreamChunk::Delta(delta) => {
+        AutoFunctionStreamChunk::Delta { delta, .. } => {
             if let Some(text) = delta.as_text() {
                 print!("{text}");
             }
@@ -295,15 +295,18 @@ while let Some(result) = stream.next().await {
 
 | `AutoFunctionStreamChunk` | Meaning |
 |---------------------------|---------|
-| `Delta(StepDelta)` | Incremental payload from the model, the same type as basic streaming |
+| `Delta { delta, extra }` | Incremental payload from the model, the same `StepDelta` as basic streaming, with the `step.delta` event's unread keys in `extra` |
 | `ExecutingFunctions { response, pending_calls }` | Calls detected; about to execute |
 | `FunctionResults(Vec<FunctionExecutionResult>)` | Execution finished for this round |
 | `Complete(response)` | Terminal: no more function calls |
 | `MaxLoopsReached(response)` | Terminal: the round limit was hit |
-| `Unknown { chunk_type, data }` | Forward compatibility |
+| `Unknown { chunk_type, data }` | An SSE event of a type this crate does not recognize, with its JSON; the round goes on |
 
 `ExecutingFunctions` and `FunctionResults` are generated client-side, so
-their `event_id` is always `None`. Only track ids from API events.
+their `event_id` is always `None`. Only track ids from API events. The loop
+reads a round's lifecycle events itself (`interaction.created`, status
+updates, `step.start`, `step.stop` and `interaction.completed`); a caller
+that wants them, or their `extra`, streams with `create_stream()` instead.
 
 To end up with the same `AutoFunctionResult` as the non-streaming call, feed
 every chunk to an accumulator:
@@ -324,7 +327,7 @@ while let Some(event) = stream.next().await {
     let event = event?;
 
     // Process deltas for UI
-    if let AutoFunctionStreamChunk::Delta(delta) = &event.chunk {
+    if let AutoFunctionStreamChunk::Delta { delta, .. } = &event.chunk {
         if let Some(text) = delta.as_text() {
             print!("{text}");
         }
