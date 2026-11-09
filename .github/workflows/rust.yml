@@ -465,7 +465,7 @@ jobs:
           rc=0
           .github/scripts/check_changelog.sh CHANGELOG.md "$VERSION" || rc=$?
           if [ "$rc" -eq 1 ]; then
-            echo "::error::CHANGELOG.md has structural problems (listed above) — usually a merge that kept both sides of [Unreleased]. The version section ships verbatim as the release body."
+            echo "::error::CHANGELOG.md has structural problems (listed above) — usually a merge that kept both sides of [Unreleased], or a breaking entry with no Migration: line. The version section ships verbatim as the release body."
             exit 1
           elif [ "$rc" -ne 0 ]; then
             echo "::error::check_changelog.sh exited $rc — a usage or environment error, not a lint finding."

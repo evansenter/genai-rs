@@ -459,7 +459,7 @@ fn response_structs_are_non_exhaustive() {
 /// Every deserializable struct keeps unmodeled fields in a flattened map
 /// (D-001): one without it drops a field the API adds on the next round trip
 /// (`WhiteSpaceConfig` did, and so did a stored interaction's speech, image
-/// and safety configs and ten Antigravity harness types, until #504's
+/// and safety configs and ten Antigravity harness types, before #504's
 /// follow-ups).
 #[test]
 fn response_structs_keep_unmodeled_fields() {
@@ -836,7 +836,7 @@ impl<'ast> Visit<'ast> for StructCheck<'_> {
 /// `Unknown` variant for a value it does not model; and every known variant
 /// of such a union keeps the fields it does not model in an `extra` map, as
 /// `Step`'s do since #491. `Tool`, `ResponseFormat`, `TranscriptionMode` and
-/// `ToolChoice` lacked that last one until #504's WP13, and nothing noticed.
+/// `ToolChoice` lacked that last one before #504's WP13, and nothing noticed.
 /// A newtype variant always needs a reason: the guard cannot see whether
 /// keys sit beside its value, as they did beside the old
 /// `ToolChoice::AllowedTools(AllowedTools)`. Each exemption is named, with

@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
-use crate::redact::REDACTED;
 use crate::antigravity::handshake::{InputConfig, OutputConfig};
 use crate::antigravity::protocol::{
     GeminiApiEndpoint, HarnessConfig, InitializeConversationEvent, McpHttpTransport,
     McpServerConfig, McpStdioTransport, ModelConfig, VertexEndpoint,
 };
 use crate::antigravity::{AntigravityAgent, McpServer};
+use crate::redact::REDACTED;
 
 /// The secret every value below holds; no `Debug` output may contain it.
 const SECRET: &str = "sentinel-secret-5150";

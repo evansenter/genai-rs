@@ -106,8 +106,8 @@ pub enum AntigravityError {
         message: String,
     },
     /// WebSocket transport error: a read or send on the connection to the
-    /// harness failed. A connect that fails during `spawn()` is
-    /// [`InitFailed`](Self::InitFailed) instead, with this error as its
+    /// harness failed. A connect, read or send that fails during `spawn()`
+    /// is [`InitFailed`](Self::InitFailed) instead, with this error as its
     /// source, beside the harness's `stderr`.
     #[error("websocket error: {message}")]
     WebSocket {

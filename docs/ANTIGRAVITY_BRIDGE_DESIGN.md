@@ -348,8 +348,9 @@ transports feed one canonical debugging surface:
   backend and tool errors, the turn deadline over a hung async tool, a
   blocking sync tool and a blocking hook, the key-free harness environment
   under a custom host, the process-tree kill, and every Python SDK option
-  the bridge models (`tests/antigravity_scripted/`: options, subagents,
-  lifecycle hooks, policies, triggers, and the parity-table guard). This replaced
+  the bridge models (`tests/antigravity_scripted/`: options, limits,
+  skills, subagents, hooks, lifecycle, MCP, policies, triggers,
+  cancellation, and the parity-table guard). This replaced
   the planned mockable transport trait: it tests the bridge *and* the
   harness behavior it depends on, which a mock of the socket could not. CI runs it in the
   required `Test Suite (antigravity)` job with the key blanked, forks
@@ -514,6 +515,21 @@ its policies and pre-tool hook, before the question is posed, as on
 0.1.18. Under `deny_all()` alone the model gets `denied by pre-tool hook:
 Denied by policy for tool 'ask_question'` and `on_questions` never runs;
 with `allow("ask_question")` beside it, the question reaches the hook.
+
+Turn failures (0.1.23, 2026-11-09, scripted model; D-062):
+
+- A 503 with no retries left and an MCP server that fails to load both end
+  the harness's run (it logs `executor run failed`) and close the
+  WebSocket, on the same "Agent execution terminated" system error step.
+  The step's `httpCode` is 503 for the first and 2, gRPC's `UNKNOWN`, for
+  the second, so only a status in 400..600 is read as the model backend's
+  (`TurnFailure::ModelBackend`); the rest is `TurnFailure::Trajectory`
+  (`test_scripted_retry_config_decides_whether_a_503_ends_the_turn`,
+  `test_scripted_mcp_timeout_bounds_listing_tools_and_each_call`).
+- After a delegation, the main trajectory's error can come on a
+  `STATE_WAITING_FOR_SUBAGENTS` update, and the turn then goes idle with
+  none; the agent keeps the first error and fails the turn with it
+  (`test_scripted_a_503_after_delegating_fails_the_turn`).
 
 Subagent names (0.1.23, 2026-11-07, live
 `test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`

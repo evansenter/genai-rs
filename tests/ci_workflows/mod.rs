@@ -13,7 +13,8 @@
 //! and that a Codecov upload fails the job on an error. `release` checks
 //! that a release publishes only a commit whose main push run of
 //! `rust.yml` is green on every job but the ones a push skips by design,
-//! with every Cross Platform leg.
+//! with every Cross Platform leg. `sweep` requires `api-surface-sweep`'s
+//! spec-watch and issue-pointer steps.
 //!
 //! The workflows are YAML that only runs in CI, so a regression in how they
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a

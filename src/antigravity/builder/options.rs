@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use super::AgentBuilder;
-use crate::redact;
 use crate::antigravity::{Budget, InlineSkill, RetryConfig, SessionContinuation};
+use crate::redact;
 use crate::{ServiceTier, ThinkingLevel};
 
 /// The options these setters collect, read by `validate.rs` and `wire.rs`.

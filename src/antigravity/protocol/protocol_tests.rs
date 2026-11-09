@@ -750,7 +750,7 @@ fn test_output_event_seq_num_string_and_number() {
 }
 
 /// Every type read from the harness keeps a field it does not model in
-/// `extra` and writes it back (D-001); these ten dropped one until #504's
+/// `extra` and writes it back (D-001); these ten dropped one before #504's
 /// follow-ups, beside siblings that kept it.
 #[test]
 fn harness_types_keep_unmodeled_fields() {

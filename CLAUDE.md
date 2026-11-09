@@ -391,7 +391,8 @@ wheel's protos with `python3`).
   library-only pattern, the steps the flakiness report counts (no offline
   test of the retry helper runs in them), and
   release's push-run gate, which lets only the jobs a push skips by
-  design be skipped and wants all six Cross Platform legs.
+  design be skipped and wants all six Cross Platform legs, and
+  `api-surface-sweep`'s spec-watch and issue-pointer steps.
   `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the

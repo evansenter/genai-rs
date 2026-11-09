@@ -223,8 +223,10 @@ impl AntigravityAgent {
     /// left running, five seconds at most), so that call gets its own
     /// reply. A turn that failed on this side before the harness ended it
     /// is halted the same way; one the harness failed itself (a pre-turn
-    /// denial) is not. A fatal model error ends the whole session instead
-    /// (see [`AntigravityError::Turn`]). To stop the harness at once
+    /// denial) is not. A failure whose
+    /// [`TurnFailure::ends_session`](crate::antigravity::TurnFailure::ends_session)
+    /// is true ends the whole session instead (see
+    /// [`AntigravityError::Turn`]). To stop the harness at once
     /// instead, or to keep the turn's partial output, cancel through
     /// [`cancel_handle`](Self::cancel_handle) rather than dropping the
     /// future.
@@ -232,8 +234,10 @@ impl AntigravityAgent {
     /// # Errors
     ///
     /// [`AntigravityError::Config`] for an empty [`Prompt`];
-    /// [`AntigravityError::Turn`] when the turn fails (a model backend error,
-    /// a cancellation by the harness, or a pre-turn denial);
+    /// [`AntigravityError::Turn`] when the turn fails, its `kind` saying
+    /// why (a model backend error, an error of the harness's own, a
+    /// cancellation by the harness, a pre-turn denial, or a hook that could
+    /// not run);
     /// [`AntigravityError::Timeout`] past the turn timeout, sending the
     /// message included (a harness that stopped reading fails here too, its
     /// `operation` saying the harness did not take the message; with no
