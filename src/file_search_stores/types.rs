@@ -471,14 +471,17 @@ impl CreateFileSearchStoreRequest {
         self
     }
 
-    /// Adds an unmodeled field, sent flat alongside the modeled ones.
+    /// Adds an unmodeled field, sent flat alongside the modeled ones. Fields
+    /// added earlier are kept, and a repeated key replaces its value, as
+    /// [`InteractionBuilder::add_extra`](crate::InteractionBuilder::add_extra)
+    /// does.
     ///
     /// ```
     /// use genai_rs::CreateFileSearchStoreRequest;
     ///
     /// let request = CreateFileSearchStoreRequest::new()
     ///     .with_display_name("my-docs")
-    ///     .with_extra("customChunkingConfig", serde_json::json!({"maxTokensPerChunk": 200}));
+    ///     .add_extra("customChunkingConfig", serde_json::json!({"maxTokensPerChunk": 200}));
     ///
     /// assert_eq!(
     ///     serde_json::to_value(&request).unwrap(),
@@ -489,7 +492,7 @@ impl CreateFileSearchStoreRequest {
     /// );
     /// ```
     #[must_use]
-    pub fn with_extra(
+    pub fn add_extra(
         mut self,
         key: impl Into<String>,
         value: impl Into<serde_json::Value>,

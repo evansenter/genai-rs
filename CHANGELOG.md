@@ -281,6 +281,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Completed { interaction, .. }`); a pattern that lists every field of a
   known variant adds `..` (`StreamChunk::Error { message, code, .. }`); a
   struct literal adds `extra: Default::default()`.
+- **Breaking: `CreateFileSearchStoreRequest::with_extra(key, value)` is
+  `add_extra(key, value)`**, the name `InteractionBuilder` gives the same
+  operation: an `add_*` setter adds an entry where a `with_*` one replaces
+  (`docs/BUILDER_API.md`). It still adds one unmodeled field, keeping the
+  ones added before, and a repeated key replaces its value. Migration:
+  rename the call; its arguments are unchanged.
 - **Breaking: `FunctionDeclarationBuilder::add_parameter` takes the name as
   `impl Into<String>`, and `InteractionBuilder::add_functions` takes
   `impl IntoIterator<Item = FunctionDeclaration>`**, in place of `&str`
