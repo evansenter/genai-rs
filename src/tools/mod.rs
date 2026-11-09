@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
+use crate::redact;
 use crate::serde_util::is_none_or_empty;
 use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 
@@ -48,7 +49,11 @@ use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 /// interaction serves back survives the round trip.
 /// This follows the [Evergreen spec](https://github.com/google-deepmind/evergreen-spec)
 /// philosophy of graceful degradation.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `Debug` prints an MCP server's header names with every value as
+/// `[REDACTED]`, as `LOUD_WIRE` does, and the retrieval configs redact
+/// their API keys.
+#[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Tool {
     /// A custom function that the model can call.
@@ -199,6 +204,122 @@ pub enum Tool {
         /// The full JSON data for this tool, preserved for debugging
         data: serde_json::Value,
     },
+}
+
+// Hand-written only for `McpServer`'s header values, which are secrets such
+// as an `Authorization` token (D-NEXT-I4-a); every other field prints as the
+// derive would. Each arm lists its fields, so a new one fails to compile here.
+impl std::fmt::Debug for Tool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Function {
+                name,
+                description,
+                parameters,
+                extra,
+            } => f
+                .debug_struct("Function")
+                .field("name", name)
+                .field("description", description)
+                .field("parameters", parameters)
+                .field("extra", extra)
+                .finish(),
+            Self::GoogleSearch {
+                search_types,
+                extra,
+            } => f
+                .debug_struct("GoogleSearch")
+                .field("search_types", search_types)
+                .field("extra", extra)
+                .finish(),
+            Self::GoogleMaps {
+                enable_widget,
+                latitude,
+                longitude,
+                extra,
+            } => f
+                .debug_struct("GoogleMaps")
+                .field("enable_widget", enable_widget)
+                .field("latitude", latitude)
+                .field("longitude", longitude)
+                .field("extra", extra)
+                .finish(),
+            Self::CodeExecution { extra } => f
+                .debug_struct("CodeExecution")
+                .field("extra", extra)
+                .finish(),
+            Self::UrlContext { extra } => {
+                f.debug_struct("UrlContext").field("extra", extra).finish()
+            }
+            Self::ComputerUse {
+                environment,
+                excluded_predefined_functions,
+                enable_prompt_injection_detection,
+                disabled_safety_policies,
+                extra,
+            } => f
+                .debug_struct("ComputerUse")
+                .field("environment", environment)
+                .field(
+                    "excluded_predefined_functions",
+                    excluded_predefined_functions,
+                )
+                .field(
+                    "enable_prompt_injection_detection",
+                    enable_prompt_injection_detection,
+                )
+                .field("disabled_safety_policies", disabled_safety_policies)
+                .field("extra", extra)
+                .finish(),
+            Self::McpServer {
+                name,
+                url,
+                allowed_tools,
+                headers,
+                extra,
+            } => f
+                .debug_struct("McpServer")
+                .field("name", name)
+                .field("url", url)
+                .field("allowed_tools", allowed_tools)
+                .field("headers", &headers.as_ref().map(redact::values))
+                .field("extra", extra)
+                .finish(),
+            Self::FileSearch {
+                store_names,
+                top_k,
+                metadata_filter,
+                extra,
+            } => f
+                .debug_struct("FileSearch")
+                .field("store_names", store_names)
+                .field("top_k", top_k)
+                .field("metadata_filter", metadata_filter)
+                .field("extra", extra)
+                .finish(),
+            Self::Retrieval {
+                retrieval_types,
+                vertex_ai_search_config,
+                exa_ai_search_config,
+                parallel_ai_search_config,
+                rag_store_config,
+                extra,
+            } => f
+                .debug_struct("Retrieval")
+                .field("retrieval_types", retrieval_types)
+                .field("vertex_ai_search_config", vertex_ai_search_config)
+                .field("exa_ai_search_config", exa_ai_search_config)
+                .field("parallel_ai_search_config", parallel_ai_search_config)
+                .field("rag_store_config", rag_store_config)
+                .field("extra", extra)
+                .finish(),
+            Self::Unknown { tool_type, data } => f
+                .debug_struct("Unknown")
+                .field("tool_type", tool_type)
+                .field("data", data)
+                .finish(),
+        }
+    }
 }
 
 /// The modeled fields, then the extras that do not name one (#491).

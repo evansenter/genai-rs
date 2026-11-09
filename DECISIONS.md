@@ -2285,3 +2285,58 @@ the evaluators do not know counts as left out, so an include behind one
 fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
+
+## D-NEXT-I4-a — `Debug` redacts every secret `LOUD_WIRE` redacts (2026-11-09)
+
+**Context.** The crate's rule is that a type holding a secret prints it
+redacted (the `Cargo.toml` lint comment, `CredentialConfig`'s `Debug`,
+`docs/LOGGING_STRATEGY.md`), and `Client`, the credential bodies and the
+webhook secrets kept it. #504's final grade found six types that derived
+`Debug` over one: `ExaAiSearchConfig` and `ParallelAiSearchConfig` printed
+their `api_key`, and through `Tool::Retrieval` so did `InteractionBuilder`'s
+and `InteractionRequest`'s `Debug`; and the Antigravity endpoints and MCP
+servers printed keys, headers and environment values. The sweep this
+decision came with found three more outside Antigravity: `McpServerConfig`
+and `Tool::McpServer` printed their header values, `AllowlistEntry` its
+`transform` header values, and `EnvVar` its plain value. So `dbg!(builder)`
+or `tracing::debug!(?request)` undid the redaction `LOUD_WIRE` applies to
+the same fields.
+
+**Decision.** The secrets are the fields `LOUD_WIRE` redacts
+(`src/wire/mod.rs`): an `api_key`, a webhook signing secret, credential
+material, an environment variable's value, and every value under an MCP
+server's `headers` or an allowlist entry's `transform`. One list serves
+both, so a field the wire hides is never shown by `Debug`. Each type that
+holds one has a hand-written `Debug` that prints `[REDACTED]` in the
+secret's place, `Some("[REDACTED]")` for an optional one that is set, and
+keeps the names: the field's, and each header's or variable's, ordered by
+name. The impls share `src/redact.rs`, and each destructures its type
+without `..`, so a field added later fails to compile until the impl
+prints or redacts it. `Tool`'s whole `Debug` is hand-written for
+`McpServer`'s headers; its other arms print what the derive did. One unit
+test, `redact_tests.rs`, formats every type that holds a secret with a
+sentinel value, alone and inside the builder, request, response, trigger,
+agent and environment that carry it, and fails if the sentinel shows or
+the placeholder does not. The types that redacted before are in it, so it
+lists the whole set.
+
+Not secrets, and printed as they are: a credential's ID (on an `EnvVar` or
+an allowlist entry, which is what the egress proxy looks up), an MCP
+server's URL, a decode's `continuation_token`, a webhook's
+`truncated_secret` (shown to identify it), and a replicated voice's `key`,
+which the API returns in place of an id and a request sends as a voice
+name, in the clear on the wire too. An `extra` map or `Unknown` payload
+prints verbatim: nothing can redact a field the crate does not model.
+
+Rejected: a newtype for secret strings and header maps. It would change
+the type of public fields callers build and match on, for a `Debug` the
+impls give without it. Rejected: a derive helper crate (`educe`,
+`derivative`) for per-field `Debug` attributes: a dependency for six
+impls.
+
+**Consequences.** Not breaking: `Debug` output is not a stable format.
+The Antigravity types that hold one (`GeminiApiEndpoint`,
+`VertexEndpoint`, `McpHttpTransport`, `McpStdioTransport`, `McpServer`,
+and the harness options `AgentBuilder`'s `Debug` prints) are the other
+half of I-9 in #504. A new type that holds one of these secrets needs its own
+`Debug` and a row in the sentinel test; nothing finds it by itself.

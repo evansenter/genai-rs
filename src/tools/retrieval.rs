@@ -1,4 +1,5 @@
 use super::Tool;
+use crate::redact;
 use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Serialize};
 
@@ -59,8 +60,9 @@ impl VertexAiSearchConfig {
 /// Configuration for the Exa.ai search retrieval backend.
 ///
 /// **Note**: `api_key` is your Exa.ai API key and is sent on the wire; treat
-/// request logs accordingly.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// request logs accordingly. `LOUD_WIRE` and `Debug` print it as
+/// `[REDACTED]`.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExaAiSearchConfig {
     /// The Exa.ai API key (required by the API).
@@ -68,6 +70,20 @@ pub struct ExaAiSearchConfig {
     /// Extra parameters passed through to the Exa.ai Search API.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_config: Option<serde_json::Value>,
+}
+
+// Prints the key as `[REDACTED]` (D-NEXT-I4-a).
+impl std::fmt::Debug for ExaAiSearchConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            api_key: _,
+            custom_config,
+        } = self;
+        f.debug_struct("ExaAiSearchConfig")
+            .field("api_key", &redact::REDACTED)
+            .field("custom_config", custom_config)
+            .finish()
+    }
 }
 
 impl ExaAiSearchConfig {
@@ -91,8 +107,9 @@ impl ExaAiSearchConfig {
 /// Configuration for the Parallel.ai search retrieval backend.
 ///
 /// **Note**: `api_key` is your Parallel.ai API key and is sent on the wire;
-/// treat request logs accordingly.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// treat request logs accordingly. `LOUD_WIRE` and `Debug` print it as
+/// `[REDACTED]`.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ParallelAiSearchConfig {
     /// The Parallel.ai API key.
@@ -101,6 +118,20 @@ pub struct ParallelAiSearchConfig {
     /// Extra parameters for Parallel.ai search.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_config: Option<serde_json::Value>,
+}
+
+// Prints a set key as `[REDACTED]` (D-NEXT-I4-a).
+impl std::fmt::Debug for ParallelAiSearchConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            api_key,
+            custom_config,
+        } = self;
+        f.debug_struct("ParallelAiSearchConfig")
+            .field("api_key", &redact::optional(api_key.as_ref()))
+            .field("custom_config", custom_config)
+            .finish()
+    }
 }
 
 impl ParallelAiSearchConfig {

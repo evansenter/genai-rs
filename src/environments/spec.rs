@@ -1,6 +1,7 @@
 //! The environment description: the `environment` request field and the
 //! Agents resource's `base_environment`. See the [parent module](super).
 
+use crate::redact;
 use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};
@@ -120,7 +121,10 @@ impl EnvironmentSource {
 /// all domains while still injecting headers on specific ones. Each
 /// `transform` entry is a flat `{header_name: header_value}` map injected on
 /// matching outbound requests by the egress proxy.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+///
+/// `Debug` prints the header names with every value as `[REDACTED]`, as
+/// `LOUD_WIRE` does.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AllowlistEntry {
     /// Domain to allow outbound requests to.
@@ -136,6 +140,28 @@ pub struct AllowlistEntry {
     /// Additional fields not yet modeled (Evergreen forward compatibility)
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// A transform's header values are secrets, such as an injected API key
+// (D-NEXT-I4-a).
+impl std::fmt::Debug for AllowlistEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            domain,
+            transform,
+            credential,
+            extra,
+        } = self;
+        let transform = transform
+            .as_ref()
+            .map(|maps| maps.iter().map(redact::values).collect::<Vec<_>>());
+        f.debug_struct("AllowlistEntry")
+            .field("domain", domain)
+            .field("transform", &transform)
+            .field("credential", credential)
+            .field("extra", extra)
+            .finish()
+    }
 }
 
 impl AllowlistEntry {
@@ -169,7 +195,10 @@ impl AllowlistEntry {
 /// A plain value is visible in the sandbox as-is. A credential-backed variable
 /// holds only a placeholder there; the egress proxy substitutes the secret
 /// into outbound requests the credential trusts.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+///
+/// `Debug` prints a plain value as `[REDACTED]`, as `LOUD_WIRE` does; the
+/// credential's ID is not a secret and prints as it is.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct EnvVar {
@@ -182,6 +211,23 @@ pub struct EnvVar {
     /// Additional fields not yet modeled (Evergreen forward compatibility)
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// A plain value is often a secret: a key the sandbox's code reads
+// (D-NEXT-I4-a).
+impl std::fmt::Debug for EnvVar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            value,
+            credential,
+            extra,
+        } = self;
+        f.debug_struct("EnvVar")
+            .field("value", &redact::optional(value.as_ref()))
+            .field("credential", credential)
+            .field("extra", extra)
+            .finish()
+    }
 }
 
 impl EnvVar {

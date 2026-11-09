@@ -55,6 +55,15 @@ inside them are attributed to the request.
 
 - The API key is sent in the `X-Goog-Api-Key` header, never in the URL, and
   `Client` / `ClientBuilder` print it as `[REDACTED]` in `Debug` output.
+- `Debug` prints the other secrets `LOUD_WIRE` redacts (below) as
+  `[REDACTED]` too, on every Interactions API type that holds one: the
+  retrieval configs' `api_key`, a credential's or credential update's
+  secrets, a webhook's signing secret, an `EnvVar`'s plain value, and the
+  header values of an MCP server (`McpServerConfig`, `Tool::McpServer`) or
+  an allowlist entry's `transform`, keeping the header and variable names.
+  So `dbg!(request)` or `tracing::debug!(?builder)` prints none of them,
+  nor does the `Debug` of an `InteractionBuilder`, `InteractionRequest` or
+  response that carries one.
 - At `debug`, request and response bodies are logged in full: prompts, base64
   media, function arguments and results. Treat debug logs as sensitive, and
   don't enable them in production unless you mean to.
