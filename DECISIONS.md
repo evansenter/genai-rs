@@ -2367,3 +2367,42 @@ The Antigravity types that hold one (`GeminiApiEndpoint`,
 and the harness options `AgentBuilder`'s `Debug` prints) are the other
 half of I-9 in #504. A new type that holds one of these secrets needs its own
 `Debug` and a row in the sentinel test; nothing finds it by itself.
+
+## D-NEXT-I4-b — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
+
+**Context.** #504's final grade found the recursive `.rs` walker written
+five times (`tests/module_size.rs`, `tests/live_verbs/mod.rs`,
+`tests/non_exhaustive_responses.rs`, `tests/ci_coverage.rs` and
+`tests/http_mock_resources/paging.rs`; `ci_coverage.rs` held a sixth, in
+its reasoned-list scan), and the resource handles found twice: by
+`live_verbs`'s `handles_in`, for the live-verb coverage, and by
+`paging.rs`'s D-016 receiver scan, each with its own copy of the marker
+string and its own walk over inherent `impl` blocks. Each copy could drift
+from the others, as the walkers had (one sorted per directory, one after
+every directory, one not at all).
+
+**Decision.** A structural move (D-011): `tests/common/source_scan.rs`
+holds `rust_files` (every `.rs` file under a root, sorted, failing on a
+root that is gone or a directory it cannot read), `parse_file`,
+`repo_relative`, `all_items`, `HANDLE_MARKER`, and the discovery:
+`structs` (each struct and whether it carries the marker), `handles` and
+`public_methods` (each type's public inherent methods in declaration
+order). Every walker above and both handle scans use it; what each guard
+does with the result, and its floor, stay in the guard (`module_size`'s
+more than three files of each kind, `non_exhaustive_responses`'s
+non-empty source list and expected test modules, `paging.rs`'s eleven
+`HANDLES`, `live_verbs`'s more than fifty live tests). Breaking the shared walker or the handle filter once
+failed every one of them.
+
+The file is not declared in `common/mod.rs`, which every integration test
+compiles: `module_size.rs` and `non_exhaustive_responses.rs` include it by
+`#[path]`, `live_verbs/mod.rs` includes it for `ci_coverage` and
+`request_wire_oracle`, and `ci_coverage` reaches it through `live_verbs`,
+since a second `mod` of one file in a binary is clippy's `duplicate_mod`.
+`paging.rs` includes it for `http_mock_resources`.
+
+**Consequences.** A new guard that walks the source or finds the handles
+includes this file rather than writing its own. Two walkers outside the
+guards stay: `tests/model_literals.rs` (which also tolerates an unreadable
+entry) and `tests/temp_file_tests.rs`'s scan of `examples/` for media
+constants.

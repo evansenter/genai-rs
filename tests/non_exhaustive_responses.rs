@@ -51,8 +51,11 @@
     reason = "a test reports a failure by panicking"
 )]
 
+#[path = "common/source_scan.rs"]
+mod source_scan;
+
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Item, Meta, Token};
@@ -391,21 +394,13 @@ const EXPECTED_TEST_MODULES: &[&str] = &[
 
 /// `(repo-relative path, text)` of every `.rs` file in `src/`.
 fn sources() -> Vec<(String, String)> {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest.join("src");
-    // A root that cannot be read must not read as a tree that is clean.
-    assert!(root.is_dir(), "scan root {} does not exist", root.display());
-
-    let mut files = Vec::new();
-    walk(&root, &mut files);
-    let sources: Vec<(String, String)> = files
+    // A root that cannot be read fails in the walk, rather than reading as
+    // a tree that is clean.
+    let root = source_scan::root().join("src");
+    let sources: Vec<(String, String)> = source_scan::rust_files(&root)
         .iter()
         .map(|path| {
-            let rel = path
-                .strip_prefix(&manifest)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
+            let rel = source_scan::repo_relative(path);
             let text = std::fs::read_to_string(path)
                 .unwrap_or_else(|e| panic!("could not read {rel}: {e}"));
             (rel, text)
@@ -1027,21 +1022,6 @@ impl<'ast> Visit<'ast> for EnumCheck<'_> {
                     .macros_without_evergreen
                     .insert(name.to_string());
             }
-        }
-    }
-}
-
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()))
-        .map(|entry| entry.expect("dir entry").path())
-        .collect();
-    entries.sort();
-    for path in entries {
-        if path.is_dir() {
-            walk(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
         }
     }
 }
