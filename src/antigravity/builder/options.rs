@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::AgentBuilder;
-use crate::antigravity::redact::RedactedValues;
+use crate::redact;
 use crate::antigravity::{Budget, InlineSkill, RetryConfig, SessionContinuation};
 use crate::{ServiceTier, ThinkingLevel};
 
@@ -56,7 +56,7 @@ impl std::fmt::Debug for HarnessOptions {
             .field("service_tier", service_tier)
             .field("max_output_tokens", max_output_tokens)
             .field("image_model", image_model)
-            .field("model_headers", &RedactedValues(model_headers))
+            .field("model_headers", &redact::values(model_headers))
             .field("max_subagent_depth", max_subagent_depth)
             .field("allowed_subagents", allowed_subagents)
             .field("define_subagent_tool", define_subagent_tool)
@@ -67,7 +67,7 @@ impl std::fmt::Debug for HarnessOptions {
             .field("mcp_max_output_bytes", mcp_max_output_bytes)
             .field("inline_skills", inline_skills)
             .field("session_continuation", session_continuation)
-            .field("harness_env", &RedactedValues(harness_env))
+            .field("harness_env", &redact::values(harness_env))
             .finish()
     }
 }

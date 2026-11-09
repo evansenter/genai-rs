@@ -3,7 +3,7 @@ use super::{
     PolicyRule, RetryConfig, RunCommandToolConfig, SessionContinuationMode, SkillsConfig,
     SubagentSkillsConfig, SubagentsConfig, ToolOutputTruncation, WorkspaceContainment,
 };
-use crate::antigravity::redact::{RedactedValues, redacted};
+use crate::redact;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -409,8 +409,8 @@ impl std::fmt::Debug for GeminiApiEndpoint {
         } = self;
         f.debug_struct("GeminiApiEndpoint")
             .field("base_url", base_url)
-            .field("http_headers", &RedactedValues(http_headers))
-            .field("api_key", &redacted(api_key.as_ref()))
+            .field("http_headers", &redact::values(http_headers))
+            .field("api_key", &redact::optional(api_key.as_ref()))
             .field("options", options)
             .finish()
     }
@@ -427,7 +427,7 @@ impl std::fmt::Debug for VertexEndpoint {
         } = self;
         f.debug_struct("VertexEndpoint")
             .field("base_url", base_url)
-            .field("http_headers", &RedactedValues(http_headers))
+            .field("http_headers", &redact::values(http_headers))
             .field("project", project)
             .field("location", location)
             .field("options", options)
@@ -519,7 +519,7 @@ impl std::fmt::Debug for McpStdioTransport {
         f.debug_struct("McpStdioTransport")
             .field("command", command)
             .field("args", args)
-            .field("env", &RedactedValues(env))
+            .field("env", &redact::values(env))
             .finish()
     }
 }
@@ -529,7 +529,7 @@ impl std::fmt::Debug for McpHttpTransport {
         let Self { url, headers } = self;
         f.debug_struct("McpHttpTransport")
             .field("url", url)
-            .field("headers", &RedactedValues(headers))
+            .field("headers", &redact::values(headers))
             .finish()
     }
 }

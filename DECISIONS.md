@@ -1858,7 +1858,7 @@ so a reporter that walks `source()` (anyhow, eyre, a `while let` loop)
 prints it once, not twice. A caller that prints only the top error now
 sees what was being done, not why; walk the chain for that. The connect
 failure `spawn()` reports as `InitFailed` keeps this error as its source
-(D-NEXT-I2).
+(D-062).
 
 ---
 
@@ -2447,7 +2447,7 @@ fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
 
-## D-NEXT-I1 — The specs' query parameters are checked; the three the API ignores stay unmodeled (2026-11-09)
+## D-060 — The specs' query parameters are checked; the three the API ignores stay unmodeled (2026-11-09)
 
 **Context.** The query test held the crate to the bindings alone, and the
 spec snapshots kept endpoints and schemas, not parameters or request
@@ -2496,7 +2496,7 @@ flags it: the watch sees the spec change, not behavior, so a later probe
 has to. The spec also wraps webhook update's and trigger update's bodies;
 those wrappers were not probed.
 
-## D-NEXT-I1-a — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
+## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
 **Context.** #504's 2026-11-08 grade found three holes in the request side
 of the coverage oracle (I-2 to I-4). A value the oracle built through a
@@ -2545,7 +2545,7 @@ state or status.
 
 ---
 
-## D-NEXT-I2 — A failed Antigravity turn names its kind, and whether the session survived (2026-11-09)
+## D-062 — A failed Antigravity turn names its kind, and whether the session survived (2026-11-09)
 
 **Context.** `AntigravityError::Turn(String)` carried every turn
 failure, so a caller had to read the message ("model backend error (HTTP
@@ -2617,7 +2617,7 @@ a session after one of these shows up as a failing scripted test.
 
 ---
 
-## D-NEXT-I2-a — A harness path the caller names is used as given (2026-11-09)
+## D-063 — A harness path the caller names is used as given (2026-11-09)
 
 **Context.** When the path given with `with_harness_path` or
 `ANTIGRAVITY_HARNESS_PATH` did not exist, discovery added it to
@@ -2644,7 +2644,7 @@ fix or remove the path.
 
 ---
 
-## D-NEXT-I2-b — Antigravity types that hold a secret print it redacted (2026-11-09)
+## D-064 — Antigravity types that hold a secret print it redacted (2026-11-09)
 
 **Context.** The crate's rule is that a type holding a secret prints it
 redacted (`Client`, `CredentialConfig`), so `dbg!` or
@@ -2655,8 +2655,8 @@ redacted (`Client`, `CredentialConfig`), so `dbg!` or
 `HarnessOptions`, `AgentBuilder`'s `Debug` printed the model headers and
 the harness environment (#504's I-9, the Antigravity half).
 
-**Decision.** Hand-written `Debug` for each, through
-`src/antigravity/redact.rs`: an API key prints as `"[REDACTED]"` (the
+**Decision.** Hand-written `Debug` for each, through the crate's
+`src/redact.rs` (D-067): an API key prints as `"[REDACTED]"` (the
 crate's spelling), and a header or environment map keeps its names and
 redacts every value, as the wire inspector redacts `env`, `headers` and
 `httpHeaders` whole. The crate-private handshake types get the same
@@ -2673,11 +2673,16 @@ They are not secrets by design, and hiding them would hide what a debug
 print is for; a credential belongs in a header or the environment.
 
 **Consequences.** `Debug` output changes for these types; their
-`Serialize` output, which the harness needs, does not.
+`Serialize` output, which the harness needs, does not. The Wave I merge
+folded this decision's own helper module (`src/antigravity/redact.rs`,
+written alongside D-067's) into `src/redact.rs`, so the crate has one
+`REDACTED` and one map helper; the Antigravity sentinel test stays in
+`src/antigravity/redact_tests.rs`, declared from `antigravity/mod.rs`
+(D-011).
 
 ---
 
-## D-NEXT-I3 — The Antigravity session's start and end move to `agent/session_lifecycle.rs` (2026-11-09)
+## D-065 — The Antigravity session's start and end move to `agent/session_lifecycle.rs` (2026-11-09)
 
 **Context.** `src/antigravity/agent.rs` held 798 of D-014's 800 lines,
 and bounding the harness WebSocket sends by the turn and halt deadlines
@@ -2700,7 +2705,7 @@ point at the old layout.
 
 ---
 
-## D-NEXT-I3-a — Every message to the harness has a deadline, and a dropped connection reads as closed (2026-11-09)
+## D-066 — Every message to the harness has a deadline, and a dropped connection reads as closed (2026-11-09)
 
 **Context.** No deadline covered the Antigravity client's WebSocket sends
 (#504, I-7). `chat()` and `send_streaming()` sent the message before the
@@ -2764,7 +2769,7 @@ send bound, a send bounded by a later deadline alone, the close bound and
 a dropped connection, and the scripted `lifecycle.rs` kills the harness
 mid-turn and while `next_trigger_turn` waits.
 
-## D-NEXT-I4-a — `Debug` redacts the secrets `LOUD_WIRE` redacts, outside unmodeled JSON (2026-11-09)
+## D-067 — `Debug` redacts the secrets `LOUD_WIRE` redacts, outside unmodeled JSON (2026-11-09)
 
 **Context.** The crate's rule is that a type holding a secret prints it
 redacted (the `Cargo.toml` lint comment, `CredentialConfig`'s `Debug`,
@@ -2836,7 +2841,7 @@ and the harness options `AgentBuilder`'s `Debug` prints) are the other
 half of I-9 in #504. A new type that holds one of these secrets needs its own
 `Debug` and a row in the sentinel test; nothing finds it by itself.
 
-## D-NEXT-I4-b — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
+## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
 **Context.** #504's final grade found the recursive `.rs` walker written
 five times (`tests/module_size.rs`, `tests/live_verbs/mod.rs`,

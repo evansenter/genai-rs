@@ -54,7 +54,9 @@ mod process;
 mod process_tree;
 mod prompt;
 pub mod protocol;
-mod redact;
+#[cfg(test)]
+#[path = "redact_tests.rs"]
+mod redact_tests;
 mod session;
 mod streaming;
 mod subagent;

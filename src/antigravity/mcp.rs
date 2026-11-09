@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::protocol;
-use super::redact::RedactedValues;
+use crate::redact;
 
 /// An MCP server for the harness to connect to.
 ///
@@ -47,12 +47,12 @@ impl std::fmt::Debug for McpTransport {
                 .debug_struct("Stdio")
                 .field("command", command)
                 .field("args", args)
-                .field("env", &RedactedValues(env))
+                .field("env", &redact::values(env))
                 .finish(),
             Self::Http { url, headers } => f
                 .debug_struct("Http")
                 .field("url", url)
-                .field("headers", &RedactedValues(headers))
+                .field("headers", &redact::values(headers))
                 .finish(),
         }
     }

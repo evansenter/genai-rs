@@ -31,7 +31,7 @@
 //! `ClientInfo.os` (4), `ClientInfo.os_version` (5) — which are all
 //! optional to the harness.
 
-use super::redact::{REDACTED, RedactedValues};
+use crate::redact::{self, REDACTED};
 
 /// Protobuf wire type for varint-encoded scalars.
 const WIRE_VARINT: u32 = 0;
@@ -104,7 +104,7 @@ impl std::fmt::Debug for InputConfig {
             .field("port", port)
             .field("bind_address", bind_address)
             .field("client_info", client_info)
-            .field("env", &RedactedValues(env))
+            .field("env", &redact::values(env))
             .finish()
     }
 }

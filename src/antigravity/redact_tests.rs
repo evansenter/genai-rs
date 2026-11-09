@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::REDACTED;
+use crate::redact::REDACTED;
 use crate::antigravity::handshake::{InputConfig, OutputConfig};
 use crate::antigravity::protocol::{
     GeminiApiEndpoint, HarnessConfig, InitializeConversationEvent, McpHttpTransport,
