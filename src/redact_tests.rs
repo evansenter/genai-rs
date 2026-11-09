@@ -3,12 +3,14 @@
 //! builders that carry it, prints no secret.
 
 use super::REDACTED;
+use crate::wire::WireEvent;
 use crate::{
     Agent, AllowlistEntry, Client, CreateCredentialRequest, CreateTriggerRequest, CredentialConfig,
     CredentialType, CredentialUpdate, EnvVar, Environment, ExaAiSearchConfig, InjectionLocation,
     InteractionResponse, McpServerConfig, NetworkConfig, ParallelAiSearchConfig, RemoteEnvironment,
     RetrievalConfig, RotateSigningSecretResponse, Tool, Trigger, Webhook,
 };
+use serde_json::json;
 use std::collections::HashMap;
 
 /// The secret every value below holds, wherever it holds one.
@@ -23,9 +25,10 @@ fn header(name: &str) -> HashMap<String, String> {
 /// (and on to a trigger and a stored interaction's echo), the environment
 /// pieces into `RemoteEnvironment`, an agent and an environment resource.
 /// The types that redacted before (`Client`, the credential and webhook
-/// secrets) are here too, so the list is the whole set. Every one shows
-/// the placeholder where the secret was, and the names around the secret
-/// stay.
+/// secrets) are here too, and so are the JSON values that carry these
+/// secrets: a retrieval config's `custom_config`, an `env` the crate could
+/// not read, and a `WireEvent`'s bodies. Every one shows the placeholder
+/// where the secret was, and the names around the secret stay.
 #[test]
 fn debug_never_prints_a_secret() {
     let exa = ExaAiSearchConfig::new(SECRET);
@@ -54,6 +57,14 @@ fn debug_never_prints_a_secret() {
         .with_environment(environment.clone());
     let builder_debug = format!("{builder:?}");
     let request = builder.build().unwrap();
+    let request_body = serde_json::to_value(&request).unwrap();
+    // One entry is not an `EnvVar`, so the whole map is kept in `extra`.
+    let unread_env: RemoteEnvironment = serde_json::from_value(json!({
+        "type": "remote",
+        "env": {"API_KEY": {"value": SECRET}, "OTHER": SECRET},
+    }))
+    .unwrap();
+    assert!(unread_env.env.is_empty() && unread_env.extra.contains_key("env"));
 
     let cases = [
         ("ExaAiSearchConfig", format!("{exa:?}")),
@@ -176,6 +187,74 @@ fn debug_never_prints_a_secret() {
                 }
             ),
         ),
+        (
+            "ExaAiSearchConfig::custom_config",
+            format!(
+                "{:?}",
+                ExaAiSearchConfig::new("key").with_custom_config(json!({"api_key": SECRET}))
+            ),
+        ),
+        (
+            "RemoteEnvironment (an env it could not read)",
+            format!("{unread_env:?}"),
+        ),
+        (
+            "WireEvent::Request",
+            format!(
+                "{:?}",
+                WireEvent::Request {
+                    id: 1,
+                    method: "POST".to_string(),
+                    url: "https://example.com/v1beta/interactions".to_string(),
+                    body: Some(request_body),
+                }
+            ),
+        ),
+        (
+            "WireEvent::ResponseBody",
+            format!(
+                "{:?}",
+                WireEvent::ResponseBody {
+                    id: 1,
+                    body: json!({"secret": SECRET, "truncated_secret": "abc"}),
+                }
+            ),
+        ),
+        (
+            "WireEvent::ErrorBody",
+            format!(
+                "{:?}",
+                WireEvent::ErrorBody {
+                    id: 1,
+                    status: 400,
+                    body: json!({"token": SECRET}).to_string(),
+                }
+            ),
+        ),
+        (
+            "WireEvent::SseFrame",
+            format!(
+                "{:?}",
+                WireEvent::SseFrame {
+                    id: 1,
+                    event_type: None,
+                    data: json!({"interaction": {"tools": [
+                        {"type": "mcp_server", "headers": {"Authorization": SECRET}}
+                    ]}})
+                    .to_string(),
+                }
+            ),
+        ),
+        (
+            "WireEvent::WsSend",
+            format!(
+                "{:?}",
+                WireEvent::WsSend {
+                    id: 1,
+                    payload: json!({"config": {"api_key": SECRET}}),
+                }
+            ),
+        ),
     ];
 
     for (what, debug) in &cases {
@@ -189,10 +268,49 @@ fn debug_never_prints_a_secret() {
         );
     }
     // The names around a secret stay: the header's, the variable's.
-    let (_, request_debug) = &cases[9];
-    for name in ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"] {
-        assert!(request_debug.contains(name), "{name}: {request_debug}");
+    for what in ["InteractionRequest", "WireEvent::Request"] {
+        let (_, debug) = cases.iter().find(|(w, _)| *w == what).unwrap();
+        for name in ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"] {
+            assert!(debug.contains(name), "{what}, {name}: {debug}");
+        }
     }
+    let (_, unread_debug) = cases
+        .iter()
+        .find(|(w, _)| w.starts_with("RemoteEnvironment ("))
+        .unwrap();
+    for name in ["API_KEY", "OTHER"] {
+        assert!(unread_debug.contains(name), "{name}: {unread_debug}");
+    }
+}
+
+/// A body with no secret prints as the derive printed it: the walk
+/// redacts, and truncates nothing.
+#[test]
+fn a_wire_event_without_a_secret_prints_whole() {
+    let data = "x".repeat(300);
+    let frame = json!({"event_type": "step.delta", "delta": {"data": data}}).to_string();
+    assert_eq!(
+        format!(
+            "{:?}",
+            WireEvent::SseFrame {
+                id: 7,
+                event_type: Some("message".to_string()),
+                data: frame.clone(),
+            }
+        ),
+        format!("SseFrame {{ id: 7, event_type: Some(\"message\"), data: {frame:?} }}")
+    );
+    let body = json!({"signature": data, "text": "hi"});
+    assert_eq!(
+        format!(
+            "{:?}",
+            WireEvent::ResponseBody {
+                id: 7,
+                body: body.clone(),
+            }
+        ),
+        format!("ResponseBody {{ id: 7, body: {body:?} }}")
+    );
 }
 
 /// A secret that is not set prints as `None`, so `Debug` still tells set

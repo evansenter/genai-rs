@@ -2313,7 +2313,7 @@ fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
 
-## D-NEXT-I4-a — `Debug` redacts every secret `LOUD_WIRE` redacts (2026-11-09)
+## D-NEXT-I4-a — `Debug` redacts the secrets `LOUD_WIRE` redacts, outside unmodeled JSON (2026-11-09)
 
 **Context.** The crate's rule is that a type holding a secret prints it
 redacted (the `Cargo.toml` lint comment, `CredentialConfig`'s `Debug`,
@@ -2325,23 +2325,35 @@ and `InteractionRequest`'s `Debug`; and the Antigravity endpoints and MCP
 servers printed keys, headers and environment values. The sweep this
 decision came with found three more outside Antigravity: `McpServerConfig`
 and `Tool::McpServer` printed their header values, `AllowlistEntry` its
-`transform` header values, and `EnvVar` its plain value. So `dbg!(builder)`
-or `tracing::debug!(?request)` undid the redaction `LOUD_WIRE` applies to
+`transform` header values, and `EnvVar` its plain value. Its review found
+three more: `WireEvent`'s derived `Debug` printed every request and
+response body whole, a retrieval config's `custom_config` a key nested in
+it, and `RemoteEnvironment` an `env` it could not read, which it keeps
+whole in `extra`. So `dbg!(builder)`, `tracing::debug!(?request)` or an
+inspector logging `{event:?}` undid the redaction `LOUD_WIRE` applies to
 the same fields.
 
 **Decision.** The secrets are the fields `LOUD_WIRE` redacts
 (`src/wire/mod.rs`): an `api_key`, a webhook signing secret, credential
 material, an environment variable's value, and every value under an MCP
-server's `headers` or an allowlist entry's `transform`. One list serves
-both, so a field the wire hides is never shown by `Debug`. Each type that
-holds one has a hand-written `Debug` that prints `[REDACTED]` in the
-secret's place, `Some("[REDACTED]")` for an optional one that is set, and
+server's `headers` or an allowlist entry's `transform`. Each type that
+holds one in a modeled field has a hand-written `Debug` that prints
+`[REDACTED]` in the secret's place, `Some("[REDACTED]")` for an optional one that is set, and
 keeps the names: the field's, and each header's or variable's, ordered by
 name. The impls share `src/redact.rs`, and each destructures its type
 without `..`, so a field added later fails to compile until the impl
 prints or redacts it. `Tool`'s whole `Debug` is hand-written for
-`McpServer`'s headers; its other arms print what the derive did. One unit
-test, `redact_tests.rs`, formats every type that holds a secret with a
+`McpServer`'s headers; its other arms print what the derive did. So the
+list is written twice, as the wire's `REDACT_FIELDS` and as these impls: a
+name added to one does not reach the other, and the sentinel test is what
+holds them together. JSON that carries these secrets by design goes through
+the wire's own walk instead (`redact::json`, which redacts and truncates
+nothing), so there the one list serves both: a `WireEvent`'s bodies and
+payloads (an error body or an SSE frame's `data` is parsed first, and
+printed as it is when it holds no secret or is not JSON), and a retrieval
+config's `custom_config`. An `env` that `RemoteEnvironment` could not read
+prints every string beneath it redacted, since a value cannot be told from
+a name there. One unit test, `redact_tests.rs`, formats every type that holds a secret with a
 sentinel value, alone and inside the builder, request, response, trigger,
 agent and environment that carry it, and fails if the sentinel shows or
 the placeholder does not. The types that redacted before are in it, so it
@@ -2352,14 +2364,19 @@ an allowlist entry, which is what the egress proxy looks up), an MCP
 server's URL, a decode's `continuation_token`, a webhook's
 `truncated_secret` (shown to identify it), and a replicated voice's `key`,
 which the API returns in place of an id and a request sends as a voice
-name, in the clear on the wire too. An `extra` map or `Unknown` payload
-prints verbatim: nothing can redact a field the crate does not model.
+name, in the clear on the wire too. Any other free-form JSON prints as it
+is, every `extra` map and `Unknown` payload among them: a secret nested
+there under a name the wire redacts (an `api_key` in an `extra`) shows in
+`Debug` though `LOUD_WIRE` hides it. Redacting it would mean a hand-written
+`Debug` on every type with an `extra` map.
 
 Rejected: a newtype for secret strings and header maps. It would change
 the type of public fields callers build and match on, for a `Debug` the
 impls give without it. Rejected: a derive helper crate (`educe`,
-`derivative`) for per-field `Debug` attributes: a dependency for six
-impls.
+`derivative`) for per-field `Debug` attributes: a dependency for eight
+impls. Rejected: leaving `WireEvent`'s `Debug` raw because a custom
+inspector receives the bodies raw. It still does, through the fields and
+the serialized form; `Debug` is what a log line prints.
 
 **Consequences.** Not breaking: `Debug` output is not a stable format.
 The Antigravity types that hold one (`GeminiApiEndpoint`,

@@ -57,13 +57,15 @@ inside them are attributed to the request.
   `Client` / `ClientBuilder` print it as `[REDACTED]` in `Debug` output.
 - `Debug` prints the other secrets `LOUD_WIRE` redacts (below) as
   `[REDACTED]` too, on every Interactions API type that holds one: the
-  retrieval configs' `api_key`, a credential's or credential update's
-  secrets, a webhook's signing secret, an `EnvVar`'s plain value, and the
-  header values of an MCP server (`McpServerConfig`, `Tool::McpServer`) or
-  an allowlist entry's `transform`, keeping the header and variable names.
-  So `dbg!(request)` or `tracing::debug!(?builder)` prints none of them,
-  nor does the `Debug` of an `InteractionBuilder`, `InteractionRequest` or
-  response that carries one.
+  retrieval configs' `api_key` (and one nested in their `custom_config`), a
+  credential's or credential update's secrets, a webhook's signing secret,
+  an `EnvVar`'s plain value, and the header values of an MCP server
+  (`McpServerConfig`, `Tool::McpServer`) or an allowlist entry's
+  `transform`, keeping the header and variable names. So `dbg!(request)`
+  or `tracing::debug!(?builder)` prints none of them, nor does the `Debug`
+  of an `InteractionBuilder`, `InteractionRequest` or response that carries
+  one, or of a `wire::WireEvent`. An `extra` map or `Unknown` payload, JSON
+  the crate does not model, prints as it is.
 - At `debug`, request and response bodies are logged in full: prompts, base64
   media, function arguments and results. Treat debug logs as sensitive, and
   don't enable them in production unless you mean to.
@@ -157,8 +159,11 @@ let client = Client::builder("api-key".to_string())
 - **Zero cost when unused**: with no inspectors, events are never built and
   bodies are never serialized for inspection.
 - **Synchronous**: inspectors run on the request path, so keep them fast.
-- **Raw data**: custom inspectors receive bodies unredacted. Only the
-  built-in inspectors truncate and redact.
+- **Raw data**: custom inspectors receive bodies unredacted, in a
+  `WireEvent`'s fields and its serialized form. Only the built-in
+  inspectors truncate and redact. A `WireEvent`'s `Debug` redacts the same
+  secrets and truncates nothing, so an inspector that logs `{event:?}`
+  prints none of them.
 
 ### Forwarding wire events to `tracing`
 

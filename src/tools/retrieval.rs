@@ -72,7 +72,8 @@ pub struct ExaAiSearchConfig {
     pub custom_config: Option<serde_json::Value>,
 }
 
-// Prints the key as `[REDACTED]` (D-NEXT-I4-a).
+// Prints the key as `[REDACTED]`, and `custom_config` through the wire's
+// walk, which redacts a key nested there too (D-NEXT-I4-a).
 impl std::fmt::Debug for ExaAiSearchConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -81,7 +82,7 @@ impl std::fmt::Debug for ExaAiSearchConfig {
         } = self;
         f.debug_struct("ExaAiSearchConfig")
             .field("api_key", &redact::REDACTED)
-            .field("custom_config", custom_config)
+            .field("custom_config", &custom_config.as_ref().map(redact::json))
             .finish()
     }
 }
@@ -120,7 +121,8 @@ pub struct ParallelAiSearchConfig {
     pub custom_config: Option<serde_json::Value>,
 }
 
-// Prints a set key as `[REDACTED]` (D-NEXT-I4-a).
+// Prints a set key as `[REDACTED]`, and `custom_config` through the wire's
+// walk, which redacts a key nested there too (D-NEXT-I4-a).
 impl std::fmt::Debug for ParallelAiSearchConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -129,7 +131,7 @@ impl std::fmt::Debug for ParallelAiSearchConfig {
         } = self;
         f.debug_struct("ParallelAiSearchConfig")
             .field("api_key", &redact::optional(api_key.as_ref()))
-            .field("custom_config", custom_config)
+            .field("custom_config", &custom_config.as_ref().map(redact::json))
             .finish()
     }
 }

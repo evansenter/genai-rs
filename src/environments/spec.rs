@@ -440,7 +440,7 @@ fn is_disabled_allowlist(obj: &serde_json::Map<String, serde_json::Value>) -> bo
 ///         AllowlistEntry::new("*.googleapis.com"),
 ///     ]));
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Default, PartialEq, Serialize)]
 #[serde(tag = "type", rename = "remote")]
 pub struct RemoteEnvironment {
     /// An existing environment to run in, by ID
@@ -465,6 +465,37 @@ pub struct RemoteEnvironment {
     /// Additional fields not yet modeled (Evergreen forward compatibility)
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// An `env` the crate could not read (one entry not an `EnvVar`) is kept
+// whole in `extra`, where its values are as secret as in `env`: every string
+// beneath it prints redacted, since a value cannot be told from a name there
+// (D-NEXT-I4-a). The rest of `extra` prints as it is.
+impl std::fmt::Debug for RemoteEnvironment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            environment_id,
+            sources,
+            network,
+            env,
+            extra,
+        } = self;
+        let extra: std::borrow::Cow<'_, _> = match extra.get("env") {
+            Some(unread) => {
+                let mut extra = extra.clone();
+                extra.insert("env".into(), redact::json_strings(unread));
+                std::borrow::Cow::Owned(extra)
+            }
+            None => std::borrow::Cow::Borrowed(extra),
+        };
+        f.debug_struct("RemoteEnvironment")
+            .field("environment_id", environment_id)
+            .field("sources", sources)
+            .field("network", network)
+            .field("env", env)
+            .field("extra", &extra)
+            .finish()
+    }
 }
 
 impl RemoteEnvironment {

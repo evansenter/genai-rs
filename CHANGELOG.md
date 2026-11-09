@@ -964,14 +964,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `Debug` no longer prints the secrets a value holds. `ExaAiSearchConfig`
-  and `ParallelAiSearchConfig` printed their `api_key`, `McpServerConfig`
-  and `Tool::McpServer` their header values, `AllowlistEntry` its
-  `transform` header values and `EnvVar` its plain value, and so did the
-  `InteractionBuilder`, `InteractionRequest`, `InteractionResponse`,
-  trigger, agent or environment holding one. Each prints `[REDACTED]` in
-  the secret's place, as `LOUD_WIRE` does, and keeps the header and
-  variable names, so `dbg!` or `tracing::debug!(?request)` no longer undoes
-  the wire's redaction.
+  and `ParallelAiSearchConfig` printed their `api_key` (and one nested in
+  `custom_config`), `McpServerConfig` and `Tool::McpServer` their header
+  values, `AllowlistEntry` its `transform` header values, `EnvVar` its
+  plain value and `RemoteEnvironment` an `env` it could not read, and so
+  did the `InteractionBuilder`, `InteractionRequest`, `InteractionResponse`,
+  trigger, agent or environment holding one. `wire::WireEvent` printed
+  every request and response body whole. Each prints `[REDACTED]` in the
+  secret's place, as `LOUD_WIRE` does, and keeps the header and variable
+  names, so `dbg!`, `tracing::debug!(?request)` or an inspector logging
+  `{event:?}` no longer undoes the wire's redaction. A `WireEvent`'s fields
+  and serialized form still hold the bodies raw.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed

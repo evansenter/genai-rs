@@ -74,8 +74,13 @@ pub const TRACING_TARGET: &str = "genai_rs::wire";
 ///
 /// Events serialize with serde (useful for snapshot tests or shipping them to
 /// external tooling); the variant is recorded in a `"kind"` tag field.
+///
+/// The fields and the serialized form hold the bodies as sent and received,
+/// secrets included. `Debug` prints the secrets `LOUD_WIRE` redacts as
+/// `[REDACTED]`, so an inspector that logs `{event:?}` does not undo the
+/// built-in inspectors' redaction; it truncates nothing.
 #[non_exhaustive]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WireEvent {
     /// An outgoing HTTP request.
@@ -176,6 +181,93 @@ pub enum WireEvent {
         /// One decoded stderr line (without the trailing newline).
         line: String,
     },
+}
+
+// A request body can hold a retrieval `api_key`, MCP header values or a
+// credential's secret, and a response body a rotated signing secret: printed
+// through the wire's own walk (D-NEXT-I4-a). Matched without a wildcard, so
+// a new event kind fails to compile here until it is printed or redacted.
+impl std::fmt::Debug for WireEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Request {
+                id,
+                method,
+                url,
+                body,
+            } => f
+                .debug_struct("Request")
+                .field("id", id)
+                .field("method", method)
+                .field("url", url)
+                .field("body", &body.as_ref().map(crate::redact::json))
+                .finish(),
+            Self::ResponseStatus { id, status } => f
+                .debug_struct("ResponseStatus")
+                .field("id", id)
+                .field("status", status)
+                .finish(),
+            Self::ResponseBody { id, body } => f
+                .debug_struct("ResponseBody")
+                .field("id", id)
+                .field("body", &crate::redact::json(body))
+                .finish(),
+            Self::ErrorBody { id, status, body } => f
+                .debug_struct("ErrorBody")
+                .field("id", id)
+                .field("status", status)
+                .field("body", &crate::redact::raw_json(body))
+                .finish(),
+            Self::SseFrame {
+                id,
+                event_type,
+                data,
+            } => f
+                .debug_struct("SseFrame")
+                .field("id", id)
+                .field("event_type", event_type)
+                .field("data", &crate::redact::raw_json(data))
+                .finish(),
+            Self::UploadStart {
+                id,
+                file_name,
+                mime_type,
+                size_bytes,
+            } => f
+                .debug_struct("UploadStart")
+                .field("id", id)
+                .field("file_name", file_name)
+                .field("mime_type", mime_type)
+                .field("size_bytes", size_bytes)
+                .finish(),
+            Self::UploadComplete { id, uri } => f
+                .debug_struct("UploadComplete")
+                .field("id", id)
+                .field("uri", uri)
+                .finish(),
+            Self::HarnessSpawn { id, path, pid } => f
+                .debug_struct("HarnessSpawn")
+                .field("id", id)
+                .field("path", path)
+                .field("pid", pid)
+                .finish(),
+            Self::WsSend { id, payload } => f
+                .debug_struct("WsSend")
+                .field("id", id)
+                .field("payload", &crate::redact::json(payload))
+                .finish(),
+            Self::WsReceive { id, payload } => f
+                .debug_struct("WsReceive")
+                .field("id", id)
+                .field("payload", &crate::redact::json(payload))
+                .finish(),
+            Self::HarnessStderr { id, line } => f
+                .debug_struct("HarnessStderr")
+                .field("id", id)
+                .field("line", line)
+                .finish(),
+        }
+    }
 }
 
 impl WireEvent {
@@ -297,12 +389,19 @@ pub(crate) fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
 /// [`REDACT_FIELDS`] and [`CONTEXT_REDACT_FIELD`]) with `"[REDACTED]"`
 /// regardless of length. Text content and other fields are preserved in full.
 fn truncate_long_fields(value: &mut serde_json::Value) {
-    redact_walk(value, false);
+    redact_walk(value, false, true);
+}
+
+/// Redacts the secret fields in a JSON value as [`truncate_long_fields`]
+/// does, truncating nothing: what `Debug` prints in place of a body
+/// (`crate::redact::json`), so `Debug` and the wire share one list.
+pub(crate) fn redact_secrets(value: &mut serde_json::Value) {
+    redact_walk(value, false, false);
 }
 
 /// Replaces every string in `value` with the placeholder, keeping object
 /// keys and structure.
-fn redact_strings(value: &mut serde_json::Value) {
+pub(crate) fn redact_strings(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(s) => *s = REDACTED_PLACEHOLDER.to_string(),
         serde_json::Value::Object(map) => map.values_mut().for_each(redact_strings),
@@ -311,9 +410,10 @@ fn redact_strings(value: &mut serde_json::Value) {
     }
 }
 
-/// The walk behind [`truncate_long_fields`]; `in_env` is true anywhere
-/// beneath an `env` key.
-fn redact_walk(value: &mut serde_json::Value, in_env: bool) {
+/// The walk behind [`truncate_long_fields`] and [`redact_secrets`]; `in_env`
+/// is true anywhere beneath an `env` key, and `truncate` shortens the long
+/// base64 fields too.
+fn redact_walk(value: &mut serde_json::Value, in_env: bool, truncate: bool) {
     match value {
         serde_json::Value::Object(map) => {
             let redact_value = in_env
@@ -332,7 +432,7 @@ fn redact_walk(value: &mut serde_json::Value, in_env: bool) {
                 } else if TRUNCATE_FIELDS.contains(&key) {
                     match val {
                         serde_json::Value::String(s) => {
-                            if s.len() > TRUNCATE_THRESHOLD {
+                            if truncate && s.len() > TRUNCATE_THRESHOLD {
                                 *s = truncate_utf8(s, TRUNCATE_THRESHOLD).into_owned();
                             }
                         }
@@ -340,16 +440,16 @@ fn redact_walk(value: &mut serde_json::Value, in_env: bool) {
                         // payloads (e.g. Evergreen `Unknown` variants
                         // preserve raw JSON under `data`); recurse so
                         // secrets nested inside are still redacted.
-                        _ => redact_walk(val, in_env),
+                        _ => redact_walk(val, in_env, truncate),
                     }
                 } else {
-                    redact_walk(val, in_env || key == "env");
+                    redact_walk(val, in_env || key == "env", truncate);
                 }
             }
         }
         serde_json::Value::Array(arr) => {
             for item in arr.iter_mut() {
-                redact_walk(item, in_env);
+                redact_walk(item, in_env, truncate);
             }
         }
         _ => {}
