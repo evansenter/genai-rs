@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::protocol;
+use super::redact::RedactedValues;
 
 /// An MCP server for the harness to connect to.
 ///
@@ -13,6 +14,9 @@ use super::protocol;
 /// let api = McpServer::http("http://localhost:8931/mcp").with_name("api");
 /// # let _ = (git, api);
 /// ```
+///
+/// `Debug` redacts the values of the environment variables and headers,
+/// keeping their names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServer {
     name: String,
@@ -23,7 +27,7 @@ pub struct McpServer {
     force_all_tools_eager: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum McpTransport {
     Stdio {
         command: String,
@@ -34,6 +38,24 @@ enum McpTransport {
         url: String,
         headers: BTreeMap<String, String>,
     },
+}
+
+impl std::fmt::Debug for McpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stdio { command, args, env } => f
+                .debug_struct("Stdio")
+                .field("command", command)
+                .field("args", args)
+                .field("env", &RedactedValues(env))
+                .finish(),
+            Self::Http { url, headers } => f
+                .debug_struct("Http")
+                .field("url", url)
+                .field("headers", &RedactedValues(headers))
+                .finish(),
+        }
+    }
 }
 
 impl McpServer {

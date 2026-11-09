@@ -14,8 +14,9 @@
 //! what you have" — and record the cancellation yourself, because nothing
 //! in the response distinguishes a halted turn from a finished one.
 //!
-//! (`AntigravityError::Turn` is still the outcome when the *harness*
-//! cancels a turn of its own accord. That is a different event.)
+//! (`AntigravityError::Turn` of kind `TurnFailure::Cancelled` is still the
+//! outcome when the *harness* cancels a turn of its own accord. That is a
+//! different event.)
 //!
 //! What this example demonstrates that the others don't:
 //!

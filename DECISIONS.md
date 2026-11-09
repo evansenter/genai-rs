@@ -1826,6 +1826,14 @@ its major version part of genai-rs's; a caller who needs it downcasts.
 `WebSocket { message, source }`. A `tokio-tungstenite` upgrade changes
 what a downcast finds, not genai-rs's API.
 
+*Amended 2026-11-09 (I-6).* `Display` no longer carries the cause's
+text: an error whose `source()` returns the cause leaves it to the chain,
+so a reporter that walks `source()` (anyhow, eyre, a `while let` loop)
+prints it once, not twice. A caller that prints only the top error now
+sees what was being done, not why; walk the chain for that. The connect
+failure `spawn()` reports as `InitFailed` keeps this error as its source
+(D-NEXT-I2).
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
@@ -2143,6 +2151,10 @@ of 800 lines, changes on three lines and grows by none: the two
 carries the parse error's text in `message`, so a printed error still
 says what failed.
 
+*Amended 2026-11-09 (I-6).* `Protocol`'s and `Io`'s `Display` no longer
+carry the source's text, as D-049's amendment gives for `WebSocket`:
+`message` says what was being done, and `source()` says why.
+
 ---
 
 ## D-057 — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
@@ -2381,3 +2393,136 @@ costs two rewritten closures and one reasoned entry.
 literal, even where a constructor would be shorter. The oracle's webhook
 and trigger updates send every state, event and status, one update per
 state or status.
+
+---
+
+## D-NEXT-I2 — A failed Antigravity turn names its kind, and whether the session survived (2026-11-09)
+
+**Context.** `AntigravityError::Turn(String)` carried every turn
+failure, so a caller had to read the message ("model backend error (HTTP
+400)") to know whether to respawn, against the guide's "match on
+variants, never on message text", and the scripted tests matched on that
+text. `spawn()` turned a failed WebSocket connect into `InitFailed` with
+the error's text and no `source()`. And `WebSocket`, `Protocol` and `Io`
+printed their source's text in `Display` while also returning it from
+`source()`, so a chain reporter printed each cause twice (#504's I-6).
+
+**Decision.**
+- `Turn { kind: TurnFailure, message }`. `TurnFailure` is
+  `#[non_exhaustive]`, `Copy`: `ModelBackend { status }`, `Denied`,
+  `Cancelled`, `Trajectory` and `Hook`. The kinds follow what the turn
+  loop can tell apart without reading the harness's text:
+  - `ModelBackend` for a system error step with an HTTP error status:
+    400, 401 and 403 fail the turn at once, as before; any other (a 503
+    whose retries ran out) is remembered, and the error that then ends
+    the main trajectory is that failure, with its status. The main
+    trajectory's first error is remembered too, so it fails the turn
+    when it arrives before the terminal update: after a delegation,
+    0.1.23 reports a 503 while waiting for subagents and then goes idle
+    with no error, and `chat` returned `Ok` with the error in
+    `errors()` on a session that was gone. The step's
+    `httpCode` holds gRPC codes too (a failed MCP load carries 2), so
+    only 400 to 599 count.
+  - `Denied` for a turn whose pre-turn hook this client answered with a
+    denial, by whichever failing state the trajectory then reaches. The
+    hook's verdict is recorded on the turn, rather than the reason
+    matched in the harness's message.
+  - `Cancelled` for a main trajectory cancelled with no denial;
+    `Trajectory` for one that ended with an error otherwise; `Hook`
+    for a hook thread that did not start or ended without a result.
+- `TurnFailure::ends_session()` is true for `ModelBackend` and
+  `Trajectory`. Scripted against harness 0.1.23: 400, 401, 403, a 503
+  with no retries, and an MCP server slower than its timeout all end the
+  harness's run ("executor run failed") and close the WebSocket, so the
+  next call fails with `WebSocket` or `ConnectionClosed`; a pre-turn
+  denial keeps the session. The tests assert each. `Cancelled` and
+  `Hook` are not taken to end it: no cancellation other than a denial's
+  was seen, and a hook failure is this client's, after which the next
+  turn halts the harness as for any turn left unfinished.
+- `message` is the harness's text (or the hook's reason) alone; the
+  error's `Display` names the kind: `agent turn failed (denied by the
+  pre-turn hook): <reason>`.
+- `InitFailed` has a `source: Option<Box<dyn Error + Send + Sync>>`:
+  the `WebSocket` error of a connect that failed, or the error reading
+  the harness's initialization reply. `init_failed` and `init_failed_by`
+  construct it, so `agent.rs` changes on its constructor lines and grows
+  by none.
+- No variant's `Display` repeats its source's text (D-049 and D-056,
+  amended).
+
+Rejected: a kind for an MCP load failure. The only signal is the
+harness's message text, which is what typed kinds exist to stop callers
+from parsing; it stays `Trajectory`, whose message names the server.
+Rejected: `ends_session()` on `AntigravityError` itself. Whether a
+`WebSocket` or `ConnectionClosed` error leaves an agent usable is
+already plain (it does not), and the question callers asked was about a
+failed turn.
+
+**Consequences.** Breaking, with a CHANGELOG migration: a
+`Turn(message)` pattern becomes `Turn { kind, message }`, and
+`InitFailed { message, stderr }` gains `source` (match with `..`). A
+caller that printed only the top error of a `WebSocket`, `Protocol`,
+`Io` or `InitFailed` sees the step that failed, not the cause. The
+session-ending claim is the 0.1.23 harness's; a harness bump that keeps
+a session after one of these shows up as a failing scripted test.
+
+---
+
+## D-NEXT-I2-a — A harness path the caller names is used as given (2026-11-09)
+
+**Context.** When the path given with `with_harness_path` or
+`ANTIGRAVITY_HARNESS_PATH` did not exist, discovery added it to
+`searched` and went on to site-packages and `PATH`, so a typo silently
+ran a different harness. `with_harness_path`'s rustdoc said it bypassed
+discovery, and the Python SDK returns the variable's path as given
+(#504's I-8).
+
+**Decision.** A named path is the harness or nothing: when it is not a
+file, discovery returns `HarnessNotFound` listing that one path, marked
+"(not a file)", and searches nothing else. The explicit path wins over
+the variable, even when the variable names a real binary, as it always
+did. An empty `ANTIGRAVITY_HARNESS_PATH` counts as unset, as it does in
+Python, where the empty string is false. The error's message tells the
+caller to fix that path (`with_harness_path`, or the variable, which can
+also be unset), not to install the harness or set the variable, which
+would not be read.
+
+Rejected: a warning and fall-through. The fall-through is the bug: the
+harness it finds may be another version, with another protocol.
+
+**Consequences.** Breaking for a setup that relied on the fall-through:
+fix or remove the path.
+
+---
+
+## D-NEXT-I2-b — Antigravity types that hold a secret print it redacted (2026-11-09)
+
+**Context.** The crate's rule is that a type holding a secret prints it
+redacted (`Client`, `CredentialConfig`), so `dbg!` or
+`tracing::debug!(?value)` cannot undo the wire inspector's redaction.
+`protocol::GeminiApiEndpoint` printed its API key, and it,
+`VertexEndpoint`, `McpHttpTransport`, `McpStdioTransport` and
+`McpServer` printed header and environment values; through
+`HarnessOptions`, `AgentBuilder`'s `Debug` printed the model headers and
+the harness environment (#504's I-9, the Antigravity half).
+
+**Decision.** Hand-written `Debug` for each, through
+`src/antigravity/redact.rs`: an API key prints as `"[REDACTED]"` (the
+crate's spelling), and a header or environment map keeps its names and
+redacts every value, as the wire inspector redacts `env`, `headers` and
+`httpHeaders` whole. The crate-private handshake types get the same
+(`InputConfig`'s environment, `OutputConfig`'s per-process token). Each
+impl destructures its struct without `..`, so a new field fails to
+compile until it is placed. `HarnessConfig`, `ModelConfig`,
+`McpServerConfig` and `InitializeConversationEvent` keep derived `Debug`,
+which reaches the redacting impls. The Python SDK's `AgentConfig` is
+`HarnessConfig` on the wire here, so the sentinel test formats it, the
+init event and `AgentBuilder`, beside each type above.
+
+Not redacted: MCP command arguments and URLs, and the Gemini base URL.
+They are not secrets by design, and hiding them would hide what a debug
+print is for; a credential belongs in a header or the environment.
+
+**Consequences.** `Debug` output changes for these types; their
+`Serialize` output, which the harness needs, does not.
+

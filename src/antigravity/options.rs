@@ -191,7 +191,11 @@ impl RetryConfig {
     }
 
     /// Retries of a model call that failed with a transient error. `0`
-    /// fails the turn on the first one.
+    /// fails the turn on the first one, as a
+    /// [`TurnFailure::ModelBackend`](super::TurnFailure::ModelBackend),
+    /// which ends the session too
+    /// ([`ends_session`](super::TurnFailure::ends_session)): spawn a new
+    /// agent after it.
     #[must_use]
     pub fn with_max_api_retries(mut self, retries: u32) -> Self {
         self.max_api_retries = Some(retries);

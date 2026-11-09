@@ -48,6 +48,7 @@ impl AntigravityAgent {
                 }
                 None => TurnDecision::Allow,
             };
+            turn.pre_turn_denied = matches!(decision, TurnDecision::Deny { .. });
             response.empty_result = None;
             response.pre_turn_result = Some(pre_turn_verdict(decision));
         } else if let Some(args) = &request.post_turn_args {

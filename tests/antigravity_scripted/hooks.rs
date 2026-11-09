@@ -104,10 +104,12 @@ async fn test_scripted_pre_turn_hook_can_refuse_a_turn() {
         .await
         .expect("spawn");
     let err = agent.chat("a forbidden request").await.unwrap_err();
-    assert!(
-        matches!(&err, AntigravityError::Turn(m) if m.contains("PRE-TURN-DENIED-9920")),
-        "{err:?}"
-    );
+    let AntigravityError::Turn { kind, message } = &err else {
+        panic!("a refused turn fails with Turn: {err:?}");
+    };
+    assert_eq!(*kind, TurnFailure::Denied);
+    // The hook's reason is carried.
+    assert!(message.contains("PRE-TURN-DENIED-9920"), "{message}");
     assert!(fake.requests().is_empty(), "a refused turn calls no model");
     // The agent stays usable.
     let response = agent.chat("an allowed request").await.expect("turn");
@@ -233,7 +235,7 @@ async fn test_scripted_lifecycle_hooks_skip_a_drained_turn() {
         let log: Arc<Mutex<Vec<String>>> = Arc::default();
         let (post, stop) = (Arc::clone(&log), Arc::clone(&log));
         let mut agent = scripted_agent(&fake)
-            .with_tool_service(Arc::new(HangingService(started.clone())))
+            .add_tool_service(Arc::new(HangingService(started.clone())))
             .with_turn_timeout(budget)
             .on_post_turn(move |turn| {
                 post.lock()

@@ -40,7 +40,7 @@ use futures_util::StreamExt;
 use genai_rs::antigravity::{
     AgentBuilder, AgentEvent, AntigravityAgent, AntigravityError, BuiltinTool, Capabilities,
     ChatResponse, PreToolDecision, SUPPORTED_HARNESS_VERSION, ToolDecision, ToolInvocation,
-    ToolOutcome, TriggerConfig, policy,
+    ToolOutcome, TriggerConfig, TurnFailure, policy,
 };
 use genai_rs::{CallableFunction, FunctionDeclaration, FunctionFuture, ToolService};
 use genai_rs_macros::tool;
@@ -561,37 +561,49 @@ async fn test_scripted_trigger_turn_reaches_the_model_and_chat_still_works() {
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
 async fn test_scripted_model_bad_request_fails_the_turn_and_ends_the_session() {
-    let fake = FakeGemini::start(vec![
-        ModelTurn::error(400, "scripted-bad-request-4410"),
-        ModelTurn::text("never-reached-8812"),
-    ])
-    .await;
-    let mut agent = scripted_agent(&fake).spawn().await.expect("spawn");
+    for status in [400, 401, 403] {
+        let fake = FakeGemini::start(vec![
+            ModelTurn::error(status, "scripted-bad-request-4410"),
+            ModelTurn::text("never-reached-8812"),
+        ])
+        .await;
+        let mut agent = scripted_agent(&fake).spawn().await.expect("spawn");
 
-    let err = agent.chat("this request is bad").await.unwrap_err();
-    let AntigravityError::Turn(message) = &err else {
-        panic!("a 400 from the model backend must fail the turn, got {err:?}");
-    };
-    assert!(message.contains("HTTP 400"), "{message}");
-    assert!(message.contains("scripted-bad-request-4410"), "{message}");
+        let err = agent.chat("this request is bad").await.unwrap_err();
+        let AntigravityError::Turn { kind, message } = &err else {
+            panic!("a {status} from the model backend must fail the turn, got {err:?}");
+        };
+        assert_eq!(
+            *kind,
+            TurnFailure::ModelBackend {
+                status: status.into()
+            }
+        );
+        assert!(kind.ends_session(), "{kind:?}");
+        // The backend's own message is carried.
+        assert!(message.contains("scripted-bad-request-4410"), "{message}");
 
-    // The harness ends the session on a fatal model error, so the next
-    // call fails on the connection (the send, or the read after it)
-    // instead of running a turn: AntigravityError::Turn's rustdoc and the
-    // guide's Errors section tell the caller to respawn.
-    let next = tokio::time::timeout(Duration::from_secs(30), agent.chat("try again"))
-        .await
-        .expect("the next call must fail promptly, not wait out the turn timeout")
-        .unwrap_err();
-    assert!(
-        matches!(
-            next,
-            AntigravityError::WebSocket { .. } | AntigravityError::ConnectionClosed { .. }
-        ),
-        "the call after a fatal model error must fail on the connection, got {next:?}"
-    );
-    assert_eq!(fake.requests().len(), 1, "no second model call");
-    let _ = agent.shutdown().await;
+        // The harness ends the session on a fatal model error, so the next
+        // call fails on the connection (the send, or the read after it)
+        // instead of running a turn, as `ends_session()` says.
+        let next = tokio::time::timeout(Duration::from_secs(30), agent.chat("try again"))
+            .await
+            .expect("the next call must fail promptly, not wait out the turn timeout")
+            .unwrap_err();
+        assert!(
+            matches!(
+                next,
+                AntigravityError::WebSocket { .. } | AntigravityError::ConnectionClosed { .. }
+            ),
+            "the call after a fatal {status} must fail on the connection, got {next:?}"
+        );
+        assert_eq!(
+            fake.requests().len(),
+            1,
+            "no second model call after a {status}"
+        );
+        let _ = agent.shutdown().await;
+    }
 }
 
 #[tokio::test]
@@ -707,7 +719,7 @@ async fn test_scripted_turn_deadline_bounds_a_hung_custom_tool() {
         ])
         .await;
         let mut agent = scripted_agent(&fake)
-            .with_tool_service(Arc::new(HangingService(started.clone())))
+            .add_tool_service(Arc::new(HangingService(started.clone())))
             .with_turn_timeout(budget)
             .spawn()
             .await

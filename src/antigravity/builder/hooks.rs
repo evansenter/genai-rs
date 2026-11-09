@@ -129,7 +129,8 @@ impl AgentBuilder {
     /// Consulted before each turn starts, with the user's message. A
     /// [`TurnDecision::Deny`] refuses the turn: `chat` fails with
     /// [`AntigravityError::Turn`](crate::antigravity::AntigravityError::Turn)
-    /// carrying the reason, and the agent stays usable.
+    /// of kind [`TurnFailure::Denied`](crate::antigravity::TurnFailure::Denied),
+    /// the reason as its message, and the agent stays usable.
     #[must_use]
     pub fn on_pre_turn(
         mut self,

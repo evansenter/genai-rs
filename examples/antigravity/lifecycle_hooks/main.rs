@@ -23,8 +23,8 @@
 //!   condition the model cannot meet keeps the turn running until the
 //!   deadline.
 //! - `on_pre_turn` can refuse a turn with `TurnDecision::deny(reason)`; the
-//!   turn then fails with `AntigravityError::Turn` and the agent stays
-//!   usable.
+//!   turn then fails with `AntigravityError::Turn` of kind
+//!   `TurnFailure::Denied`, and the agent stays usable.
 //! - `create_file` is write-capable, so `spawn()` needs a policy or a
 //!   pre-tool hook. The harness's workspace containment (on by default)
 //!   keeps the write inside the workspace.

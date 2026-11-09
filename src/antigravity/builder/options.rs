@@ -5,11 +5,13 @@
 use std::collections::BTreeMap;
 
 use super::AgentBuilder;
+use crate::antigravity::redact::RedactedValues;
 use crate::antigravity::{Budget, InlineSkill, RetryConfig, SessionContinuation};
 use crate::{ServiceTier, ThinkingLevel};
 
 /// The options these setters collect, read by `validate.rs` and `wire.rs`.
-#[derive(Debug, Clone, Default)]
+/// `Debug` redacts the model headers' and the harness environment's values.
+#[derive(Clone, Default)]
 pub(super) struct HarnessOptions {
     pub(super) thinking_level: Option<ThinkingLevel>,
     pub(super) service_tier: Option<ServiceTier>,
@@ -27,6 +29,47 @@ pub(super) struct HarnessOptions {
     pub(super) inline_skills: Vec<InlineSkill>,
     pub(super) session_continuation: Option<SessionContinuation>,
     pub(super) harness_env: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for HarnessOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            thinking_level,
+            service_tier,
+            max_output_tokens,
+            image_model,
+            model_headers,
+            max_subagent_depth,
+            allowed_subagents,
+            define_subagent_tool,
+            budget,
+            retry,
+            compaction_threshold,
+            tool_output_truncation,
+            mcp_max_output_bytes,
+            inline_skills,
+            session_continuation,
+            harness_env,
+        } = self;
+        f.debug_struct("HarnessOptions")
+            .field("thinking_level", thinking_level)
+            .field("service_tier", service_tier)
+            .field("max_output_tokens", max_output_tokens)
+            .field("image_model", image_model)
+            .field("model_headers", &RedactedValues(model_headers))
+            .field("max_subagent_depth", max_subagent_depth)
+            .field("allowed_subagents", allowed_subagents)
+            .field("define_subagent_tool", define_subagent_tool)
+            .field("budget", budget)
+            .field("retry", retry)
+            .field("compaction_threshold", compaction_threshold)
+            .field("tool_output_truncation", tool_output_truncation)
+            .field("mcp_max_output_bytes", mcp_max_output_bytes)
+            .field("inline_skills", inline_skills)
+            .field("session_continuation", session_continuation)
+            .field("harness_env", &RedactedValues(harness_env))
+            .finish()
+    }
 }
 
 impl HarnessOptions {

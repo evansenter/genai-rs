@@ -174,15 +174,70 @@ fn test_discovery_falls_back_to_path() {
 }
 
 #[test]
-fn test_discovery_missing_explicit_falls_through() {
+fn test_discovery_missing_named_path_is_not_found() {
+    // A path named by the builder or the environment variable is the
+    // harness: when it is missing, discovery fails naming it, and never
+    // runs the harness the rest of the search would find instead.
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("nope/localharness");
+    let found_elsewhere = dir.path().join("env/localharness");
+    let path_dir = dir.path().join("bin");
+    touch_executable(&found_elsewhere);
+    touch_executable(&path_dir.join("localharness"));
+    // (explicit, env, what the location names, the fix the message gives)
+    let env_fix = format!("Point {HARNESS_PATH_ENV} at");
+    let cases = [
+        (
+            Some(&missing),
+            None,
+            "explicit path",
+            "Point `with_harness_path` at",
+        ),
+        // The explicit path wins over the variable, even a valid one.
+        (
+            Some(&missing),
+            Some(&found_elsewhere),
+            "explicit path",
+            "Point `with_harness_path` at",
+        ),
+        (None, Some(&missing), HARNESS_PATH_ENV, env_fix.as_str()),
+    ];
+    for (explicit, env, named, fix) in cases {
+        let err = discover_in(
+            HARNESS_FILE_NAMES,
+            explicit.map(PathBuf::as_path),
+            env.map(PathBuf::as_path),
+            no_python(),
+            Some(path_dir.as_os_str()),
+        )
+        .unwrap_err();
+        let AntigravityError::HarnessNotFound { searched } = &err else {
+            panic!("expected HarnessNotFound, got {err:?}");
+        };
+        assert_eq!(searched.len(), 1, "{searched:?}");
+        assert!(
+            searched[0].contains(named) && searched[0].contains(&missing.display().to_string()),
+            "{searched:?}"
+        );
+        // The message points at the path that was named, not at an
+        // install or a variable that would not be read.
+        let message = err.to_string();
+        assert!(
+            message.contains(fix) && !message.contains("pip install"),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn test_discovery_treats_an_empty_variable_as_unset() {
+    let dir = tempfile::tempdir().unwrap();
     let path_dir = dir.path().join("bin");
     touch_executable(&path_dir.join("localharness"));
     let found = discover_in(
         HARNESS_FILE_NAMES,
-        Some(&missing),
         None,
+        Some(Path::new("")),
         [],
         Some(path_dir.as_os_str()),
     )
@@ -528,17 +583,14 @@ fn test_version_mismatch_notes_only_a_known_different_version() {
     assert!(note.contains("0.1.18") && note.contains(SUPPORTED_HARNESS_VERSION));
 
     // An init failure carries the note; other errors are untouched.
-    let init = AntigravityError::InitFailed {
-        message: "unknown field \"runWorkflow\"".to_string(),
-        stderr: String::new(),
-    }
-    .with_version_note(Some("0.1.18"));
+    let init = AntigravityError::init_failed("unknown field \"runWorkflow\"", String::new())
+        .with_version_note(Some("0.1.18"));
     let AntigravityError::InitFailed { message, .. } = init else {
         panic!("variant must be kept");
     };
     assert!(message.starts_with("unknown field") && message.contains("0.1.18"));
-    let other = AntigravityError::Turn("x".to_string()).with_version_note(Some("0.1.18"));
-    assert!(matches!(other, AntigravityError::Turn(m) if m == "x"));
+    let other = AntigravityError::Config("x".to_string()).with_version_note(Some("0.1.18"));
+    assert!(matches!(other, AntigravityError::Config(m) if m == "x"));
 }
 
 #[test]
@@ -599,12 +651,11 @@ fn test_harness_command_adds_the_configured_env() {
 #[test]
 fn test_discovery_error_lists_searched_locations() {
     let dir = tempfile::tempdir().unwrap();
-    let missing = dir.path().join("nope/localharness");
     let site = dir.path().join("site");
     std::fs::create_dir_all(&site).unwrap();
     let err = discover_in(
         HARNESS_FILE_NAMES,
-        Some(&missing),
+        None,
         None,
         [vec![site.clone()]],
         Some(std::ffi::OsStr::new("/definitely/not/a/dir")),
@@ -613,7 +664,7 @@ fn test_discovery_error_lists_searched_locations() {
     let AntigravityError::HarnessNotFound { searched } = &err else {
         panic!("expected HarnessNotFound, got {err:?}");
     };
-    assert!(searched.iter().any(|s| s.contains("explicit path")));
+    assert!(searched.iter().any(|s| s.contains(HARNESS_PATH_ENV)));
     assert!(searched.iter().any(|s| s.contains(SITE_PACKAGES_SUFFIX)));
     assert!(searched.iter().any(|s| s.contains("PATH")));
     // The rendered error must point users at the fix.

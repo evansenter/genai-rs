@@ -15,7 +15,7 @@ use super::protocol::{
 use super::turn::{HookDenial, TurnState};
 use super::{
     AgentEvent, AntigravityAgent, AntigravityError, PreToolDecision, ToolDecision, ToolInvocation,
-    ToolOutcome, streaming,
+    ToolOutcome, TurnFailure, streaming,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -388,12 +388,18 @@ where
             // and then nobody wants the result.
             let _ = sender.send(outcome);
         })
-        .map_err(|e| AntigravityError::Turn(format!("could not start a hook's thread: {e}")))?;
+        .map_err(|e| {
+            AntigravityError::turn(
+                TurnFailure::Hook,
+                format!("could not start a hook's thread: {e}"),
+            )
+        })?;
     match receiver.await {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(panic)) => std::panic::resume_unwind(panic),
-        Err(_) => Err(AntigravityError::Turn(
-            "a hook's thread ended without a result".to_string(),
+        Err(_) => Err(AntigravityError::turn(
+            TurnFailure::Hook,
+            "a hook's thread ended without a result",
         )),
     }
 }

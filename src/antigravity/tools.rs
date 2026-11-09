@@ -17,7 +17,7 @@ use super::protocol;
 /// - `add_tool(FunctionDeclaration)` — declarations from the `#[tool]`
 ///   macro; execution resolves through the crate's global function registry
 ///   by name (exactly like the Interactions-API auto-function path).
-/// - `with_tool_service(Arc<dyn ToolService>)` — stateful tools carrying
+/// - `add_tool_service(Arc<dyn ToolService>)` — stateful tools carrying
 ///   their own [`CallableFunction`] implementations.
 ///
 /// Only tools registered here are declared to the harness, and only

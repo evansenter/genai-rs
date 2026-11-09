@@ -22,8 +22,9 @@ turn resolves normally, carrying whatever text it had produced. Nothing in
 the response distinguishes a halted turn from a finished one — record that
 on your side if it matters.
 
-(`AntigravityError::Turn` is still the outcome when the *harness* cancels
-a turn of its own accord. Different event.)
+(`AntigravityError::Turn` of kind `TurnFailure::Cancelled` is still the
+outcome when the *harness* cancels a turn of its own accord. Different
+event.)
 
 ## What it covers that the other examples don't
 

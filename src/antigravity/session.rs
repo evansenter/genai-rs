@@ -351,7 +351,7 @@ mod tests {
         );
         let chained = std::error::Error::source(&error).expect("source() is the transport error");
         assert_eq!(chained.to_string(), source.to_string());
-        assert!(error.to_string().ends_with(&source.to_string()), "{error}");
+        assert!(!error.to_string().contains(&source.to_string()), "{error}");
     }
 
     #[tokio::test(start_paused = true)]
