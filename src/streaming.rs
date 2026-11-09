@@ -141,10 +141,10 @@ pub enum AutoFunctionStreamChunk {
     /// Unknown event type (for forward compatibility).
     ///
     /// A round's SSE event of a type this crate does not recognize, passed on
-    /// as [`StreamChunk::Unknown`](crate::StreamChunk::Unknown) carries it:
-    /// `chunk_type` is the event's type and `data` its JSON. Deserializing
-    /// the chunk's JSON form with an unrecognized `chunk_type` gives one too,
-    /// so a log written by a later version still reads.
+    /// from the [`StreamChunk::Unknown`](crate::StreamChunk::Unknown) it was
+    /// read as: `chunk_type` is the event's type and `data` its JSON.
+    /// Deserializing the chunk's JSON form with an unrecognized `chunk_type`
+    /// gives one too, so a log written by a later version still reads.
     ///
     /// An unknown event does not end the loop: the round goes on to its
     /// `interaction.completed`.

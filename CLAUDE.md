@@ -233,7 +233,10 @@ reaches the wire must use a real id.
   for tool execution.
 - Logging (`docs/LOGGING_STRATEGY.md`): `warn` for recoverable issues
   including Evergreen unknowns, `debug` for lifecycle; user content and
-  request bodies only at `debug`; API keys always redacted.
+  request bodies only at `debug`; API keys always redacted. A type that
+  holds a secret `LOUD_WIRE` redacts has a hand-written `Debug` printing
+  `[REDACTED]` (`src/redact.rs`) and a row in its sentinel test
+  (D-NEXT-I4-a).
 - Breaking changes are fine when they simplify the API (D-007); no
   compatibility shims. Pre-1.0.
 
