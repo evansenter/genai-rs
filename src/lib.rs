@@ -412,10 +412,12 @@ mod streaming_tests;
 // default feature set and strict mode). Not included: CLAUDE.md files,
 // CHANGELOG.md, and the maintainer notes docs/INTERACTIONS_API_GAP.md and
 // docs/ANTIGRAVITY_BRIDGE_DESIGN.md, which Cargo.toml's `include` leaves out
-// of the published crate. `tests/doc_guards/` fails on any other docs/*.md,
-// or top-level Markdown file with a Rust block, left out of this list
-// (`NOT_DOCTESTED` has each exclusion's reason), and check_dated_facts.sh on
-// a Rust block in a file left out that is not `ignore`d with a reason.
+// of the published crate. `tests/doc_guards/` fails on any other Markdown
+// file under docs/, or top-level one with a Rust block, left out of this
+// list (`NOT_DOCTESTED` has each exclusion's reason), and
+// check_dated_facts.sh on a Rust block in a file left out that is not
+// `ignore`d with a reason. Both read only an include in code (not a
+// comment) under no `cfg` the doctest run leaves out.
 
 #[cfg(doctest)]
 mod doc_tests {

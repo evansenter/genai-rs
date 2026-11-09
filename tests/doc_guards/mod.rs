@@ -1,16 +1,19 @@
 //! Guards that keep two docs facts true as the tree grows, for
 //! `tests/ci_coverage.rs`.
 //!
-//! - **The test-kind table** at the top of `docs/TESTING.md` names every
+//! - **The test-kind table** at the top of `docs/TESTING.md` places every
 //!   top-level test crate in exactly one row, under the right kind: a crate
 //!   with a `#[ignore = "Requires API key"]` test in a row whose "Needs a
 //!   key" cell says yes, every other crate in one that says no, and a guard
-//!   (a crate that reads the repository and never names the library) in
-//!   the Guards row. A new test file left out of the table fails.
-//! - **Every guide is doctested.** Each `docs/*.md`, and each top-level
-//!   Markdown file that holds a Rust block, is included in `src/lib.rs`'s
-//!   `doc_tests` module, so its blocks compile in CI, unless
-//!   [`NOT_DOCTESTED`] gives the reason it is not.
+//!   (a crate that reads the repository and uses the library for nothing
+//!   but a constant) in the Guards row. A new test file left out of the
+//!   table fails. A file named inside parentheses is a reference to its
+//!   row, not a placement.
+//! - **Every guide is doctested.** Each Markdown file under `docs/`, and
+//!   each top-level one that holds a Rust block, is included in
+//!   `src/lib.rs`'s `doc_tests` module (in code, under no `cfg` the doctest
+//!   run leaves out), so its blocks compile in CI, unless [`NOT_DOCTESTED`]
+//!   gives the reason it is not.
 //!   `.github/scripts/check_dated_facts.sh` covers the other side: a Rust
 //!   block in a Markdown file that is not doctested must be `ignore`d with
 //!   a reason.
@@ -29,27 +32,54 @@ struct TestCrate {
     name: String,
     /// Has a test ignored with [`LIVE_REASON`].
     live: bool,
-    /// Never names `genai_rs` (or the macros crate), nor drives trybuild:
-    /// it reads the repository rather than exercising the library.
+    /// Does not use the library ([`uses_library`]): it reads the
+    /// repository rather than exercising the library.
     guard: bool,
 }
 
-/// Whether Rust source `text` names any of `idents` as a token: comments
-/// and string literals do not count, so a message that mentions
-/// `genai_rs::DEFAULT_MODEL` is not a use of the crate.
-fn names_ident(text: &str, idents: &[&str]) -> bool {
+/// Whether Rust source `text` uses the library: names `genai_rs`,
+/// `genai_rs_macros` or `trybuild` as a token, except to read one of the
+/// library's constants (`genai_rs::DEFAULT_MODEL`), which a guard may
+/// check the repository against. Comments and string literals do not
+/// count, so a message that mentions `genai_rs::Client` is not a use.
+fn uses_library(text: &str) -> bool {
     use syn::buffer::Cursor;
     use syn::parse::Parser;
 
-    fn walk(mut cursor: Cursor<'_>, idents: &[&str]) -> bool {
+    /// Whether `cursor` starts `::NAME`, a SCREAMING_SNAKE_CASE constant
+    /// with no path after it.
+    fn reads_constant(cursor: Cursor<'_>) -> bool {
+        let Some((first, rest)) = cursor.punct() else {
+            return false;
+        };
+        let Some((second, rest)) = rest.punct() else {
+            return false;
+        };
+        let Some((ident, rest)) = rest.ident() else {
+            return false;
+        };
+        let name = ident.to_string();
+        first.as_char() == ':'
+            && second.as_char() == ':'
+            && name.chars().any(|c| c.is_ascii_uppercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            && rest.punct().is_none_or(|(next, _)| next.as_char() != ':')
+    }
+
+    fn walk(mut cursor: Cursor<'_>) -> bool {
         while !cursor.eof() {
             if let Some((ident, next)) = cursor.ident() {
-                if idents.iter().any(|name| ident == name) {
+                if ident == "genai_rs_macros"
+                    || ident == "trybuild"
+                    || (ident == "genai_rs" && !reads_constant(next))
+                {
                     return true;
                 }
                 cursor = next;
             } else if let Some((inside, _, _, next)) = cursor.any_group() {
-                if walk(inside, idents) {
+                if walk(inside) {
                     return true;
                 }
                 cursor = next;
@@ -64,7 +94,7 @@ fn names_ident(text: &str, idents: &[&str]) -> bool {
 
     let parser = |input: syn::parse::ParseStream<'_>| {
         input.step(|cursor| {
-            let found = walk(*cursor, idents);
+            let found = walk(*cursor);
             let mut rest = *cursor;
             while let Some((_, next)) = rest.token_tree() {
                 rest = next;
@@ -89,30 +119,30 @@ fn test_crates(dir: &Path) -> Vec<TestCrate> {
             let live = texts
                 .iter()
                 .any(|text| ignore_reasons(text).any(|reason| reason == LIVE_REASON));
-            let uses_library = texts
-                .iter()
-                .any(|text| names_ident(text, &["genai_rs", "genai_rs_macros", "trybuild"]));
             TestCrate {
                 name,
                 live,
-                guard: !uses_library,
+                guard: !texts.iter().any(|text| uses_library(text)),
             }
         })
         .collect()
 }
 
-/// One row of the test-kind table: its kind, whether it needs a key, and
-/// the test crates its "Where" cell names.
+/// One row of the test-kind table: its kind, whether it needs a key, the
+/// test crates its "Where" cell places there, and the ones it only refers
+/// to.
 #[derive(Debug)]
 struct KindRow {
     kind: String,
     needs_key: bool,
     crates: Vec<String>,
+    references: Vec<String>,
 }
 
 /// The rows of the table under `## Test kinds` in `markdown`. A crate is a
-/// backticked `tests/<name>.rs`, or a bare `<name>.rs` with no directory,
-/// in the "Where" cell.
+/// backticked `tests/<name>.rs` in the "Where" cell, or a bare `<name>.rs`
+/// in a cell that starts ``In `tests/`:``. Named inside parentheses, it is
+/// a reference (`(guarded by tests/ci_coverage.rs)`), not a placement.
 fn kind_rows(markdown: &str) -> Vec<KindRow> {
     let section = markdown
         .split("\n## Test kinds\n")
@@ -138,20 +168,43 @@ fn kind_rows(markdown: &str) -> Vec<KindRow> {
                 Some("No") => false,
                 _ => panic!("a \"Needs a key\" cell starts with neither Yes nor No: {line}"),
             };
-            let crates = row[1]
-                .split('`')
-                .skip(1)
-                .step_by(2)
-                .filter_map(|code| {
-                    let name = code.strip_prefix("tests/").unwrap_or(code);
-                    let stem = name.strip_suffix(".rs")?;
-                    (!stem.contains(['/', '*', '<'])).then(|| stem.to_string())
-                })
-                .collect();
+            let in_tests = row[1].starts_with("In `tests/`:");
+            let (mut crates, mut references) = (Vec::new(), Vec::new());
+            let mut depth = 0usize;
+            // Even segments are prose, odd ones code spans.
+            for (i, segment) in row[1].split('`').enumerate() {
+                if i % 2 == 0 {
+                    for c in segment.chars() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => depth = depth.saturating_sub(1),
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+                let name = match segment.strip_prefix("tests/") {
+                    Some(name) => name,
+                    None if in_tests => segment,
+                    None => continue,
+                };
+                let Some(stem) = name.strip_suffix(".rs") else {
+                    continue;
+                };
+                if stem.contains(['/', '*', '<']) {
+                    continue;
+                }
+                if depth > 0 {
+                    references.push(stem.to_string());
+                } else {
+                    crates.push(stem.to_string());
+                }
+            }
             KindRow {
                 kind: row[0].clone(),
                 needs_key,
                 crates,
+                references,
             }
         })
         .collect()
@@ -176,12 +229,16 @@ fn test_kind_problems(rows: &[KindRow], crates: &[TestCrate]) -> Vec<String> {
     let mut placed: BTreeMap<&str, Vec<&KindRow>> = BTreeMap::new();
     for row in rows {
         for name in &row.crates {
-            match known.get(name.as_str()) {
-                Some(found) => placed.entry(found.name.as_str()).or_default().push(row),
-                None => problems.push(format!(
+            if let Some(found) = known.get(name.as_str()) {
+                placed.entry(found.name.as_str()).or_default().push(row);
+            }
+        }
+        for name in row.crates.iter().chain(&row.references) {
+            if !known.contains_key(name.as_str()) {
+                problems.push(format!(
                     "the {:?} row names tests/{name}.rs, which is not a top-level test file",
                     row.kind
-                )),
+                ));
             }
         }
     }
@@ -217,7 +274,7 @@ fn test_kind_problems(rows: &[KindRow], crates: &[TestCrate]) -> Vec<String> {
         let in_guards = row.kind == "Guards";
         if found.guard && !in_guards {
             problems.push(format!(
-                "tests/{}.rs never names the library, so it is a guard; list it in the Guards row, not {:?}",
+                "tests/{}.rs uses the library for nothing but a constant, so it is a guard; list it in the Guards row, not {:?}",
                 found.name, row.kind
             ));
         }
@@ -310,7 +367,7 @@ fn the_test_kind_check_finds_each_drift() {
             table
                 .replace("`tests/guard.rs`", "`tests/offline.rs`")
                 .replace("`tests/offline.rs`, `src", "`tests/guard.rs`, `src"),
-            "tests/guard.rs never names the library, so it is a guard",
+            "tests/guard.rs uses the library for nothing but a constant, so it is a guard",
         ),
         (
             table.replace("`live.rs`", "`live.rs`, `gone.rs`"),
@@ -334,20 +391,55 @@ fn the_test_kind_check_finds_each_drift() {
             .any(|p| p.contains("tests/offline.rs exercises the library")),
         "{problems:?}"
     );
+
+    // A bare name outside the live row's `In tests/:` cell is not a test
+    // crate, and a file named inside parentheses is a reference: neither
+    // places it. A reference to a file that is gone still fails.
+    let noted = table
+        .replace(
+            "`src/x_tests.rs`",
+            "`src/*_tests.rs` (such as `x_tests.rs`)",
+        )
+        .replace(
+            "`tests/guard.rs`",
+            "`tests/guard.rs` (beside `tests/offline.rs`'s checks)",
+        );
+    let rows = kind_rows(&noted);
+    assert_eq!(rows[1].references, ["offline"]);
+    assert!(
+        test_kind_problems(&rows, &crates(&[])).is_empty(),
+        "{:?}",
+        test_kind_problems(&rows, &crates(&[]))
+    );
+    let gone = table.replace("`tests/guard.rs`", "`tests/guard.rs` (see `tests/gone.rs`)");
+    let problems = test_kind_problems(&kind_rows(&gone), &crates(&[]));
+    assert!(
+        matches!(&problems[..], [one] if one.contains("names tests/gone.rs")),
+        "{problems:?}"
+    );
 }
 
 /// A crate is classified from its tokens: a mention in a comment or a
-/// string is not a use of the library.
+/// string is not a use of the library, and neither is reading one of its
+/// constants.
 #[test]
-fn a_guard_is_a_crate_that_never_names_the_library() {
-    let guard = "//! Reads genai_rs's sources.\nfn f() { let _ = \"genai_rs::DEFAULT_MODEL\"; }\n";
-    assert!(!names_ident(guard, &["genai_rs"]));
+fn a_guard_is_a_crate_that_uses_the_library_for_a_constant_at_most() {
+    for guard in [
+        "//! Reads genai_rs's sources.\nfn f() { let _ = \"genai_rs::Client\"; }\n",
+        "#[test] fn pinned() { assert!(!genai_rs::DEFAULT_MODEL.is_empty()); }",
+        "use genai_rs::DEFAULT_MODEL;",
+    ] {
+        assert!(!uses_library(guard), "{guard}");
+    }
     for user in [
         "use genai_rs::Client;",
+        "use genai_rs::{DEFAULT_MODEL, Client};",
         "fn f() { assert!(matches!(x, genai_rs::Kind::A)); }",
+        "fn f() { let _ = genai_rs::DEFAULT_MODEL::new(); }",
         "#[test] fn t() { let t = trybuild::TestCases::new(); }",
+        "use genai_rs_macros::tool;",
     ] {
-        assert!(names_ident(user, &["genai_rs", "trybuild"]), "{user}");
+        assert!(uses_library(user), "{user}");
     }
 }
 
@@ -361,7 +453,7 @@ const NOT_DOCTESTED: &[(&str, &str)] = &[
     ),
     (
         "docs/ANTIGRAVITY_BRIDGE_DESIGN.md",
-        "A maintainer note, left out of the published crate; its one Rust block is a sketch of a wire type.",
+        "A maintainer note, left out of the published crate; its one Rust block is a pre-implementation sketch of the builder API.",
     ),
     (
         "CHANGELOG.md",
@@ -374,48 +466,148 @@ const NOT_DOCTESTED: &[(&str, &str)] = &[
 ];
 
 /// The repository-relative Markdown files `lib_rs`'s `doc_tests` module
-/// includes, by their `include_str!("../<path>")`.
+/// includes as docs (`#[doc = include_str!("../<path>")]` on one of its
+/// items) where the doctest run compiles them: in code, not a comment, and
+/// under no `cfg` that run leaves out ([`cfg_holds`]).
 fn doctested(lib_rs: &str) -> BTreeSet<String> {
-    let module = lib_rs
-        .split("mod doc_tests {")
-        .nth(1)
+    let file = syn::parse_file(lib_rs).unwrap_or_else(|e| panic!("cannot parse src/lib.rs: {e}"));
+    let module = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Mod(module) if module.ident == "doc_tests" => Some(module),
+            _ => None,
+        })
         .expect("src/lib.rs has no doc_tests module");
-    module
-        .split("include_str!(\"../")
-        .skip(1)
-        .filter_map(|rest| rest.split('"').next())
-        .filter(|path| path.ends_with(".md"))
-        .map(str::to_string)
+    let (_, items) = module
+        .content
+        .as_ref()
+        .expect("doc_tests is an inline module");
+    if !module.attrs.iter().all(cfg_attr_holds) {
+        return BTreeSet::new();
+    }
+    items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) => Some(&module.attrs),
+            _ => None,
+        })
+        .filter(|attrs| attrs.iter().all(cfg_attr_holds))
+        .flat_map(|attrs| attrs.iter().filter_map(included_doc))
         .collect()
 }
 
-/// Whether Markdown `text` holds a block rustdoc would read as Rust: a
-/// fence whose info string starts with `rust`.
+/// The repository-relative path `attr` includes as docs, if it is
+/// `#[doc = include_str!("../<path>.md")]`.
+fn included_doc(attr: &syn::Attribute) -> Option<String> {
+    let syn::Meta::NameValue(doc) = &attr.meta else {
+        return None;
+    };
+    let syn::Expr::Macro(include) = &doc.value else {
+        return None;
+    };
+    if !doc.path.is_ident("doc") || !include.mac.path.is_ident("include_str") {
+        return None;
+    }
+    let path: syn::LitStr = include.mac.parse_body().ok()?;
+    path.value()
+        .strip_prefix("../")
+        .filter(|path| path.ends_with(".md"))
+        .map(str::to_string)
+}
+
+/// Whether `attr` is no `cfg`, or one that holds in the doctest run.
+fn cfg_attr_holds(attr: &syn::Attribute) -> bool {
+    !attr.path().is_ident("cfg") || attr.parse_args().is_ok_and(|meta| cfg_holds(&meta))
+}
+
+/// Whether a `cfg` predicate holds in CI's doctest run, a debug build with
+/// every feature on Linux: `doctest`, `unix`, `debug_assertions`, every
+/// `feature = "..."`, `target_os = "linux"` and `target_family = "unix"`
+/// do; any other name (`test`, `fuzzing`, an empty `any()`) does not.
+/// `check_dated_facts.sh` reads includes the same way.
+fn cfg_holds(meta: &syn::Meta) -> bool {
+    use syn::punctuated::Punctuated;
+    match meta {
+        syn::Meta::Path(path) => ["doctest", "unix", "debug_assertions"]
+            .iter()
+            .any(|name| path.is_ident(name)),
+        syn::Meta::NameValue(pair) => {
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(value),
+                ..
+            }) = &pair.value
+            else {
+                return false;
+            };
+            let value = value.value();
+            pair.path.is_ident("feature")
+                || (pair.path.is_ident("target_os") && value == "linux")
+                || (pair.path.is_ident("target_family") && value == "unix")
+        }
+        syn::Meta::List(list) => {
+            let Ok(nested) =
+                list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+            else {
+                return false;
+            };
+            if list.path.is_ident("all") {
+                nested.iter().all(cfg_holds)
+            } else if list.path.is_ident("any") {
+                nested.iter().any(cfg_holds)
+            } else if list.path.is_ident("not") {
+                nested.len() == 1 && !cfg_holds(&nested[0])
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Info-string tokens that make rustdoc read a block as Rust.
+const RUSTDOC_RUST: &[&str] = &[
+    "rust",
+    "ignore",
+    "no_run",
+    "should_panic",
+    "compile_fail",
+    "test_harness",
+    "standalone_crate",
+];
+
+/// Whether Markdown `text` holds a Rust block: a fence rustdoc reads as
+/// Rust (its info string names `rust`, a rustdoc attribute or an
+/// `edition`), or one GitHub shows as Rust (`rs`, `Rust`), which rustdoc
+/// never compiles.
 fn holds_rust(text: &str) -> bool {
     text.lines().any(|line| {
         let line = line.trim_start();
         ["```", "~~~"].iter().any(|fence| {
             line.strip_prefix(fence)
-                .map(|info| info.trim_start_matches(['`', '~']).trim_start())
+                .map(|info| info.trim_start_matches(['`', '~']))
                 .is_some_and(|info| {
-                    info.split([',', ' ', '\t'])
-                        .next()
-                        .is_some_and(|first| first == "rust")
+                    info.split([',', ' ', '\t']).any(|token| {
+                        RUSTDOC_RUST.contains(&token)
+                            || token.starts_with("edition")
+                            || token.eq_ignore_ascii_case("rs")
+                            || token.eq_ignore_ascii_case("rust")
+                    })
                 })
         })
     })
 }
 
-/// The guides `doc_tests` misses: every `docs/*.md`, and every top-level
-/// Markdown file holding Rust, among `files` (repository-relative path and
-/// text), unless `exempt` names it; and every exemption that no longer
-/// applies, because `doc_tests` includes the file or the file is gone.
+/// The guides `doc_tests` misses: every Markdown file under `docs/`, and
+/// every top-level one holding Rust, among `files` (repository-relative
+/// path and text), unless `exempt` names it; and every exemption that no
+/// longer applies, because `doc_tests` includes the file, the file is
+/// gone, or a top-level file holds no Rust any more.
 fn undoctested(lib_rs: &str, files: &[(String, String)], exempt: &[(&str, &str)]) -> Vec<String> {
     let included = doctested(lib_rs);
     let exempt: BTreeSet<&str> = exempt.iter().map(|(path, _)| *path).collect();
     let mut problems = Vec::new();
     for (path, text) in files {
-        let guide = path.starts_with("docs/") && !path["docs/".len()..].contains('/');
+        let guide = path.starts_with("docs/");
         let top_level = !path.contains('/') && holds_rust(text);
         if (guide || top_level) && !included.contains(path) && !exempt.contains(path.as_str()) {
             problems.push(format!(
@@ -425,44 +617,60 @@ fn undoctested(lib_rs: &str, files: &[(String, String)], exempt: &[(&str, &str)]
             ));
         }
     }
-    let present: BTreeSet<&str> = files.iter().map(|(path, _)| path.as_str()).collect();
+    let present: BTreeMap<&str, &str> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
     for path in exempt {
-        if included.contains(path) || !present.contains(path) {
+        let stale = match present.get(path) {
+            None => Some("is gone"),
+            Some(_) if included.contains(path) => Some("is doctested"),
+            Some(text) if !path.starts_with("docs/") && !holds_rust(text) => {
+                Some("holds no Rust block")
+            }
+            Some(_) => None,
+        };
+        if let Some(why) = stale {
             problems.push(format!(
-                "NOT_DOCTESTED lists {path}, which is doctested or gone; drop the entry"
+                "NOT_DOCTESTED lists {path}, which {why}; drop the entry"
             ));
         }
     }
     for path in &included {
-        if !present.contains(path.as_str()) {
+        if !present.contains_key(path.as_str()) {
             problems.push(format!("doc_tests includes {path}, which is not here"));
         }
     }
     problems
 }
 
-/// The Markdown files a guide could be: `docs/*.md` and the top level's.
+/// The Markdown files a guide could be: every one under `docs/`, at any
+/// depth, and the top level's.
 fn guide_candidates(root: &Path) -> Vec<(String, String)> {
-    let mut files = Vec::new();
-    for (dir, prefix) in [(root.to_path_buf(), ""), (root.join("docs"), "docs/")] {
-        for entry in std::fs::read_dir(&dir).unwrap() {
+    fn markdown(dir: &Path, prefix: &str, deep: bool, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
-            if path.extension().is_some_and(|ext| ext == "md") && path.is_file() {
-                let name = path.file_name().unwrap().to_string_lossy();
-                files.push((
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if path.is_dir() && deep {
+                markdown(&path, &format!("{prefix}{name}/"), deep, out);
+            } else if path.extension().is_some_and(|ext| ext == "md") && path.is_file() {
+                out.push((
                     format!("{prefix}{name}"),
                     std::fs::read_to_string(&path).unwrap(),
                 ));
             }
         }
     }
+    let mut files = Vec::new();
+    markdown(root, "", false, &mut files);
+    markdown(&root.join("docs"), "docs/", true, &mut files);
     files.sort();
     files
 }
 
-/// Every guide's Rust blocks compile in the doctest run: each `docs/*.md`
-/// but the maintainer notes, and each top-level Markdown file with Rust, is
-/// in `doc_tests`.
+/// Every guide's Rust blocks compile in the doctest run: each Markdown
+/// file under `docs/` but the maintainer notes, and each top-level one with
+/// Rust, is in `doc_tests`.
 #[test]
 fn every_guide_is_doctested() {
     let lib_rs = std::fs::read_to_string(root().join("src/lib.rs")).unwrap();
@@ -475,9 +683,10 @@ fn every_guide_is_doctested() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
-/// The doctest check fails on a new guide left out, a top-level file with
-/// Rust left out, and a stale exemption; it passes a top-level file with no
-/// Rust and an exempt note.
+/// The doctest check fails on a new guide left out (nested under `docs/`
+/// too), a top-level file with Rust left out (fenced `rs` too), and a
+/// stale exemption: a file doctested, or a top-level one with no Rust. It
+/// passes a top-level file with no Rust and an exempt note.
 #[test]
 fn the_doctest_check_finds_a_guide_left_out() {
     let lib_rs = "#[cfg(doctest)]\nmod doc_tests {\n    #[doc = include_str!(\"../README.md\")]\n    mod readme {}\n    #[cfg(feature = \"x\")]\n    #[doc = include_str!(\"../docs/GUIDE.md\")]\n    mod guide {}\n}\n";
@@ -488,14 +697,79 @@ fn the_doctest_check_finds_a_guide_left_out() {
         file("docs/NOTES.md", "# Notes\n"),
         file("docs/NEW.md", "# New\n"),
         file("HISTORY.md", "```rust,no_run\nlet x = 1;\n```\n"),
+        file("SHORT.md", "```rs\nlet x = 1;\n```\n"),
         file("SHELL.md", "```bash\nls\n```\n"),
-        file("docs/sub/DEEP.md", "```rust\n```\n"),
+        file("PLAIN.md", "# Plain\n"),
+        file("docs/sub/DEEP.md", "# Deep\n"),
     ];
-    let exempt = [("docs/NOTES.md", "a note"), ("docs/GUIDE.md", "stale")];
+    let exempt = [
+        ("docs/NOTES.md", "a note"),
+        ("docs/GUIDE.md", "stale"),
+        ("PLAIN.md", "its one Rust block is gone"),
+    ];
     let problems = undoctested(lib_rs, &files, &exempt);
     let flagged = |needle: &str| problems.iter().any(|p| p.starts_with(needle));
     assert!(flagged("docs/NEW.md is not in"), "{problems:?}");
+    assert!(flagged("docs/sub/DEEP.md is not in"), "{problems:?}");
     assert!(flagged("HISTORY.md is not in"), "{problems:?}");
-    assert!(flagged("NOT_DOCTESTED lists docs/GUIDE.md"), "{problems:?}");
-    assert_eq!(problems.len(), 3, "{problems:?}");
+    assert!(flagged("SHORT.md is not in"), "{problems:?}");
+    assert!(
+        flagged("NOT_DOCTESTED lists docs/GUIDE.md, which is doctested"),
+        "{problems:?}"
+    );
+    assert!(
+        flagged("NOT_DOCTESTED lists PLAIN.md, which holds no Rust block"),
+        "{problems:?}"
+    );
+    assert_eq!(problems.len(), 6, "{problems:?}");
+}
+
+/// An include counts only where the doctest run compiles it: not in a
+/// comment, and not under a `cfg` that run leaves out.
+#[test]
+fn only_an_include_the_doctest_run_compiles_counts() {
+    let include = "#[doc = include_str!(\"../docs/GUIDE.md\")]";
+    let counted = |item: &str| {
+        let lib_rs =
+            format!("#[cfg(doctest)]\nmod doc_tests {{\n    {item}\n    mod guide {{}}\n}}\n");
+        doctested(&lib_rs).contains("docs/GUIDE.md")
+    };
+    for on in [
+        include.to_string(),
+        format!("#[cfg(feature = \"antigravity\")] {include}"),
+        format!("{include} #[cfg(all(doctest, unix, not(windows)))]"),
+    ] {
+        assert!(counted(&on), "{on}");
+    }
+    for off in [
+        format!("// {include}"),
+        format!("/* {include} */"),
+        format!("/// {include}"),
+        format!("#[cfg(any())] {include}"),
+        format!("{include} #[cfg(not(doctest))]"),
+        format!("#[cfg(test)] {include}"),
+    ] {
+        assert!(!counted(&off), "{off}");
+    }
+    let gated = format!("#[cfg(any())]\nmod doc_tests {{\n    {include}\n    mod guide {{}}\n}}\n");
+    assert!(doctested(&gated).is_empty());
+}
+
+/// A fence holds Rust when rustdoc or GitHub reads it as Rust.
+#[test]
+fn a_rust_block_is_any_fence_rustdoc_or_github_reads_as_rust() {
+    for rust in [
+        "```rust",
+        "```rust,ignore",
+        "~~~no_run",
+        "```edition2021",
+        "```rs",
+        "```Rust",
+        "````  should_panic",
+    ] {
+        assert!(holds_rust(&format!("{rust}\nx\n```\n")), "{rust}");
+    }
+    for other in ["```bash", "```text", "```", "```trust", "```toml"] {
+        assert!(!holds_rust(&format!("{other}\nx\n```\n")), "{other}");
+    }
 }
