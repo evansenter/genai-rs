@@ -36,9 +36,9 @@
 )]
 
 mod ci_workflows;
-mod doc_guards;
 #[path = "api_surface/claims.rs"]
 mod claims;
+mod doc_guards;
 mod live_verbs;
 
 use std::collections::BTreeSet;

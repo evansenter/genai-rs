@@ -186,7 +186,9 @@ fn test_kind_problems(rows: &[KindRow], crates: &[TestCrate]) -> Vec<String> {
         }
     }
     for found in crates {
-        let rows = placed.get(found.name.as_str()).map_or(&[][..], Vec::as_slice);
+        let rows = placed
+            .get(found.name.as_str())
+            .map_or(&[][..], Vec::as_slice);
         let [row] = rows else {
             let kinds: Vec<&str> = rows.iter().map(|row| row.kind.as_str()).collect();
             problems.push(format!(
@@ -264,15 +266,19 @@ fn the_test_kind_check_finds_each_drift() {
 | Live integration | In `tests/`: `live.rs` | Yes | `make test-all` |
 ";
     let crates = |extra: &[(&str, bool, bool)]| -> Vec<TestCrate> {
-        [("offline", false, false), ("guard", false, true), ("live", true, false)]
-            .iter()
-            .chain(extra)
-            .map(|&(name, live, guard)| TestCrate {
-                name: name.to_string(),
-                live,
-                guard,
-            })
-            .collect()
+        [
+            ("offline", false, false),
+            ("guard", false, true),
+            ("live", true, false),
+        ]
+        .iter()
+        .chain(extra)
+        .map(|&(name, live, guard)| TestCrate {
+            name: name.to_string(),
+            live,
+            guard,
+        })
+        .collect()
     };
     let rows = kind_rows(table);
     assert_eq!(rows[0].crates, ["offline"]);
@@ -490,9 +496,6 @@ fn the_doctest_check_finds_a_guide_left_out() {
     let flagged = |needle: &str| problems.iter().any(|p| p.starts_with(needle));
     assert!(flagged("docs/NEW.md is not in"), "{problems:?}");
     assert!(flagged("HISTORY.md is not in"), "{problems:?}");
-    assert!(
-        flagged("NOT_DOCTESTED lists docs/GUIDE.md"),
-        "{problems:?}"
-    );
+    assert!(flagged("NOT_DOCTESTED lists docs/GUIDE.md"), "{problems:?}");
     assert_eq!(problems.len(), 3, "{problems:?}");
 }
