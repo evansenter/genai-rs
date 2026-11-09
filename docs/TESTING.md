@@ -534,7 +534,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, and each endpoint's query parameters (with whether each is required) and request body; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -552,7 +552,14 @@ checks on it:
   key), plus proptest samples for the union arms and enum values.
   `request_values_are_full_literals` (`request/fills.rs`) fails on a
   `default()` fill, other than a whole `extra` map, in those literals and
-  in every strategy the oracle samples. An
+  in every strategy the oracle samples. It also fails, in both, on a
+  value built through a constructor, a call to an associated function of
+  a crate type (`CustomMetadata::string`, `Tool::code_execution()`, the
+  first call of a builder), since one can leave a new field unset out of
+  the oracle's sight; `TRUSTED` there lists the few it allows, each with
+  the reason the value still sets every field (such as the agent configs'
+  `fully_populated()` and `FunctionParameters::new`, whose fields are
+  private, and `WebhookInput::from`, which destructures every field). An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
@@ -565,7 +572,11 @@ checks on it:
   union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s
   `Dict[str, Any]`) cannot hide a wrong key. The reverse test
   (`request_classes_have_no_unsent_fields`) lists every field of a reached
-  request class that nothing sends.
+  request class that nothing sends, and `request_only_enum_values_are_sent`
+  (`request/enum_values.rs`) every value nothing sends of an enumeration
+  only a request reaches (`webhooks.WebhookUpdateState`), unless
+  `NOT_SENT_VALUES` gives the reason; the response side checks the values
+  of one a response reaches.
 - **Request bodies on the wire** (`tests/request_wire_oracle.rs`). Each
   verb with a body runs against the local stub, and the captured body is
   checked the same way, wrapping included. `every_verb_with_a_body_is_called_above`
@@ -586,7 +597,19 @@ checks on it:
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a
   path no endpoint takes. A template that keeps a full resource name
-  (`{operationName}`) matches only the names `FULL_NAMES` gives it.
+  (`{operationName}`) matches only the names `FULL_NAMES` gives it. The
+  specs' query parameters are diffed against the bindings' and what the
+  verbs send (`request_wire_oracle/spec_query.rs`), each spec copy on its
+  own: a spec parameter the bindings lack that no verb sends, a binding
+  parameter the spec lacks, and one the spec marks required each need a
+  reason in `SPEC_QUERY` for that copy, so a parameter added to or removed
+  from either copy fails. Keys go through `with_query`:
+  `query_keys_are_added_only_through_with_query` fails on what else in
+  `src/http/`'s library code would add one, which a verb could send only
+  when an input the test does not set calls for it: a string literal that
+  holds `?key=` or `&key=` (`format!("{url}&chunked=true")`), a `'?'` or
+  `'&'` character or a string ending in one outside `with_query`, and
+  reqwest's `.query(..)` or `url`'s query setters.
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each

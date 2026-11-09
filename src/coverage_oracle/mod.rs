@@ -343,11 +343,16 @@ fn every_spec_schema_is_mapped() {
     );
 }
 
-/// Every exception list's entries, as `(list, entry, reason)`.
+/// Every exception list's entries, as `(list, entry, reason)`. A blank
+/// reason fails here (see [`with_reasons`]), so every test that reads the
+/// lists does too.
 fn reasons() -> Vec<(&'static str, &'static str, &'static str)> {
-    let lists: &[(&str, &[Allowed])] = &[
+    let lists: &[(&'static str, &[Allowed])] = &[
         ("request ALLOWED", request::ALLOWED),
         ("request NOT_SENT", request::NOT_SENT),
+        ("request TRUSTED", request::TRUSTED),
+        #[cfg(not(genai_strict_unknown))]
+        ("request NOT_SENT_VALUES", request::NOT_SENT_VALUES),
         #[cfg(not(genai_strict_unknown))]
         ("UNMAPPED", UNMAPPED),
         #[cfg(not(genai_strict_unknown))]
@@ -359,14 +364,50 @@ fn reasons() -> Vec<(&'static str, &'static str, &'static str)> {
         #[cfg(not(genai_strict_unknown))]
         ("SPARSE", response_minimal::SPARSE),
     ];
-    lists
+    with_reasons(lists)
+}
+
+/// The entries of `lists` as `(list, entry, reason)`, failing on a reason
+/// that is empty or only white space: an exception is listed for a reason,
+/// and a blank one hides that it was never given.
+fn with_reasons(
+    lists: &[(&'static str, &[Allowed])],
+) -> Vec<(&'static str, &'static str, &'static str)> {
+    let entries: Vec<_> = lists
         .iter()
         .flat_map(|&(list, entries)| {
             entries
                 .iter()
                 .map(move |(entry, reason)| (list, *entry, *reason))
         })
-        .collect()
+        .collect();
+    let blank: Vec<String> = entries
+        .iter()
+        .filter(|(_, _, reason)| reason.trim().is_empty())
+        .map(|(list, entry, _)| format!("{list}: {entry}"))
+        .collect();
+    assert!(
+        blank.is_empty(),
+        "exception entries with a blank reason (say why each is listed):\n  {}",
+        blank.join("\n  ")
+    );
+    entries
+}
+
+/// Every reason in the oracle's lists says something. (Strict mode builds
+/// only the request side's lists, 16 entries today.)
+#[test]
+fn every_reason_is_given() {
+    assert!(reasons().len() > 10, "too few entries: {}", reasons().len());
+}
+
+/// A reason that is empty or only white space fails, and names its entry.
+#[test]
+#[should_panic(expected = "NOT_SENT: b.C.d")]
+fn a_blank_reason_is_rejected() {
+    const GIVEN: &[Allowed] = &[("a.B.c", "Deprecated.")];
+    const BLANK: &[Allowed] = &[("b.C.d", " \n\t")];
+    with_reasons(&[("ALLOWED", GIVEN), ("NOT_SENT", BLANK)]);
 }
 
 /// Every reason that states a live fact dates it

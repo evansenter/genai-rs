@@ -173,7 +173,7 @@ each one replaced.
 | Shape | Rule |
 |-------|------|
 | `client.agents().get(id)` | Required arguments are positional. The future holds only the client borrow, so it can be stored or joined with others |
-| `client.agents().list()` | Returns a list builder. `with_page_size()`, `with_page_token()` and the list's own filters (`with_parent()`) configure it |
+| `client.agents().list()` | Returns a list builder. `with_page_size()`, `with_page_token()` and the list's own options (`with_parent()`) configure it |
 | `.send()` | Sends one request and returns one page (`AgentListResponse`) |
 | `.pages()` | Streams every page |
 | `.items()` | Streams every item across pages, in server order |

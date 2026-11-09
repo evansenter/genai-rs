@@ -38,7 +38,298 @@
   "POST /{api_version}/webhooks/{id}:rotateSigningSecret",
   "PUT /upload/{api_version}/environments/{environment}/files/{path}"
  ],
- "fetched": "2026-11-07",
+ "fetched": "2026-11-09",
+ "operations": {
+  "DELETE /{api_version}/agents/{agentsId}": {
+   "query": {}
+  },
+  "DELETE /{api_version}/credentials/{id}": {
+   "query": {}
+  },
+  "DELETE /{api_version}/environments/{id}": {
+   "query": {}
+  },
+  "DELETE /{api_version}/interactions/{id}": {
+   "query": {}
+  },
+  "DELETE /{api_version}/triggers/{id}": {
+   "query": {}
+  },
+  "DELETE /{api_version}/voices/{voicesId}": {
+   "query": {}
+  },
+  "DELETE /{api_version}/webhooks/{id}": {
+   "query": {}
+  },
+  "GET /{api_version}/agents": {
+   "query": {
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    },
+    "parent": {
+     "required": true
+    }
+   }
+  },
+  "GET /{api_version}/agents/{agentsId}": {
+   "query": {}
+  },
+  "GET /{api_version}/credentials": {
+   "query": {
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/credentials/{id}": {
+   "query": {}
+  },
+  "GET /{api_version}/environments": {
+   "query": {
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/environments/{environment}/files/{path}": {
+   "query": {
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    },
+    "recursive": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/environments/{id}": {
+   "query": {}
+  },
+  "GET /{api_version}/interactions/{id}": {
+   "query": {
+    "last_event_id": {
+     "required": false
+    },
+    "stream": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/triggers": {
+   "query": {
+    "filter": {
+     "required": false
+    },
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/triggers/{id}": {
+   "query": {}
+  },
+  "GET /{api_version}/triggers/{triggerId}/executions": {
+   "query": {
+    "filter": {
+     "required": false
+    },
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/voices": {
+   "query": {
+    "accent": {
+     "required": false
+    },
+    "context": {
+     "required": false
+    },
+    "gender": {
+     "required": false
+    },
+    "language_code": {
+     "required": false
+    },
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    },
+    "persona": {
+     "required": false
+    },
+    "pitch": {
+     "required": false
+    },
+    "region_code": {
+     "required": false
+    },
+    "search": {
+     "required": false
+    },
+    "type": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/voices/{voicesId}": {
+   "query": {}
+  },
+  "GET /{api_version}/webhooks": {
+   "query": {
+    "page_size": {
+     "required": false
+    },
+    "page_token": {
+     "required": false
+    }
+   }
+  },
+  "GET /{api_version}/webhooks/{id}": {
+   "query": {}
+  },
+  "PATCH /{api_version}/credentials/{id}": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/CredentialUpdateParams"
+    }
+   },
+   "query": {
+    "update_mask": {
+     "required": false
+    }
+   }
+  },
+  "PATCH /{api_version}/triggers/{id}": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/UpdateTriggerRequest"
+    }
+   },
+   "query": {}
+  },
+  "PATCH /{api_version}/webhooks/{id}": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/UpdateWebhookRequest"
+    }
+   },
+   "query": {}
+  },
+  "POST /{api_version}/agents": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/Agent"
+    }
+   },
+   "query": {
+    "parent": {
+     "required": true
+    }
+   }
+  },
+  "POST /{api_version}/credentials": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/CredentialCreateParams"
+    }
+   },
+   "query": {}
+  },
+  "POST /{api_version}/environments": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/CreateEnvironmentRequest"
+    }
+   },
+   "query": {}
+  },
+  "POST /{api_version}/interactions": {
+   "body": {
+    "application/json": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/CreateAgentInteractionParams"
+      },
+      {
+       "$ref": "#/components/schemas/CreateModelInteractionParams"
+      }
+     ]
+    }
+   },
+   "query": {}
+  },
+  "POST /{api_version}/interactions/{id}/cancel": {
+   "query": {}
+  },
+  "POST /{api_version}/triggers": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/Trigger"
+    }
+   },
+   "query": {}
+  },
+  "POST /{api_version}/triggers/{triggerId}/executions": {
+   "query": {}
+  },
+  "POST /{api_version}/voices": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/CreateVoiceRequest"
+    }
+   },
+   "query": {}
+  },
+  "POST /{api_version}/webhooks": {
+   "body": {
+    "application/json": {
+     "$ref": "#/components/schemas/CreateWebhookRequest"
+    }
+   },
+   "query": {
+    "webhook_id": {
+     "required": false
+    }
+   }
+  },
+  "POST /{api_version}/webhooks/{id}:ping": {
+   "query": {}
+  },
+  "POST /{api_version}/webhooks/{id}:rotateSigningSecret": {
+   "query": {}
+  },
+  "PUT /upload/{api_version}/environments/{environment}/files/{path}": {
+   "query": {
+    "extract": {
+     "required": false
+    },
+    "overwrite": {
+     "required": false
+    }
+   }
+  }
+ },
  "schemas": {
   "Agent": {
    "properties": {

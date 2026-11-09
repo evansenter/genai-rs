@@ -812,7 +812,9 @@ const UNREADABLE: &str = "<a reason the scan cannot read>";
 /// (inside a function or module too), as `(file:LIST, [(entry, reason)])`.
 /// A reason is a string literal or a `&str` constant of the same file; an
 /// entry is its tuple's first element. Trybuild's `ui/` sources and the
-/// fixtures hold no lists and are not read.
+/// fixtures hold no lists and are not read. A reason that is empty or only
+/// white space fails the scan, naming its list and entry: an entry is
+/// listed for a reason, and a blank one hides that none was given.
 fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
     use syn::visit::Visit;
 
@@ -904,7 +906,7 @@ fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
             let syn::Expr::Array(array) = &*array.expr else {
                 continue;
             };
-            let entries = array
+            let entries: Vec<(String, String)> = array
                 .elems
                 .iter()
                 .filter_map(|elem| match elem {
@@ -923,6 +925,20 @@ fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
             out.push((format!("{relative}:{name}"), entries));
         }
     }
+    let blank: Vec<String> = out
+        .iter()
+        .flat_map(|(name, entries)| {
+            entries
+                .iter()
+                .filter(|(_, reason)| reason.trim().is_empty())
+                .map(move |(entry, _)| format!("{name}: {entry}"))
+        })
+        .collect();
+    assert!(
+        blank.is_empty(),
+        "reasoned-list entries with a blank reason (say why each is listed):\n  {}",
+        blank.join("\n  ")
+    );
     out
 }
 
@@ -1029,6 +1045,27 @@ fn reasoned_lists_are_found_wherever_they_are_declared() {
         })
         .collect();
     assert_eq!(claims::undated_live_claims(&borrowed).len(), 2);
+}
+
+/// A blank reason fails the scan, as a string literal or through a
+/// constant, and the failure names the list and the entry.
+#[test]
+fn reasoned_lists_reject_a_blank_reason() {
+    for source in [
+        r#"const LIST: &[(&str, &str)] = &[("a", "Given."), ("blank", "  ")];"#,
+        r#"const NONE: &str = "";
+           const LIST: &[(&str, &str)] = &[("a", "Given."), ("blank", NONE)];"#,
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("a.rs"), source).unwrap();
+        let outcome = std::panic::catch_unwind(|| reasoned_lists(temp.path()));
+        let panic = outcome.expect_err("a blank reason passed the scan");
+        let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(
+            message.contains("a.rs:LIST: blank") && !message.contains("LIST: a\n"),
+            "{message}"
+        );
+    }
 }
 
 /// `/{api_version}/agents/{agentsId}` -> `/{}/agents/{}`, the form the

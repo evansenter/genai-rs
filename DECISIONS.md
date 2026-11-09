@@ -2285,3 +2285,99 @@ the evaluators do not know counts as left out, so an include behind one
 fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
+
+## D-NEXT-I1 — The specs' query parameters are checked; the three the API ignores stay unmodeled (2026-11-09)
+
+**Context.** The query test held the crate to the bindings alone, and the
+spec snapshots kept endpoints and schemas, not parameters or request
+bodies. So neither a test nor the daily watch saw the three query
+parameters the v1beta spec gives and the bindings lack (`webhook_id` on
+webhook create, `parent`, marked required, on agent create, and `filter`
+on a trigger's executions), nor the `{webhook: ...}` wrapper the spec
+gives webhook create's body (#504's 2026-11-08 grade, I-1). Probed on
+2026-11-09, each parameter is accepted and ignored, as is any unknown
+query key there, and the wrapper is a `400 Unknown parameter`
+(`docs/INTERACTIONS_API_GAP.md`, "Spec-only query parameters").
+
+**Decision.**
+- `snapshot_openapi.py` keeps each operation: its query parameters, each
+  with whether it is required, and its request body's schema by content
+  type. The committed specs were refreshed with it, so
+  `watch_spec_urls.sh` now flags a served spec whose parameters or bodies
+  change.
+- The query test diffs the specs' parameters against the bindings' and
+  what the verbs send (`tests/request_wire_oracle/spec_query.rs`), each
+  spec copy on its own. A spec parameter the bindings lack that no verb
+  sends, a binding parameter the spec lacks, and a parameter the spec
+  marks required are findings until `SPEC_QUERY` gives the reason for that
+  copy, so a parameter added to or removed from either copy, or one made
+  required, fails offline. The copies are not merged: v1 lists only
+  parameters v1beta also has, so a merged view would never see one
+  removed from v1. A spec-only key a verb does send is left to the
+  bindings check, where it needs a `QUERY_ALLOWED` reason.
+- None of the three is modeled. Each is reasoned in `SPEC_QUERY` and dated
+  in the gap tracker: an option that changes nothing would pass every
+  structural test and claim a feature the API lacks (D-010).
+  `ListAgents::with_parent` stays, since the bindings define the
+  parameter (D-004), and its rustdoc, `docs/RESOURCES.md` and
+  `docs/AGENTS_AND_BACKGROUND.md` say the API ignores it.
+- The spec's request bodies are kept in the snapshot but not diffed: a
+  request is checked against its binding class, which leads the spec on
+  requests (D-040).
+
+Rejected: `with_*` options for the three "for parity" with the spec, for
+the D-010 reason above. Rejected: removing `ListAgents::with_parent` now
+that it is known to filter nothing; it is breaking, Python's
+`agents.list` takes `parent`, and the call is the owner's.
+
+**Consequences.** If the API starts honoring one of the three, nothing
+flags it: the watch sees the spec change, not behavior, so a later probe
+has to. The spec also wraps webhook update's and trigger update's bodies;
+those wrappers were not probed.
+
+## D-NEXT-I1-a — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
+
+**Context.** #504's 2026-11-08 grade found three holes in the request side
+of the coverage oracle (I-2 to I-4). A value the oracle built through a
+constructor escaped the full-literal scan: a field added to
+`CustomMetadata` and left to `Default` by `CustomMetadata::string` passed
+every test. Values added to an enumeration only a request reaches
+(`webhooks.WebhookUpdateState`) passed too, since the response side
+checks only what a response reaches. A blank reason passed every
+exception list. And a query key written into a URL string, behind a
+condition the query test does not meet, reached no check.
+
+**Decision.**
+- `request_values_are_full_literals` fails on a call to an associated
+  function of a crate type (`Type::name`, called or passed), which begins
+  every constructor and builder, in the oracle's files and in the
+  strategies it samples, unless `TRUSTED` gives the reason the value still
+  sets every field: a type with private fields whose full literal sits
+  beside it, checked by a `{:?}`-field test (the agent configs'
+  `fully_populated()`, `FunctionParameters::new`); `WebhookInput::from`,
+  which destructures every field; and one strategy's variant constructor
+  whose fields the oracle's own literal sets (`NetworkConfig::allowlist`).
+- `request_only_enum_values_are_sent` requires every value of an
+  enumeration a request case reaches and no response target does to be
+  sent by some request value, or listed in `NOT_SENT_VALUES` with its
+  reason. An enumeration is a literal alias, by its name, or a literal a
+  field spells out, by `Class.field`.
+- The oracle's `reasons()` and `tests/ci_coverage.rs`'s
+  `reasoned_lists()` fail on a reason that is empty or only white space.
+- `query_keys_are_added_only_through_with_query` fails on what in
+  `src/http/`'s library code would add a query key other than through
+  `with_query`: a string literal that holds `?key=` or `&key=`, a query
+  separator outside `with_query` (a `'?'` or `'&'` character, or a string
+  ending in one), and reqwest's or `url`'s own query builders. It finds
+  the usual ways to write a query, not every one: a separator the code
+  computes gets past it.
+
+Rejected: exempting the strategies, which are sampled for union arms and
+enum values while the literals cover the fields. Only three constructor
+calls were in the strategies the oracle reaches, so one rule for both
+costs two rewritten closures and one reasoned entry.
+
+**Consequences.** A new request type's oracle value is written as a struct
+literal, even where a constructor would be shorter. The oracle's webhook
+and trigger updates send every state, event and status, one update per
+state or status.
