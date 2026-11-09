@@ -56,7 +56,7 @@ fn matrix_values(job: &str) -> BTreeMap<String, Vec<String>> {
 
 /// The names a job shows in a run: its `name:`, with each
 /// `${{ matrix.key }}` expanded over the key's values, or its id.
-fn display_names(id: &str, job: &str) -> Vec<String> {
+pub(super) fn display_names(id: &str, job: &str) -> Vec<String> {
     let Some(name) = job
         .lines()
         .find_map(|line| line.strip_prefix("    name: "))

@@ -4,9 +4,11 @@
 # release.yml publishes only a commit whose main push run of rust.yml is
 # green on every job: the Cross Platform legs included, which release
 # validation, on Ubuntu alone, never runs. What is pinned: a green run
-# passes; a failed, cancelled or skipped leg, or a run with no Cross
-# Platform legs, fails and is named; a run still going is waited for, and
-# one that outlasts the wait fails; a commit with no push run fails.
+# passes, with the jobs a push skips by design skipped; a failed, cancelled
+# or skipped leg, any other skipped job (a live group, the escalation),
+# and a run with fewer or more Cross Platform legs than the full matrix's
+# six, fail and are named; a run still going is waited for, and one that
+# outlasts the wait fails; a commit with no push run fails.
 
 set -euo pipefail
 
@@ -91,22 +93,31 @@ expect() {
 }
 
 completed='[{"databaseId": 7, "status": "completed", "conclusion": "success", "url": "https://example.invalid/runs/7"}]'
-# jobs <conclusion of the Windows stable leg> [extra job JSON]
+# jobs <conclusion of the Windows stable leg> [extra job JSON] [jq filter
+# over the job list]: a main push run's jobs, the three a push skips by
+# design skipped, and the six Cross Platform legs.
 jobs() {
     jq -nc --arg windows "$1" --argjson extra "${2:-[]}" '{jobs: ([
       {name: "Check", conclusion: "success"},
       {name: "Test Suite", conclusion: "success"},
+      {name: "Integration Tests (core)", conclusion: "success"},
       {name: "Cross Platform (ubuntu-latest, stable)", conclusion: "success"},
-      {name: "Cross Platform (windows-latest, stable)", conclusion: $windows},
+      {name: "Cross Platform (ubuntu-latest, beta)", conclusion: "success"},
       {name: "Cross Platform (macos-latest, stable)", conclusion: "success"},
-      {name: "Scheduled Run Status", conclusion: "skipped"}] + $extra)}'
+      {name: "Cross Platform (macos-latest, beta)", conclusion: "success"},
+      {name: "Cross Platform (windows-latest, stable)", conclusion: $windows},
+      {name: "Cross Platform (windows-latest, beta)", conclusion: "success"},
+      {name: "Captured Fixtures Refresh", conclusion: "skipped"},
+      {name: "Process Tree (macOS)", conclusion: "skipped"},
+      {name: "Main Push Status", conclusion: "success"},
+      {name: "Scheduled Run Status", conclusion: "skipped"}] + $extra | '"${3:-.}"')}'
 }
 
-# --- A green run passes; skipped jobs are fine.
+# --- A green run passes; the jobs a push skips by design may be skipped.
 setup "$(jobs success)" "$completed"
 run_check
 expect_rc "green: exits 0" 0
-expect "green: says so" "Every job of the push run passed or was skipped"
+expect "green: says so" "Every job of the push run passed, but the ones a push skips by design"
 if grep -q -- "--branch main --event push --commit $SHA" "$STUB/calls.log"; then
     echo "ok   - green: looks for main's push run of the commit"
 else
@@ -129,11 +140,40 @@ run_check
 expect_rc "skipped leg: exits 1" 1
 expect "skipped leg: named" "::error::Cross Platform (windows-latest, stable): skipped"
 
-# --- A run with no Cross Platform legs is not a main push run's.
+# --- Any other skipped job fails: a live group skipped on a push verified
+#     nothing, and so did a skipped escalation.
+setup "$(jobs success '[]' 'map(if .name == "Integration Tests (core)" then .conclusion = "skipped" else . end)')" "$completed"
+run_check
+expect_rc "skipped live group: exits 1" 1
+expect "skipped live group: named" "::error::Integration Tests (core): skipped, and a push skips only"
+setup "$(jobs success '[]' 'map(if .name == "Main Push Status" then .conclusion = "skipped" else . end)')" "$completed"
+run_check
+expect_rc "skipped escalation: exits 1" 1
+expect "skipped escalation: named" "::error::Main Push Status: skipped"
+# A skipped matrix job shows under its unexpanded name.
+setup "$(jobs success '[{"name": "Integration Tests (${{ matrix.group }})", "conclusion": "skipped"}]' 'map(select(.name | startswith("Integration Tests (core)") | not))')" "$completed"
+run_check
+expect_rc "skipped matrix: exits 1" 1
+expect "skipped matrix: named" "::error::Integration Tests (\${{ matrix.group }}): skipped"
+# A job a push skips by design may also have run.
+setup "$(jobs success '[]' 'map(if .name == "Captured Fixtures Refresh" then .conclusion = "success" else . end)')" "$completed"
+run_check
+expect_rc "a skip-by-design job that ran: exits 0" 0
+
+# --- Every leg of the full matrix: a run with none, or a matrix that
+#     shrank or grew, is not the full main push run.
 setup '{"jobs": [{"name": "Check", "conclusion": "success"}]}' "$completed"
 run_check
 expect_rc "no legs: exits 1" 1
-expect "no legs: said" "no Cross Platform legs"
+expect "no legs: said" "0 Cross Platform legs, not 6: not a full main push run"
+setup "$(jobs success '[]' 'map(select(.name | endswith("beta)") | not))')" "$completed"
+run_check
+expect_rc "beta dropped: exits 1" 1
+expect "beta dropped: said" "3 Cross Platform legs, not 6"
+setup "$(jobs success '[{"name": "Cross Platform (ubuntu-24.04-arm, stable)", "conclusion": "success"}]')" "$completed"
+run_check
+expect_rc "a seventh leg: exits 1" 1
+expect "a seventh leg: said" "7 Cross Platform legs, not 6"
 
 # --- A run still going is waited for, then read.
 setup "$(jobs success)" \

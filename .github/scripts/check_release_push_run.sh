@@ -12,9 +12,11 @@
 #
 # It finds the `push` run of rust.yml on `main` for the commit, waits for a
 # run still going to finish, then reads its jobs (the latest attempt's, so a
-# leg re-run to green counts as green). It passes when every job succeeded
-# or was skipped, and the run has Cross Platform legs, none of them
-# skipped. Otherwise it names what is wrong and exits 1.
+# leg re-run to green counts as green). It passes when every job succeeded,
+# apart from the jobs a push skips by design (SKIPPED_ON_PUSH below), which
+# may be skipped, and the run has all CROSS_PLATFORM_LEGS Cross Platform
+# legs. A skipped live group, or a matrix that shrank, fails it. Otherwise
+# it names what is wrong and exits 1.
 #
 # Environment (all optional):
 #   RUST_WORKFLOW         the workflow file (default rust.yml)
@@ -30,6 +32,14 @@ workflow="${RUST_WORKFLOW:-rust.yml}"
 appear="${RUN_APPEAR_SECONDS:-300}"
 finish="${RUN_FINISH_SECONDS:-2700}"
 poll="${POLL_SECONDS:-30}"
+
+# The rust.yml jobs whose `if:` runs them on other events only, so a push
+# run always skips them; every other job must succeed. tests/ci_workflows/
+# (release.rs) holds both values to rust.yml: these names to the jobs whose
+# condition leaves pushes out, the count to the Cross Platform matrix off a
+# PR (three OSes, two toolchains).
+SKIPPED_ON_PUSH='["Captured Fixtures Refresh", "Process Tree (macOS)", "Scheduled Run Status"]'
+CROSS_PLATFORM_LEGS=6
 
 command -v jq >/dev/null 2>&1 || {
   echo "check_release_push_run.sh: jq is required" >&2
@@ -75,13 +85,14 @@ jobs=$(gh run view "$id" --json jobs | jq -c '[.jobs[] | {name, conclusion}]')
 echo "Push run $url for $sha:"
 jq -r '.[] | "  \(.conclusion)\t\(.name)"' <<<"$jobs"
 
-problems=$(jq -r '
-  ([.[] | select(.conclusion != "success" and .conclusion != "skipped")
-        | "\(.name): \(.conclusion)"])
-  + (if any(.[]; .name | startswith("Cross Platform (")) then [] else
-       ["no Cross Platform legs: not a full main push run"] end)
-  + [.[] | select((.name | startswith("Cross Platform (")) and .conclusion == "skipped")
-         | "\(.name): skipped"]
+problems=$(jq -r --argjson skippable "$SKIPPED_ON_PUSH" --argjson legs "$CROSS_PLATFORM_LEGS" '
+  ([.[] | .name | select(startswith("Cross Platform ("))] | unique | length) as $found
+  | [.[] | select(.conclusion != "success" and .conclusion != "skipped")
+         | "\(.name): \(.conclusion)"]
+    + [.[] | select(.conclusion == "skipped" and (.name as $n | $skippable | index($n) | not))
+           | "\(.name): skipped, and a push skips only \($skippable | join(", ")) by design"]
+    + (if $found == $legs then [] else
+         ["\($found) Cross Platform legs, not \($legs): not a full main push run"] end)
   | .[]' <<<"$jobs")
 if [ -n "$problems" ]; then
   while IFS= read -r problem; do
@@ -90,4 +101,4 @@ if [ -n "$problems" ]; then
   echo "::error::The push run of $workflow for $sha ($url) is not green on every job, so this release stops before publishing. Fix main and tag the fix, or re-run the failed jobs and then this one."
   exit 1
 fi
-echo "Every job of the push run passed or was skipped, the Cross Platform legs included."
+echo "Every job of the push run passed, but the ones a push skips by design, and all $CROSS_PLATFORM_LEGS Cross Platform legs ran."
