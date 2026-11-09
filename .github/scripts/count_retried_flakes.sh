@@ -44,9 +44,14 @@
 # came first). Its code is the model-side flake's name (`malformed_tool_call`,
 # `invalid_json`, `processing_error`, `please_retry`, `spanner_utf8`) or
 # the transport failure's (an HTTP status, `timeout`, `network`,
-# `stream_interrupted`). A run with a model-side retry is a flaky run of the
-# test that the report counts toward its chronic share, as a retry nextest
-# made would be (D-052); transport retries are listed only.
+# `stream_interrupted`); `transport()` below tells the two apart, once. A
+# run with a model-side retry is a flaky run of the test that the report
+# counts toward its chronic share, as a retry nextest made would be
+# (D-052); transport retries are listed only. The retry helper's offline
+# tests print the marker too, on purpose, on every run: rust.yml's counted
+# steps leave them out (the integration loop runs `--run-ignored only`),
+# which tests/ci_workflows/flakiness.rs checks, since this cannot tell
+# their markers from a live test's.
 #
 # Example smoke runs are counted too, in any step (their loops in
 # rust.yml retry by hand, with no NEXTEST_RETRIES): each example opens a
@@ -231,9 +236,11 @@ command -v jq >/dev/null 2>&1 || {
       printf "marker\t%s\t%s\t%d\n", k[1], k[2], markers[key]
       flaky_test[key] = 1
     }
+    # The last field says whether the code is transport: this function
+    # alone tells the two kinds apart, and jq below reads its answer.
     for (key in transient) {
       split(key, k, SUBSEP)
-      printf "transient\t%s\t%s\t%s\t%d\n", k[1], k[2], k[3], transient[key]
+      printf "transient\t%s\t%s\t%s\t%d\t%d\n", k[1], k[2], k[3], transient[key], transport(k[3])
     }
     # Per test: the runs with an in-test retry, those with a model-side
     # one, and those of them nextest did not retry the test in as well.
@@ -301,8 +308,7 @@ command -v jq >/dev/null 2>&1 || {
         | sort_by(-.flaky, .name)
       ),
       transient_retries: ([$rows[] | select(.[0] == "transient") | .[4] | tonumber] | add // 0),
-      transient_flake_retries: ([$rows[] | select(.[0] == "transient")
-        | select(.[3] | test("^([0-9]+|timeout|network|stream_interrupted)$") | not)
+      transient_flake_retries: ([$rows[] | select(.[0] == "transient" and .[5] == "0")
         | .[4] | tonumber] | add // 0),
       transient: (
         (reduce ($rows[] | select(.[0] == "transient_runs")) as $r
@@ -315,8 +321,7 @@ command -v jq >/dev/null 2>&1 || {
                 binary: .[0][1],
                 name: .[0][2],
                 retries: (map(.[4] | tonumber) | add),
-                flake_retries: (map(select(.[3] | test("^([0-9]+|timeout|network|stream_interrupted)$") | not)
-                                    | .[4] | tonumber) | add // 0),
+                flake_retries: (map(select(.[5] == "0") | .[4] | tonumber) | add // 0),
                 codes: (sort_by(.[3]) | map({(.[3]): (.[4] | tonumber)}) | add),
                 retried_runs: ($per_run[$key][0] // 0),
                 flake_runs: ($per_run[$key][1] // 0),

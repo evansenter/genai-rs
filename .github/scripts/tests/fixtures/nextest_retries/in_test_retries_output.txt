@@ -1,0 +1,50 @@
+────────────
+[32;1m Nextest run[0m ID [1m9609b6ac-eb15-48a6-bc0c-562989128bb3[0m with nextest profile: [1mdefault[0m
+[32;1m    Starting[0m [1m4[0m tests across [1m1[0m binary ([1m33[0m tests [33;1mskipped[0m)
+[32;1m        PASS[0m [   0.006s] (1/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_success_first_try[0m
+[32;1m        PASS[0m [   0.006s] (2/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_retries_plain_5xx[0m
+[32;1m        PASS[0m [   0.007s] (3/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_success_after_retry[0m
+[32;1m        PASS[0m [   0.008s] (4/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_retries_an_auto_function_loop_that_failed[0m
+────────────
+[32;1m     Summary[0m [   0.009s] [1m4[0m tests run: [1m4[0m [32;1mpassed[0m, [1m33[0m [33;1mskipped[0m
+[32;1m        PASS[0m [   0.006s] (1/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_success_first_try[0m
+[32;1m [0m [32;1mstdout[0m [32;1m───[0m
+
+    running 1 test
+    test test_retry_on_transient_success_first_try ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+    [0m
+
+[32;1m        PASS[0m [   0.006s] (2/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_retries_plain_5xx[0m
+[32;1m [0m [32;1mstdout[0m [32;1m───[0m
+
+    running 1 test
+    TRANSIENT_RETRIED test_retry_on_transient_retries_plain_5xx 503
+    Transient error on attempt 1 of 2, retrying in 1s: Api { status_code: 503, message: "The service is currently unavailable.", request_id: None, retry_after: None }
+    test test_retry_on_transient_retries_plain_5xx ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+    [0m
+
+[32;1m        PASS[0m [   0.007s] (3/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_success_after_retry[0m
+[32;1m [0m [32;1mstdout[0m [32;1m───[0m
+
+    running 1 test
+    TRANSIENT_RETRIED test_retry_on_transient_success_after_retry spanner_utf8
+    Transient error on attempt 1 of 4, retrying in 1s: Api { status_code: 500, message: "Spanner UTF-8 error", request_id: None, retry_after: None }
+    test test_retry_on_transient_success_after_retry ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+    [0m
+
+[32;1m        PASS[0m [   0.008s] (4/4) [35;1mgenai-rs::error_handling_tests[0m [34;1mtest_retry_on_transient_retries_an_auto_function_loop_that_failed[0m
+[32;1m [0m [32;1mstdout[0m [32;1m───[0m
+
+    running 1 test
+    TRANSIENT_RETRIED test_retry_on_transient_retries_an_auto_function_loop_that_failed malformed_tool_call
+    Transient failed interaction on attempt 1 of 4, retrying in 1s: Some([InteractionError { code: Some("malformed_tool_call"), message: Some("Model generated invalid JSON syntax and the output could not be parsed. Please retry the request. If the issue persists, include this error message in the retry prompt to instruct the model to produce valid JSON."), extra: {} }])
+    test test_retry_on_transient_retries_an_auto_function_loop_that_failed ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+    [0m

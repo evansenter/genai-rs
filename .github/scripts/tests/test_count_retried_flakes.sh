@@ -7,10 +7,12 @@
 # timestamped) where three tests passed on a retry, and a red run as
 # `gh run view --log` prints it, where one test passed on a retry and one
 # failed every try. A green run's flakes are the case the report used to
-# miss, so it is the one pinned hardest here. in_test_retries_job.txt is
-# nextest 0.9.120's output of four offline tests of tests/common/retry.rs,
-# three of which print the TRANSIENT_RETRIED marker before a retry, wrapped
-# as a retried integration step's raw job log.
+# miss, so it is the one pinned hardest here. in_test_retries_output.txt
+# is nextest 0.9.120's own output, colour and all, of four offline tests of
+# tests/common/retry.rs, three of which print the TRANSIENT_RETRIED marker
+# before a retry: it pins where the marker falls in real output. With no
+# step header it counts whole; in CI those offline tests never run in a
+# counted step (tests/ci_workflows/flakiness.rs).
 #
 # Each case runs under every awk on the machine: CI's Ubuntu runner has
 # mawk, a Mac has BSD awk. The script is run directly, as the workflow
@@ -268,7 +270,7 @@ LOG
 
     # --- In-test retries from real output: one marker per retry, on the
     #     test that printed it, model-side ones apart from transport ones.
-    out=$("$SCRIPT" "$FIXTURES/in_test_retries_job.txt")
+    out=$("$SCRIPT" "$FIXTURES/in_test_retries_output.txt")
     expect_json "in-test (real output): every marker, model-side apart" \
         '[.transient_retries, .transient_flake_retries]' '[3,2]'
     expect_json "in-test (real output): by test, with codes and runs" \

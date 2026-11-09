@@ -1,8 +1,9 @@
 //! The flakiness report (`ci-flakiness-report.yml`), tied to what it reads
 //! (#504): the jobs whose logs it fetches by name, the retry lines the
-//! example loops and the live tests' own retries print, the order in which
-//! it publishes and then fails, and the offline tests that would otherwise
-//! flake on a loaded runner.
+//! example loops and the live tests' own retries print, the steps it counts
+//! them in, which leave out the retry helper's offline tests, the order in
+//! which it publishes and then fails, and the offline tests that would
+//! otherwise flake on a loaded runner.
 
 use super::{command_lines, is_live_nextest_step, jobs, read, root, steps};
 use regex::Regex;
@@ -239,12 +240,19 @@ fn retry_marker_problems(retry: &str, script: &str) -> Vec<String> {
         ));
     }
     // The codes retry_code gives a failure before any HTTP status, which
-    // the script must count as transport, as it does a status.
-    let transport = script
+    // the script must count as transport, as it does a status, in awk's
+    // `transport()` alone: a second list (jq's totals once had two) could
+    // drift from it unseen.
+    let transport_lines: Vec<&str> = script
         .lines()
         .skip_while(|line| !line.contains("function transport(code)"))
         .take(4)
-        .collect::<String>();
+        .collect();
+    let transport = transport_lines.concat();
+    let elsewhere: Vec<&str> = script
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#') && !transport_lines.contains(line))
+        .collect();
     let codes = retry
         .split("fn retry_code(")
         .nth(1)
@@ -259,6 +267,13 @@ fn retry_marker_problems(retry: &str, script: &str) -> Vec<String> {
         if !transport.contains(&format!("code == \"{code}\"")) {
             problems.push(format!(
                 "retry_code's transport code `{code}` is not transport in count_retried_flakes.sh"
+            ));
+        }
+        if let Some(line) = elsewhere.iter().find(|line| line.contains(code)) {
+            problems.push(format!(
+                "count_retried_flakes.sh names the transport code `{code}` outside \
+                 transport(), which alone should classify codes: `{}`",
+                line.trim()
             ));
         }
     }
@@ -305,6 +320,14 @@ fn in_test_retries_print_the_marker_the_report_counts() {
             script.replace("w[1] == \"TRANSIENT_RETRIED\"", "w[1] == \"RETRIED\""),
         ),
         (retry.clone(), script.replace("code == \"timeout\" || ", "")),
+        // jq classifying the codes again, by its own list.
+        (
+            retry.clone(),
+            script.replace(
+                "select(.[5] == \"0\")",
+                "select(.[3] | test(\"^([0-9]+|timeout|network|stream_interrupted)$\") | not)",
+            ),
+        ),
     ];
     for (i, (retry_text, script_text)) in broken.iter().enumerate() {
         assert!(
@@ -313,6 +336,122 @@ fn in_test_retries_print_the_marker_the_report_counts() {
         );
         assert!(
             !retry_marker_problems(retry_text, script_text).is_empty(),
+            "mutation {i} went unnoticed"
+        );
+    }
+}
+
+/// The source of test binary `binary`: `tests/<binary>.rs` and, when it
+/// has one, every file under `tests/<binary>/`.
+fn binary_source(binary: &str) -> String {
+    let tests = root().join("tests");
+    let mut text = read(&tests.join(format!("{binary}.rs")));
+    let mut dirs = vec![tests.join(binary)];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for path in entries.map(|entry| entry.expect("a test directory entry").path()) {
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                text.push_str(&read(&path));
+            }
+        }
+    }
+    text
+}
+
+/// Problems with the steps of `rust` that the flakiness report counts (the
+/// live nextest steps, which retry), and how many there are. The retry
+/// helper's offline tests (`error_handling_tests`) print
+/// `TRANSIENT_RETRIED` on every run, on purpose, and the counter cannot
+/// tell their markers from a live test's. So each counted `nextest run`
+/// runs the live tests alone (`--run-ignored only`), or binaries
+/// (`binary(x)`) whose source, read by `source`, never calls the helper.
+fn counted_step_problems(rust: &str, source: impl Fn(&str) -> String) -> (usize, Vec<String>) {
+    let binary = Regex::new(r"binary\(([A-Za-z0-9_]+)\)").expect("a regex");
+    let mut counted = 0;
+    let mut problems = Vec::new();
+    for (id, body) in jobs(rust) {
+        for step in steps(&body).iter().filter(|step| {
+            is_live_nextest_step(step)
+                && command_lines(step).any(|line| line.starts_with("NEXTEST_RETRIES:"))
+        }) {
+            counted += 1;
+            let title = step.lines().next().unwrap_or("").trim().to_string();
+            for line in command_lines(step).filter(|line| line.contains("nextest run")) {
+                if line.contains("--run-ignored only") {
+                    continue;
+                }
+                let filtered: Vec<&str> = binary
+                    .captures_iter(line)
+                    .filter_map(|found| found.get(1).map(|name| name.as_str()))
+                    .collect();
+                if filtered.is_empty() {
+                    problems.push(format!(
+                        "job {id}, step `{title}`: `{line}` runs offline tests too, and the \
+                         retry helper's own tests print TRANSIENT_RETRIED on every run; \
+                         run `--run-ignored only`"
+                    ));
+                }
+                for name in filtered {
+                    let text = source(name);
+                    if text.contains("retry_on_transient(") || text.contains("retry_request!") {
+                        problems.push(format!(
+                            "job {id}, step `{title}`: `{line}` runs {name}'s offline tests \
+                             too, and it calls the retry helper; run `--run-ignored only`"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    (counted, problems)
+}
+
+/// A live test's in-test retry is counted from its marker, but the retry
+/// helper's offline tests print it too, on purpose, on every run: run in
+/// the integration loop, which once ran each binary's offline tests as
+/// well (`--run-ignored all`), five of them read as chronic flakes in
+/// every run, and the report failed every day.
+#[test]
+fn counted_steps_leave_the_offline_retry_tests_out() {
+    let rust = read(&root().join(".github/workflows/rust.yml"));
+    let (counted, problems) = counted_step_problems(&rust, binary_source);
+    assert!(counted >= 2, "found only {counted} counted steps");
+    assert!(
+        problems.is_empty(),
+        "a step the flakiness report counts runs the retry helper's offline tests:\n  {}",
+        problems.join("\n  ")
+    );
+    let integration = "cargo nextest run --test $test --run-ignored only";
+    let harness = "-E 'binary(antigravity_harness)'";
+    assert!(rust.contains(integration) && rust.contains(harness));
+    let broken = [
+        // The integration loop running every test again.
+        (
+            rust.replace(
+                integration,
+                "cargo nextest run --test $test --run-ignored all",
+            ),
+            false,
+        ),
+        // The harness step unfiltered.
+        (rust.replace(harness, ""), false),
+        // The harness binary calling the helper.
+        (rust.clone(), true),
+    ];
+    for (i, (text, calls)) in broken.iter().enumerate() {
+        let source = |name: &str| {
+            if *calls && name == "antigravity_harness" {
+                "retry_on_transient(3, || async { .. })".to_string()
+            } else {
+                binary_source(name)
+            }
+        };
+        assert!(
+            !counted_step_problems(text, source).1.is_empty(),
             "mutation {i} went unnoticed"
         );
     }

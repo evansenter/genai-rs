@@ -258,7 +258,11 @@ jobs:
             rc=0
             # Retried by NEXTEST_RETRIES (env, below). --no-fail-fast: one
             # failure must not drop the binary's remaining tests.
-            cargo nextest run --test $test --run-ignored all --no-fail-fast --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
+            # --run-ignored only: the live tests alone, whose retries the
+            # flakiness report counts. A binary's offline tests run in the
+            # Test Suite job; here the retry helper's own tests would print
+            # TRANSIENT_RETRIED on every run (tests/ci_workflows/flakiness.rs).
+            cargo nextest run --test $test --run-ignored only --no-fail-fast --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
             # LIVE_TOOL_EVIDENCE_SKIPPED: a live tool test that could not show
             # the server was reached. Occasional is noise; persistent is a
