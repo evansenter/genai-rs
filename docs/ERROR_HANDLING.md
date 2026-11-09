@@ -55,7 +55,7 @@ visible with `LOUD_WIRE=1` (see [Logging](LOGGING_STRATEGY.md)).
 | 404 | Unknown model, agent, file or interaction id | Use the constants in `genai_rs` (`DEFAULT_MODEL`, ...) rather than typed ids |
 | 408 | The server stopped waiting before the request arrived whole | Retry with backoff |
 | 429 | Rate limited | Back off; honor `retry_after()` when set |
-| 501 | The server does not implement the method or feature (`UNIMPLEMENTED`), or a remote MCP server returned an error ("MCP server returned an error"; [live record](INTERACTIONS_API_GAP.md#tools)) | Don't retry, except an MCP server's error, which can pass while that server is down ([why](RELIABILITY.md#genaierroris_retryable)) |
+| 501 | The server does not implement the method or feature (`UNIMPLEMENTED`), or a remote MCP server returned an error ("MCP server returned an error"; [live record](INTERACTIONS_API_GAP.md#tools)) | Don't retry, except an MCP server's error, which can pass. A server the API cannot reach gets a 500 ([why](RELIABILITY.md#genaierroris_retryable)) |
 | Other 5xx | Server error | Retry with backoff, except 505, 506, 508, 510 and 511 ([why](RELIABILITY.md#genaierroris_retryable)) |
 
 `request_id` comes from the `x-goog-request-id` response header. Log it; it is

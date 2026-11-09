@@ -196,10 +196,11 @@ impl GenaiError {
     ///   Detected, 510 Not Extended and 511 Network Authentication Required.
     ///   Each names a condition the same request meets on every attempt.
     ///   One kind of 501 can pass: the API also sends it when a remote MCP
-    ///   server returns an error ("MCP server returned an error"). A URL
-    ///   that is no MCP server gets it on every attempt, but so does a
-    ///   real one while it is down, and that ends. To retry it, match its
-    ///   status and message before calling this.
+    ///   server answered with an error ("MCP server returned an error").
+    ///   A URL that is no MCP server gets it on every attempt, but a real
+    ///   server's error can pass. To retry it, match its status and
+    ///   message before calling this. A server the API cannot reach gets
+    ///   a 500, which is retryable.
     ///   Every other 5xx is retryable, including 507 Insufficient Storage
     ///   (temporary, per RFC 4918) and codes no RFC registers, such as a
     ///   proxy's 520 to 599.

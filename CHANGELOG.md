@@ -565,8 +565,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   acted on nothing and the same request can succeed; google-genai retries
   it too. Each of the six names a condition the same request meets on every
   attempt (501 is Google's `UNIMPLEMENTED`), so a retry loop spent its
-  budget on them. One 501 can pass: the API also sends it when a remote MCP
-  server returns an error, as a real server does while it is down. Every
+  budget on them. One 501 can pass: the API also sends it, saying "MCP
+  server returned an error", when a remote MCP server answered with an
+  error; a server it cannot reach gets a 500, which stays retryable. Every
   other 5xx stays retryable, including 507 and the unregistered codes some
   proxies send; a status of 600 or more is no longer retryable, as
   `docs/RELIABILITY.md` already said. The crate's own waits follow:
