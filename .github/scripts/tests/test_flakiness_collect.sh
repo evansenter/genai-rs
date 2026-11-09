@@ -11,6 +11,9 @@
 #     and each flake carries the runs it ran in;
 #   - their skip markers are added up across runs, with the tests that
 #     printed them, and reach the report;
+#   - so are the retries a live test made inside itself (TRANSIENT_RETRIED),
+#     and a run with a model-side one counts toward the test's chronic
+#     share, once when nextest retried the test in that run too;
 #   - the week is listed by creation date, at the API's ceiling for a
 #     filtered listing (1,000, which a larger --limit does not raise), and
 #     a listing that reaches it, or fails, fails the step instead of
@@ -116,10 +119,14 @@ Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:00.2Z ##[
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.0Z     Starting 4 tests across 1 binary
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.1Z   TRY 1 FAIL [   1.000s] (─────) genai-rs::interactions_api_tests generation_config::test_continuation
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.2Z   TRY 2 PASS [   1.000s] (1/4) genai-rs::interactions_api_tests generation_config::test_continuation
+Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.25Z     TRANSIENT_RETRIED generation_config::test_continuation malformed_tool_call
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.3Z      Summary [   2.000s] 4 tests run: 4 passed (1 flaky), 0 skipped
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.4Z    FLAKY 2/3 [   1.000s] (1/4) genai-rs::interactions_api_tests generation_config::test_continuation
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.5Z         PASS [   1.000s] (2/4) genai-rs::interactions_api_tests semantic::test_answer
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.6Z     SEMANTIC_VALIDATION_SKIPPED (transient validator error): Api 503
+Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.65Z     TRANSIENT_RETRIED semantic::test_answer 429
+Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.7Z         PASS [   1.000s] (3/4) genai-rs::interactions_api_tests tools::test_tool_call
+Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.8Z     TRANSIENT_RETRIED tools::test_tool_call malformed_tool_call
 LOG
 cat > "$STUB/job-1002.log" <<'LOG'
 Example Smoke Run	Run examples	2026-11-05T10:00:00.0Z ##[group]Run set -eo pipefail
@@ -217,6 +224,18 @@ check "collect: example runs and retries" summary.json '[.examples_run, .example
 check "collect: skip markers across the week" summary.json '.skip_markers' 1
 check "collect: the test that printed one, with its file" summary.json \
     '.skipped_tests' '[{"name":"semantic::test_answer","markers":1,"runs":1,"file":"tests/interactions_api_tests.rs"}]'
+check "collect: in-test retries across the week, model-side apart" summary.json \
+    '[.transient_retries, .transient_flake_retries]' '[3,2]'
+check "collect: each test's in-test retries, with its file" summary.json \
+    '[.transient_tests[] | [.name, .retries, .flake_runs, .runs, .file]]' \
+    '[["generation_config::test_continuation",1,1,1,"tests/interactions_api_tests.rs"],["semantic::test_answer",1,0,1,"tests/interactions_api_tests.rs"],["tools::test_tool_call",1,1,1,"tests/interactions_api_tests.rs"]]'
+check "collect: a model-side in-test retry is a flaky run of its test" tests.json \
+    '[.[] | select(.name == "tools::test_tool_call") | [.retried, .in_test, .runs, .category]]' \
+    '[[0,1,1,"retried in the test"]]'
+check "collect: a run nextest retried too counts once" tests.json \
+    '[.[] | select(.name == "generation_config::test_continuation") | [.retried, .in_test]]' '[[1,0]]'
+check "collect: a transport retry is no flake" tests.json \
+    '[.[] | select(.name == "semantic::test_answer")] | length' 0
 if grep -qE -- "run list .*--created >=[0-9]{4}-[0-9]{2}-[0-9]{2} .*--limit 1000( |$)" "$STUB/calls.log"; then
     echo "ok   - collect: the week's runs are listed by creation date, up to 1000"
 else
@@ -248,6 +267,12 @@ check_text "report: the week's skip markers have a row" "$RUN_DIR/flakiness_repo
     "| Skip markers (passed without verifying) | 1 in 4 live test runs, from 1 test(s) |"
 check_text "report: and the test that printed one" "$RUN_DIR/flakiness_report.md" \
     '| `semantic::test_answer` | 1 | 1 | tests/interactions_api_tests.rs |'
+check_text "report: the week's in-test retries have a row" "$RUN_DIR/flakiness_report.md" \
+    '| Retried inside the test (`TRANSIENT_RETRIED`) | 3 in 4 live test runs, from 3 test(s): 2 model-side, 1 transport |'
+check_text "report: and a table" "$RUN_DIR/flakiness_report.md" \
+    '| `semantic::test_answer` | 1 | 0 | 1 | 1 | 429 1 | tests/interactions_api_tests.rs |'
+check_text "report: a model-side in-test retry is a flake of its test" "$RUN_DIR/flakiness_report.md" \
+    '| `tools::test_tool_call` | 0 | 0 | 1 | retried in the test | tests/interactions_api_tests.rs |'
 
 # --- A listing that reaches the ceiling may have dropped runs; a failed
 #     one would read as an empty week. Either fails the step, loudly, and

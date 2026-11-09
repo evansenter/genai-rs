@@ -34,6 +34,12 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 /// Transport transience (network, timeouts, 408, 429, most 5xx) is
 /// [`GenaiError::is_retryable`]'s job.
 pub fn is_transient_error(err: &GenaiError) -> bool {
+    transient_flake(err).is_some()
+}
+
+/// The model-side flake [`is_transient_error`] matches, by the code its
+/// retry marker carries (see [`transient_retry_marker`]).
+fn transient_flake(err: &GenaiError) -> Option<&'static str> {
     match err {
         GenaiError::Api {
             status_code,
@@ -44,26 +50,74 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
             // A tool-call loop is a known server bug, not a transient one;
             // see the doc comment.
             if lower.contains("too_many_tool_calls") {
-                return false;
+                return None;
             }
             // Spanner UTF-8 errors are transient backend issues
             // See: https://github.com/evansenter/genai-rs/issues/60
-            (lower.contains("spanner") && lower.contains("utf-8"))
-                // Model occasionally generates invalid JSON — transient API-side issue
-                || (*status_code == 400 && lower.contains("invalid json syntax"))
-                // Server-side processing burst: generic apology with no
-                // pointer at the request. Message-pinned so a genuine
-                // fixture rejection (which names its problem) still fails
-                // loud on the first attempt.
-                || (*status_code == 400
-                    && lower.contains("there was a problem processing your request"))
-                // The model produced a broken tool call, and the API said
-                // so in a 400: "...Please retry the request." It now says it
-                // in a failed interaction instead (`is_transient_failure`).
-                // (A loop says it too, and is turned away above.)
-                || (*status_code == 400 && lower.contains("please retry the request"))
+            if lower.contains("spanner") && lower.contains("utf-8") {
+                return Some("spanner_utf8");
+            }
+            if *status_code != 400 {
+                return None;
+            }
+            // Model occasionally generates invalid JSON — transient API-side issue
+            if lower.contains("invalid json syntax") {
+                Some("invalid_json")
+            // Server-side processing burst: generic apology with no
+            // pointer at the request. Message-pinned so a genuine
+            // fixture rejection (which names its problem) still fails
+            // loud on the first attempt.
+            } else if lower.contains("there was a problem processing your request") {
+                Some("processing_error")
+            // The model produced a broken tool call, and the API said
+            // so in a 400: "...Please retry the request." It now says it
+            // in a failed interaction instead (`is_transient_failure`).
+            // (A loop says it too, and is turned away above.)
+            } else if lower.contains("please retry the request") {
+                Some("please_retry")
+            } else {
+                None
+            }
         }
-        _ => false,
+        _ => None,
+    }
+}
+
+/// The word that starts the line each retry below prints, which the
+/// flakiness report counts per test (`count_retried_flakes.sh`; D-052).
+pub const TRANSIENT_RETRY_MARKER: &str = "TRANSIENT_RETRIED";
+
+/// The line [`retry_on_transient`] prints before each retry, alone on its
+/// line: `TRANSIENT_RETRIED <test> <code>`. The test is the running thread's
+/// name, which libtest sets to the test's path in its binary (a tokio
+/// test's body runs on that thread), or `-` off a test thread. The code is
+/// the model-side flake's name (`malformed_tool_call`, or what
+/// [`is_transient_error`] matched: `invalid_json`, `processing_error`,
+/// `please_retry`, `spanner_utf8`), or the transport failure's: the HTTP
+/// status, `timeout`, `network` or `stream_interrupted`. The report counts
+/// a run with a model-side retry toward the test's chronic-flake share, and
+/// lists transport retries without a target.
+pub fn transient_retry_marker(code: &str) -> String {
+    let thread = std::thread::current();
+    let test = thread
+        .name()
+        .filter(|name| *name != "main" && !name.starts_with("tokio-runtime"))
+        .unwrap_or("-");
+    format!("{TRANSIENT_RETRY_MARKER} {test} {code}")
+}
+
+/// The code a retried error's marker carries (see
+/// [`transient_retry_marker`]).
+fn retry_code(err: &GenaiError) -> String {
+    if let Some(flake) = transient_flake(err) {
+        return flake.to_string();
+    }
+    match err {
+        GenaiError::Api { status_code, .. } => status_code.to_string(),
+        GenaiError::Timeout(_) => "timeout".to_string(),
+        GenaiError::Http(_) => "network".to_string(),
+        GenaiError::StreamInterrupted { .. } => "stream_interrupted".to_string(),
+        _ => "other".to_string(),
     }
 }
 
@@ -133,6 +187,7 @@ where
                     return Ok(result);
                 }
                 total_slept += delay;
+                println!("{}", transient_retry_marker("malformed_tool_call"));
                 println!(
                     "Transient failed interaction on attempt {} of {}, retrying in {:?}: {:?}",
                     attempt + 1,
@@ -157,6 +212,7 @@ where
                     return Err(err);
                 }
                 total_slept += delay;
+                println!("{}", transient_retry_marker(&retry_code(&err)));
                 println!(
                     "Transient error on attempt {} of {}, retrying in {:?}: {:?}",
                     attempt + 1,

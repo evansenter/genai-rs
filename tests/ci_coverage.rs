@@ -1,7 +1,7 @@
 //! Guards the link between live tests, the CI integration matrix and the
 //! API surface.
 //!
-//! `rust.yml`'s `test-integration` job runs `--run-ignored all` per binary
+//! `rust.yml`'s `test-integration` job runs `--run-ignored only` per binary
 //! listed in its matrix groups, and `release.yml` is the only other place
 //! live tests run — after the tag exists. A live test binary left out of the
 //! matrix therefore goes unexercised on every PR, which is how
