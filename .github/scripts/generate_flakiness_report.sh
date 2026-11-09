@@ -16,8 +16,16 @@
 #     test runs, is 1% or more (#504);
 #   - no live test runs were read, so the rate is unknown;
 #   - a chronic flake: a test or example that passed only on a retry in
-#     more than 5% of the runs it ran in, and in at least two.
+#     more than 5% of the runs it ran in, and in at least two. A run where
+#     the test retried a model-side flake inside itself (`retry_request!`,
+#     D-052) counts as one that passed on a retry.
 # Anything else non-zero is an error.
+#
+# The tests file's entries carry `retried` (runs that passed only on a
+# nextest retry) and `in_test` (runs with a model-side in-test retry that
+# nextest did not also retry); the summary's `transient_tests` lists every
+# in-test retry, transport ones included, which the report shows but does
+# not hold to a target.
 
 set -euo pipefail
 
@@ -109,6 +117,12 @@ EXAMPLES_RETRIED=$(current examples_retried 0)
 # enforced. Absent from summaries written before the field existed.
 SKIP_MARKERS=$(current skip_markers "")
 SKIPPED_TESTS=$(jq -c '.skipped_tests // []' <<<"$SUMMARY")
+# Retries `retry_request!` made inside live tests (TRANSIENT_RETRIED), and
+# the model-side ones among them. Absent from summaries written before the
+# field existed.
+TRANSIENT_RETRIES=$(current transient_retries "")
+TRANSIENT_FLAKE_RETRIES=$(current transient_flake_retries 0)
+TRANSIENT_TESTS=$(jq -c '.transient_tests // []' <<<"$SUMMARY")
 # The weekly flake rate the Tests/CI bar holds under 1% (#504).
 FLAKE_TARGET_PCT=1
 # A test's own share of runs that needed a retry, past which it is a
@@ -139,12 +153,14 @@ else
   NO_LIVE_RUNS=1
 fi
 
-# Chronic flakes, worst share first: `retried` runs that passed only on a
-# retry, of the `runs` the test ran in.
+# Chronic flakes, worst share first: the runs that needed a retry, on
+# nextest's (`retried`) or a model-side one inside the test (`in_test`), of
+# the `runs` the test ran in.
 CHRONIC=$(jq -c --argjson pct "$CHRONIC_PCT" --argjson min "$CHRONIC_MIN" '
-  [.[] | select((.retried // 0) >= $min and (.runs // 0) > 0
-                and ((.retried / .runs) * 100) > $pct)]
-  | sort_by(-(.retried / .runs), .name)' <<<"$TESTS")
+  [.[] | ((.retried // 0) + (.in_test // 0)) as $needed
+       | select($needed >= $min and (.runs // 0) > 0 and (($needed / .runs) * 100) > $pct)
+       | .needed = $needed]
+  | sort_by(-(.needed / .runs), .name)' <<<"$TESTS")
 CHRONIC_COUNT=$(jq 'length' <<<"$CHRONIC")
 
 HAS_24H=$(echo "$TRENDS" | jq -r '.trends_24h.available')
@@ -235,6 +251,14 @@ echo "| Passed on retry | $RETRIED of $LIVE_RUNS live test runs ($FLAKE_RATE_CEL
 if [ "$EXAMPLES_RUN" -gt 0 ] || [ "$EXAMPLES_RETRIED" -gt 0 ]; then
   echo "| Examples passed on retry | $(share_cell "$EXAMPLES_RETRIED" "$EXAMPLES_RUN" 2 " example runs") | — | — |"
 fi
+if [ -n "$TRANSIENT_RETRIES" ]; then
+  RETRYING_TESTS=$(jq 'length' <<<"$TRANSIENT_TESTS")
+  if [ "$TRANSIENT_RETRIES" -gt 0 ]; then
+    echo "| Retried inside the test (\`TRANSIENT_RETRIED\`) | $TRANSIENT_RETRIES in $LIVE_RUNS live test runs, from $RETRYING_TESTS test(s): $TRANSIENT_FLAKE_RETRIES model-side, $((TRANSIENT_RETRIES - TRANSIENT_FLAKE_RETRIES)) transport | — | — |"
+  else
+    echo "| Retried inside the test (\`TRANSIENT_RETRIED\`) | 0 in $LIVE_RUNS live test runs | — | — |"
+  fi
+fi
 if [ -n "$SKIP_MARKERS" ]; then
   SKIPPING_TESTS=$(jq 'length' <<<"$SKIPPED_TESTS")
   if [ "$SKIP_MARKERS" -gt 0 ]; then
@@ -258,7 +282,7 @@ fi
 if [ "$CHRONIC_COUNT" -gt 0 ]; then
   BREACHES=$((BREACHES + 1))
   echo
-  echo "**$CHRONIC_COUNT chronic flake(s): passed only on a retry in more than ${CHRONIC_PCT}% of their runs.**"
+  echo "**$CHRONIC_COUNT chronic flake(s): needed a retry, by nextest or a model-side one inside the test, in more than ${CHRONIC_PCT}% of their runs.**"
 fi
 
 TOTAL_CATEGORIZED=$((API_ERRORS + RATE_LIMIT + ASSERTION_FAILURES + PANIC + DETERMINISTIC + UNKNOWN))
@@ -318,12 +342,26 @@ if [ "$CHRONIC_COUNT" -gt 0 ]; then
 
 ### Chronic Flakes
 
-Passed only on a retry in more than ${CHRONIC_PCT}% of the runs they ran in (and in at least ${CHRONIC_MIN}). Each one fails this report until it is fixed.
+Needed a retry in more than ${CHRONIC_PCT}% of the runs they ran in (and in at least ${CHRONIC_MIN}): nextest's, or a model-side one the test made itself. Each one fails this report until it is fixed.
 
-| Test | Passed on retry | Runs | Share | File |
-|------|-----------------|------|-------|------|
+| Test | Passed on retry | Retried in the test | Runs | Share | File |
+|------|-----------------|---------------------|------|-------|------|
 EOF
-  jq -r '.[] | "| `\(.name)` | \(.retried) | \(.runs) | \((.retried / .runs * 1000 | round) / 10)% | \(.file) |"' <<<"$CHRONIC"
+  jq -r '.[] | "| `\(.name)` | \(.retried // 0) | \(.in_test // 0) | \(.runs) | \((.needed / .runs * 1000 | round) / 10)% | \(.file) |"' <<<"$CHRONIC"
+fi
+
+if [ "$(jq 'length' <<<"$TRANSIENT_TESTS")" -gt 0 ]; then
+  cat <<EOF
+
+### In-Test Retries
+
+Retries \`retry_request!\` made inside live tests (\`TRANSIENT_RETRIED\`), which nextest never sees. A run with a model-side one counts toward the test's chronic-flake share, as a run nextest retried does; transport ones (an HTTP status, \`timeout\`, \`network\`) are listed, not held to a target.
+
+| Test | Retries | Model-side | Runs with one | Runs | Codes | File |
+|------|---------|------------|---------------|------|-------|------|
+EOF
+  jq -r 'sort_by(-.retries, .name) | .[:10][]
+    | "| `\(if .name == "" then "(no test named)" else .name end)` | \(.retries) | \(.flake_retries // 0) | \(.retried_runs // 0) | \(.runs // 0) | \(.codes // {} | to_entries | sort_by(-.value, .key) | map("\(.key) \(.value)") | join(", ")) | \(.file) |"' <<<"$TRANSIENT_TESTS"
 fi
 
 if [ "$(jq 'length' <<<"$SKIPPED_TESTS")" -gt 0 ]; then
@@ -345,15 +383,16 @@ if [ "$TEST_COUNT" -gt 0 ]; then
 
 ### Top Flaky Tests
 
-| Test | Failures | Passed on retry | Category | File |
-|------|----------|-----------------|----------|------|
+| Test | Failures | Passed on retry | Retried in the test | Category | File |
+|------|----------|-----------------|---------------------|----------|------|
 EOF
 
-  # `// 0`: tests.json from before #492 has no `retried`.
+  # `// 0`: tests.json from before #492 has no `retried`, and from before
+  # the in-test count no `in_test`.
   echo "$TESTS" | jq -r '
-    sort_by(-(.failures + (.retried // 0)), .name) |
+    sort_by(-(.failures + (.retried // 0) + (.in_test // 0)), .name) |
     .[:10][] |
-    "| `\(.name)` | \(.failures) | \(.retried // 0) | \(.category) | \(.file) |"
+    "| `\(.name)` | \(.failures) | \(.retried // 0) | \(.in_test // 0) | \(.category) | \(.file) |"
   '
 else
   cat <<EOF
@@ -377,7 +416,7 @@ fi
 
 if [ "$CHRONIC_COUNT" -gt 0 ]; then
   RECOMMENDATIONS=$((RECOMMENDATIONS + 1))
-  echo "$RECOMMENDATIONS. **Fix the chronic flakes** — $CHRONIC_COUNT test(s) or example(s) passed only on a retry in more than ${CHRONIC_PCT}% of their runs"
+  echo "$RECOMMENDATIONS. **Fix the chronic flakes** — $CHRONIC_COUNT test(s) or example(s) needed a retry in more than ${CHRONIC_PCT}% of their runs"
 fi
 
 if [ "$DETERMINISTIC" -gt 0 ]; then

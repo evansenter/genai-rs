@@ -1,7 +1,8 @@
 //! The flakiness report (`ci-flakiness-report.yml`), tied to what it reads
 //! (#504): the jobs whose logs it fetches by name, the retry lines the
-//! example loops print, the order in which it publishes and then fails, and
-//! the offline tests that would otherwise flake on a loaded runner.
+//! example loops and the live tests' own retries print, the order in which
+//! it publishes and then fails, and the offline tests that would otherwise
+//! flake on a loaded runner.
 
 use super::{command_lines, is_live_nextest_step, jobs, read, root, steps};
 use regex::Regex;
@@ -189,6 +190,132 @@ fn example_loops_report_their_retries() {
         "example loops must print what the flakiness report counts:\n  {}",
         problems.join("\n  ")
     );
+}
+
+/// Problems with the in-test retry marker, empty when it holds:
+/// `retry_on_transient` (`tests/common/retry.rs`) prints it before every
+/// retry, which is each `sleep(` in its body, and `count_retried_flakes.sh`
+/// reads the same word and treats the same codes as transport.
+fn retry_marker_problems(retry: &str, script: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let Some(marker) = retry
+        .lines()
+        .find_map(|line| line.strip_prefix("pub const TRANSIENT_RETRY_MARKER: &str = \""))
+        .and_then(|rest| rest.strip_suffix("\";"))
+    else {
+        return vec!["retry.rs has no `pub const TRANSIENT_RETRY_MARKER: &str = \"...\";`".into()];
+    };
+    let body = retry
+        .split("pub async fn retry_on_transient")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .unwrap_or_default();
+    let before_each_sleep: Vec<&str> = body.split("sleep(").collect();
+    if before_each_sleep.len() < 3 {
+        problems.push(format!(
+            "retry_on_transient sleeps before {} retries, not the two kinds (a failed \
+             interaction and an error): is the scan broken?",
+            before_each_sleep.len().saturating_sub(1)
+        ));
+    }
+    for (i, before) in before_each_sleep
+        .iter()
+        .take(before_each_sleep.len().saturating_sub(1))
+        .enumerate()
+    {
+        if !before.contains("println!(\"{}\", transient_retry_marker(") {
+            problems.push(format!(
+                "retry_on_transient's retry {} sleeps without printing the marker first",
+                i + 1
+            ));
+        }
+    }
+    if !retry.contains("format!(\"{TRANSIENT_RETRY_MARKER} {test} {code}\")") {
+        problems.push("the marker line is not `<marker> <test> <code>`".into());
+    }
+    if !script.contains(&format!("w[1] == \"{marker}\"")) {
+        problems.push(format!(
+            "count_retried_flakes.sh does not read `{marker}` lines"
+        ));
+    }
+    // The codes retry_code gives a failure before any HTTP status, which
+    // the script must count as transport, as it does a status.
+    let transport = script
+        .lines()
+        .skip_while(|line| !line.contains("function transport(code)"))
+        .take(4)
+        .collect::<String>();
+    let codes = retry
+        .split("fn retry_code(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .unwrap_or_default();
+    for code in codes
+        .split("=> \"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .filter(|code| *code != "other")
+    {
+        if !transport.contains(&format!("code == \"{code}\"")) {
+            problems.push(format!(
+                "retry_code's transport code `{code}` is not transport in count_retried_flakes.sh"
+            ));
+        }
+    }
+    problems
+}
+
+/// A live test's `retry_request!` retries transport errors and the
+/// model-side flakes D-052 allows inside the test, where nextest never sees
+/// them, so the report could not count them: H4's `malformed_tool_call`
+/// retry moved a flake nextest used to retry out of its sight. Each retry
+/// now prints `TRANSIENT_RETRIED <test> <code>`, which
+/// `count_retried_flakes.sh` counts per test.
+#[test]
+fn in_test_retries_print_the_marker_the_report_counts() {
+    let retry = read(&root().join("tests/common/retry.rs"));
+    let script = read(&root().join(".github/scripts/count_retried_flakes.sh"));
+    let problems = retry_marker_problems(&retry, &script);
+    assert!(
+        problems.is_empty(),
+        "in-test retries must print what the flakiness report counts:\n  {}",
+        problems.join("\n  ")
+    );
+    let broken = [
+        // The error retry's marker gone, or the failed interaction's.
+        (
+            retry.replacen(
+                "println!(\"{}\", transient_retry_marker(&retry_code(&err)));",
+                "",
+                1,
+            ),
+            script.clone(),
+        ),
+        (
+            retry.replacen(
+                "println!(\"{}\", transient_retry_marker(\"malformed_tool_call\"));",
+                "",
+                1,
+            ),
+            script.clone(),
+        ),
+        // The script reading another word, or counting a timeout as a flake.
+        (
+            retry.clone(),
+            script.replace("w[1] == \"TRANSIENT_RETRIED\"", "w[1] == \"RETRIED\""),
+        ),
+        (retry.clone(), script.replace("code == \"timeout\" || ", "")),
+    ];
+    for (i, (retry_text, script_text)) in broken.iter().enumerate() {
+        assert!(
+            retry_text != &retry || script_text != &script,
+            "mutation {i} did not apply"
+        );
+        assert!(
+            !retry_marker_problems(retry_text, script_text).is_empty(),
+            "mutation {i} went unnoticed"
+        );
+    }
 }
 
 /// A breached target (a flake rate of 1% or more, no live runs read, a

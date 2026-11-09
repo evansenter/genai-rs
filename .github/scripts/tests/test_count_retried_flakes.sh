@@ -7,7 +7,10 @@
 # timestamped) where three tests passed on a retry, and a red run as
 # `gh run view --log` prints it, where one test passed on a retry and one
 # failed every try. A green run's flakes are the case the report used to
-# miss, so it is the one pinned hardest here.
+# miss, so it is the one pinned hardest here. in_test_retries_job.txt is
+# nextest 0.9.120's output of four offline tests of tests/common/retry.rs,
+# three of which print the TRANSIENT_RETRIED marker before a retry, wrapped
+# as a retried integration step's raw job log.
 #
 # Each case runs under every awk on the machine: CI's Ubuntu runner has
 # mawk, a Mac has BSD awk. The script is run directly, as the workflow
@@ -263,6 +266,63 @@ LOG
         '[["tools_and_config_tests","mcp::test_mcp",3,2],["","",1,0]]'
     expect_json "markers: not flakes" '[.tests_run, .flaky]' '[3,0]'
 
+    # --- In-test retries from real output: one marker per retry, on the
+    #     test that printed it, model-side ones apart from transport ones.
+    out=$("$SCRIPT" "$FIXTURES/in_test_retries_job.txt")
+    expect_json "in-test (real output): every marker, model-side apart" \
+        '[.transient_retries, .transient_flake_retries]' '[3,2]'
+    expect_json "in-test (real output): by test, with codes and runs" \
+        '[.transient[] | [.binary, .name, .codes, .flake_runs, .runs]]' \
+        '[["error_handling_tests","test_retry_on_transient_retries_an_auto_function_loop_that_failed",{"malformed_tool_call":1},1,1],["error_handling_tests","test_retry_on_transient_retries_plain_5xx",{"503":1},0,1],["error_handling_tests","test_retry_on_transient_success_after_retry",{"spanner_utf8":1},1,1]]'
+    expect_json "in-test (real output): not nextest flakes" '[.tests_run, .flaky]' '[4,0]'
+
+    # --- In-test retries across runs. A model-side retry makes a flaky run
+    #     of its test (chronic_runs), unless nextest retried the test in the
+    #     same run, which counts it already; a transport retry never does.
+    #     A marker before any status line keeps the name it printed; the
+    #     step header's script and a step without retries do not count.
+    cat > "$WORK/transient.log" <<'LOG'
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:00.0Z ##[group]Run set -eo pipefail
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:00.1Z ^[[36;1m  echo "TRANSIENT_RETRIED not_a_test 429"^[[0m
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:00.2Z   NEXTEST_RETRIES: 2
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:00.3Z ##[endgroup]
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.0Z     Starting 2 tests across 1 binary
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.05Z     TRANSIENT_RETRIED early::test_before_any_line please_retry
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.1Z   TRY 1 FAIL [   1.000s] (─────) genai-rs::function_calling_tests auto::test_loop
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.2Z     TRANSIENT_RETRIED auto::test_loop malformed_tool_call
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.3Z   TRY 2 PASS [   1.000s] (1/2) genai-rs::function_calling_tests auto::test_loop
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.4Z         PASS [   1.000s] (2/2) genai-rs::function_calling_tests test_rate_limited
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.5Z     TRANSIENT_RETRIED test_rate_limited 429
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.6Z     TRANSIENT_RETRIED test_rate_limited timeout
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:01.7Z      Summary [   2.000s] 2 tests run: 2 passed (1 flaky), 0 skipped
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:02.0Z     Starting 2 tests across 1 binary
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:02.1Z         PASS [   1.000s] (1/2) genai-rs::function_calling_tests auto::test_loop
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:02.2Z     TRANSIENT_RETRIED auto::test_loop malformed_tool_call
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:02.3Z     TRANSIENT_RETRIED auto::test_loop invalid_json
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:02.4Z         PASS [   1.000s] (2/2) genai-rs::function_calling_tests test_rate_limited
+Integration Tests (functions)	Run integration tests (functions)	2026-11-05T10:00:02.5Z      Summary [   2.000s] 2 tests run: 2 passed, 0 skipped
+Test Suite	Run unit tests	2026-11-05T10:00:04.0Z ##[group]Run cargo nextest run --workspace
+Test Suite	Run unit tests	2026-11-05T10:00:04.1Z ##[endgroup]
+Test Suite	Run unit tests	2026-11-05T10:00:05.0Z     Starting 1 test across 1 binary
+Test Suite	Run unit tests	2026-11-05T10:00:05.1Z         PASS [   0.010s] (1/1) genai-rs::error_handling_tests test_offline
+Test Suite	Run unit tests	2026-11-05T10:00:05.2Z     TRANSIENT_RETRIED test_offline spanner_utf8
+LOG
+    out=$("$SCRIPT" "$WORK/transient.log")
+    expect_json "in-test: the retried step's markers, none from its script or another step" \
+        '[.transient_retries, .transient_flake_retries]' '[6,4]'
+    expect_json "in-test: a test's runs with a retry, with a model-side one, and new to the count" \
+        '[.transient[] | select(.name == "auto::test_loop") | [.retries, .flake_retries, .retried_runs, .flake_runs, .chronic_runs, .runs]]' \
+        '[[3,3,2,2,1,2]]'
+    expect_json "in-test: codes by count" \
+        '[.transient[] | select(.name == "auto::test_loop") | .codes]' \
+        '[{"invalid_json":1,"malformed_tool_call":2}]'
+    expect_json "in-test: transport retries are no flaky run" \
+        '[.transient[] | select(.name == "test_rate_limited") | [.retries, .flake_retries, .retried_runs, .flake_runs, .chronic_runs, .codes]]' \
+        '[[2,0,1,0,0,{"429":1,"timeout":1}]]'
+    expect_json "in-test: a marker before any status line keeps its own name" \
+        '[.transient[] | select(.binary == "") | [.name, .chronic_runs]]' '[["early::test_before_any_line",1]]'
+    expect_json "in-test: nextest's own count is unchanged" '[.tests_run, .flaky]' '[4,1]'
+
     # --- Nothing to count: a clean run, and no input at all.
     printf '     Summary [   1.000s] 7 tests run: 7 passed, 0 skipped\n' > "$WORK/clean.log"
     out=$("$SCRIPT" "$WORK/clean.log")
@@ -271,6 +331,8 @@ LOG
     expect_json "empty input: zeros, not an error" '[.tests_run, .flaky, (.tests | length)]' '[0,0,0]'
     expect_json "empty input: no examples" '[.examples_run, .examples_retried, (.examples | length)]' '[0,0,0]'
     expect_json "empty input: no skip markers" '[.skip_markers, (.skips | length)]' '[0,0]'
+    expect_json "empty input: no in-test retries" \
+        '[.transient_retries, .transient_flake_retries, (.transient | length)]' '[0,0,0]'
 done
 
 unset AWK
@@ -327,7 +389,7 @@ refute_report() {
 
 render_report "$("$SCRIPT" "$FIXTURES/green_integration_job.txt")"
 expect_report "report: a green week's retried flake is listed" \
-    '| `test_pdf_from_temp_file` | 0 | 1 | passed on retry | tests/temp_file_tests.rs |'
+    '| `test_pdf_from_temp_file` | 0 | 1 | 0 | passed on retry | tests/temp_file_tests.rs |'
 expect_report "report: the rate row counts flakes over live test runs" \
     '| Passed on retry | 3 of 5 live test runs (60.00%) |'
 expect_report "report: a rate over the target is called out" \

@@ -180,7 +180,7 @@ jobs:
           if [ "$LOGS_READ" -gt 0 ]; then
             .github/scripts/count_retried_flakes.sh "${LOG_DIR:?}"/*.log > retried.json
           else
-            echo '{"tests_run": 0, "flaky": 0, "tests": [], "examples_run": 0, "examples_retried": 0, "examples": [], "skip_markers": 0, "skips": []}' > retried.json
+            echo '{"tests_run": 0, "flaky": 0, "tests": [], "examples_run": 0, "examples_retried": 0, "examples": [], "skip_markers": 0, "skips": [], "transient_retries": 0, "transient_flake_retries": 0, "transient": []}' > retried.json
           fi
           rm -rf "${LOG_DIR:?}"
           RETRIED_FLAKES=$(jq -r '.flaky' retried.json)
@@ -193,12 +193,22 @@ jobs:
           SKIP_MARKERS=$(jq -r '.skip_markers // 0' retried.json)
           SKIPPED_TESTS=$(jq -c '[(.skips // [])[] | {name, markers, runs,
             file: (if .binary == "lib" then "src/" elif .binary == "" then "unknown" else "tests/\(.binary).rs" end)}]' retried.json)
+          # Retries a live test made inside itself (retry_request!, which
+          # prints TRANSIENT_RETRIED), which nextest never sees: every one is
+          # listed, and a run with a model-side one counts toward the test's
+          # chronic share below, as a nextest retry does (D-052).
+          TRANSIENT_RETRIES=$(jq -r '.transient_retries // 0' retried.json)
+          TRANSIENT_FLAKE_RETRIES=$(jq -r '.transient_flake_retries // 0' retried.json)
+          TRANSIENT_TESTS=$(jq -c '[(.transient // [])[] | {name, retries, flake_retries, codes,
+            retried_runs, flake_runs, runs,
+            file: (if .binary == "lib" then "src/" elif .binary == "" then "unknown" else "tests/\(.binary).rs" end)}]' retried.json)
 
           # Flakes are named by test; nextest names the binary too, which
           # locates the file without a grep. An example is named for its
           # `cargo run --example`. A flake's runs are the runs it ran in,
           # for its own share (the report flags one over 5%).
           declare -A TEST_RETRIED=()
+          declare -A TEST_IN_TEST=()
           declare -A TEST_RUNS=()
           while IFS=$'\t' read -r test_name file count runs; do
             [ -n "$test_name" ] || continue
@@ -214,6 +224,22 @@ jobs:
                          (.flaky | tostring), (.runs // 0 | tostring)]),
             ((.examples // [])[] | ["example \(.name)", "cargo run --example \(.name)",
                                     (.flaky | tostring), (.runs // 0 | tostring)])
+            | @tsv' retried.json)
+          # A test with a model-side in-test retry: its runs with one that
+          # nextest did not also retry (chronic_runs), so a run counts once.
+          while IFS=$'\t' read -r test_name file count runs; do
+            [ -n "$test_name" ] || continue
+            TEST_IN_TEST[$test_name]=$((${TEST_IN_TEST[$test_name]:-0} + count))
+            [ -n "${TEST_RUNS[$test_name]:-}" ] || TEST_RUNS[$test_name]=$runs
+            [ -n "${TEST_FILES[$test_name]:-}" ] || TEST_FILES[$test_name]="$file"
+            if [ -z "${TEST_FAILURES[$test_name]:-}" ]; then
+              TEST_FAILURES[$test_name]=0
+              TEST_CATEGORIES[$test_name]="retried in the test"
+            fi
+          done < <(jq -r '
+            (.transient // [])[] | select(.flake_runs > 0 and .name != "")
+            | [.name, (if .binary == "lib" then "src/" elif .binary == "" then "unknown" else "tests/\(.binary).rs" end),
+               (.chronic_runs | tostring), (.runs // 0 | tostring)]
             | @tsv' retried.json)
 
           UNIQUE_FLAKY=${#TEST_FAILURES[@]}
@@ -255,6 +281,9 @@ jobs:
             --argjson examples_retried "$EXAMPLES_RETRIED" \
             --argjson skip_markers "$SKIP_MARKERS" \
             --argjson skipped_tests "$SKIPPED_TESTS" \
+            --argjson transient_retries "$TRANSIENT_RETRIES" \
+            --argjson transient_flake_retries "$TRANSIENT_FLAKE_RETRIES" \
+            --argjson transient_tests "$TRANSIENT_TESTS" \
             --argjson api_errors "$API_ERRORS" \
             --argjson rate_limit "$RATE_LIMIT" \
             --argjson assertion_failures "$ASSERTION_FAILURES" \
@@ -276,6 +305,9 @@ jobs:
               examples_retried: $examples_retried,
               skip_markers: $skip_markers,
               skipped_tests: $skipped_tests,
+              transient_retries: $transient_retries,
+              transient_flake_retries: $transient_flake_retries,
+              transient_tests: $transient_tests,
               api_errors: $api_errors,
               rate_limit: $rate_limit,
               assertion_failures: $assertion_failures,
@@ -291,10 +323,11 @@ jobs:
               --arg name "$test_name" \
               --argjson failures "${TEST_FAILURES[$test_name]}" \
               --argjson retried "${TEST_RETRIED[$test_name]:-0}" \
+              --argjson in_test "${TEST_IN_TEST[$test_name]:-0}" \
               --argjson runs "${TEST_RUNS[$test_name]:-0}" \
               --arg category "${TEST_CATEGORIES[$test_name]:-unknown}" \
               --arg file "${TEST_FILES[$test_name]:-unknown}" \
-              '{name: $name, failures: $failures, retried: $retried, runs: $runs, category: $category, file: $file}') || continue
+              '{name: $name, failures: $failures, retried: $retried, in_test: $in_test, runs: $runs, category: $category, file: $file}') || continue
             jq --argjson new "$ITEM_JSON" '. + [$new]' tests.json > tests.json.tmp \
               && mv tests.json.tmp tests.json
           done
@@ -438,7 +471,7 @@ jobs:
       - name: Fail on a breached flake target
         if: steps.report.outputs.breach == 'true'
         run: |
-          echo "::error::The flakiness report breaches a target: a weekly flake rate of 1% or more, no live test runs read, or a test that passed only on a retry in more than 5% of its runs. The rolling ci-health issue has the report."
+          echo "::error::The flakiness report breaches a target: a weekly flake rate of 1% or more, no live test runs read, or a test that needed a retry (nextest's, or a model-side one inside the test) in more than 5% of its runs. The rolling ci-health issue has the report."
           exit 1
 
       # Scheduled failures otherwise only email the last committer of this file
@@ -455,8 +488,9 @@ jobs:
           .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
             "The report fails on purpose when the week breaches a flake target:
           a flake rate of 1% or more, no live test runs read, or a chronic
-          flake (a test that passed only on a retry in more than 5% of its
-          runs). The rolling \`ci-health\` report issue names which, and the
+          flake (a test that needed a retry, nextest's or a model-side one
+          inside the test, in more than 5% of its runs). The rolling
+          \`ci-health\` report issue names which, and the
           issue closes on the first run that meets every target. A failure
           before the report step is the workflow itself breaking."
 

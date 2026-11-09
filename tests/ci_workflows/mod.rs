@@ -2,8 +2,9 @@
 //!
 //! `flakiness` ties the flakiness report to what it reads (#504):
 //! `RETRY_JOBS` names exactly the `rust.yml` jobs that retry, both example
-//! loops print `EXAMPLE_RETRIED`, the report publishes before it fails
-//! and escalates, and a stub test with a millisecond timeout runs on the paused
+//! loops print `EXAMPLE_RETRIED`, every in-test retry prints
+//! `TRANSIENT_RETRIED`, the report publishes before it fails and
+//! escalates, and a stub test with a millisecond timeout runs on the paused
 //! clock. Every live nextest step keeps its skip markers in the log and
 //! fails its step over a budget of them. `coverage` checks that the Code
 //! Coverage job writes its summary, over the packages it measured, on every
