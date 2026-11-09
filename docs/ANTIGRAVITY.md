@@ -186,8 +186,9 @@ On Windows the forced paths end the harness process only: there are no
 process groups to signal, so the `run_command` commands it started keep
 running after a dropped agent, a failed `spawn()` or an escalated
 shutdown. Only the graceful exit stops them there, so call `shutdown()`
-and let it finish. Stdio MCP servers are not affected: they exit at the
-end of their stdin, which closes when the harness dies, on any platform.
+and let it finish. Stdio MCP servers are not affected on Linux and macOS:
+they exit at the end of their stdin, which closes when the harness dies.
+That is unverified on Windows (#536).
 
 ### Images, documents and slash commands
 

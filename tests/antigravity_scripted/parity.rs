@@ -66,8 +66,9 @@ fn table_keys(doc: &str) -> BTreeSet<String> {
 }
 
 /// The rows that break the table's promise, each with what is missing:
-/// every key maps to something in the genai-rs column, and a row that is
-/// not modeled gives its reason in the notes column.
+/// every key maps to something in the genai-rs column, and a row whose
+/// genai-rs cell names no API (no backticked name: "Not modeled", "N/A",
+/// whatever its wording) gives its reason in the notes column.
 fn row_problems(doc: &str) -> Vec<String> {
     parity_rows(doc)
         .into_iter()
@@ -77,8 +78,8 @@ fn row_problems(doc: &str) -> Vec<String> {
             let notes = cells.get(2).map_or("", String::as_str);
             if mapping.is_empty() {
                 Some(format!("no genai-rs mapping: {row}"))
-            } else if mapping.starts_with("Not modeled") && notes.is_empty() {
-                Some(format!("not modeled, with no reason in its notes: {row}"))
+            } else if !mapping.contains('`') && notes.is_empty() {
+                Some(format!("names no API, with no reason in its notes: {row}"))
             } else {
                 None
             }
@@ -146,12 +147,19 @@ fn row_problems_finds_a_row_with_no_mapping_or_no_reason() {
                | `D.bare` | Not modeled | |\n\
                | `E.blank` |  | A note. |\n\
                | `F.short` | Not modeled (preset) |\n\
+               | `H.na` | N/A | |\n\
+               | `I.unsupported` | Unsupported |   |\n\
+               | `J.reasoned` | Unsupported | The reason. |\n\
+               | `K.partial` | Not modeled; use `with_k` | |\n\
                ## Next\n| `G.other` | Not modeled | |\n";
     let problems = row_problems(doc);
-    assert_eq!(problems.len(), 3, "{problems:#?}");
+    assert_eq!(problems.len(), 5, "{problems:#?}");
     assert!(problems[0].contains("`D.bare`") && problems[0].contains("no reason"));
     assert!(problems[1].contains("`E.blank`") && problems[1].contains("no genai-rs mapping"));
     assert!(problems[2].contains("`F.short`") && problems[2].contains("no reason"));
+    // Any wording that names no API needs a reason, not only "Not modeled".
+    assert!(problems[3].contains("`H.na`") && problems[3].contains("no reason"));
+    assert!(problems[4].contains("`I.unsupported`") && problems[4].contains("no reason"));
     assert_eq!(
         cells("| `C.piped` | `add(\\|x\\| x)` | |")[1],
         "`add(|x| x)`"
@@ -165,7 +173,7 @@ fn every_parity_row_maps_its_keys_and_gives_a_reason_when_not_modeled() {
     assert!(
         problems.is_empty(),
         "the parity table in docs/ANTIGRAVITY_BRIDGE_DESIGN.md has rows that map nothing, or \
-         are not modeled with no reason in their Notes cell:\n  {}",
+         name no API with no reason in their Notes cell:\n  {}",
         problems.join("\n  ")
     );
 }

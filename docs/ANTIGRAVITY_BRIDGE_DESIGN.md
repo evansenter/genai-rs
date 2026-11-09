@@ -142,9 +142,9 @@ releases. Mitigations:
 
 ## Binary acquisition & discovery
 
-The binary ships only inside platform-specific PyPI wheels (macOS arm64,
-Linux x86_64/aarch64, Windows amd64/arm64). Discovery order (mirrors the
-Python SDK, extended):
+The binary ships only inside platform-specific PyPI wheels (0.1.23: macOS
+arm64/x86_64, Linux x86_64/aarch64, Windows amd64/arm64). Discovery order
+(mirrors the Python SDK, extended):
 
 1. Explicit path: `AntigravityAgent::builder().with_harness_path(...)`.
 2. `ANTIGRAVITY_HARNESS_PATH` env var (same var the Python SDK honors).
@@ -543,8 +543,9 @@ the new wheel's keys against the pin's.
 
 "Not modeled" rows give the reason, and
 `every_parity_row_maps_its_keys_and_gives_a_reason_when_not_modeled`
-(`parity.rs`, key-free) fails on a row that maps nothing or is not
-modeled with an empty Notes cell. Each modeled setting is shown changing
+(`parity.rs`, key-free) fails on a row that maps nothing, or whose
+genai-rs cell names no backticked API ("Not modeled", or any other
+wording) with an empty Notes cell. Each modeled setting is shown changing
 the harness's behavior by a test in `tests/antigravity_scripted/`
 (D-010): the model request it sends, the tools it declares, a tool's
 result, the turn's outcome, or what it writes to disk. Three kinds of row
