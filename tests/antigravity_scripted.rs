@@ -707,7 +707,7 @@ async fn test_scripted_turn_deadline_bounds_a_hung_custom_tool() {
         ])
         .await;
         let mut agent = scripted_agent(&fake)
-            .with_tool_service(Arc::new(HangingService(started.clone())))
+            .add_tool_service(Arc::new(HangingService(started.clone())))
             .with_turn_timeout(budget)
             .spawn()
             .await

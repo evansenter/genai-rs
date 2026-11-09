@@ -310,9 +310,10 @@ impl AgentBuilder {
         self
     }
 
-    /// Registers a [`ToolService`] providing stateful custom tools.
+    /// Registers a [`ToolService`] providing stateful custom tools. Each
+    /// call adds a service; the tools of every one are declared.
     #[must_use]
-    pub fn with_tool_service(mut self, service: Arc<dyn ToolService>) -> Self {
+    pub fn add_tool_service(mut self, service: Arc<dyn ToolService>) -> Self {
         self.tool_services.push(service);
         self
     }
@@ -522,7 +523,7 @@ impl AgentBuilder {
     /// [`Self::with_ungated_subagents`].
     ///
     /// Custom tools listed on the subagent (by name) must also be
-    /// registered on this builder (`add_tool` / `with_tool_service`);
+    /// registered on this builder (`add_tool` / `add_tool_service`);
     /// `spawn()` fails with [`AntigravityError::Config`] on a dangling
     /// reference or a duplicate subagent name.
     #[must_use]

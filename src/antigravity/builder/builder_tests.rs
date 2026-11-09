@@ -129,6 +129,24 @@ fn harness_config_falls_back_to_a_real_model_when_none_is_set() {
 }
 
 #[test]
+fn test_add_tool_service_appends() {
+    struct NoTools;
+    impl ToolService for NoTools {
+        fn tools(&self) -> Vec<Arc<dyn crate::CallableFunction>> {
+            Vec::new()
+        }
+    }
+    let builder = AgentBuilder::default()
+        .add_tool_service(Arc::new(NoTools))
+        .add_tool_service(Arc::new(NoTools));
+    assert_eq!(
+        builder.tool_services.len(),
+        2,
+        "a second call keeps the first"
+    );
+}
+
+#[test]
 fn test_builder_harness_config_assembly() {
     let builder = AntigravityAgent::builder()
         .with_api_key("test-key")

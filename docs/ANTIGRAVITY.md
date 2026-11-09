@@ -699,7 +699,7 @@ fn get_weather(city: String) -> String {
 # let my_service: std::sync::Arc<dyn genai_rs::ToolService> = unimplemented!();
 let builder = AntigravityAgent::builder()
     .add_tool(GetWeatherCallable.declaration())     // #[tool] machinery
-    .with_tool_service(my_service)                  // stateful ToolService
+    .add_tool_service(my_service)                   // stateful ToolService
     // ...
     ;
 # let _ = builder;
@@ -811,7 +811,7 @@ Rules (matching the reference SDK):
   # let _ = builder;
   ```
 - **Custom tools are referenced by name** and must also be registered on the
-  parent agent (`add_tool` / `with_tool_service`) — subagent custom-tool
+  parent agent (`add_tool` / `add_tool_service`) — subagent custom-tool
   calls dispatch through the parent's registry. `spawn()` validates the
   references (and name uniqueness) and fails with `AntigravityError::Config`
   on a dangling one.

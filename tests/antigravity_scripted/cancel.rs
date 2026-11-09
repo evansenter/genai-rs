@@ -176,9 +176,7 @@ async fn assert_next_turns_survive(blocker: Blocker, abandon: Abandon) {
     let (release, blocked) = std::sync::mpsc::channel::<()>();
     let builder = scripted_agent(&fake).add_workspace(workspace.path().to_string_lossy());
     let builder = match blocker {
-        Blocker::HangingTool => {
-            builder.with_tool_service(Arc::new(HangingService(started.clone())))
-        }
+        Blocker::HangingTool => builder.add_tool_service(Arc::new(HangingService(started.clone()))),
         Blocker::PendingHook => {
             let blocked = Mutex::new(blocked);
             let hook_started = started.clone();
@@ -318,7 +316,7 @@ async fn test_scripted_a_drained_turn_timeout_is_not_halted_again() {
     // Room for one model round trip on a slow runner, so the turn after
     // the timeout completes under the same budget.
     let mut agent = scripted_agent(&fake)
-        .with_tool_service(Arc::new(HangingService(started)))
+        .add_tool_service(Arc::new(HangingService(started)))
         .with_turn_timeout(Duration::from_secs(5))
         .spawn()
         .await

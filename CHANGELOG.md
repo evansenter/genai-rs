@@ -529,6 +529,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a parse failure arrives as `Protocol`); and map your own `io` and
   `serde_json` errors into your error type rather than through
   `AntigravityError`.
+- **Breaking: `AgentBuilder::with_tool_service` is `add_tool_service`.**
+  It appends, so each call registers another service; the `with_` prefix
+  says a second call replaces. Migration: rename the call.
 - **Breaking: a cut-off stream ends with the new
   `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
   the connection can end a stream body before `interaction.completed` or an

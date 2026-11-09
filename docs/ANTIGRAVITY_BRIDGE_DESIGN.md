@@ -649,7 +649,7 @@ test asserts so that the day it does is noticed.
 | `CapabilitiesConfig.tool_output_truncation_config`, `ToolOutputTruncationConfig.max_tokens` | `with_tool_output_truncation` | |
 | `CapabilitiesConfig.mcp_max_output_bytes` | `with_mcp_max_output_bytes` | |
 | `CapabilitiesConfig.compaction_threshold`, `AgentConfig.compaction_config`, `CompactionConfig.token_threshold` | `with_compaction_threshold` | Both spellings written, as Python does. |
-| `AgentConfig.tools` | `add_tool`, `with_tool_service` | |
+| `AgentConfig.tools` | `add_tool`, `add_tool_service` | |
 | `ToolContext.conversation_id`, `StateStore.get_state`, `StateStore.set_state`, `StateStore.update_state`, `StateStore.lock` | Not modeled | Python hands a `ToolContext` to a tool with a parameter of that type: the conversation id and a per-session state store (`StateStore`, also behind `HookContext`). A genai-rs tool's state lives on its `ToolService`, shared by the tools it returns, and `conversation_id()` gives the id once `spawn()` returns. |
 
 ### Subagents

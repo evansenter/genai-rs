@@ -233,7 +233,7 @@ async fn test_scripted_lifecycle_hooks_skip_a_drained_turn() {
         let log: Arc<Mutex<Vec<String>>> = Arc::default();
         let (post, stop) = (Arc::clone(&log), Arc::clone(&log));
         let mut agent = scripted_agent(&fake)
-            .with_tool_service(Arc::new(HangingService(started.clone())))
+            .add_tool_service(Arc::new(HangingService(started.clone())))
             .with_turn_timeout(budget)
             .on_post_turn(move |turn| {
                 post.lock()
