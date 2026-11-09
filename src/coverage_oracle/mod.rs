@@ -352,6 +352,8 @@ fn reasons() -> Vec<(&'static str, &'static str, &'static str)> {
         ("request NOT_SENT", request::NOT_SENT),
         ("request TRUSTED", request::TRUSTED),
         #[cfg(not(genai_strict_unknown))]
+        ("request NOT_SENT_VALUES", request::NOT_SENT_VALUES),
+        #[cfg(not(genai_strict_unknown))]
         ("UNMAPPED", UNMAPPED),
         #[cfg(not(genai_strict_unknown))]
         ("SPEC_UNMAPPED", SPEC_UNMAPPED),

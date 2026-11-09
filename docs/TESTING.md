@@ -572,7 +572,11 @@ checks on it:
   union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s
   `Dict[str, Any]`) cannot hide a wrong key. The reverse test
   (`request_classes_have_no_unsent_fields`) lists every field of a reached
-  request class that nothing sends.
+  request class that nothing sends, and `request_only_enum_values_are_sent`
+  (`request/enum_values.rs`) every value nothing sends of an enumeration
+  only a request reaches (`webhooks.WebhookUpdateState`), unless
+  `NOT_SENT_VALUES` gives the reason; the response side checks the values
+  of one a response reaches.
 - **Request bodies on the wire** (`tests/request_wire_oracle.rs`). Each
   verb with a body runs against the local stub, and the captured body is
   checked the same way, wrapping included. `every_verb_with_a_body_is_called_above`

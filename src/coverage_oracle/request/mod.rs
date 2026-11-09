@@ -21,8 +21,13 @@
 
 mod bodies;
 mod content;
+// Reads the response targets, which strict mode does not build.
+#[cfg(not(genai_strict_unknown))]
+mod enum_values;
 mod fills;
 
+#[cfg(not(genai_strict_unknown))]
+pub(super) use enum_values::NOT_SENT_VALUES;
 pub(super) use fills::TRUSTED;
 
 use std::collections::BTreeSet;

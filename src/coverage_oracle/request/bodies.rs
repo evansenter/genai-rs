@@ -373,14 +373,34 @@ pub(super) fn webhooks() -> Vec<Value> {
     vec![to_value(&WebhookInput::from(&webhook))]
 }
 
+/// One update per state, every event subscribed: a state or event only an
+/// update takes is a request-only enumeration, which `enum_values` holds to
+/// being sent.
 pub(super) fn webhook_updates() -> Vec<Value> {
-    vec![to_value(&WebhookUpdate {
-        name: Some("hook".into()),
-        uri: Some("https://example.com/hook".into()),
-        subscribed_events: Some(vec![WebhookEvent::InteractionFailed]),
-        state: Some(WebhookState::Disabled),
-        update_mask: Some("name,uri".into()),
-    })]
+    [
+        WebhookState::Enabled,
+        WebhookState::Disabled,
+        WebhookState::DisabledDueToFailedDeliveries,
+    ]
+    .into_iter()
+    .map(|state| {
+        to_value(&WebhookUpdate {
+            name: Some("hook".into()),
+            uri: Some("https://example.com/hook".into()),
+            subscribed_events: Some(vec![
+                WebhookEvent::BatchSucceeded,
+                WebhookEvent::BatchExpired,
+                WebhookEvent::BatchFailed,
+                WebhookEvent::InteractionRequiresAction,
+                WebhookEvent::InteractionCompleted,
+                WebhookEvent::InteractionFailed,
+                WebhookEvent::VideoGenerated,
+            ]),
+            state: Some(state),
+            update_mask: Some("name,uri".into()),
+        })
+    })
+    .collect()
 }
 
 pub(super) fn trigger_params() -> Vec<Value> {
@@ -401,12 +421,23 @@ pub(super) fn trigger_params() -> Vec<Value> {
         .collect()
 }
 
+/// One update per status, each a request-only value (see
+/// [`webhook_updates`]).
 pub(super) fn trigger_updates() -> Vec<Value> {
-    vec![to_value(&TriggerUpdate {
-        display_name: Some("daily".into()),
-        status: Some(TriggerStatus::Paused),
-        extra: serde_json::Map::new(),
-    })]
+    [
+        TriggerStatus::Active,
+        TriggerStatus::Paused,
+        TriggerStatus::Error,
+    ]
+    .into_iter()
+    .map(|status| {
+        to_value(&TriggerUpdate {
+            display_name: Some("daily".into()),
+            status: Some(status),
+            extra: serde_json::Map::new(),
+        })
+    })
+    .collect()
 }
 
 pub(super) fn agents() -> Vec<Value> {
