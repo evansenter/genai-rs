@@ -4,9 +4,6 @@
 //! to record requests and replay canned responses. Shared by
 //! `http_mock_tests.rs` and `http_mock_resources.rs`.
 
-// Each test binary compiles `common` separately and uses a subset of it.
-#![allow(dead_code)]
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

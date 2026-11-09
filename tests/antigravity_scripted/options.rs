@@ -5,7 +5,7 @@
 use super::*;
 use genai_rs::antigravity::protocol::StopReason;
 use genai_rs::antigravity::{
-    Budget, InlineSkill, McpServer, RetryConfig, RunCommandOptions, SessionContinuation, Subagent,
+    Budget, InlineSkill, RetryConfig, RunCommandOptions, SessionContinuation, Subagent,
     SystemInstructions,
 };
 
@@ -88,6 +88,93 @@ Body.
     assert!(!prompt.contains("Active Workspaces"), "{prompt}");
     assert!(prompt.contains("=== Workspace ==="), "{prompt}");
     agent.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_section_titles_and_the_workspace_setter_reach_the_prompt() {
+    let workspace = scratch_dir("agy-scripted-ws");
+    let decoy = scratch_dir("agy-scripted-ws-decoy");
+    let root = workspace.path().canonicalize().unwrap();
+    let decoy = decoy.path().canonicalize().unwrap();
+
+    // A retitled appended section; `with_workspace` replaces the workspace
+    // added before it.
+    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
+    let mut agent = scripted_agent(&fake)
+        .add_workspace(decoy.to_string_lossy())
+        .with_workspace(root.to_string_lossy())
+        .with_system_instructions(
+            SystemInstructions::appended("TITLED-MARK-4475").with_title("retitled_section"),
+        )
+        .spawn()
+        .await
+        .expect("spawn");
+    agent.chat("hi").await.expect("turn");
+    let prompt = fake.system_prompt(0);
+    assert!(
+        prompt.contains("<retitled_section>\nTITLED-MARK-4475"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("<user_system_instructions>"), "{prompt}");
+    assert!(prompt.contains(root.to_string_lossy().as_ref()), "{prompt}");
+    assert!(
+        !prompt.contains(decoy.to_string_lossy().as_ref()),
+        "{prompt}"
+    );
+    agent.shutdown().await.expect("shutdown");
+
+    // A retitled custom prompt: its tag is the title, not `System`.
+    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
+    let mut agent = scripted_agent(&fake)
+        .with_system_instructions(
+            SystemInstructions::custom("CUSTOM-TITLED-4476").with_title("custom_title"),
+        )
+        .spawn()
+        .await
+        .expect("spawn");
+    agent.chat("hi").await.expect("turn");
+    let prompt = fake.system_prompt(0);
+    assert!(prompt.contains("<custom_title>"), "{prompt}");
+    assert!(prompt.contains("CUSTOM-TITLED-4476"), "{prompt}");
+    assert!(!prompt.contains("<System>"), "{prompt}");
+    agent.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_capabilities_choose_the_declared_builtins() {
+    let cases = [
+        (Capabilities::read_only(), "view_file", true),
+        (
+            Capabilities::read_only().disable(BuiltinTool::ViewFile),
+            "view_file",
+            false,
+        ),
+        (Capabilities::read_only(), "run_command", false),
+        (
+            Capabilities::read_only().enable(BuiltinTool::RunCommand),
+            "run_command",
+            true,
+        ),
+    ];
+    for (capabilities, tool, declared) in cases {
+        let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
+        let mut agent = scripted_agent(&fake)
+            .with_capabilities(capabilities)
+            .add_policy(policy::allow_all())
+            .spawn()
+            .await
+            .expect("spawn");
+        agent.chat("hi").await.expect("turn");
+        let tools = fake.tool_names(0);
+        assert_eq!(
+            tools.iter().any(|t| t == tool),
+            declared,
+            "{tool}: {tools:?}"
+        );
+        agent.shutdown().await.expect("shutdown");
+    }
 }
 
 // =============================================================================
@@ -241,7 +328,9 @@ async fn test_scripted_retry_config_decides_whether_a_503_ends_the_turn() {
     agent.shutdown().await.expect("shutdown");
 }
 
-/// A `run_command` call as the model makes it.
+/// A `run_command` call as the model makes it. Unix only, as the tests that
+/// use it are.
+#[cfg(unix)]
 fn run_command(command: &str, cwd: &std::path::Path, wait_ms: u64) -> ModelTurn {
     ModelTurn::call(
         "run_command",
@@ -418,57 +507,70 @@ async fn test_scripted_inline_skills_reach_the_model() {
     agent.shutdown().await.expect("shutdown");
 }
 
-/// The stdio MCP fixture `tests/fixtures/mcp_echo_server.py`.
-fn widgets_server() -> McpServer {
-    let fixture =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_echo_server.py");
-    McpServer::stdio("python3", [fixture.to_string_lossy().to_string()]).with_name("widgets")
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_response_schema_is_the_finish_tools_parameters() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"code": {"type": "integer"}},
+        "required": ["code"]
+    });
+    let fake = FakeGemini::start(vec![
+        ModelTurn::call("finish", json!({"code": 4417})),
+        ModelTurn::text("unreached"),
+    ])
+    .await;
+    let mut agent = scripted_agent(&fake)
+        .with_response_schema(schema.clone())
+        .spawn()
+        .await
+        .expect("spawn");
+    let response = agent.chat("answer").await.expect("turn");
+    let request = fake.request_json(0).unwrap();
+    let finish = request["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool["functionDeclarations"].as_array())
+        .flatten()
+        .find(|declaration| declaration["name"] == "finish")
+        .unwrap_or_else(|| panic!("no finish tool: {request}"));
+    assert_eq!(finish["parametersJsonSchema"], schema, "{finish}");
+    assert_eq!(response.structured_output(), Some(&json!({"code": 4417})));
+    agent.shutdown().await.expect("shutdown");
 }
 
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
-async fn test_scripted_mcp_eager_tools_and_output_cap() {
-    // Default: the server's tools sit behind call_mcp_tool.
+async fn test_scripted_app_data_dir_holds_the_conversations_working_files() {
+    let app_data = scratch_dir("agy-scripted-appdata");
+    let dir = app_data.path().to_string_lossy().into_owned();
     let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
     let mut agent = scripted_agent(&fake)
-        .add_mcp_server(widgets_server())
-        .add_policy(policy::allow_all())
+        .with_app_data_dir(&dir)
         .spawn()
         .await
         .expect("spawn");
     agent.chat("hi").await.expect("turn");
-    let tools = fake.tool_names(0);
-    assert!(tools.contains(&"call_mcp_tool".to_string()), "{tools:?}");
-    assert!(!tools.contains(&"mcp_widgets_lookup_widget_code".to_string()));
+    let conversation = agent
+        .conversation_id()
+        .expect("a conversation id")
+        .to_string();
     agent.shutdown().await.expect("shutdown");
 
-    // Eager: declared by name. A tiny output cap spills the result to a
-    // file.
-    let fake = FakeGemini::start(vec![
-        ModelTurn::call(
-            "mcp_widgets_lookup_widget_code",
-            json!({"widget": "flange"}),
-        ),
-        ModelTurn::text("done"),
-    ])
-    .await;
-    let mut agent = scripted_agent(&fake)
-        .add_mcp_server(widgets_server().with_force_all_tools_eager(true))
-        .with_mcp_max_output_bytes(5)
-        .add_policy(policy::allow_all())
-        .spawn()
-        .await
-        .expect("spawn");
-    agent.chat("look it up").await.expect("turn");
-    let tools = fake.tool_names(0);
+    let prompt = fake.system_prompt(0);
     assert!(
-        tools.contains(&"mcp_widgets_lookup_widget_code".to_string()),
-        "{tools:?}"
+        prompt.contains(&format!("App Data Directory: {dir}")),
+        "{prompt}"
     );
-    let told = function_response_text(&fake, 1);
-    assert!(told.contains("saved to"), "{told}");
-    assert!(!told.contains("wibble-3317-quux"), "{told}");
-    agent.shutdown().await.expect("shutdown");
+    let transcript = app_data.path().join(format!(
+        "brain/{conversation}/.system_generated/logs/transcript.jsonl"
+    ));
+    assert!(
+        transcript.is_file(),
+        "the harness keeps the conversation's transcript under the app data directory: {}",
+        transcript.display()
+    );
 }
 
 #[tokio::test]
@@ -624,11 +726,19 @@ async fn test_scripted_prompt_media_and_slash_commands_reach_the_model() {
     // Media goes to the model as inline data, after the text.
     let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
     let mut agent = scripted_agent(&fake).spawn().await.expect("spawn");
-    let prompt = Prompt::new()
-        .add_text("PROMPT-TEXT-4401")
-        .add_media(Media::new(b"PNG-BYTES-4402".to_vec(), "image/png"));
+    let prompt = Prompt::new().add_text("PROMPT-TEXT-4401").add_media(
+        Media::new(b"PNG-BYTES-4402".to_vec(), "image/png")
+            .with_description("DESCRIPTION-MARK-4404"),
+    );
     agent.chat(prompt).await.expect("turn");
     let request = fake.request_json(0).unwrap();
+    // Sent to the harness, which does not pass it on (0.1.23): when this
+    // fails, the harness has started to, and the parity table and
+    // `Media::with_description` should say so.
+    assert!(
+        !request.to_string().contains("DESCRIPTION-MARK-4404"),
+        "{request}"
+    );
     let parts = &request["contents"][0]["parts"];
     assert!(
         parts[0]["text"]

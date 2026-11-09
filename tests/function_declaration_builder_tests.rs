@@ -5,6 +5,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -108,7 +112,7 @@ fn test_function_builder_with_many_parameters() {
     // Add 20 parameters
     for i in 0..20 {
         builder = builder.add_parameter(
-            &format!("param_{i}"),
+            format!("param_{i}"),
             json!({"type": "string", "description": format!("Parameter {}", i)}),
         );
     }

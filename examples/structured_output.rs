@@ -175,7 +175,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     json_text.push_str(text);
                 }
             }
-            StreamChunk::Error { message, code } => {
+            StreamChunk::Error { message, code, .. } => {
                 return Err(format!("stream error ({code:?}): {message}").into());
             }
             _ => {}

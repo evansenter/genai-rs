@@ -9,14 +9,15 @@ fmt:
 
 # Lint with warnings as errors, as CI's Clippy job does: all features; strict
 # mode (`--cfg genai_strict_unknown`, D-030), which compiles code in and out
-# (the coverage oracle's response side); and the library without default
+# (the coverage oracle's response side); and every target without default
 # features, whose code the all-features run never compiles. RUSTFLAGS rebuilds
 # every crate, so strict mode builds in its own target dir rather than
-# evicting the default build.
+# evicting the default build. The Windows-only code is linted by CI's Cross
+# Platform job, on its Windows stable leg.
 clippy:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	RUSTFLAGS="--cfg genai_strict_unknown" cargo clippy --workspace --all-targets --all-features --target-dir target/strict -- -D warnings
-	cargo clippy --lib --no-default-features -- -D warnings
+	cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
 # Unit tests in strict mode, as CI's test-strict-unknown job runs them
 test-strict:
@@ -38,7 +39,8 @@ test-all:
 # An empty glob, for the harnesses or for any directory shellcheck lints, is
 # an error that names it, not a pass or shellcheck's "No such file" (#456).
 # check_dated_facts.sh then reads the checkout itself: D-032's one home per
-# dated live fact, and a reason above every `ignore` code fence.
+# dated live fact, a reason above every `ignore` code fence, no Rust block in
+# Markdown that nothing doctests, and no Rust in a text block.
 test-scripts:
 	@for tool in jq python3; do \
 		command -v "$$tool" >/dev/null 2>&1 || { \

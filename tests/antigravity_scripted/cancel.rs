@@ -216,7 +216,10 @@ async fn assert_next_turns_survive(blocker: Blocker, abandon: Abandon) {
                             return Ok(*response);
                         }
                     }
-                    Err(AntigravityError::Protocol("no Finished event".into()))
+                    Err(AntigravityError::Protocol {
+                        message: "no Finished event".into(),
+                        source: None,
+                    })
                 };
                 let mut consume = std::pin::pin!(consume);
                 poll_until_started(consume.as_mut(), &started).await;

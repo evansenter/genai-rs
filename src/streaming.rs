@@ -75,6 +75,10 @@ pub enum AutoFunctionStreamChunk {
     /// Incremental step payload from the model (text fragments,
     /// `arguments_delta` function-argument fragments, thought summaries and
     /// signatures, tool call/result deltas, ...)
+    ///
+    /// The `StepDelta` alone: the `step.delta` event's other keys
+    /// ([`StreamChunk::extra`](crate::StreamChunk::extra)) reach a caller of
+    /// `execute_stream()` only.
     Delta(StepDelta),
 
     /// Function calls detected, about to execute.
@@ -83,15 +87,19 @@ pub enum AutoFunctionStreamChunk {
     /// before the functions are executed. The `pending_calls` field contains
     /// the function calls that are about to be executed.
     ///
-    /// **Note**: In streaming mode, function calls arrive incrementally via
-    /// `Delta` chunks. The `pending_calls` list is built from accumulated deltas
-    /// and will always be populated, even though `response.function_calls()`
-    /// may be empty.
+    /// **Note**: the calls also arrive incrementally as `Delta` chunks, and
+    /// `response` holds them whole: the round's steps are assembled from
+    /// the stream. `pending_calls` are the response's function calls that
+    /// have no result in it
+    /// ([`pending_function_calls`](InteractionResponse::pending_function_calls)),
+    /// so `response.function_calls()` holds them too, along with any call a
+    /// server-run tool already answered.
     ExecutingFunctions {
-        /// The response from the API (may have empty `function_calls()` in
-        /// streaming mode). Boxed, so that a `Delta` chunk stays small (#490).
+        /// The round's response, its steps assembled from the stream. Boxed,
+        /// so that a `Delta` chunk stays small (#490).
         response: Box<InteractionResponse>,
-        /// The function calls that are about to be executed (always populated)
+        /// The function calls about to be executed: the response's calls
+        /// with no result in it, never empty.
         pending_calls: Vec<OwnedFunctionCallInfo>,
     },
 

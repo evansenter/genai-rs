@@ -599,6 +599,13 @@ Streams borrowing the client would avoid those clones, but switching to
 owned streams afterwards would change the handle types, so owned streams
 were chosen up front.
 
+*Amended 2026-11-07 (#504).* Rules 2 and 6 are checked on every handle,
+not only the sampled verbs the compile guard calls: a source scan in
+`tests/http_mock_resources/paging.rs` fails on a public handle method that
+takes anything but `self` or `mut self`, or returns a value that is
+neither `#[must_use]` itself (a `Result`, a handle, a list builder) nor
+marked on the method.
+
 ---
 
 ## D-017 — Interaction methods move to `src/interactions.rs` (2026-09-27)
@@ -1150,6 +1157,27 @@ fact from any other date in the files it reads, so a date that is not a
 fact (a release date in a guide) has to be phrased without one or added to
 the script's `NAMES`.
 
+**Amended 2026-11-08 (#504's H6).** A date is no longer only ISO: the
+script also reads an unpadded ISO day (`2026-11-5`), a slashed date
+(`2026/11/05`, `11/05/2026`), a dotted one (`2026.11.05`, `05.11.2026`),
+one dashed with the year last (`11-05-2026`) and one with the month named
+(`November 5, 2026`, `Nov 5, 2026`, `5 November 2026`, `November 2026`),
+also when hard-wrapped prose breaks it across two lines, since a named
+date has spaces to break at. It skips a date followed by a time with
+seconds, a timestamp such as an HTTP date in a `Retry-After` example; a
+time without seconds is how prose dates an observation, so that date is
+read, in every form alike. A date with no year or a two-digit one
+(`Nov 5`, `'26`) is not read: matching one would flag ordinary prose. The
+reason line on an `ignore` fence is required in every doc comment of
+every Rust file, test code and `tests/` included, since those are where a
+fence went without one; the date rule still skips them. Three rules keep
+every Rust block compiled or explained (D-059): a Rust block nothing
+compiles must be `ignore`d with a reason, whether in a Markdown file that
+`src/lib.rs`'s `doc_tests` does not include (`CHANGELOG.md` is exempt as
+history) or in a doc comment outside the library's non-test code; a fence
+tagged `rs` or `Rust`, which rustdoc never compiles, fails anywhere; and a
+`text` block may not hold a Rust statement or item header.
+
 ## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
 
 **Context.** The leaked-resource janitor (#492) deletes only resources
@@ -1246,14 +1274,20 @@ its reason in the guard:
   do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
   `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
   `FunctionResultPayload`.
-- The known `StreamChunk` and `AutoFunctionStreamChunk` variants: parsed
-  stream events that nothing sends back, serialized only in the crate's own
-  `{chunk_type, data}` log form. The payloads inside keep their own `extra`;
-  a key the API adds to an SSE event's envelope itself is dropped (tracked
-  in #538).
+- The known `AutoFunctionStreamChunk` variants: the crate's own
+  `{chunk_type, data}` log form, which only the crate writes. The payload
+  inside keeps its own `extra`, but no chunk's `extra` (D-054) is
+  passed on: `Delta` carries the `StepDelta` alone, and the stream reads
+  the other events without yielding them. A key the API adds to an SSE
+  event's envelope reaches `execute_stream()`'s `StreamChunk::extra`
+  only.
 - The Antigravity `InputEvent` arms, `{"<arm>": payload}`: a oneof the
   crate only sends to the harness. A payload struct keeps its own `extra`;
   a bool or string payload has no fields.
+
+*Amended 2026-11-07 (#538).* The known `StreamChunk` variants left the
+list above: each keeps the SSE event's keys it does not read in an `extra`
+map (D-054), and the guard no longer exempts them.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1438,6 +1472,17 @@ served again and the snapshots were refreshed from them. The watch
 comments only on an open issue, so the sweep's step now probes the URLs
 and logs what each serves. Nothing yet compares a served spec with its
 committed snapshot; that watch is left to the owner.
+
+**Amended 2026-11-08 (#504's H1; #544, #541).** The sweep watches the
+specs themselves now. `watch_spec_urls.sh` reduces what each snapshot's
+URL serves with `snapshot_openapi.py`, with the snapshot's own source and
+fetch date, and compares the result with the committed file. A drift, or
+a URL that stops serving the spec on a second try, opens or updates one
+rolling `api-sweep` issue, which comments only when the findings change;
+a clean run closes it. It still leaves the refresh to a person, for the
+reason above. The store and document listings now send the camelCase
+pair, as the Files API does, so the eight reasoned paging entries are
+gone.
 
 ---
 
@@ -1729,6 +1774,33 @@ mutexes inside hook closures that cannot return an error.
 if it unwraps outside a `#[test]` function. A new invariant panic in the
 library needs its reason written down.
 
+*Amended 2026-11-07 (#504).* The panicking macros follow the same rule:
+`clippy::panic`, `clippy::unreachable`, `clippy::todo` and
+`clippy::unimplemented` are on at warn. The one library site,
+`Client::new`'s documented panic, carries `#[expect(clippy::panic, reason
+= "...")]`, and the fuzz entry points' module-level `#![expect]` names
+`clippy::panic` beside `clippy::expect_used`. Tests are exempt as before:
+`clippy.toml`'s `allow-panic-in-tests`, and all four lints in every
+integration-test crate root's allow, for helpers outside a `#[test]`
+function. Clippy has no in-tests setting for the other three, so each
+crate's `lib.rs` allows them under `#![cfg_attr(test, ...)]`: the
+unit-test build compiles `#[cfg(test)]` modules, and the library build,
+which `--all-targets` lints as well, still denies them. An example that
+uses one adds it to its crate-root allow; none does today.
+
+`clippy::allow_attributes_without_reason` is on as well, in tests too:
+every `#[allow]` and `#[expect]` says why in `reason = "..."`, not in a
+comment beside it. Where the lint always fires, the attribute is
+`#[expect]`, so it fails once nothing needs it (the `unsafe_code` sites, a
+test struct whose field is only parsed). A lint that fires in some builds
+and not others keeps `#[allow]`: dead code in `tests/common/`, which each
+test binary compiles and uses a part of (one allow at its root now, in
+place of one per helper), `clone_on_copy` in the `list_builder!` template,
+and `ref_option`, a pedantic lint that is off, on the two serde helpers
+whose signature serde dictates. Six `#[allow(dead_code)]` on
+`#[tool]` functions suppressed nothing, since the registration uses them,
+and are gone.
+
 ---
 
 ## D-049 — `AntigravityError::WebSocket` keeps its cause as a boxed error (2026-11-07)
@@ -1776,6 +1848,20 @@ Windows) is not part of this; `docs/ANTIGRAVITY.md` states that scope.
 **Consequences.** A Windows search that misses lists both names for each
 site-packages directory.
 
+**Amendment (#504, H2): the interpreter too.** python.org's Windows
+installer provides `python.exe` and no `python3`, which on Windows is
+often only the Microsoft Store's stub (it exits with an error). So the
+site-packages step asks each of `python_interpreters(cfg!(windows))` in
+turn: `python3`, then `python` on Windows, and `python3` alone elsewhere,
+where `python` may be Python 2 or absent and adds nothing. The next
+interpreter is started only when the ones before it gave no site-packages
+holding the harness, so a working `python3` costs no second start-up, and
+each gets the full discovery timeout. A harness found through `python` is
+version-checked as any other: the check reads the wheel metadata beside
+the binary, not the interpreter. The `py` launcher is not tried; it needs
+its own arguments (`py -3`), and `ANTIGRAVITY_HARNESS_PATH` covers an
+install found neither way.
+
 ---
 
 ## D-051 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
@@ -1787,14 +1873,16 @@ among them, remained (outside this file and `CHANGELOG.md`), on rules and
 code those issues introduced. Both issues are closed, and #504 asked whether such
 tags stay.
 
-**Decision.** They stay. A provenance tag, `(#N)` beside a rule or a
-behavior, names where it came from, as a decision number does; a closed
-issue still holds the discussion behind it, and the rule has not changed
-because the issue closed. A pointer ("see #N", "tracked in #N", "until #N
-lands", "#493 item 7") sends the reader to the issue for what is still
-open, so it names an open issue only: when the issue closes, the outcome
-is stated in place and the pointer goes. `CLAUDE.md` states the rule
-beside D-032's.
+**Decision.** They stay. A reference is told by what it claims, not by
+its form (amended below). A provenance tag names where a rule or a
+behavior was decided or found, as a decision number does: `(#N)` beside
+it, or "#493 item 3" on what that item added. A closed issue still holds
+the discussion behind it, and the rule has not changed because the issue
+closed. A pointer claims that the issue holds current status or pending
+work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
+item M" while that item is still open), so it names an open issue only:
+when the issue closes, the outcome is stated in place and the pointer
+goes. `CLAUDE.md` states the rule beside D-032's.
 
 Rejected: removing every reference to a closed issue. It would delete the
 only link from the `extra` maps to the reasoning behind them, and the
@@ -1807,6 +1895,18 @@ without guessing.
 **Consequences.** A reviewer, not a script, catches a pointer left on a
 closed issue. Closing an issue that a pointer names means editing that
 sentence in the same change.
+
+**Amended 2026-11-08 (#504's H6).** The decision first told a pointer by
+its form, listing "#493 item 7" among the pointers. By that reading the
+tags naming #493's items on the code they added (closed #493's provenance)
+were pointers to a closed issue, and so were "See #421" in
+`api-surface-sweep.yml` and "See #431" in `report_scheduled_failure.sh`,
+which name the history behind each. A reference is now told by what it
+claims: current status or pending work makes it a pointer, where
+something was decided or found makes it a provenance tag, whatever the
+wording. A sentence that could be read either way is reworded to say
+which it is, as those two now do. Still no check: telling the two apart
+means reading what the sentence claims.
 
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
@@ -1872,3 +1972,316 @@ until they age out, and a test stays chronic while two of its retried runs
 are in it: the Antigravity test's are all from 2026-11-01, so it clears
 from the 2026-11-09 report, and the search test's second-to-last is from
 2026-11-05, so it clears from the 2026-11-13 report, with no new retry.
+
+**Amended 2026-11-08 (#545).** `malformed_tool_call`, the broken tool
+call the API itself asks to be retried, stays one of `retry_request!`'s
+transient errors in its new form. The API now reports it in a `200`, as
+an interaction whose `status` is `failed` and whose `errors` carry that
+code (4 of 4 live, recorded in the gap tracker), where it used to be a
+`400`, so `retry_on_transient` retries an interaction it returns, or an
+auto-function loop's final response, that failed that way, and returns
+the last attempt as it came. As in the `400` form, a failure that names
+`too_many_tool_calls` is never retried. The search test's follow-up,
+the case that met it most, is fixed at its cause (it resends the tool);
+the retry is for the broken call a model makes now and then anywhere.
+
+## D-053 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
+
+**Context.** `is_retryable()` called every 5xx transient and every 4xx but
+429 permanent (#504, Reliability). So a 408, which google-genai retries,
+ended a retry loop, and a 501, the API's `UNIMPLEMENTED`, spent its whole
+budget on the same answer. google-genai has two lists. Its older client
+retries 408, 429, 500, 502, 503 and 504. Its generated Interactions client,
+the surface this crate mirrors, retries 408, 409, 429 and every 5xx by
+default.
+
+**Decision.** A status is retryable when it is 408, 429, or a 5xx other than
+the registered ones whose definition is a condition the same request meets
+again: 501 Not Implemented, 505 HTTP Version Not Supported, 506 Variant
+Also Negotiates, 508 Loop Detected, 510 Not Extended and 511 Network
+Authentication Required. The 5xx default stays retryable, so 507 (temporary
+per RFC 4918) and the unregistered codes proxies send (520 to 599) are
+retried, as they were. A 408 is safe to re-send even for a create: the
+server stopped waiting before the request arrived whole, so it acted on
+nothing. 409 stays permanent: Google's `ALREADY_EXISTS` never passes, and
+`ABORTED` wants a fresh read rather than the same request. Nothing at 600
+or above is a server error. The private `is_retryable_status` in
+`src/errors.rs` gives each code's reason.
+
+**Consequences.** The deny-list is the conservative reading: it changes
+only the codes whose definition a retry cannot fix and keeps the old answer
+for every other 5xx, where google-genai's older allow-list would have stopped
+retrying unregistered codes. The cost is that a misbehaving proxy's
+permanent unregistered 5xx is retried until the caller's budget runs out,
+as before. One 501 can pass: the API also sends it when a remote MCP
+server returns an error, which `classify_mcp_create_error` in
+`tests/tools_and_config_tests.rs` counts as that server's availability. The
+status cannot tell it from a URL that is no MCP server, which fails every
+time, and `is_retryable()` does not match message text (the transient 400s
+are left out for the same reason), so 501 stays permanent and the docs
+tell a caller who wants that one retried to match its message first. The
+crate's own waits (`wait_until_active`, an import's wait) poll through
+what `is_retryable()` accepts, so they follow this list.
+
+---
+
+## D-054 — Known `StreamChunk` variants keep the event's unread keys; `Completed` is a struct variant (2026-11-07)
+
+**Context.** #538: a stream's known events kept only their modeled fields,
+so a key the API adds beside an event's payload was dropped. The payloads
+kept their own `extra` (D-034), but the envelope did not, and the
+Evergreen guard exempted all seven known variants for it. The issue named
+two shapes: an `extra` map on each known variant, or the raw event JSON,
+as `InteractionStreamEvent` keeps for an unknown type.
+
+**Decision.** Each known variant has an `extra` map, read by
+`StreamChunk::extra()`, which is what the guard's enum arm checks and how
+`Step`, `Tool` and `ToolChoice::AllowedTools` already keep theirs.
+`Completed(Box<InteractionResponse>)` becomes
+`Completed { interaction, extra }`: a newtype variant has nowhere to put
+the map, and the guard needs a named reason for every newtype, which this
+one no longer has. A chunk's `extra` holds every key of its event it does
+not read:
+
+- a key the crate models on no event type;
+- a modeled key on an event type that does not read it (an `index` on a
+  `status_update`), as it came: the parser reads only the keys the
+  event's type reads, so it neither writes such a key back through the
+  crate's type (which would not reproduce it) nor fails the event on a
+  value that type could not read;
+- what is left of `metadata` beside the `total_usage` a `step.delta` or
+  `interaction.completed` reads from it, and of `error` beside its
+  `message` and `code`, under that key.
+
+`event_type` is the variant, and `event_id` is on `StreamEvent`, so neither
+is in it. A known event is still parsed by value (#498): each key its type
+reads is moved out of the object and read, a null modeled key is dropped
+as an absent one is, and what is left is the `extra`. The crate's
+`{chunk_type, data}` log form writes a non-empty `extra` beside `data` and
+reads it back.
+
+Rejected: the raw event JSON on every chunk. It would copy each event
+before parsing it, the cost #498 removed from the delta path (a streamed
+image delta is the whole base64 image), and would hold every payload
+twice. Rejected too: one map on `StreamEvent`. The guard checks the
+union's variants, and a chunk is often handled without its event.
+
+**Consequences.** Breaking (D-007): a pattern on `Completed(response)`
+becomes `Completed { interaction, .. }`, a pattern listing every field of
+a known variant needs `..`, and a struct literal needs `extra`. The
+guard's `StreamChunk` exemption and D-034's uncovered bullet are gone. The
+auto-function stream passes on no chunk's `extra` (D-034's
+`AutoFunctionStreamChunk` bullet), so an envelope key reaches only a
+caller of `execute_stream()`.
+
+---
+
+## D-055 — The file watch skips a poll it cannot fully read, and follows a symlinked root (2026-11-07)
+
+**Context.** `triggers::on_file_change` snapshots its tree each poll and
+diffs it against the last one. A snapshot whose root could not be read was
+already a failed poll (#504, C6), but below the root a directory that
+could not be listed, or an entry whose metadata or listing failed, was
+left out, so a transiently unreadable directory reported every file in it
+deleted, then added back. A watched path that was a symbolic link read as
+an empty tree (`symlink_metadata` on the root), where Python's `watchfiles`
+follows the root. A zero `poll_interval` walked the tree back to back.
+
+**Decision.** Any I/O or permission error other than not-found, on the
+root or below it (metadata, a listing, or an entry the listing yields),
+fails the snapshot: the poll is skipped, with a warning when such polls
+begin and a debug line for each one after. Not-found means the path went
+away, so what was there reads as deleted, as before. A directory in
+`IGNORED_DIRS` is never read, so it cannot fail a poll. The root is
+followed with `metadata`; entries below it keep `symlink_metadata`, so
+links there are still not followed. The interval is raised to
+`PollOptions::MIN_POLL_INTERVAL` (10 ms), as D-047 does for status polls.
+
+The alternative for an unreadable directory was to carry the last
+snapshot's entries under it forward, treating it as unchanged, which keeps
+reporting changes elsewhere while it stays unreadable. Skipping the poll
+is the narrower change and cannot invent or hide a change under the
+directory; carrying forward can be added if a permanently unreadable
+directory in a watched tree turns out to be common.
+
+**Consequences.** A directory that stays unreadable holds back every
+change under the watched path until it reads again; the rustdoc and
+`docs/ANTIGRAVITY.md` say to keep such directories out of the tree, and
+the warning names the entry or directory that failed and its error, so
+the user can find it. The baseline taken in `on_file_change` follows the
+same rule: when part of the tree cannot be read then, it warns, and the
+first snapshot that reads all of it becomes the baseline, so changes made
+before that are not reported. A link to a file as the root is that file,
+and a dangling root link is an empty tree, like a missing path.
+
+---
+
+## D-056 — `AntigravityError` names its causes: no `#[from]`, sources on `Protocol` and `Io` (2026-11-07)
+
+**Context.** `AntigravityError` had `Io(#[from] std::io::Error)` and
+`Json(#[from] serde_json::Error)`, so any `?` on either became one of
+them. An unparsable harness frame came out as `Json`, though `Protocol`'s
+doc claimed that case, and `Media::from_file` returned `Io` without the
+path it failed to read.
+
+**Decision.** Both `#[from]`s go, and `Json` with them. `Protocol` is
+`{ message, source: Option<Box<dyn Error + Send + Sync>> }`: an inbound
+parse failure carries the `serde_json` error as its source; a turn that
+ended without its final event has none; and an outbound message that would
+not encode (none can today) is a `Protocol` error too, since it is the
+same contract broken from this side. `Io` is `{ message, source }`, the
+shape `WebSocket` has, with the operation and path in `message`: a
+`Media::from_file` read, and the one other I/O failure left, harness
+discovery cut short by a runtime shutting down. A message the client
+sends is serialized in `session.rs` (`send_raw` takes the value), so the
+error mapping lives in one place.
+
+**Consequences.** Breaking, with a CHANGELOG migration. `agent.rs`, at 798
+of 800 lines, changes on three lines and grows by none: the two
+`Protocol(..)` constructions call `AntigravityError::protocol(..)`, and
+`initialize` passes the init event to `send_raw`. `Protocol`'s `Display`
+carries the parse error's text in `message`, so a printed error still
+says what failed.
+
+---
+
+## D-057 — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
+
+**Context.** `Session::connect` retried up to 5 times with backoff, but an
+attempt had no bound: a harness that accepted the TCP connection and
+never answered the WebSocket upgrade held `spawn()` forever.
+
+**Decision.** Each attempt (the TCP connect and the upgrade) is bounded by
+`CONNECT_ATTEMPT_TIMEOUT`, 5 s, and a timeout counts as a failed attempt,
+with an `io::ErrorKind::TimedOut` error as the transport source. The
+harness is on localhost and has already written its port, so a healthy
+one answers in milliseconds; 5 s is a wide margin for a loaded CI runner
+while keeping the worst case, 5 attempts and 1.5 s of backoff, at about
+26.5 s, below the 30 s the conversation's initialization then gets. A
+bound on the whole connect instead would leave a slow first attempt no
+retry.
+
+**Consequences.** A wedged harness fails `spawn()` with `InitFailed` after
+about 26.5 s. The paused-clock test checks the attempts, the backoff and
+the source.
+
+## D-058 — CI measures what it reports: a coverage floor with the antigravity feature, skip markers across runs, and releases gated on the push run (2026-11-08)
+
+**Context.** The final #504 grading (2026-11-07) left Tests/CI at A with
+small gaps, none of them tracked. Code Coverage measured the crate without
+the `antigravity` feature, about 14k of its 62.5k lines, and had no floor,
+so a drop passed. Skip markers were budgeted run by run and never added
+up, and the Antigravity harness step neither kept nor budgeted them.
+`release.yml` validated on Ubuntu alone and never looked at the tagged
+commit's push run, where the Cross Platform legs ran. The flakiness report
+read the 200 newest runs and stopped there without a word, at about 115 a
+week.
+
+**Decision.**
+- Coverage runs the workspace with `--features antigravity` twice into one
+  report: the offline suite, then the key-free scripted harness suite,
+  which tests most of the feature. The live suites stay out: they need the
+  key, and what they cover moves with the model. A step after the summary
+  fails under `--fail-under-lines 94`: the job measured 94.48% of 27,879
+  lines on Linux when the floor was set (95.90% outside the feature, and
+  89% of its 5,700), and the half point between keeps run-to-run noise
+  from failing it. The floor is raised by hand as coverage grows and
+  lowered only with the reason in the commit;
+  `tests/ci_workflows/coverage.rs` rejects one under 90%.
+- The flakiness report counts skip markers across the week's runs, by the
+  test that printed them, as a row and a table. It is not a target: each
+  run already fails over its own budget, and a per-test threshold across
+  runs needs weeks of these counts to set.
+- Every live nextest step keeps passing output and fails over 3 markers
+  (10 for `release.yml`'s whole-workspace run).
+- `release.yml`'s `validate` passes only when the tagged commit's push run
+  of `rust.yml` on `main` passed every job (skipped allowed), with its
+  Cross Platform legs present and none skipped. It waits up to 45 minutes
+  for a run still going rather than failing at once, since the release
+  steps tag `origin/main` right after a merge, while its push run is still
+  going.
+- The report lists the window's runs by creation date, up to 1,000, the
+  API's ceiling for a filtered listing, and fails when the listing reaches
+  it or fails. A larger `--limit` lists no more, so a week past 1,000 runs
+  needs a shorter window or date-bounded listings joined together.
+
+**Consequences.** A coverage drop fails the Code Coverage job, which is
+not a required check, so it shows on the PR without blocking it; making it
+required is the owner's call. The job takes a few minutes longer for the
+antigravity build and the scripted suite. A release can wait on its push
+run, and a red leg there stops it before anything is published.
+
+## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
+
+**Context.** #504's final grade put Docs at A-: five contradictions and
+five enforcement holes. Two of the contradictions were tables that drift
+as files are added (`docs/TESTING.md`'s test kinds called every other
+test file live; nine were offline), and nothing required a new guide to
+be doctested, nor a Rust block outside the doctested guides to compile;
+one sat in a `text` fence.
+
+**Decision.**
+- `tests/doc_guards/` checks the test-kind table against the test crates.
+  A crate is live when any of its module files has a
+  `#[ignore = "Requires API key"]` test, and a guard when its code (not
+  its comments or strings) uses the library for nothing but a constant:
+  it never names `genai_rs_macros` or `trybuild`, nor `genai_rs` except
+  as `genai_rs::SOME_CONSTANT`, which a guard may check the repository
+  against. Each crate is in exactly one row, live ones under a kind that
+  needs a key, guards in the Guards row. The live row names its files
+  instead of saying "the other files", so a new file fails until it is
+  placed. A row places a file by naming it as `tests/<name>.rs`, or bare
+  in the live row's ``In `tests/`:`` list, outside parentheses; a file
+  named inside parentheses is a reference, which only has to exist.
+- The same module requires every Markdown file under `docs/`, at any
+  depth, and every top-level one with a Rust block (a fence rustdoc
+  reads as Rust, or one tagged `rs` or `Rust`), in `src/lib.rs`'s
+  `doc_tests`, except `NOT_DOCTESTED`'s four, each with its reason: the
+  two maintainer notes, `CHANGELOG.md` and `CLAUDE.md`. An include counts
+  where the doctest run compiles it: `src/lib.rs` is parsed with `syn`,
+  so a commented-out include is not one, and an include under a `cfg`
+  that CI's doctest run (a debug build with every feature on Linux)
+  leaves out, such as `cfg(any())`, does not count. An exemption the
+  module no longer needs fails too: for a file doctested or gone, or a
+  top-level file that holds no Rust any more.
+- `check_dated_facts.sh` requires a Rust block that nothing compiles to
+  be `ignore`d with a reason, exempting `CHANGELOG.md`'s history. That is
+  a block in a Markdown file `doc_tests` leaves out (it reads the includes
+  as the guard does, comments stripped and each `cfg` evaluated), or in a
+  doc comment outside the library's non-test code: under `tests/`,
+  `examples/` or `fuzz/`, in a test file or `#[cfg(test)]` item, or in a
+  module compiled only under such a `cfg`. A block is Rust when its info
+  string names `rust`, a rustdoc attribute or an `edition`, and, in a doc
+  comment, when it is untagged. A fence tagged `rs` or `Rust` fails
+  anywhere: GitHub shows it as Rust, and rustdoc reads it as another
+  language and never compiles it. The script rejects Rust in a `text`
+  block: a `let` (on one line or several, destructuring, or `let ...
+  else`) or `use` statement, a field assignment, a `fn`, `struct`,
+  `enum`, `trait` or `impl` header, an `if let`, `while let` or `match`
+  header with its body, or a derive, test or tokio attribute. An untagged
+  block in a Markdown file that is not doctested counts as text, as
+  GitHub renders it.
+
+Rejected: converting `CHANGELOG.md`'s 28 migration blocks to
+`rust,ignore` with reasons. They are history, written against the API of
+their release, and the reason line would say the same thing 28 times.
+Rejected: a looser Rust heuristic for `text` blocks (any `::`, any `;`).
+The repository's text blocks hold file trees, wire logs and program
+output, and only statement and item shapes tell Rust from those without
+guessing.
+Rejected: a `known bug: ...` ignore reason that `tests/ci_coverage.rs`
+accepts, for a failing test parked until its fix. `make test-all` and
+`release.yml` run every ignored test, so a parked failure would fail the
+release; a known bug gets an issue, and its test lands with the fix
+(`docs/TESTING.md`).
+
+**Consequences.** A new test file, or a new guide, fails `make test`
+until it is placed in the table or in `doc_tests`. A Rust block in a
+README under `examples/`, in a fixture, or in a doc comment of a test
+helper or an example must be `ignore`d with its reason. Known limits:
+Rust written in a `text` block on a line the heuristic does not know (a
+bare expression) still passes, as rare blocks a reviewer reads; a `cfg`
+the evaluators do not know counts as left out, so an include behind one
+fails the guard until it is taught; and a cross-reference to another
+row's file written outside parentheses reads as a second placement and
+fails.

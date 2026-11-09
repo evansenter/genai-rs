@@ -44,6 +44,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -114,7 +118,7 @@ const CRATE_MADE: &[(&str, &str)] = &[
     (
         "src/streaming.rs:AutoFunctionStreamEvent",
         "the crate's envelope around an auto-function chunk; the wire's \
-         unmodeled fields live in the chunk's response and steps",
+         unmodeled fields are kept in the chunk's response and steps",
     ),
     (
         "src/wire_streaming/mod.rs:StreamEvent",
@@ -138,35 +142,35 @@ const SENT_ONLY: &[(&str, &str)] = &[
     ),
     (
         "src/tools/retrieval.rs:ExaAiSearchConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:ParallelAiSearchConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagStoreConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagResource",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagRetrievalConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:HybridSearchConfig",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagFilter",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/tools/retrieval.rs:RagRanking",
-        "the retrieval tool's, which the Gemini API rejects",
+        "the retrieval tool's, which the Gemini API rejects (live 2026-07)",
     ),
     (
         "src/webhooks.rs:WebhookUpdate",
@@ -339,10 +343,6 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         AUTO_FUNCTION_CHUNK,
     ),
     (
-        "src/wire_streaming/mod.rs:StreamChunk::Completed",
-        STREAM_CHUNK,
-    ),
-    (
         "src/content/video_processing.rs:VideoProcessing::Static",
         "the bare string `\"static\"`, which has no fields; the object form \
          is `StaticSegment`, which keeps its `extra`",
@@ -360,39 +360,12 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         "read only when `allowlist` is the object's one key: with another key \
          beside it, the object is kept whole as `NetworkConfig::Unknown`",
     ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::Created",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StatusUpdate",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StepStart",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StepDelta",
-        STREAM_CHUNK,
-    ),
-    (
-        "src/wire_streaming/mod.rs:StreamChunk::StepStop",
-        STREAM_CHUNK,
-    ),
-    ("src/wire_streaming/mod.rs:StreamChunk::Error", STREAM_CHUNK),
 ];
-
-/// Why a known `StreamChunk` keeps no `extra`.
-const STREAM_CHUNK: &str = "a parsed SSE event, serialized only in the crate's own \
-     `{chunk_type, data}` log form; nothing sends one back to the API, and the \
-     payloads inside (`InteractionResponse`, `Step`, `StepDelta`, \
-     `UsageMetadata`) keep their own `extra`. A key the API adds to the event \
-     envelope itself is not kept (D-034; tracked in #538)";
 
 /// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
 const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \
-     the crate writes; the payload inside keeps its own `extra`";
+     the crate writes; the payload inside keeps its own `extra`, but the SSE event's \
+     envelope keys (`StreamChunk::extra`) are not passed on (D-034)";
 
 /// Why an `InputEvent` arm keeps no `extra`.
 const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \

@@ -1,13 +1,19 @@
 //! Common test utilities shared across all integration test files.
 //!
 //! Usage in test files:
+//! <!-- ignore: rustdoc does not doctest a test crate's modules; every test file that uses them compiles these lines -->
 //! ```ignore
 //! mod common;
 //! use common::*;
 //! ```
 //!
-//! Items carry `#[allow(dead_code)]` because each test file compiles this
-//! module separately and no single file uses all of it.
+//! Each test file compiles this module separately and no single file uses
+//! all of it, so dead code is allowed throughout, submodules included.
+
+#![allow(
+    dead_code,
+    reason = "each test binary compiles `common` separately and uses a subset of it"
+)]
 
 pub mod fake_gemini;
 mod fixtures;
@@ -16,16 +22,12 @@ mod retry;
 mod semantic;
 mod streams;
 
-// Re-exported so every helper stays at `common::<name>`; a file that uses
-// none of a submodule's helpers would otherwise warn on its re-export.
-#[allow(unused_imports)]
-pub use fixtures::*;
-#[allow(unused_imports)]
-pub use retry::*;
-#[allow(unused_imports)]
-pub use semantic::*;
-#[allow(unused_imports)]
-pub use streams::*;
+// Re-exported so every helper stays at `common::<name>`.
+#[allow(
+    unused_imports,
+    reason = "a file that uses none of a submodule's helpers would warn on its re-export"
+)]
+pub use self::{fixtures::*, retry::*, semantic::*, streams::*};
 
 use genai_rs::{Client, GenaiError, InteractionResponse, InteractionStatus};
 use std::env;
@@ -36,7 +38,6 @@ use tokio::time::sleep;
 /// Creates a client from `GEMINI_API_KEY`, or `None` when it is unset or blank
 /// (the same trimmed check the CI guard applies). A key that is set but fails
 /// to build a client panics rather than reading as "no key".
-#[allow(dead_code)]
 pub fn get_client() -> Option<Client> {
     let api_key = env::var("GEMINI_API_KEY")
         .ok()
@@ -57,7 +58,6 @@ pub fn get_client() -> Option<Client> {
 /// (`.github/scripts/cleanup_test_resources.py`) deletes only resources
 /// that carry it, so a test that creates a resource without it leaks that
 /// resource for good when its own cleanup does not run (#492).
-#[allow(dead_code)]
 pub const TEST_RESOURCE_PREFIX: &str = "genai-rs-test";
 
 /// `genai-rs-test-{label}-{unix seconds}-{nanos}`: unique per call, marked
@@ -65,7 +65,6 @@ pub const TEST_RESOURCE_PREFIX: &str = "genai-rs-test";
 /// no timestamp at all (verified 2026-11-05), so the janitor reads their age
 /// from this name rather than deleting one a running test still uses. Use
 /// it for every id or display name a live test chooses.
-#[allow(dead_code)]
 pub fn test_resource_name(label: &str) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -79,7 +78,6 @@ pub fn test_resource_name(label: &str) -> String {
 
 /// Content for an inline environment source, marked for the janitor: an
 /// environment whose inline sources all start with the prefix is a test's.
-#[allow(dead_code)]
 pub fn test_source_content(text: &str) -> String {
     format!("{TEST_RESOURCE_PREFIX} {text}")
 }
@@ -89,7 +87,6 @@ pub fn test_source_content(text: &str) -> String {
 // =============================================================================
 
 /// Per-test budget: 60s, or `TEST_TIMEOUT_SECS`.
-#[allow(dead_code)]
 pub fn test_timeout() -> Duration {
     Duration::from_secs(
         std::env::var("TEST_TIMEOUT_SECS")
@@ -101,7 +98,6 @@ pub fn test_timeout() -> Duration {
 
 /// Budget for tests making many sequential calls: 120s, or
 /// `EXTENDED_TEST_TIMEOUT_SECS`.
-#[allow(dead_code)]
 pub fn extended_test_timeout() -> Duration {
     Duration::from_secs(
         std::env::var("EXTENDED_TEST_TIMEOUT_SECS")
@@ -112,7 +108,6 @@ pub fn extended_test_timeout() -> Duration {
 }
 
 /// Runs `future`, panicking if it outlives `duration`.
-#[allow(dead_code)]
 pub async fn with_timeout<F, T>(duration: Duration, future: F) -> T
 where
     F: Future<Output = T>,
@@ -129,7 +124,6 @@ where
 /// Polls a stored interaction until it leaves `InProgress` or `Queued`,
 /// returning it in whatever terminal state it reached. Unknown statuses keep
 /// polling (Evergreen). Panics on an API error or when `max_wait` elapses.
-#[allow(dead_code)]
 pub async fn poll_until_done(
     client: &Client,
     interaction_id: &str,
@@ -180,7 +174,6 @@ pub async fn poll_until_done(
 /// the input as a list of steps (a single `user_input` step for one turn,
 /// live 2026-11-04). The record is the typed response serialized again,
 /// which keeps every field the crate does not model as it arrived (D-001).
-#[allow(dead_code)]
 pub async fn stored_echo(
     client: &Client,
     interaction_id: &str,
@@ -199,13 +192,41 @@ pub async fn stored_echo(
     Ok(record.pointer(pointer).cloned())
 }
 
+/// How long [`stored_echo_when_present`] waits for a field to appear.
+pub const STORED_ECHO_WAIT: Duration = Duration::from_secs(10);
+
+/// [`stored_echo`], read again until `pointer` holds a value, for up to
+/// [`STORED_ECHO_WAIT`]. A background run's record can lack a field for a
+/// moment after its create returned: while an Antigravity or Deep Research
+/// run starts, a read returns a sparse record without `agent_config`, and
+/// one read after the cancel still met it in three runs of one day (#504).
+/// The last read is returned as it came: still `None` after the wait, or an
+/// `Err` (not retried here; `stored_echo` already retries transients).
+pub async fn stored_echo_when_present(
+    client: &Client,
+    interaction_id: &str,
+    pointer: &str,
+) -> Result<Option<serde_json::Value>, GenaiError> {
+    // tokio's clock, so a test on a paused one sees the wait in virtual time.
+    let deadline = tokio::time::Instant::now() + STORED_ECHO_WAIT;
+    let mut delay = Duration::from_millis(500);
+    loop {
+        let read = stored_echo(client, interaction_id, pointer).await;
+        if !matches!(read, Ok(None)) || tokio::time::Instant::now() + delay > deadline {
+            return read;
+        }
+        println!("{interaction_id}: nothing stored at {pointer} yet; reading again in {delay:?}");
+        sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_secs(2));
+    }
+}
+
 /// Asserts that a stored read-back holds everything that was sent: every
 /// key of `sent`, at every depth, with an equal value. The stored record may
 /// hold more (defaults the server fills in), which is not a mismatch. An
 /// integer comes back as its decimal string where the API stores an int64
 /// (protobuf JSON: `max_total_tokens: "200000"`, 2026-11-05), which counts
 /// as equal. `stored` is [`stored_echo`]'s result; a failed read fails here.
-#[allow(dead_code)]
 #[track_caller]
 pub fn assert_stored(
     what: &str,
@@ -250,13 +271,11 @@ pub fn assert_stored(
 // =============================================================================
 
 /// An interaction builder on `DEFAULT_MODEL`.
-#[allow(dead_code)]
 pub fn interaction_builder(client: &Client) -> genai_rs::InteractionBuilder<'_> {
     client.interaction().with_model(genai_rs::DEFAULT_MODEL)
 }
 
 /// An interaction builder on `DEFAULT_MODEL` with storage enabled.
-#[allow(dead_code)]
 pub fn stateful_builder(client: &Client) -> genai_rs::InteractionBuilder<'_> {
     interaction_builder(client).with_store_enabled()
 }
@@ -268,7 +287,6 @@ pub fn stateful_builder(client: &Client) -> genai_rs::InteractionBuilder<'_> {
 /// The API's content safety block (400 "Request blocked due to safety
 /// violations"). Built-in tools that fetch external content (URL context,
 /// search) can trip it intermittently (observed live 2026-07).
-#[allow(dead_code)]
 pub fn is_safety_block_error(error: &GenaiError) -> bool {
     match error {
         GenaiError::Api {

@@ -20,7 +20,7 @@ RUN_URL="${2:?usage: report_scheduled_failure.sh <workflow-name> <run-url> [cont
 # as Security Audit where the default monitoring framing reads wrong.
 CONTEXT="${3:-Scheduled workflows fail quietly — the only other signal is an email
 to whoever last committed the workflow file, which does not survive a
-change of maintainer. See #431 for the history that motivated this.}"
+change of maintainer. This rolling issue came out of #431.}"
 
 # Each trigger keeps its own issue: a green push to main does not run what
 # only the schedule runs (rust.yml's captured fixtures), so it must not close

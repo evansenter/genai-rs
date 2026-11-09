@@ -7,16 +7,18 @@
 //! with the resumable protocol the Files API uses, whose start request
 //! carries the document's settings as JSON, so the crate need not enable
 //! reqwest's `multipart` feature. Importing a file is a JSON `POST
-//! {store}:importFile`. The resource accepts `page_size` as well as
-//! `pageSize`, so the shared [`with_paging`] helper works unchanged.
+//! {store}:importFile`. The listings page with the Files API's camelCase
+//! `pageSize` and `pageToken`.
 
 use super::common::{
-    NO_BODY, file_body, mime_type_header, path_segment, require_id, send_and_read, with_paging,
-    with_query,
+    NO_BODY, file_body, mime_type_header, path_segment, require_id, send_and_read, with_query,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
-use super::files::{ResumableUpload, check_upload_size, finish_resumable_upload};
+use super::files::{
+    ResumableUpload, check_upload_size, finish_resumable_upload, one_segment_name,
+    with_camel_case_paging,
+};
 use crate::errors::GenaiError;
 use crate::file_search_stores::{
     CreateFileSearchStoreRequest, DocumentImport, DocumentOptions, FileSearchDocument,
@@ -34,24 +36,13 @@ fn stores_url(ctx: &HttpContext) -> String {
 
 /// Validates a `fileSearchStores/<id>` resource name and rebuilds it as a
 /// URL path fragment with the ID percent-encoded.
-///
-/// A name failing this shape could never have addressed a store, so
-/// rejecting locally turns a silent misfire into a loud one.
 fn store_resource_path(store_name: &str) -> Result<String, GenaiError> {
-    let Some(id) = store_name.strip_prefix("fileSearchStores/") else {
-        return Err(GenaiError::InvalidInput(format!(
-            "store name must be a full `fileSearchStores/<id>` resource name \
-             (the form create responses return); got {store_name:?}"
-        )));
-    };
-    require_id(id, "file search store")?;
-    if id.contains('/') {
-        return Err(GenaiError::InvalidInput(format!(
-            "store name must contain exactly one segment after \
-             `fileSearchStores/`; got {store_name:?}"
-        )));
-    }
-    Ok(format!("fileSearchStores/{}", path_segment(id)))
+    one_segment_name(
+        store_name,
+        "fileSearchStores",
+        "file search store",
+        "create",
+    )
 }
 
 /// Validates a `fileSearchStores/<store>/documents/<doc>` resource name and
@@ -125,7 +116,7 @@ pub async fn list_file_search_stores(
     page_token: Option<&str>,
 ) -> Result<FileSearchStoreListResponse, GenaiError> {
     tracing::debug!("Listing file search stores: page_size={page_size:?}");
-    let url = with_paging(stores_url(ctx), page_size, page_token);
+    let url = with_camel_case_paging(stores_url(ctx), page_size, page_token);
     let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "FileSearchStoreListResponse")
 }
@@ -157,7 +148,7 @@ pub async fn list_documents(
     page_token: Option<&str>,
 ) -> Result<FileSearchDocumentListResponse, GenaiError> {
     tracing::debug!("Listing documents in store: {store_name}");
-    let url = with_paging(documents_url(ctx, store_name)?, page_size, page_token);
+    let url = with_camel_case_paging(documents_url(ctx, store_name)?, page_size, page_token);
     let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "FileSearchDocumentListResponse")
 }

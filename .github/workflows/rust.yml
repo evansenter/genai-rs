@@ -122,7 +122,19 @@ jobs:
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"
             exit 1
           fi
-          cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
+          # As in test-integration: --success-output=final keeps passing
+          # tests' *_SKIPPED markers in the log, and more than 3 fails the
+          # step. rc is captured so the marker check runs on a failure too.
+          rc=0
+          cargo nextest run --features antigravity --run-ignored all --no-fail-fast --success-output=final -E 'binary(antigravity_harness)' 2>&1 | tee /tmp/antigravity_harness.log || rc=$?
+          skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/antigravity_harness.log || true)
+          if [ "${skips:-0}" -gt 3 ]; then
+            echo "::error::antigravity_harness: $skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+            if [ "$rc" -eq 0 ]; then rc=1; fi
+          elif [ "${skips:-0}" -gt 0 ]; then
+            echo "::warning::antigravity_harness: $skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+          fi
+          exit "$rc"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           # Retries for the shared key's occasional 429s; retried tests show
@@ -527,11 +539,12 @@ jobs:
         env:
           RUSTFLAGS: --cfg genai_strict_unknown
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # The library a consumer gets with `default-features = false`, which
-      # compiles code the all-features run never sees (the plain wire printer
-      # without `wire-color`). Same command as `make clippy`.
+      # Every target without default features, as a consumer with
+      # `default-features = false` builds it: code the all-features run never
+      # sees (the plain wire printer without `wire-color`), and the tests and
+      # examples against it. Same command as `make clippy`.
       - name: Run clippy (no default features)
-        run: cargo clippy --lib --no-default-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
   doc:
     name: Documentation
@@ -583,6 +596,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
+          components: clippy
       - uses: taiki-e/install-action@cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
@@ -613,6 +627,19 @@ jobs:
       - name: Check the antigravity feature
         if: ${{ !cancelled() && runner.os != 'Linux' }}
         run: cargo check --features antigravity
+      # The Clippy job runs on Linux, so it never sees the `cfg(not(unix))`
+      # code, or the tests and helpers a Windows build leaves out: lint them
+      # here, on the leg a PR runs. Stable only, as the Clippy job is: a beta
+      # lint is not yet the bar.
+      - name: Run clippy (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' && matrix.rust == 'stable' }}
+        run: cargo clippy --features antigravity --all-targets -- -D warnings
+      # The forced kill's reach on macOS (process_tree.rs's libproc lookup of
+      # the harness's child groups) runs only here: test-antigravity is
+      # Linux's /proc path. Its unit tests alone, on the release build above.
+      - name: Test the antigravity process tree
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo nextest run --features antigravity --cargo-profile release --lib -E 'test(/process_tree/)'
 
   coverage:
     name: Code Coverage
@@ -626,10 +653,24 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: ./.github/actions/setup-mold
       - uses: taiki-e/install-action@cargo-nextest
+      # The scripted harness suite below drives the real harness. Version
+      # must match SUPPORTED_HARNESS_VERSION, as in test-antigravity.
+      - name: Install pinned localharness wheel
+        run: pip install google-antigravity==0.1.23
+      # nextest (process per test): several unit tests assume process
+      # isolation and flake under plain `cargo test` threads (#418). The
+      # antigravity feature is measured too (about a fifth of the source),
+      # with the key-free scripted harness suite that tests most of it; the
+      # key is blanked, as in test-antigravity. Both runs feed one report.
       - name: Generate coverage
-        # nextest (process per test): several unit tests assume process
-        # isolation and flake under plain `cargo test` threads (#418).
-        run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
+        env:
+          GEMINI_API_KEY: ""
+        run: |
+          set -euo pipefail
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov nextest --workspace --features antigravity --no-report
+          cargo llvm-cov nextest --workspace --features antigravity --no-report --run-ignored all -E 'binary(antigravity_scripted)'
+          cargo llvm-cov report --workspace --lcov --output-path lcov.info
       # Every run, token or not: with no Codecov upload, the job summary is
       # where the coverage is read. `--workspace` as above: without it the
       # report covers the root package only, not genai-rs-macros.
@@ -644,6 +685,12 @@ jobs:
             cat coverage-summary.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      # After the summary, so a drop below the floor is shown before it
+      # fails the job. The floor sits just under the line coverage measured
+      # when it was set (D-058): raise it as coverage grows, and lower
+      # it only with the reason in the commit.
+      - name: Enforce the coverage floor
+        run: cargo llvm-cov report --workspace --fail-under-lines 94
       # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,
       # and the summary above stands in; with one, a failed upload fails the
       # job instead of passing with nothing uploaded.

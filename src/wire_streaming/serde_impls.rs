@@ -1,6 +1,7 @@
 //! The wire format of [`StreamChunk`] and [`StreamEvent`]: the
 //! `chunk_type`/`data` map this crate writes for logging and replay, and
-//! reads back.
+//! reads back. A known chunk's non-empty `extra` is written beside them, as
+//! `extra`.
 
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +19,7 @@ impl StreamChunk {
         M: serde::ser::SerializeMap,
     {
         match self {
-            Self::Created { interaction } => {
+            Self::Created { interaction, .. } => {
                 map.serialize_entry("chunk_type", "created")?;
                 map.serialize_entry("data", interaction)?;
             }
@@ -27,6 +28,7 @@ impl StreamChunk {
                 status,
                 usage,
                 continuation_token,
+                ..
             } => {
                 map.serialize_entry("chunk_type", "status_update")?;
                 let mut data = serde_json::Map::new();
@@ -48,7 +50,7 @@ impl StreamChunk {
                 }
                 map.serialize_entry("data", &data)?;
             }
-            Self::StepStart { index, step } => {
+            Self::StepStart { index, step, .. } => {
                 map.serialize_entry("chunk_type", "step_start")?;
                 map.serialize_entry(
                     "data",
@@ -62,6 +64,7 @@ impl StreamChunk {
                 index,
                 delta,
                 total_usage,
+                ..
             } => {
                 map.serialize_entry("chunk_type", "step_delta")?;
                 let mut data = serde_json::json!({
@@ -78,6 +81,7 @@ impl StreamChunk {
                 index,
                 usage,
                 step_usage,
+                ..
             } => {
                 map.serialize_entry("chunk_type", "step_stop")?;
                 let mut data = serde_json::json!({ "index": index });
@@ -90,11 +94,11 @@ impl StreamChunk {
                 }
                 map.serialize_entry("data", &data)?;
             }
-            Self::Completed(response) => {
+            Self::Completed { interaction, .. } => {
                 map.serialize_entry("chunk_type", "completed")?;
-                map.serialize_entry("data", response)?;
+                map.serialize_entry("data", interaction)?;
             }
-            Self::Error { message, code } => {
+            Self::Error { message, code, .. } => {
                 map.serialize_entry("chunk_type", "error")?;
                 map.serialize_entry(
                     "data",
@@ -116,6 +120,11 @@ impl StreamChunk {
                     map.serialize_entry("data", data)?;
                 }
             }
+        }
+        if let Some(extra) = self.extra()
+            && !extra.is_empty()
+        {
+            map.serialize_entry("extra", extra)?;
         }
         Ok(())
     }
@@ -193,6 +202,11 @@ impl<'de> Deserialize<'de> for StreamChunk {
 
         // Written by an `Unknown` whose type collides with a known one.
         let marked_unknown = value.get("unknown") == Some(&serde_json::Value::Bool(true));
+        // A known chunk's `extra`, written only when it has keys.
+        let extra = || match value.get("extra") {
+            Some(serde_json::Value::Object(extra)) => extra.clone(),
+            _ => serde_json::Map::new(),
+        };
 
         match chunk_type {
             chunk_type if marked_unknown => Ok(Self::Unknown {
@@ -206,7 +220,10 @@ impl<'de> Deserialize<'de> for StreamChunk {
                             "Failed to deserialize StreamChunk::Created data: {e}"
                         ))
                     })?;
-                Ok(Self::Created { interaction })
+                Ok(Self::Created {
+                    interaction,
+                    extra: extra(),
+                })
             }
             "status_update" => {
                 let data = data_of(&value);
@@ -247,6 +264,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                     status,
                     usage,
                     continuation_token,
+                    extra: extra(),
                 })
             }
             "step_start" => {
@@ -260,7 +278,11 @@ impl<'de> Deserialize<'de> for StreamChunk {
                         "Failed to deserialize StreamChunk::StepStart step: {e}"
                     ))
                 })?;
-                Ok(Self::StepStart { index, step })
+                Ok(Self::StepStart {
+                    index,
+                    step,
+                    extra: extra(),
+                })
             }
             "step_delta" => {
                 let data = data_of(&value);
@@ -285,6 +307,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
                     index,
                     delta,
                     total_usage,
+                    extra: extra(),
                 })
             }
             "step_stop" => {
@@ -306,16 +329,20 @@ impl<'de> Deserialize<'de> for StreamChunk {
                     index,
                     usage,
                     step_usage,
+                    extra: extra(),
                 })
             }
             "completed" => {
-                let response: Box<InteractionResponse> = serde_json::from_value(data_of(&value))
+                let interaction: Box<InteractionResponse> = serde_json::from_value(data_of(&value))
                     .map_err(|e| {
                         serde::de::Error::custom(format!(
                             "Failed to deserialize StreamChunk::Completed data: {e}"
                         ))
                     })?;
-                Ok(Self::Completed(response))
+                Ok(Self::Completed {
+                    interaction,
+                    extra: extra(),
+                })
             }
             "error" => {
                 let data = data_of(&value);
@@ -328,7 +355,11 @@ impl<'de> Deserialize<'de> for StreamChunk {
                         "Unknown error".to_string()
                     });
                 let code = data.get("code").and_then(|v| v.as_str()).map(String::from);
-                Ok(Self::Error { message, code })
+                Ok(Self::Error {
+                    message,
+                    code,
+                    extra: extra(),
+                })
             }
             other => {
                 tracing::warn!(

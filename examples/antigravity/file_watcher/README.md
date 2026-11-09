@@ -33,7 +33,11 @@ cargo run --example file_watcher --features antigravity
 - **The watch polls**, comparing sizes and modification times, and skips
   `.git`, `node_modules` and similar directories.
 - **The baseline is taken when `on_file_change` is called**, so a file
-  written right after `spawn()` is reported.
+  written right after `spawn()` is reported. If part of the tree cannot be
+  read then, the first poll that reads all of it is the baseline instead.
+- **A poll that cannot read part of the tree is skipped**, with a warning
+  naming what it could not read, so an unreadable directory holds back
+  every change until it reads again.
 - **Changes made during a turn arrive as one batch after it**: the
   callback runs once the agent is idle, with the net change since the
   last batch. Return `None` from it to skip a batch.

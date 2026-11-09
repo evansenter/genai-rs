@@ -12,7 +12,7 @@ wildcard arm.
 
 | Variant | Meaning | `is_retryable()` |
 |---------|---------|------------------|
-| `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 429 and 5xx only |
+| `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 408, 429 and 5xx, except 501, 505, 506, 508, 510 and 511 ([why](RELIABILITY.md#genaierroris_retryable)) |
 | `Http(reqwest::Error)` | Network, connect (including the default 30 s connect timeout), TLS, or a client-level timeout before the response headers | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
 | `StreamInterrupted { message, source }` | A stream's body ended before its terminal event: the server closed early, or the transport failed mid-body (`source` holds that `reqwest::Error`). Also an auto-function round that ends on an event this crate doesn't recognize, with `source` `None` ([An unrecognized last event](RELIABILITY.md#an-unrecognized-last-event)) | Yes; see [Cut-off streams](RELIABILITY.md#cut-off-streams) |
@@ -53,15 +53,17 @@ visible with `LOUD_WIRE=1` (see [Logging](LOGGING_STRATEGY.md)).
 | 400 | Invalid request: a bad field, an unsupported combination, a field the Gemini API rejects as Vertex-only | Read `message`; it usually names the field |
 | 401 / 403 | Missing, invalid or unauthorized API key, or a feature not enabled for the key | Check `GEMINI_API_KEY` and access |
 | 404 | Unknown model, agent, file or interaction id | Use the constants in `genai_rs` (`DEFAULT_MODEL`, ...) rather than typed ids |
+| 408 | The server stopped waiting before the request arrived whole | Retry with backoff |
 | 429 | Rate limited | Back off; honor `retry_after()` when set |
-| 5xx | Server error | Retry with backoff |
+| 501 | The server does not implement the method or feature (`UNIMPLEMENTED`), or a remote MCP server returned an error ("MCP server returned an error"; [live record](INTERACTIONS_API_GAP.md#tools)) | Don't retry, except an MCP server's error, which can pass while that server is down ([why](RELIABILITY.md#genaierroris_retryable)) |
+| Other 5xx | Server error | Retry with backoff, except 505, 506, 508, 510 and 511 ([why](RELIABILITY.md#genaierroris_retryable)) |
 
 `request_id` comes from the `x-goog-request-id` response header. Log it; it is
 what Google support needs to find a specific failed request.
 
 ## Known transient errors
 
-`is_retryable()` covers transport errors, timeouts, 429 and 5xx. The
+`is_retryable()` covers transport errors, timeouts, 408, 429 and most 5xx. The
 integration suite also retries four error classes that `is_retryable()`
 deliberately leaves out, because they are matched on message text rather than
 status (`tests/common/retry.rs`, `is_transient_error`):
@@ -71,12 +73,22 @@ status (`tests/common/retry.rs`, `is_transient_error`):
 | `Api` whose message contains both `spanner` and `utf-8` | Google backend issue seen on stateful conversations (#60) |
 | `Api` 400 containing `invalid json syntax` | The model occasionally emits invalid JSON (structured output, or a malformed function call) |
 | `Api` 400 containing `there was a problem processing your request` | Server-side bursts that pass on re-run |
-| `Api` 400 containing `please retry the request`, unless it names `too_many_tool_calls` | The API says so itself after a broken tool call (`malformed_tool_call`). A tool-call loop (`too_many_tool_calls`) is not retried whatever its message says: the same request loops again (see the [gap tracker](INTERACTIONS_API_GAP.md)), and each attempt runs to the 60-call limit |
+| `Api` 400 containing `please retry the request`, unless it names `too_many_tool_calls` | How the API used to report a broken tool call (`malformed_tool_call`), with its own advice to retry; it now reports one in a `200` (below), and the match stays for the `400` form. A tool-call loop (`too_many_tool_calls`) is not retried whatever its message says: the same request loops again (see the [gap tracker](INTERACTIONS_API_GAP.md)), and each attempt runs to the 60-call limit |
 
-If you want the same behavior, compose the two predicates:
+A broken tool call is no longer an error at all: the API answers `200`
+with an interaction whose `status` is `failed` and whose `errors` carry
+the code `malformed_tool_call`, with the same advice to retry
+([live record](INTERACTIONS_API_GAP.md#tools)). Neither predicate sees a
+response, so check it too; the integration suite retries it
+(`is_transient_failure`), and still not a `too_many_tool_calls`. A
+streamed request that fails this way ends with a `failed` interaction
+that carries no `errors`.
+
+If you want the same behavior, compose the two predicates, and check a
+response the same way:
 
 ```rust
-use genai_rs::GenaiError;
+use genai_rs::{GenaiError, InteractionResponse, InteractionStatus};
 
 fn should_retry(err: &GenaiError) -> bool {
     if err.is_retryable() {
@@ -97,7 +109,31 @@ fn should_retry(err: &GenaiError) -> bool {
         _ => false,
     }
 }
+
+fn should_retry_response(response: &InteractionResponse) -> bool {
+    let errors = response.errors.as_deref().unwrap_or_default();
+    // A loop is turned away wherever an error names it, code or message,
+    // as `should_retry` does for the 400.
+    let names_loop = errors.iter().any(|e| {
+        [e.code.as_deref(), e.message.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|text| text.to_lowercase().contains("too_many_tool_calls"))
+    });
+    response.status == InteractionStatus::Failed
+        && errors.iter().any(|e| e.code.as_deref() == Some("malformed_tool_call"))
+        && !names_loop
+}
 # let _ = should_retry;
+# let failed = |message: &str| -> InteractionResponse {
+#     serde_json::from_value(serde_json::json!({
+#         "id": "x", "status": "failed", "steps": [],
+#         "errors": [{"code": "malformed_tool_call", "message": message}],
+#     }))
+#     .unwrap()
+# };
+# assert!(should_retry_response(&failed("Please retry the request.")));
+# assert!(!should_retry_response(&failed("Stopped after 60 calls: TOO_MANY_TOOL_CALLS")));
 ```
 
 Keep the retry budget small: these matches are on message text, so an API
@@ -153,8 +189,8 @@ instead of reaching the model as a result.
 
 A stream from `create_stream()` ends in one of three ways:
 
-- A terminal `StreamChunk::Completed(response)`.
-- A terminal `StreamChunk::Error { message, code }` event, which the server
+- A terminal `StreamChunk::Completed { interaction, .. }`.
+- A terminal `StreamChunk::Error { message, code, .. }` event, which the server
   sends inside the SSE stream, such as a recitation block (`code:
   "recitation"`). No events follow it.
 - An `Err(GenaiError)` item, for transport, parse, or timeout errors. A

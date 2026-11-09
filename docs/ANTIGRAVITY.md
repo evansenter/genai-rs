@@ -110,19 +110,23 @@ expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 1. `AgentBuilder::with_harness_path(...)` — explicit path.
 2. `ANTIGRAVITY_HARNESS_PATH` environment variable (the same variable the
    Python SDK honors).
-3. `google/antigravity/bin/localharness` inside `python3`'s site-packages.
+3. `google/antigravity/bin/localharness` inside `python3`'s site-packages,
+   then, on Windows, inside `python`'s.
 4. `localharness` on `PATH`.
 
 On Windows steps 3 and 4 look for `localharness.exe` first, the name the
-Windows wheel ships, as the Python SDK does.
+Windows wheel ships, as the Python SDK does. Step 3 asks `python` there
+because python.org's Windows installer provides no `python3`; `python` is
+started only when `python3`'s site-packages lack the harness.
 
 A miss returns `AntigravityError::HarnessNotFound` listing every location
 searched. The search runs on tokio's blocking pool, not on your runtime's
-threads, and `python3` gets 10 seconds to list its site-packages before
-the search moves on to `PATH`. The read of the installed wheel's version
-beside the binary gets the same 10 seconds, on a thread of its own, so a
-read abandoned at the limit does not hold up your runtime's shutdown.
-File checks and the start of the binary itself are not bounded.
+threads, and each interpreter gets 10 seconds to list its site-packages
+before the search moves on (on Windows from `python3` to `python`, then to
+`PATH`). The read of the installed wheel's version beside the binary gets
+the same 10 seconds, on a thread of its own, so a read abandoned at the
+limit does not hold up your runtime's shutdown. File checks and the start
+of the binary itself are not bounded.
 
 ## Quick start
 
@@ -149,23 +153,29 @@ agent.shutdown().await?;   // graceful: the harness persists its trajectory
 ```
 
 `spawn()` launches the harness, performs the stdio handshake, connects to
-its localhost WebSocket, and initializes the conversation. `shutdown()`
+its localhost WebSocket, and initializes the conversation. The connect
+makes up to five attempts with backoff between them, each given 5
+seconds, so a harness that accepts the connection but never answers
+fails `spawn()` with `InitFailed` after about 26.5 seconds. `shutdown()`
 closes the WebSocket and stdin (the harness's graceful-exit signal; the
 harness then stops the commands it started itself), and escalates to
 SIGTERM/SIGKILL only if it lingers. Dropping the agent without `shutdown()`
 kills the harness immediately — no zombie, but no trajectory persistence
 either.
 
-On Unix every kill reaches the processes the harness started, not just
-the harness: it runs in its own process group, and the forced paths (drop,
-an init failure, the shutdown escalation) signal that group *and* the
-process group of each of its children. The second part matters because the
-harness gives every `run_command` command a process group of its own
-(0.1.23), so a kill of the harness or its group alone left those commands
-running. A command that detaches itself (`setsid`, a double-forked daemon)
-is still out of reach. Because the harness is in its own group, a
-terminal's Ctrl-C reaches only your process; when it exits, the harness
-sees stdin close and shuts down gracefully.
+On Linux and macOS every kill reaches the processes the harness started,
+not just the harness: it runs in its own process group, and the forced
+paths (drop, an init failure, the shutdown escalation) signal that group
+*and* the process group of each of its children. The second part matters
+because the harness gives every `run_command` command a process group of
+its own (0.1.23), so a kill of the harness or its group alone left those
+commands running. A command that detaches itself (`setsid`, a
+double-forked daemon) is still out of reach. Other Unixes get the first
+part only: the harness's children are listed through `/proc` on Linux and
+libproc on macOS, so elsewhere the kill reaches the harness's group, and
+the `run_command` commands keep running. On every Unix the harness is in
+its own group, so a terminal's Ctrl-C reaches only your process; when it
+exits, the harness sees stdin close and shuts down gracefully.
 
 On Windows the forced paths end the harness process only: there are no
 process groups to signal, so the `run_command` commands it started keep
@@ -301,12 +311,13 @@ let builder = AntigravityAgent::builder().with_capabilities(caps);
 # let _ = builder;
 ```
 
-That set deliberately differs from the Python SDK's 0.1.18 `read_only()`
-(`view_file`, `read_url_content`, `schedule`, `finish`). The Python SDK
-now calls the three local finders deprecated, but the harness still serves
-them and a read-only agent without them can only open files by guessing
-paths; `read_url_content` is network egress, so it is write-capable here
-(like `search_web`); and `schedule` is not offered at all:
+That set deliberately differs from the Python SDK's `read_only()` in
+0.1.23 (`view_file`, `read_url_content`, `schedule`, `finish`). The Python
+SDK now calls the three local finders deprecated, but the harness still
+serves them and a read-only agent without them can only open files by
+guessing paths; `read_url_content` is network egress, so it is
+write-capable here (like `search_web`); and `schedule` is not offered at
+all:
 
 - **`schedule`** lets the agent schedule its own future turns. This client
   drives one turn at a time and cannot observe a turn it did not start, so
@@ -724,6 +735,12 @@ them by name instead. `with_mcp_max_output_bytes(n)` sets the size past
 which the harness writes an MCP tool's output to a file and gives the model
 the path (harness default 4096 bytes).
 
+The harness connects to a server and lists its tools on the first turn,
+not in `spawn()`. On harness 0.1.23, `McpServer::with_timeout_seconds(n)`
+bounds both that load, where a server slower than it fails the turn
+(`AntigravityError::Turn`, `MCP load failed for <server>`), and each tool
+call, where a slower call comes back to the model as an error.
+
 ## Subagents
 
 Static subagents run in their own trajectory with their own instructions and
@@ -1069,10 +1086,11 @@ let builder = AntigravityAgent::builder()
 - **Image model**: with `BuiltinTool::GenerateImage` enabled the bridge
   configures `DEFAULT_IMAGE_MODEL` unless `with_image_model` names another.
   Without an image model the harness fails every `generate_image` call.
-- **Budgets** cap model calls, tool calls and tokens for the session
-  (`BudgetScope::Lifetime`, the default) or from the session's start
-  (`ForwardLooking`). A turn that reaches one ends early with its
-  `stop_reason`.
+- **Budgets** cap model calls, tool calls and tokens counted from the
+  start of the conversation, a resumed one included
+  (`BudgetScope::Lifetime`, the default), or from when this session
+  started or was resumed (`ForwardLooking`). A turn that reaches one ends
+  early with its `stop_reason`.
 - **Retries**: `RetryConfig::new().with_max_api_retries(0)` fails a turn on
   the first 503; `RetryConfig::benchmark()` is the Python SDK's preset for
   long evaluation runs.
@@ -1134,17 +1152,27 @@ while let Some(response) = agent.next_trigger_turn(Duration::from_secs(60)).awai
 # }
 ```
 
-The file watch polls every `poll_interval`, comparing each file's size and
+The file watch polls every `poll_interval` (an interval under 10 ms, zero
+included, polls every 10 ms), comparing each file's size and
 modification time (no OS watcher, so no extra dependency), and skips the
 directories the Python SDK's `watchfiles` filter skips (`.git`,
-`node_modules`, virtualenvs, caches). Changes made while a turn runs are
-held until the agent is idle and handed to the callback as one batch, the
-net change since the last batch.
+`node_modules`, virtualenvs, caches). A watched path that is a symbolic
+link is followed, as `watchfiles` follows its root; links below it are
+not. A poll that cannot read part of the tree (a permission error on a
+directory under the path) is skipped, with a warning naming that
+directory, rather than reporting the files there deleted, so a directory
+that stays unreadable holds every change back until it reads again. If
+part of the tree cannot be read when `on_file_change` is called, the first
+poll that reads all of it becomes the baseline, and changes made before it
+are not reported. Changes made while a turn runs are held until the
+agent is idle and handed to the callback as one batch, the net change
+since the last batch.
 
 Delivery semantics (see `antigravity::triggers` for details):
 
 - The first firing happens after the first interval elapses, not
-  immediately. Intervals must be non-zero (`spawn()` validates).
+  immediately. A `TriggerConfig` interval must be non-zero (`spawn()`
+  validates); a file watch's `poll_interval` is raised to 10 ms instead.
 - A trigger can fire before the first turn on harness 0.1.23, which runs it
   as a normal turn. Harnesses 0.1.10 and 0.1.18 aborted the agent run
   instead (`earliest step index is out of bounds: 0 vs 0`) and closed the
@@ -1345,7 +1373,14 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 `HarnessExited` (a failed exit on `shutdown()`, with `stderr`),
 `Config` (spawn-time validation, including the safety gate), `Turn`
 (cancellation, pre-turn denial, fatal model-backend errors), `Timeout`,
-`ToolDispatch`, `WebSocket`, `Protocol`, `Io`, `Json`.
+`ToolDispatch`, `WebSocket` (with the transport error as its source),
+`Protocol` (a harness message this client could not parse, with the parse
+error as its source, a turn that ended without its final event, or a
+message this client could not encode) and `Io` (a file `Media::from_file`
+could not read, named in its message, or harness discovery cut short by
+the runtime shutting down; the I/O error is its source). No variant
+converts from another error type with `?`: map your own I/O and JSON
+errors yourself.
 
 A fatal model-backend error (an HTTP 400 from the model endpoint) fails the
 turn with `Turn` and, on harness 0.1.23, ends the session as well: the

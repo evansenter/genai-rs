@@ -7,8 +7,14 @@
 # and the finding. The interesting parts are what the check must not read:
 # D-032's exceptions (the homes, DECISIONS.md and CHANGELOG.md, test code,
 # `//` comments in src/), a link to a home's dated heading, a timestamp, the
-# API revision; and the test-code boundary, an inline `#[cfg(test)]` module
-# that must not hide the code after it.
+# API revision; the test-code boundary, an inline `#[cfg(test)]` module
+# that must not hide the code after it; the date forms beyond ISO, a date
+# wrapped across lines, and a time with and without seconds; and the fence
+# rules: a reason on every `ignore`, test code included; no Rust block
+# nothing compiles (in a file nothing doctests, behind an include that is
+# commented out or under a `cfg` the doctest run leaves out, or in a doc
+# comment outside the library's non-test code); no `rs` or `Rust` fence;
+# and no Rust in a text block.
 
 set -euo pipefail
 
@@ -206,6 +212,7 @@ expect "an empty reason fails" 1 "an ignore fence needs"
 
 base_tree "$T"
 printf '%s\n' '````markdown' '```rust,ignore' 'x' '```' '````' '```rust' 'fn ignore() {}' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '#[doc = include_str!("../docs/GUIDE.md")]' 'mod guide {}' >>"$T/src/lib.rs"
 run_check "$T"
 expect "a fence quoted inside a longer fence, and ignore as code, pass" 0 "No dated live fact"
 
@@ -218,6 +225,195 @@ base_tree "$T"
 printf '%s\n' '' '/// <!-- ignore: a fragment -->' '/// ```ignore' '/// x' '/// ```' 'pub fn quoted() {}' >>"$T/src/lib.rs"
 run_check "$T"
 expect "a rustdoc ignore fence with a reason passes" 0 "No dated live fact"
+
+# Rule 1 reads a date however it is written, not only as ISO.
+for form in 'November 5, 2026' 'Nov 5, 2026' 'Nov. 5 2026' '5 November 2026' \
+  '2026/11/05' '11/05/2026' 'November 2026' '2026-11-5' '2026.11.05' '05.11.2026' '11-05-2026'; do
+  base_tree "$T"
+  printf '%s\n' '' "The API accepted it ($form)." >>"$T/docs/GUIDE.md"
+  run_check "$T"
+  expect "a date written as '$form' fails" 1 "docs/GUIDE.md:15: dated live fact ($form)"
+done
+
+base_tree "$T"
+printf '%s\n' '' '/// Seen on Nov 5, 2026.' 'pub fn seen() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a named-month date in a doc comment fails" 1 "src/lib.rs:14: dated live fact (Nov 5, 2026) in a doc comment"
+
+base_tree "$T"
+printf '%s\n' '' 'A `Retry-After` of `Wed, 21 Oct 2015 07:28:00 GMT` waits until then.' \
+  'Logged at 2026/11/05 10:30:45, 11/05/2026, 10:30:45 and 2026-11-05 10:30:45.' \
+  'Version 1/2 of 3, release 0.14.0, address 10.11.12.13.' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "an HTTP date, timestamps with seconds, a fraction and a version pass" 0 "No dated live fact"
+
+# A time without seconds is how prose dates an observation, in any form.
+base_tree "$T"
+printf '%s\n' '' 'Observed November 5, 2026, 10:30 UTC.' 'Observed 2026/11/05 10:30 UTC.' \
+  'Observed 2026-11-05 10:30 UTC.' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a named date with a time but no seconds fails" 1 "docs/GUIDE.md:15: dated live fact (November 5, 2026)"
+expect "a slashed date with a time but no seconds fails" 1 "docs/GUIDE.md:16: dated live fact (2026/11/05)"
+expect "an ISO date with a time but no seconds fails" 1 "docs/GUIDE.md:17: dated live fact (2026-11-05)"
+
+# A named-month date has spaces, so hard-wrapped prose breaks it across
+# lines: the finding names its first line.
+base_tree "$T"
+printf '%s\n' '' 'The API began sending it as of November' '5, 2026, so the helper reads it.' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a date wrapped across two lines fails, on its first" 1 "docs/GUIDE.md:15: dated live fact (November 5, 2026)"
+
+base_tree "$T"
+printf '%s\n' '' '/// As of November' '/// 5, 2026 the API sets it.' 'pub fn set() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a date wrapped across two doc lines fails" 1 "src/lib.rs:14: dated live fact (November 5, 2026) in a doc comment"
+
+base_tree "$T"
+printf '%s\n' 'fn main() {' '    // The API answers 200 as of Nov' '    // 5, 2026.' '}' >"$T/examples/store.rs"
+run_check "$T"
+expect "a date wrapped across two example comments fails" 1 "examples/store.rs:2: dated live fact (Nov 5, 2026) in an example"
+
+# Rule 2 reaches every doc comment: test code and tests/ too, where rule 1
+# does not look.
+base_tree "$T"
+printf '%s\n' '//! Shared helpers.' '//! ```ignore' '//! mod common;' '//! ```' >"$T/tests/helpers.rs"
+run_check "$T"
+expect "an ignore fence in a tests/ helper needs a reason" 1 "tests/helpers.rs:2: an ignore fence needs a"
+
+base_tree "$T"
+printf '%s\n' '//! Shared helpers (2026-11-05).' '//! <!-- ignore: a test crate is not doctested -->' \
+  '//! ```ignore' '//! mod common;' '//! ```' >"$T/tests/helpers.rs"
+run_check "$T"
+expect "a tests/ helper's reasoned ignore fence, and its date, pass" 0 "No dated live fact"
+
+base_tree "$T"
+printf '%s\n' '/// ```ignore' '/// x' '/// ```' 'fn fixture() {}' >"$T/src/lib_tests.rs"
+run_check "$T"
+expect "an ignore fence in a unit-test file needs a reason" 1 "src/lib_tests.rs:1: an ignore fence needs a"
+
+base_tree "$T"
+printf '%s\n' '#[cfg(test)]' '/// ```rust,ignore' '/// x' '/// ```' 'fn helper() {' '}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "an ignore fence on a gated test item needs a reason" 1 "src/lib.rs:14: an ignore fence needs a"
+
+# Rule 3: a Rust block in Markdown that nothing doctests.
+base_tree "$T"
+printf '%s\n' '' '```rust' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a rust fence in a guide src/lib.rs does not include fails" 1 "docs/GUIDE.md:15: a Rust block here never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '```rust,no_run' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '```no_run' 'let x = 1;' '```' >"$T/README.md"
+run_check "$T"
+expect "a no_run fence is Rust too" 1 "docs/GUIDE.md:15: a Rust block here never compiles"
+expect "a bare rustdoc attribute is Rust too" 1 "README.md:2: a Rust block here never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '```rust' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' '    #[doc = include_str!("../docs/GUIDE.md")]' '    mod guide {}' '}' >>"$T/src/lib.rs"
+printf '%s\n' '' '```rust' 'client.old_call();' '```' >>"$T/CHANGELOG.md"
+run_check "$T"
+expect "a doctested guide's rust fence, and CHANGELOG's, pass" 0 "No dated live fact"
+
+base_tree "$T"
+printf '%s\n' '' '```rust' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' '    #[cfg(feature = "antigravity")]' \
+  '    #[doc = include_str!("../docs/GUIDE.md")]' '    mod guide {}' '}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "an include behind a feature, which the all-features run has, counts" 0 "No dated live fact"
+
+# An include that is commented out, or behind a cfg the doctest run never
+# sets, doctests nothing.
+for include in '// #[doc = include_str!("../docs/GUIDE.md")]' \
+  '/* #[doc = include_str!("../docs/GUIDE.md")] */' \
+  '#[cfg(any())] #[doc = include_str!("../docs/GUIDE.md")]' \
+  '#[doc = include_str!("../docs/GUIDE.md")] #[cfg(not(doctest))]'; do
+  base_tree "$T"
+  printf '%s\n' '' '```rust' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+  printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' "    $include" '    mod guide {}' '}' >>"$T/src/lib.rs"
+  run_check "$T"
+  expect "an include written as '$include' doctests nothing" 1 "docs/GUIDE.md:15: a Rust block here never compiles"
+done
+
+# `rs` and `Rust` are Rust to GitHub and another language to rustdoc, so
+# nothing compiles them, even in a doctested guide; an `edition` token is
+# Rust to rustdoc.
+base_tree "$T"
+printf '%s\n' '' '```rs' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' '    #[doc = include_str!("../docs/GUIDE.md")]' '    mod guide {}' '}' >>"$T/src/lib.rs"
+printf '%s\n' '' '```Rust' 'let x = 1;' '```' >"$T/README.md"
+printf '%s\n' '' '```edition2021' 'let x = 1;' '```' >"$T/docs/OTHER.md"
+run_check "$T"
+expect "an rs fence in a doctested guide fails" 1 "docs/GUIDE.md:15: a \`rs\` fence is Rust to GitHub"
+expect "a Rust fence fails" 1 "README.md:2: a \`Rust\` fence is Rust to GitHub"
+expect "an edition fence in a guide nothing doctests fails" 1 "docs/OTHER.md:2: a Rust block here never compiles"
+
+# In Rust, rustdoc compiles the library's doc comments only: not tests/,
+# examples/, test files, test items, or a module compiled only in tests.
+# There an untagged block is Rust too.
+base_tree "$T"
+printf '%s\n' '//! Shared helpers.' '//! ```rust' '//! let x = 1;' '//! ```' >"$T/tests/helpers.rs"
+printf '%s\n' '//! Shows a store.' '//! ```' '//! let x = 1;' '//! ```' 'fn main() {}' >"$T/examples/store.rs"
+printf '%s\n' '/// ```' '/// let x = 1;' '/// ```' 'fn fixture() {}' >"$T/src/lib_tests.rs"
+run_check "$T"
+expect "a Rust block in a tests/ helper's doc fails" 1 "tests/helpers.rs:2: a Rust block in this doc comment never compiles"
+expect "an untagged block in an example's doc fails" 1 "examples/store.rs:2: a Rust block in this doc comment"
+expect "an untagged block in a unit-test file fails" 1 "src/lib_tests.rs:1: a Rust block in this doc comment"
+
+base_tree "$T"
+printf '%s\n' '#[cfg(test)]' '/// <!-- ignore: a fragment -->' '/// ```rust,ignore' '/// x' '/// ```' \
+  '/// ```no_run' '/// let x = 1;' '/// ```' 'fn helper() {' '}' '#[cfg(test)]' 'mod oracle;' >>"$T/src/lib.rs"
+printf '%s\n' '/// ```rust' '/// let x = 1;' '/// ```' 'pub fn reach() {}' >"$T/src/oracle.rs"
+run_check "$T"
+expect "a Rust block on a gated test item fails" 1 "src/lib.rs:18: a Rust block in this doc comment"
+expect "a Rust block in a module compiled only in tests fails" 1 "src/oracle.rs:1: a Rust block in this doc comment"
+
+base_tree "$T"
+printf '%s\n' '' '/// ```' '/// let x = 1;' '/// ```' 'pub fn shown() {}' '#[cfg(unix)]' 'mod tree;' >>"$T/src/lib.rs"
+printf '%s\n' '/// ```rust' '/// let x = 1;' '/// ```' 'pub fn kill() {}' >"$T/src/tree.rs"
+printf '%s\n' '//! <!-- ignore: a test crate is not doctested -->' '//! ```rust,ignore' '//! mod common;' '//! ```' \
+  '//! ```text' '//! a/b' '//! ```' >"$T/tests/helpers.rs"
+run_check "$T"
+expect "library doc blocks, a Linux-only module's included, and tests/ ignore and text blocks pass" 0 "No dated live fact"
+
+# Rule 4: Rust in a text block.
+base_tree "$T"
+printf '%s\n' '' '```text' 'let mut response = InteractionResponse::default();' \
+  'response.status = InteractionStatus::Completed;' '```' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a let statement in a text fence fails, naming its line" 1 "docs/GUIDE.md:16: Rust in a text block never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '```text' 'response.status = InteractionStatus::Completed;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '```' 'use genai_rs::Client;' '```' >"$T/README.md"
+run_check "$T"
+expect "a field assignment in a text fence fails" 1 "docs/GUIDE.md:16: Rust in a text block"
+expect "an untagged fence in an undoctested file is read as text" 1 "README.md:3: Rust in a text block"
+
+base_tree "$T"
+printf '%s\n' '' '/// ```text' '/// #[derive(Debug)]' '/// ```' 'pub fn shown() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "Rust in a rustdoc text fence fails" 1 "src/lib.rs:15: Rust in a text block"
+
+# Statements that span lines or bind a pattern, and headers with a body.
+for body in $'let response = client\n    .interaction()\n    .create()\n    .await?;' \
+  'let (text, usage) = split(response);' \
+  'let Some(text) = response.text() else { return };' \
+  $'match chunk {\n    StreamChunk::Completed { .. } => done(),\n}' \
+  $'if let Some(text) = response.text() {\n    println!("{text}");\n}'; do
+  base_tree "$T"
+  printf '%s\n' '' '```text' "$body" '```' >>"$T/docs/GUIDE.md"
+  run_check "$T"
+  expect "a text fence holding '${body%%$'\n'*}' fails" 1 "docs/GUIDE.md:16: Rust in a text block never compiles"
+done
+
+base_tree "$T"
+printf '%s\n' '' '```text' 'src/' '  mod.rs        Re-exports the public API' '  agent.rs      fn-free notes' \
+  'with_content() set? -> Yes' 'Harness up. conversation_id=Some("...")' 'events => created, delta;' \
+  'let it settle; then read' 'match: 3 of 4 {' '```' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a file tree and program output in a text fence pass" 0 "No dated live fact"
 
 # Every finding is listed, not just the first.
 base_tree "$T"
@@ -236,7 +432,7 @@ expect "two arguments are a usage error" 2 "Usage:"
 # The real tree, from the repo root: the default ROOT reads it.
 rc=0
 out=$(cd "$HERE/../../.." && bash "$SCRIPT" 2>&1) || rc=$?
-expect "the checkout follows both rules" 0 "No dated live fact outside its home"
+expect "the checkout follows every rule" 0 "No dated live fact outside its home"
 
 echo
 if [ "$failures" -gt 0 ]; then

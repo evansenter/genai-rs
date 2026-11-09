@@ -50,7 +50,7 @@ pub(crate) fn target_groups(
 }
 
 #[cfg(unix)]
-#[allow(unsafe_code)] // libc::kill; see the SAFETY comment
+#[expect(unsafe_code, reason = "libc::kill; see the SAFETY comment")]
 fn signal_group(group: libc::pid_t, signal: libc::c_int) {
     // SAFETY: plain signal dispatch to a process group this process
     // created (or one a child of its own child created); no memory is
@@ -61,7 +61,7 @@ fn signal_group(group: libc::pid_t, signal: libc::c_int) {
 }
 
 #[cfg(unix)]
-#[allow(unsafe_code)] // libc::getpgrp; see the SAFETY comment
+#[expect(unsafe_code, reason = "libc::getpgrp; see the SAFETY comment")]
 fn own_process_group() -> libc::pid_t {
     // SAFETY: getpgrp takes no arguments and cannot fail.
     unsafe { libc::getpgrp() }
@@ -117,7 +117,7 @@ pub(crate) fn parse_proc_stat(stat: &str) -> Option<(i32, i32)> {
 }
 
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code)] // libproc and getpgid; see the SAFETY comments
+#[expect(unsafe_code, reason = "libproc and getpgid; see the SAFETY comments")]
 pub(crate) fn child_process_groups(parent: libc::pid_t) -> Vec<libc::pid_t> {
     const CAPACITY: usize = 4096;
     let mut pids = vec![0 as libc::pid_t; CAPACITY];

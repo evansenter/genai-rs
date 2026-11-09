@@ -29,20 +29,22 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`, and the committed snapshots are those copies, fetched 2026-11-07. They differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. Each snapshot records its URL, and the daily sweep probes both (`watch_spec_urls.sh`). This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`, and the committed snapshots are those copies, fetched 2026-11-07. They differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves and compares it with the snapshot, and opens an `api-sweep` issue when one drifts or stops serving; on 2026-11-08 both matched. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
 Rank 2 disagrees with rank 1 in both directions, which is why nothing from
-the bindings is modeled until it is probed. From the 2.25.0 sweep:
+the bindings is modeled until it is probed. The 2.25.0 sweep found both:
 
-- **Bindings list surface the API rejects:** `cached_content` and
+- **The bindings listed surface the API rejected:** `cached_content` and
   `transcription_config.language_hints` (`400 Unknown parameter`), the
-  `service_tier: "deferred"` value, and the string arm of `environment.env`.
-- **The API accepts surface the bindings lack:** the tool types
-  `filesystem`, `tool_search`, `manage_task`, `schedule`, `bash`; the
-  annotation types `in_context_file_citation` and `reference_metadata`; and
-  extra usage and environment fields.
+  `service_tier: "deferred"` value (named Vertex-only and modeled since the
+  2.34.0 sweep), and the string arm of `environment.env`.
+- **The API accepted surface the bindings lacked:** the tool types
+  `filesystem`, `tool_search`, `manage_task`, `schedule`, `bash` (rejected
+  with a 400 since the 2.34.0 sweep); the annotation types
+  `in_context_file_citation` and `reference_metadata`; and extra usage and
+  environment fields.
 
 ## Coverage oracle (2026-11-04)
 
@@ -220,6 +222,16 @@ from here rather than repeated.
   identity in `docs/ENUM_WIRE_FORMATS.md`. An
   interaction can end in `requires_action` after every MCP call was
   answered (see [Server-side changes](#server-side-changes-live-2026-10-01)).
+  A create whose `mcp_server` the API cannot use fails with a status that
+  says why (2026-11-05): a server it cannot reach is `500 An internal error
+  occurred while connecting to the MCP server.`, a URL that is no MCP
+  server `501 MCP server returned an error. Please check the server
+  configuration.`, and a malformed tool `400 Unknown parameter ...`. The
+  501's message names the server's error, so a real server that fails
+  (one that is down) should get it too; that case was not observed. It is
+  the one 501 that can pass, which is why `docs/RELIABILITY.md` and
+  `docs/ERROR_HANDLING.md` single it out. `classify_mcp_create_error` in
+  `tests/tools_and_config_tests.rs` sorts the three.
 - **File search** can't be combined with `google_search` or `url_context`
   (2026-08-16: `400 '<other>' and 'file_search' cannot be combined in the
   same request. Please choose one to continue.`); `code_execution` is
@@ -272,6 +284,19 @@ from here rather than repeated.
   malformed_tool_call` through 2026-11-04, as `status: "failed"` from
   2026-11-05, and twice as `requires_action`. Sent with the tool again, 6
   of 6 completed, answering from the history without a second search.
+  On 2026-11-08 a follow-up without the tool that asked for a search
+  again failed in 4 of 4: each a `200` with `status: "failed"`, no steps,
+  and that one `malformed_tool_call` error, its message unchanged.
+  Streamed, the same request ended in an `interaction.completed` whose
+  interaction had `status: "failed"` and no `errors` (1 of 1). A function
+  declared on turn 1 and left off the follow-up was called anyway
+  (`requires_action`, 3 of 3), never refused. The integration suite's
+  `retry_request!` retries the `200` form as it did the `400` (#545).
+  The live jobs' logs of 112 CI runs from 2026-11-01 to 2026-11-07 show
+  the `400` form in this follow-up and once in
+  `test_structured_output_with_url_context`, last on 2026-11-04; after
+  that the only test to fail on a `failed` interaction was this
+  follow-up (4 runs), so no other test fails this way.
 - **Google Maps `latitude` / `longitude`** are accepted and used: asked
   for "a coffee shop near me" with Times Square's coordinates, the model
   answered with one on West 47th Street (2026-11-07).
@@ -654,10 +679,10 @@ modeled on 2026-11-05; see [Interaction residue](#interaction-residue-2026-11-05
 |---|---|
 | `cached_content` (re-added, deprecated) | Still `400 Unknown parameter 'cached_content'`. Stays removed (D-005). |
 | `transcription_config.language_hints` | `400 Unknown parameter` |
-| `input` optional on create | The API still answers `400 Missing input.` in every form tried |
-| `service_tier: "deferred"` | `400 The value 'deferred' is not supported` |
+| `input` optional on create | Superseded: the API answered `400 Missing input.` in every form tried then. A stored decode's continuation now takes no input, and a request with neither input nor a continuation token is a misleading `404` that `build()` heads off ([Interaction residue](#interaction-residue-2026-11-05)) |
+| `service_tier: "deferred"` | Superseded: the API answered `400 The value 'deferred' is not supported` then. The 2.25.0 → 2.34.0 sweep found it named Vertex-only and modeled it as `ServiceTier::Deferred` (D-005; [Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)) |
 | String arm of `environment.env` | `Invalid input at 'environment'`. Preserved in `extra` if read. |
-| Server-only tool types (`bash`, `filesystem`, `tool_search`, `manage_task`, `schedule`) | Absent from the bindings. Accepted bare, but `bash`/`filesystem` end in `400 malformed_tool_call` and the rest do nothing on a raw model. Revisit when they reach the bindings. |
+| Server-only tool types (`bash`, `filesystem`, `tool_search`, `manage_task`, `schedule`) | Superseded: absent from the bindings, they were accepted bare then, and `bash`/`filesystem` ended in `400 malformed_tool_call` while the rest did nothing on a raw model. The 2.25.0 → 2.34.0 sweep found them rejected with a 400 that lists the supported tool types ([Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)). |
 | Annotation types `in_context_file_citation`, `reference_metadata` | Server enum only. They land in `Annotation::Unknown`. |
 | Environment `storage` field | Server only. Preserved in `Environment::extra`. |
 | Path-parameter renames (`interactionsId`, `agentsId`, ...) and new MIME literals (`audio/webm`, `video/jpeg2000`) | Cosmetic. MIME types are open strings. |

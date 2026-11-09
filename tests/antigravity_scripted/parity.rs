@@ -13,9 +13,9 @@ fn design_doc() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-/// The keys in the first column of the parity section's tables: every
-/// backticked token in it.
-fn table_keys(doc: &str) -> BTreeSet<String> {
+/// The parity section's table rows: each line of it that starts with a
+/// backticked key.
+fn parity_rows(doc: &str) -> Vec<&str> {
     let start = doc
         .find("## Python SDK parity")
         .expect("the design doc has a Python SDK parity section");
@@ -24,13 +24,64 @@ fn table_keys(doc: &str) -> BTreeSet<String> {
     section[..end]
         .lines()
         .filter(|line| line.starts_with("| `"))
-        .filter_map(|line| line.split('|').nth(1))
+        .collect()
+}
+
+/// A table row's cells, trimmed, split on the pipes Markdown does not
+/// escape: `add_custom_trigger(\|ctx\| ..)` is one cell.
+fn cells(row: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut chars = row.trim().trim_start_matches('|').chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                cell.push('|');
+                chars.next();
+            }
+            '|' => cells.push(std::mem::take(&mut cell).trim().to_string()),
+            c => cell.push(c),
+        }
+    }
+    if !cell.trim().is_empty() {
+        cells.push(cell.trim().to_string());
+    }
+    cells
+}
+
+/// The keys in the first column of the parity section's tables: every
+/// backticked token in it.
+fn table_keys(doc: &str) -> BTreeSet<String> {
+    parity_rows(doc)
+        .into_iter()
+        .filter_map(|row| cells(row).into_iter().next())
         .flat_map(|cell| {
             cell.split('`')
                 .skip(1)
                 .step_by(2)
                 .map(str::to_string)
                 .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The rows that break the table's promise, each with what is missing:
+/// every key maps to something in the genai-rs column, and a row that is
+/// not modeled gives its reason in the notes column.
+fn row_problems(doc: &str) -> Vec<String> {
+    parity_rows(doc)
+        .into_iter()
+        .filter_map(|row| {
+            let cells = cells(row);
+            let mapping = cells.get(1).map_or("", String::as_str);
+            let notes = cells.get(2).map_or("", String::as_str);
+            if mapping.is_empty() {
+                Some(format!("no genai-rs mapping: {row}"))
+            } else if mapping.starts_with("Not modeled") && notes.is_empty() {
+                Some(format!("not modeled, with no reason in its notes: {row}"))
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -83,6 +134,40 @@ fn table_keys_reads_the_first_column_only() {
                ## Next\n| `C.four` | y |\n";
     let keys: Vec<_> = table_keys(doc).into_iter().collect();
     assert_eq!(keys, ["A.one", "A.two", "B.three"]);
+}
+
+#[test]
+fn row_problems_finds_a_row_with_no_mapping_or_no_reason() {
+    let doc = "## Python SDK parity (x)\n\n\
+               | Option | genai-rs | Notes |\n|---|---|---|\n\
+               | `A.mapped` | `with_a` | |\n\
+               | `B.skipped` | Not modeled | The reason. |\n\
+               | `C.piped` | `add(\\|x\\| x)` | |\n\
+               | `D.bare` | Not modeled | |\n\
+               | `E.blank` |  | A note. |\n\
+               | `F.short` | Not modeled (preset) |\n\
+               ## Next\n| `G.other` | Not modeled | |\n";
+    let problems = row_problems(doc);
+    assert_eq!(problems.len(), 3, "{problems:#?}");
+    assert!(problems[0].contains("`D.bare`") && problems[0].contains("no reason"));
+    assert!(problems[1].contains("`E.blank`") && problems[1].contains("no genai-rs mapping"));
+    assert!(problems[2].contains("`F.short`") && problems[2].contains("no reason"));
+    assert_eq!(
+        cells("| `C.piped` | `add(\\|x\\| x)` | |")[1],
+        "`add(|x| x)`"
+    );
+}
+
+/// Key-free: the table itself, whatever wheel is installed.
+#[test]
+fn every_parity_row_maps_its_keys_and_gives_a_reason_when_not_modeled() {
+    let problems = row_problems(&design_doc());
+    assert!(
+        problems.is_empty(),
+        "the parity table in docs/ANTIGRAVITY_BRIDGE_DESIGN.md has rows that map nothing, or \
+         are not modeled with no reason in their Notes cell:\n  {}",
+        problems.join("\n  ")
+    );
 }
 
 #[test]

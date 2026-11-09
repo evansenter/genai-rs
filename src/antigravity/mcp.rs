@@ -137,7 +137,10 @@ impl McpServer {
         self
     }
 
-    /// Sets the per-call timeout in seconds.
+    /// Sets how long the harness waits for the server, in seconds: to
+    /// connect and list its tools, which it does on the first turn (a
+    /// slower server fails that turn), and for each tool call (a slower call
+    /// returns an error to the model). Harness 0.1.23 applies both.
     #[must_use]
     pub fn with_timeout_seconds(mut self, seconds: i32) -> Self {
         self.timeout_seconds = Some(seconds);

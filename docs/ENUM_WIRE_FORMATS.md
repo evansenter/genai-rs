@@ -386,6 +386,14 @@ with that marker reads back as `Unknown`, so the chunk can't turn into the
 known one on a round trip. The marker is written only on such a collision;
 maps written by 0.13.0 and earlier have none and read back as before.
 
+Every known variant also keeps the SSE event's keys it does not read, in
+its `extra` map: a key no event type models (one the API adds beside the
+payload), a modeled key on an event type that does not read it (an `index`
+on a `status_update`, kept as it came and not parsed), and what is left of `metadata` beside its
+`total_usage`, or of `error` beside its `message` and `code`, under that
+key. The map writes a non-empty `extra` beside `data`, as `"extra": {...}`,
+and reads it back; maps without it read back with an empty one.
+
 ### Annotation
 
 A union tagged by `"type"` (previously a single struct). Each known variant
@@ -648,7 +656,7 @@ Interactions API.
 
 - List envelopes are `{"fileSearchStores": [...]}` and `{"documents": [...]}`.
   An empty store list, or an empty store's document list, is a bare `{}`.
-  `page_size` and `pageSize` are both accepted; the crate sends `page_size`.
+  `page_size` and `pageSize` are both accepted; the crate sends `pageSize`.
 - Document `sizeBytes` is a JSON **string** (`"27"`).
 - `DocumentState` is `STATE_PENDING` / `STATE_ACTIVE` / `STATE_FAILED`,
   prefixed, unlike the Files API's bare `PROCESSING` / `ACTIVE` / `FAILED`.
@@ -1225,9 +1233,11 @@ isn't in its `REQUEST_SIDE` exemption list. The rule:
 Outside the crate the attribute blocks struct literals and
 `..Default::default()`, but not `T::default()` plus field assignment:
 
-```text
+```rust
+# use genai_rs::{InteractionResponse, InteractionStatus};
 let mut response = InteractionResponse::default();
 response.status = InteractionStatus::Completed;
+# assert_eq!(response.status, InteractionStatus::Completed);
 ```
 
 Types with neither `Default` nor a constructor need a JSON fixture:

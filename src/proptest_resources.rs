@@ -97,7 +97,7 @@ pub(crate) fn arb_webhook_config() -> impl Strategy<Value = WebhookConfig> {
         .prop_map(|(uris, user_metadata)| WebhookConfig {
             uris,
             user_metadata,
-            ..Default::default()
+            extra: serde_json::Map::new(),
         })
 }
 
@@ -129,7 +129,7 @@ pub(super) fn arb_environment_source() -> impl Strategy<Value = EnvironmentSourc
                 target,
                 content,
                 encoding,
-                ..Default::default()
+                extra: serde_json::Map::new(),
             },
         )
 }
@@ -150,7 +150,8 @@ pub(super) fn arb_network_config() -> impl Strategy<Value = NetworkConfig> {
                 .prop_map(|(domain, transform)| AllowlistEntry {
                     domain,
                     transform,
-                    ..Default::default()
+                    credential: None,
+                    extra: serde_json::Map::new(),
                 }),
             0..3,
         )
@@ -167,9 +168,11 @@ pub(crate) fn arb_environment_spec() -> impl Strategy<Value = EnvironmentSpec> {
         )
             .prop_map(|(sources, network)| {
                 EnvironmentSpec::Remote(RemoteEnvironment {
+                    environment_id: None,
                     sources,
                     network,
-                    ..Default::default()
+                    env: std::collections::BTreeMap::new(),
+                    extra: serde_json::Map::new(),
                 })
             }),
     ]

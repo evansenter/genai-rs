@@ -8,9 +8,7 @@
 //! API key and a deterministic outcome. Built on the HTTP stub in
 //! `http_stub.rs`.
 
-// Each test binary compiles `common` separately and uses a subset of it.
-#![allow(dead_code)]
-
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -96,13 +94,19 @@ fn sse_reply(parts: Value) -> Reply {
 /// turn repeats for any request past the end of the script.
 pub struct FakeGemini {
     stub: Stub,
+    /// The harness's app data directory for this test, made on first use and
+    /// removed when the fake drops ([`FakeGemini::app_data_dir`]).
+    app_data: OnceLock<tempfile::TempDir>,
 }
 
 impl FakeGemini {
     pub async fn start(script: Vec<ModelTurn>) -> Self {
         assert!(!script.is_empty(), "a script needs at least one turn");
         let stub = Stub::start(move |_, n| script[n.min(script.len() - 1)].reply()).await;
-        Self { stub }
+        Self {
+            stub,
+            app_data: OnceLock::new(),
+        }
     }
 
     /// A model whose reply is chosen per request by `route` (handed the
@@ -113,12 +117,33 @@ impl FakeGemini {
         route: impl Fn(&Recorded, usize) -> ModelTurn + Send + Sync + 'static,
     ) -> Self {
         let stub = Stub::start(move |request, n| route(request, n).reply()).await;
-        Self { stub }
+        Self {
+            stub,
+            app_data: OnceLock::new(),
+        }
     }
 
     /// The URL to hand to `with_gemini_base_url`.
     pub fn base_url(&self) -> &str {
         &self.stub.base_url
+    }
+
+    /// A directory to hand to `with_app_data_dir`, one per fake and so per
+    /// test, removed when the fake drops. Without one the harness keeps each
+    /// conversation's working files (`brain/<conversation>/`) under the
+    /// runner's `~/.gemini/antigravity`, and every run would leave them
+    /// there.
+    pub fn app_data_dir(&self) -> String {
+        self.app_data
+            .get_or_init(|| {
+                tempfile::Builder::new()
+                    .prefix("agy-scripted-appdata")
+                    .tempdir()
+                    .expect("create the app data dir")
+            })
+            .path()
+            .to_string_lossy()
+            .into_owned()
     }
 
     /// Every model request so far, in order.

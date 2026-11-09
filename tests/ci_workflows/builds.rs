@@ -5,7 +5,9 @@
 //! endings that no other leg sees. So a PR runs the Windows stable leg, the
 //! full matrix also runs on the schedule, every text file checks out with LF,
 //! the Windows doctests run even after a failing unit test, the antigravity
-//! feature compiles off Linux, and clippy lints the library without default
+//! feature compiles off Linux, its process-tree tests run on macOS (whose
+//! libproc path no other job reaches), clippy lints the Windows-only code
+//! on the leg a PR runs, and clippy lints every target without default
 //! features, in CI and in `make clippy`.
 
 use super::{jobs, read, root, steps};
@@ -36,6 +38,21 @@ fn step_condition(step: &str) -> Option<&str> {
         .find_map(|line| line.trim().strip_prefix("if: "))
 }
 
+/// The Windows clippy step's command.
+const WINDOWS_CLIPPY: &str = "cargo clippy --features antigravity --all-targets -- -D warnings";
+
+/// The `&&` terms the Windows clippy step's `if:` may have. Each keeps the
+/// step on the Windows stable leg, the PR's included.
+const WINDOWS_CLIPPY_CONDITION_TERMS: [&str; 7] = [
+    "!cancelled()",
+    "always()",
+    "success()",
+    "runner.os != 'Linux'",
+    "runner.os == 'Windows'",
+    "matrix.os == 'windows-latest'",
+    "matrix.rust == 'stable'",
+];
+
 /// Each matrix key: the one value a PR runs, and the values every other
 /// trigger (main pushes, the schedule, manual runs) must keep.
 const MATRIX: [(&str, &str, &[&str]); 2] = [
@@ -47,6 +64,24 @@ const MATRIX: [(&str, &str, &[&str]); 2] = [
     ("rust", "stable", &["stable", "beta"]),
 ];
 
+/// The `&&` terms of a step's `if:` that are not in `allowed`, the
+/// `${{ }}` taken off; empty when it has no `if:`.
+fn unknown_condition_terms(step: &str, allowed: &[&str]) -> Vec<String> {
+    let Some(condition) = step_condition(step) else {
+        return Vec::new();
+    };
+    let expression = condition
+        .strip_prefix("${{")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .unwrap_or(condition);
+    expression
+        .split("&&")
+        .map(str::trim)
+        .filter(|term| !allowed.contains(term))
+        .map(String::from)
+        .collect()
+}
+
 /// The `&&` terms the antigravity check's `if:` may have. Each keeps the step
 /// on every Windows leg, the PR's included; anything else (another OS test,
 /// an event test, an `||`) is refused rather than read.
@@ -56,6 +91,20 @@ const ANTIGRAVITY_CONDITION_TERMS: [&str; 5] = [
     "success()",
     "runner.os != 'Linux'",
     "runner.os == 'Windows'",
+];
+
+/// The step that runs the antigravity process-tree tests on macOS.
+const PROCESS_TREE_TESTS: &str = "cargo nextest run --features antigravity --cargo-profile release \
+                                  --lib -E 'test(/process_tree/)'";
+
+/// The `&&` terms the process-tree step's `if:` may have. Each keeps the
+/// step on the macOS legs; anything else is refused rather than read.
+const PROCESS_TREE_CONDITION_TERMS: [&str; 5] = [
+    "!cancelled()",
+    "always()",
+    "success()",
+    "runner.os == 'macOS'",
+    "runner.os != 'Linux'",
 ];
 
 /// A matrix value written `${{ github.event_name == 'pull_request' &&
@@ -76,8 +125,10 @@ fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
 /// every `rust.yml` trigger, the weekly schedule included (no job-level
 /// `if:`); a PR's matrix is the Windows stable leg and every other trigger's
 /// is the full matrix, none of it excluded; the doctests run after a failed
-/// unit-test step; and the antigravity feature is checked on every Windows
-/// leg.
+/// unit-test step; the antigravity feature is checked on every Windows
+/// leg; clippy lints it, every target, on the Windows stable leg, with
+/// the toolchain's clippy component installed; and the antigravity
+/// process-tree tests run on every macOS leg.
 fn cross_platform_problems(workflow: &str) -> Vec<String> {
     let body = job(workflow, "cross-platform");
     let mut problems = Vec::new();
@@ -127,26 +178,52 @@ fn cross_platform_problems(workflow: &str) -> Vec<String> {
     }
     match step_running(&body, "cargo check --features antigravity") {
         Some(step) => {
-            if let Some(condition) = step_condition(&step) {
-                let expression = condition
-                    .strip_prefix("${{")
-                    .and_then(|rest| rest.strip_suffix("}}"))
-                    .unwrap_or(condition);
-                let unknown: Vec<&str> = expression
-                    .split("&&")
-                    .map(str::trim)
-                    .filter(|term| !ANTIGRAVITY_CONDITION_TERMS.contains(term))
-                    .collect();
-                if !unknown.is_empty() {
-                    problems.push(format!(
-                        "`cargo check --features antigravity` must run on every Windows leg, \
-                         the PR's included: its `if:` has {unknown:?}, not only terms from \
-                         {ANTIGRAVITY_CONDITION_TERMS:?}"
-                    ));
-                }
+            let unknown = unknown_condition_terms(&step, &ANTIGRAVITY_CONDITION_TERMS);
+            if !unknown.is_empty() {
+                problems.push(format!(
+                    "`cargo check --features antigravity` must run on every Windows leg, \
+                     the PR's included: its `if:` has {unknown:?}, not only terms from \
+                     {ANTIGRAVITY_CONDITION_TERMS:?}"
+                ));
             }
         }
         None => problems.push("no `cargo check --features antigravity` step".into()),
+    }
+    match step_running(&body, WINDOWS_CLIPPY) {
+        Some(step) => {
+            let unknown = unknown_condition_terms(&step, &WINDOWS_CLIPPY_CONDITION_TERMS);
+            if !unknown.is_empty() {
+                problems.push(format!(
+                    "`{WINDOWS_CLIPPY}` must run on the Windows stable leg, the PR's \
+                     included: its `if:` has {unknown:?}, not only terms from \
+                     {WINDOWS_CLIPPY_CONDITION_TERMS:?}"
+                ));
+            }
+        }
+        None => problems.push(format!(
+            "no `{WINDOWS_CLIPPY}` step: nothing lints the Windows-only code"
+        )),
+    }
+    let components = body
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("components: "));
+    if !components.is_some_and(|list| list.split(',').any(|c| c.trim() == "clippy")) {
+        problems.push(format!(
+            "the toolchain step does not install clippy (`components: clippy`): found \
+             {components:?}"
+        ));
+    }
+    match step_running(&body, PROCESS_TREE_TESTS) {
+        Some(step) => {
+            let unknown = unknown_condition_terms(&step, &PROCESS_TREE_CONDITION_TERMS);
+            if !unknown.is_empty() {
+                problems.push(format!(
+                    "the process-tree tests must run on every macOS leg: their `if:` has \
+                     {unknown:?}, not only terms from {PROCESS_TREE_CONDITION_TERMS:?}"
+                ));
+            }
+        }
+        None => problems.push(format!("no step running `{PROCESS_TREE_TESTS}`")),
     }
     problems
 }
@@ -235,6 +312,30 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
             "!cancelled() && runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
             "runner.os == 'macOS' || runner.os == 'Linux' }}\n        run: cargo check --features antigravity",
         ),
+        // The Windows clippy step gone, or narrowed to the library.
+        workflow.replace(
+            "run: cargo clippy --features antigravity --all-targets -- -D warnings\n",
+            "run: cargo clippy --features antigravity -- -D warnings\n",
+        ),
+        // ... on macOS instead, or off the PR's leg.
+        workflow.replace(
+            "runner.os == 'Windows' && matrix.rust == 'stable' }}\n        run: cargo clippy",
+            "runner.os == 'macOS' && matrix.rust == 'stable' }}\n        run: cargo clippy",
+        ),
+        workflow.replace(
+            "matrix.rust == 'stable' }}\n        run: cargo clippy",
+            "matrix.rust == 'stable' && github.event_name != 'pull_request' }}\n        run: cargo clippy",
+        ),
+        // ... or with no clippy to run.
+        workflow.replace("          components: clippy\n      - uses: taiki-e/install-action@cargo-nextest", "      - uses: taiki-e/install-action@cargo-nextest"),
+        // The macOS process-tree tests gone, widened to every test, or
+        // moved off macOS.
+        workflow.replace(&format!("        run: {PROCESS_TREE_TESTS}\n"), ""),
+        workflow.replace("-E 'test(/process_tree/)'", "-E 'all()'"),
+        workflow.replace(
+            &format!("runner.os == 'macOS' }}}}\n        run: {PROCESS_TREE_TESTS}"),
+            &format!("runner.os == 'Linux' }}}}\n        run: {PROCESS_TREE_TESTS}"),
+        ),
     ];
     for (i, text) in broken.iter().enumerate() {
         assert_ne!(text, &workflow, "mutation {i} did not apply");
@@ -245,12 +346,13 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
     }
 }
 
-/// The library a consumer gets with `default-features = false` compiles code
-/// the all-features run never does (`src/wire/printer.rs` without
-/// `wire-color`), so it is linted on its own, in CI and in `make clippy`.
+/// What a consumer builds with `default-features = false` compiles code the
+/// all-features run never does (`src/wire/printer.rs` without `wire-color`),
+/// so every target is linted that way too, in CI and in `make clippy`.
 #[test]
-fn clippy_lints_the_library_without_default_features() {
-    const COMMAND: &str = "cargo clippy --lib --no-default-features -- -D warnings";
+fn clippy_lints_every_target_without_default_features() {
+    const COMMAND: &str =
+        "cargo clippy --workspace --all-targets --no-default-features -- -D warnings";
     let workflow = rust_yml();
     assert!(
         step_running(&job(&workflow, "clippy"), COMMAND).is_some(),

@@ -9,6 +9,12 @@
 #   - a one-OS break is labelled deterministic, with its OS;
 #   - green runs' retry-job logs are read, the example loop's included,
 #     and each flake carries the runs it ran in;
+#   - their skip markers are added up across runs, with the tests that
+#     printed them, and reach the report;
+#   - the week is listed by creation date, at the API's ceiling for a
+#     filtered listing (1,000, which a larger --limit does not raise), and
+#     a listing that reaches it, or fails, fails the step instead of
+#     reporting on part of the week, with a fix that works;
 #   - a breached target finishes the report and records `breach=true`
 #     instead of stopping the step before the baseline marker is written.
 
@@ -112,6 +118,8 @@ Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.1Z   T
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.2Z   TRY 2 PASS [   1.000s] (1/4) genai-rs::interactions_api_tests generation_config::test_continuation
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.3Z      Summary [   2.000s] 4 tests run: 4 passed (1 flaky), 0 skipped
 Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.4Z    FLAKY 2/3 [   1.000s] (1/4) genai-rs::interactions_api_tests generation_config::test_continuation
+Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.5Z         PASS [   1.000s] (2/4) genai-rs::interactions_api_tests semantic::test_answer
+Integration Tests (core)	Run integration tests (core)	2026-11-05T10:00:01.6Z     SEMANTIC_VALIDATION_SKIPPED (transient validator error): Api 503
 LOG
 cat > "$STUB/job-1002.log" <<'LOG'
 Example Smoke Run	Run examples	2026-11-05T10:00:00.0Z ##[group]Run set -eo pipefail
@@ -130,7 +138,17 @@ cat > "$STUB/bin/gh" <<STUB
 dir="$STUB"
 echo "gh \$*" >> "\$dir/calls.log"
 case "\$1 \$2" in
-  "run list") cat "\$dir/runs.json" ;;
+  "run list")
+    # A listing that fails, or one that fills whatever limit was asked for.
+    [ -f "\$dir/list-fails" ] && exit 1
+    if [ -f "\$dir/list-fills" ]; then
+      limit=\$(sed -n 's/.*--limit \([0-9]*\).*/\1/p' <<<"\$*")
+      jq -n --argjson n "\$limit" '[range(\$n) | {databaseId: ., conclusion: "success",
+        createdAt: "2026-11-05T10:00:00Z", headBranch: "main", event: "push"}]'
+      exit 0
+    fi
+    cat "\$dir/runs.json"
+    ;;
   "run view")
     if [ "\$3" = "--job" ]; then
       [ -f "\$dir/job-\$4.log" ] || exit 1
@@ -196,6 +214,16 @@ check "collect: a green run's flake, with its runs" tests.json \
     '[[1,1,"tests/interactions_api_tests.rs"]]'
 check "collect: the live rate's counts" summary.json '[.retried_flakes, .live_test_runs]' '[1,4]'
 check "collect: example runs and retries" summary.json '[.examples_run, .examples_retried]' '[2,1]'
+check "collect: skip markers across the week" summary.json '.skip_markers' 1
+check "collect: the test that printed one, with its file" summary.json \
+    '.skipped_tests' '[{"name":"semantic::test_answer","markers":1,"runs":1,"file":"tests/interactions_api_tests.rs"}]'
+if grep -qE -- "run list .*--created >=[0-9]{4}-[0-9]{2}-[0-9]{2} .*--limit 1000( |$)" "$STUB/calls.log"; then
+    echo "ok   - collect: the week's runs are listed by creation date, up to 1000"
+else
+    echo "FAIL - collect: run list was not filtered to the window"
+    sed 's/^/         /' "$STUB/calls.log"
+    failures=$((failures + 1))
+fi
 check "collect: a retried example is listed" tests.json \
     '[.[] | select(.name == "example streaming") | [.retried, .runs, .file]]' \
     '[[1,1,"cargo run --example streaming"]]'
@@ -216,6 +244,42 @@ check_text "report: a breach is recorded" "$WORK/github_output" "breach=true"
 check_text "report: the report is complete" "$RUN_DIR/flakiness_report.md" "### Recommendations"
 check_text "report: the baseline marker follows it" "$RUN_DIR/flakiness_report.md" "<!-- flaky-baseline"
 check_text "report: the deterministic break is in it" "$RUN_DIR/flakiness_report.md" "deterministic on windows"
+check_text "report: the week's skip markers have a row" "$RUN_DIR/flakiness_report.md" \
+    "| Skip markers (passed without verifying) | 1 in 4 live test runs, from 1 test(s) |"
+check_text "report: and the test that printed one" "$RUN_DIR/flakiness_report.md" \
+    '| `semantic::test_answer` | 1 | 1 | tests/interactions_api_tests.rs |'
+
+# --- A listing that reaches the ceiling may have dropped runs; a failed
+#     one would read as an empty week. Either fails the step, loudly, and
+#     the first names a fix that works (raising --limit does not).
+expect_step_failure() { # label, needle
+    local rc=0
+    : > "$WORK/github_output"
+    (cd "$RUN_DIR" && PATH="$STUB/bin:$PATH" GITHUB_OUTPUT="$WORK/github_output" \
+        bash "$WORK/collect.sh" > "$WORK/collect.out" 2>&1) || rc=$?
+    if [ "$rc" -ne 0 ] && { [ -z "$2" ] || grep -qF -- "$2" "$WORK/collect.out"; }; then
+        echo "ok   - $1"
+    else
+        echo "FAIL - $1: the collect step exited $rc"
+        sed 's/^/         /' "$WORK/collect.out"
+        failures=$((failures + 1))
+    fi
+}
+touch "$STUB/list-fills"
+expect_step_failure "collect: a listing at the API's ceiling fails the step" \
+    "::error::gh run list returned 1000 runs, the most the API lists for a filtered listing"
+if grep -qF "Shorten DAYS_BACK, or list the window in date-bounded parts" "$WORK/collect.out" \
+    && ! grep -qi "raise" "$WORK/collect.out"; then
+    echo "ok   - collect: the ceiling's error names a fix that works"
+else
+    echo "FAIL - collect: the ceiling's error should point at DAYS_BACK or date-bounded listings"
+    sed 's/^/         /' "$WORK/collect.out"
+    failures=$((failures + 1))
+fi
+rm "$STUB/list-fills"
+touch "$STUB/list-fails"
+expect_step_failure "collect: a failed listing fails the step" ""
+rm "$STUB/list-fails"
 
 # --- A healthy week records no breach.
 jq '.retried_flakes = 0 | .live_test_runs = 400' "$RUN_DIR/summary.json" > "$WORK/s.json"

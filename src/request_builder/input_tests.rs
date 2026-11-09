@@ -458,6 +458,21 @@ fn test_conversation_builder_fluent_api() {
 }
 
 #[test]
+fn test_conversation_builder_debug_shows_its_steps_and_not_the_key() {
+    let client = crate::Client::builder("secret-key-4417").build().unwrap();
+    let conversation = client
+        .interaction()
+        .with_model("test-model")
+        .conversation()
+        .user("Hello there");
+    let debug = format!("{conversation:?}");
+    assert!(debug.starts_with("ConversationBuilder {"), "{debug}");
+    assert!(debug.contains("Hello there"), "{debug}");
+    assert!(debug.contains("test-model"), "{debug}");
+    assert!(!debug.contains("secret-key-4417"), "{debug}");
+}
+
+#[test]
 fn test_conversation_builder_with_parts_content() {
     use crate::{Content, Step, TurnContent};
 

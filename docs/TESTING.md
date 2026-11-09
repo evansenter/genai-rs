@@ -10,16 +10,24 @@ follow.
 | Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
 | Property (proptest) | `src/proptest_tests.rs` and `src/proptest_<feature>.rs` | No | `make test` (or `cargo test proptest`) |
 | Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` (and `tests/http_mock_resources/`), `tests/reliability_tests.rs` | No | `make test` |
+| Offline values | Builders and the macro: `tests/interaction_builder_tests.rs`, `tests/function_declaration_builder_tests.rs`, `tests/macro_tests.rs`. Serde against the documented wire: `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs`, `tests/round_trip_fidelity_tests.rs`, `tests/envelope_extra.rs`, and `tests/strict_unknown_tests.rs` (both modes) | No | `make test` (and `make test-strict`) |
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
-| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/` and the workflow guards in `tests/ci_workflows/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
-| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, and a reason above every `ignore` fence) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
+| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`, the workflow guards in `tests/ci_workflows/` and the doc guards in `tests/doc_guards/`), `tests/model_literals.rs`, `tests/module_size.rs` (D-014's size bars), `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
+| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, a reason above every `ignore` fence, and every Rust block compiled or `ignore`d with its reason, `CHANGELOG.md`'s history aside) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
-| Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
+| Live integration | In `tests/`: `api_canary_tests.rs`, `binding_parity_tests.rs`, `credentials_tests.rs`, `environment_files_tests.rs`, `error_handling_tests.rs`, `file_search_stores_tests.rs`, `files_api_tests.rs`, `function_calling_tests.rs`, `interactions_api_tests.rs`, `multimodal_tests.rs`, `multiturn_tests.rs`, `processing_steps_tests.rs`, `streaming_multiturn_tests.rs`, `streaming_resume_tests.rs`, `temp_file_tests.rs`, `tool_service_tests.rs`, `tools_and_config_tests.rs`, `voices_tests.rs`, `webhooks_and_agents_tests.rs`. Each live test is `#[ignore = "Requires API key"]`; a file's offline tests run in `make test` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`#[doc = include_str!(..)]` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
 | Scripted harness | `tests/antigravity_scripted.rs`; each test is `#[ignore = "Requires localharness binary"]` | No, only `localharness` | See [Scripted harness tests](#scripted-harness-tests) |
 | Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
 | Fuzz | `fuzz/` (cargo-fuzz targets over `src/fuzzing.rs`; failing inputs replayed by `src/fuzzing_tests.rs`) | No | `cargo +nightly fuzz run <target>` in `fuzz/`; see [fuzz/README.md](../fuzz/README.md) |
+
+`tests/doc_guards/` holds this table to `tests/`: each top-level test file
+is placed in exactly one row, a live one in a row that needs a key and a
+guard (a file that uses the library for nothing but a constant) in the
+Guards row. A row places a file by naming it with its `tests/` prefix, or
+bare in the live row's list, outside parentheses; a file named inside
+parentheses is a reference, which only has to exist.
 
 ```bash
 make test                                             # everything offline
@@ -63,11 +71,12 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   tests are one file per resource in `tests/http_mock_resources/` (plus
   `paging.rs`, `ids.rs` and `errors.rs`), declared from it with `#[path]`
   so they build into the one binary.
-- **Known bugs**, when there are any, go in
-  `tests/http_mock_resources/known_bugs.rs` as failing tests ignored with a
-  `known bug: ...` reason until fixed. A subdirectory, because
-  `ci_coverage.rs` scans only top-level files. Run them with
-  `cargo nextest run --test http_mock_resources --run-ignored only`.
+- **Known bugs** get an issue, and the offline test of the behavior the
+  fix must produce lands with the fix. Don't park a failing test behind
+  `#[ignore]` until then: `make test-all` and `release.yml` run every
+  ignored test, and `ci_coverage.rs`, which reads every module file a test
+  binary compiles, fails on an ignore reason other than the live one and
+  takes a binary with any ignored test for a live one.
 
 Prefer an offline test for anything that doesn't depend on model behavior;
 it's fast and runs on every PR.
@@ -214,12 +223,14 @@ must not flake.
 ### Rules
 
 - **Ignore reason.** A live test is `#[ignore = "Requires API key"]`, that
-  exact string. `tests/ci_coverage.rs` fails if any top-level `tests/*.rs`
-  file uses another reason, except the two Antigravity suites, whose
+  exact string. `tests/ci_coverage.rs` fails if any test file (a top-level
+  `tests/*.rs` or a module file it compiles in) uses another reason,
+  except in the two Antigravity suites, whose
   key-free tests are `#[ignore = "Requires localharness binary"]`
   (`antigravity_harness` and `antigravity_scripted`, which run in the
   `test-antigravity` job rather than the matrix).
-- **CI matrix.** Every top-level file with a live test must be listed in
+- **CI matrix.** Every test binary with a live test, in its top-level file
+  or a module file it compiles in, must be listed in
   exactly one `test-integration` group in `.github/workflows/rust.yml`.
   `ci_coverage.rs` fails on a missing binary, a binary listed twice, or a
   listed binary with no file.
@@ -296,7 +307,7 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 |--------|---------|
 | `get_client()` | `Some(Client)` when `GEMINI_API_KEY` is set |
 | `interaction_builder(&client)`, `stateful_builder(&client)` | Builders preset with `DEFAULT_MODEL` (the latter with storage on) |
-| `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`) and the model-side flakes in `is_transient_error` |
+| `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`), the model-side flakes in `is_transient_error`, and an interaction `is_transient_failure` matches |
 | `with_timeout(test_timeout(), ..)`, `extended_test_timeout()` | Bound a test |
 | `consume_stream(..)`, `consume_auto_function_stream(..)` | Collect a stream's text and final response; they panic on the first stream error |
 | `poll_until_done(..)` | Poll a background interaction |
@@ -308,10 +319,18 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 
 `is_transient_error` matches Spanner UTF-8 errors and three 400s (`invalid
 json syntax`, `there was a problem processing your request`, and `please
-retry the request`, the API's advice on `malformed_tool_call`), but never
-`too_many_tool_calls`, the url_context loop, whatever its message says; see
-[Error Handling](ERROR_HANDLING.md#known-transient-errors). A validation
-rejection still fails on the first attempt.
+retry the request`, the API's advice on `malformed_tool_call` when it
+reported one as a `400`), but never `too_many_tool_calls`, the url_context
+loop, whatever its message says; see
+[Error Handling](ERROR_HANDLING.md#known-transient-errors). A broken tool
+call now comes back as a `200` instead: an interaction whose `status` is
+`failed` and whose `errors` carry `malformed_tool_call`
+([live record](INTERACTIONS_API_GAP.md#tools)). `retry_on_transient`, and
+so `retry_request!`, retries that too (`is_transient_failure`), when the
+operation returns an `InteractionResponse` or an `AutoFunctionResult`, and
+never when an error names `too_many_tool_calls`; after the last attempt it
+returns the failed interaction, for the test's own status check to report.
+A validation rejection still fails on the first attempt.
 
 For the auto-function loop, assert that executions **succeeded**, not just
 that they happened: `result.all_executions_succeeded()`, with
@@ -361,6 +380,16 @@ when the week breaches a target (D-046):
   than 5% of the runs it ran in, and in at least two. The report lists
   each with its share. A low rate across the suite can hide one test that
   needs a retry every few runs.
+
+The report lists the week's runs by creation date, up to 1,000 (about 115
+a week now), the most the API lists for a filtered listing: a larger
+`--limit` lists no more. A listing that reaches that ceiling fails the
+report rather than leave runs out, and so does a listing that fails; a
+busier week needs a shorter `DAYS_BACK`, or the window listed in
+date-bounded parts and joined. It also adds up the [skip markers](#skip-markers) the retry
+jobs printed across the week, with the tests that printed them: each job
+budgets only its own run's, so a test that skips its check in run after
+run shows only here. That row is reported, not a target.
 
 Failed runs are split by event. Only main's (push, schedule, dispatch) are
 categorized; a pull request's red run is usually the change under review,
@@ -456,12 +485,16 @@ Two printed markers mean "passed without verifying":
 
 | Marker | Meaning |
 |--------|---------|
-| `SEMANTIC_VALIDATION_SKIPPED` | The validator failed transiently (or returned no usable verdict), so the verdict was never obtained |
+| `SEMANTIC_VALIDATION_SKIPPED` | The validator failed transiently (or returned no usable verdict), so the verdict was never obtained, or the test had nothing to check it against (the Antigravity question test, when the model asked no multiple-choice question) |
 | `LIVE_TOOL_EVIDENCE_SKIPPED` | The interaction produced no evidence the tool ran, for a reason the test can't tell apart from a regression |
 
-The `test-integration` job keeps passing-test output
-(`--success-output=final`) and counts both markers per binary. Any marker
-gives a warning; more than 3 fails the step (`release.yml` does the same).
+Every live nextest step keeps passing-test output
+(`--success-output=final`) and counts both markers: the `test-integration`
+job per binary, and the Antigravity harness step in `test-antigravity` and
+in `release.yml`. Any marker gives a warning; more than 3 fails the step
+(10 for `release.yml`'s whole-workspace run). `tests/ci_workflows/` checks
+that every live step does this, and the flakiness report adds the markers
+up across the week.
 
 A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
@@ -475,12 +508,23 @@ Serialization is tested twice, on purpose:
 
 | Layer | Where | Purpose |
 |-------|-------|---------|
-| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491); it does the same over a whole generated `InteractionResponse`, reaching every known `Tool`, `ResponseFormat`, `TranscriptionMode` and `ToolChoice` variant a stored interaction serves back, except under the keys `NOT_INJECTED_UNDER` lists with their reasons (#504) |
+| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain: shared ones in `src/proptest_tests.rs`, the rest with their properties in `src/proptest_<feature>.rs` (`content`, `steps`, `request`, `tools`, `response`, `resources`). `src/proptest_stream.rs` streams every step with a delta form (its `step.start`, the step split over `step.delta` events, `step.stop`) through `dispatch_stream_event` and checks the completed response carries the step a non-streamed one would, so a stream accumulator arm that drops what its delta carries fails offline. `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491); it does the same over a whole generated `InteractionResponse`, reaching every known `Tool`, `ResponseFormat`, `TranscriptionMode` and `ToolChoice` variant a stored interaction serves back, except under the keys `NOT_INJECTED_UNDER` lists with their reasons (#504) |
 | Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
 Keep both: the examples are documentation, and they run fast. Both take
 their expected shapes from the crate's own serde attributes, so neither can
 catch a wrong wire key; the coverage oracle below can.
+
+## Line coverage
+
+The Code Coverage job in `rust.yml` measures the workspace with the
+`antigravity` feature: the offline suite, then the key-free scripted
+harness suite, merged into one report that goes to the job summary on
+every run. The job then fails when line coverage is under its floor
+(`--fail-under-lines`), set just under the value measured when it was
+last raised (D-058): raise it in `rust.yml` as coverage grows, and
+lower it only with the reason in the commit. `tests/ci_workflows/coverage.rs`
+checks the job keeps all of this.
 
 ## Coverage oracle
 
@@ -490,7 +534,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep probes that URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -505,7 +549,10 @@ checks on it:
   populated (the agent configs, whose fields are private, through each
   type's `fully_populated()` literal beside it, and
   `agent_configs_set_every_field` fails on a field there that sends no
-  key), plus proptest samples for the union arms and enum values. An
+  key), plus proptest samples for the union arms and enum values.
+  `request_values_are_full_literals` (`request/fills.rs`) fails on a
+  `default()` fill, other than a whole `extra` map, in those literals and
+  in every strategy the oracle samples. An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
@@ -528,8 +575,13 @@ checks on it:
 - **Query strings on the wire** (`tests/request_wire_oracle.rs`,
   `every_query_key_a_verb_sends_is_a_binding_query_parameter`). Every verb
   of every resource handle runs against the stub with every list builder
-  option set (`every_verb_is_called_by_the_query_test` fails on a verb not
-  called or an option not set on its verb's builder), and each request is
+  option and every request type's query option set
+  (`every_verb_is_called_by_the_query_test` fails on a verb not called, an
+  option not set on its verb's builder, or a `with_*` method not called
+  whose field a verb sends on the query string, such as
+  `WebhookUpdate::with_update_mask`; those fields are found by tracing each
+  `with_query` value back through `src/`, and a value the trace cannot
+  follow fails the test too), and each request is
   matched to its endpoint in `bindings.json`. A key the endpoint does not
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a
@@ -610,8 +662,11 @@ reason to the list that fits:
 | `QUERY_ALLOWED`, `NOT_SENT` (`tests/request_wire_oracle.rs`, by `METHOD /path?key`) | A query key the crate sends that its endpoint does not list (the `alt` system parameter); a binding query parameter no verb sends |
 
 Date every live fact in a reason (D-010): `live_claims_are_dated` fails on
-a reason in the in-crate lists that says what the API served, rejected or
-accepted, or quotes an error status, without a `YYYY-MM` date. An entry
+a reason that says what the API served, rejected or accepted, or quotes an
+error status, without a `YYYY-MM` date. The in-crate oracle holds its lists
+to it, and `tests/ci_coverage.rs` every reasoned list in `tests/` (each
+`const` slice of tuples ending in a `&str` reason), so a list a test adds
+is checked too. An entry
 that matches nothing fails the test, so the lists only shrink when the
 crate catches up. A `values()` override in `response.rs` replaces a
 synthesized value where the snapshot's type is looser than what the API

@@ -51,10 +51,15 @@ fn test_media_from_file_reads_bytes_and_infers_the_mime_type() {
         Media::from_file(&unknown),
         Err(AntigravityError::Config(_))
     ));
-    assert!(matches!(
-        Media::from_file(dir.path().join("missing.png")),
-        Err(AntigravityError::Io(_))
-    ));
+    let missing = dir.path().join("missing.png");
+    let Err(AntigravityError::Io { message, source }) = Media::from_file(&missing) else {
+        panic!("an unreadable file is an I/O error");
+    };
+    assert!(
+        message.contains(&missing.display().to_string()),
+        "the error names the path: {message}"
+    );
+    assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
 }
 
 #[test]

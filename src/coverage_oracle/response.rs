@@ -465,6 +465,40 @@ fn a_new_field_on_a_known_variant_is_reported() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The stream probe's rebuilt wire event keeps what the chunk kept in its
+/// `extra`: a key beside the payload, a key another event type reads, and
+/// what is left of `metadata` and `error` beside the fields read from them.
+/// Each is in the `extra` the oracle reports, not dropped.
+#[test]
+fn a_stream_events_unread_keys_come_back_on_the_rebuilt_event() {
+    for event in [
+        json!({
+            "event_type": "step.delta", "index": 0,
+            "delta": {"type": "text", "text": "hi"},
+            "metadata": {"total_usage": {"total_tokens": 3}, "trace_id": "t"},
+            "brand_new": 1,
+        }),
+        json!({
+            "event_type": "error",
+            "error": {"message": "m", "code": "c", "details": [1]},
+            "brand_new": {"a": 1},
+        }),
+        json!({
+            "event_type": "interaction.status_update",
+            "interaction_id": "i", "status": "in_progress", "index": 2,
+        }),
+    ] {
+        let (debug, back) = probe_stream_event(event.clone()).unwrap();
+        let kept = key_paths(&back);
+        let missing: Vec<String> = key_paths(&event)
+            .into_iter()
+            .filter(|path| !kept.contains(path))
+            .collect();
+        assert!(missing.is_empty(), "{missing:?} dropped from {back}");
+        assert!(!debug_extra_keys(&debug).is_empty(), "{debug}");
+    }
+}
+
 /// A field on a type that keeps no `extra` is reported as dropped, including
 /// on an object directly inside a list, where serde drops it without a
 /// trace: `key_paths` records list elements, so the element counts as the

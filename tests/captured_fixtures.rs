@@ -20,6 +20,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -155,7 +159,10 @@ fn assert_stream(what: &str, fixture: &Value, events: Vec<Result<StreamEvent, Ge
     );
     assert_eq!(streamed, expected, "{what}: streamed text");
     let last = events.last().expect("no events");
-    let StreamChunk::Completed(done) = &last.chunk else {
+    let StreamChunk::Completed {
+        interaction: done, ..
+    } = &last.chunk
+    else {
         panic!("{what}: the stream did not end at Completed: {last:?}");
     };
     assert_eq!(done.status, InteractionStatus::Completed, "{what}");

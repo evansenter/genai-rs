@@ -16,7 +16,8 @@ order (D-004):
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
    releases to find new surface). The OpenAPI specs (v1beta and v1) are
    the same surface in machine-readable form. The oracle reads their
-   committed snapshots, and the daily sweep probes the published URLs
+   committed snapshots, and the daily sweep compares what the published
+   URLs serve with them, opening an issue on a drift or a dead URL
    (`watch_spec_urls.sh`); their state is recorded in
    `docs/INTERACTIONS_API_GAP.md` ("How to verify API surface").
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
@@ -38,17 +39,23 @@ harness version, with the dated record in
 date (private items included); dated evidence for the code beside it goes
 in a `//` comment, and tests keep theirs. `make test-scripts` runs
 `.github/scripts/check_dated_facts.sh`, which fails on a date anywhere
-else, and on a code fence marked `ignore` without an
-`<!-- ignore: reason -->` line directly above it.
+else (ISO or not), on a code fence marked `ignore` without an
+`<!-- ignore: reason -->` line directly above it, on a Rust block that
+nothing compiles and is not `ignore`d with that reason (in a Markdown file
+`src/lib.rs`'s `doc_tests` leaves out, `CHANGELOG.md`'s history aside, or
+in a doc comment outside the library's non-test code), on a fence tagged
+`rs` or `Rust` (rustdoc never compiles one), and on Rust in a `text`
+block. `tests/doc_guards/` requires every guide in `doc_tests`.
 
-An issue number in a doc or a comment is one of two things
-(D-051). A provenance tag, `(#491)`, names the issue a rule or
-behavior came from, and stays when the issue closes, as a decision number
-does. A pointer ("see #N", "tracked in #N", "until #N lands", "#N item
-M") sends the reader to the issue for what is still open, so it names an
-open issue only: when the issue closes, state the outcome in place and
-drop the pointer. Nothing checks this, since an issue's state needs the
-network.
+An issue number in a doc or a comment is one of two things, told apart
+by what it claims rather than its wording (D-051). A provenance tag names
+where a rule or behavior was decided or found (`(#491)`, or "#493 item 3"
+on what that item added), and stays when the issue closes, as a decision
+number does. A pointer claims the issue holds current status or pending
+work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
+item M" while that item is open), so it names an open issue only: when
+the issue closes, state the outcome in place and drop the pointer.
+Nothing checks this, since an issue's state needs the network.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the
@@ -115,7 +122,7 @@ there (`docs/LOGGING_STRATEGY.md` has the snippet).
 | `src/errors.rs`, `src/multimodal.rs`, `src/safety.rs`, `src/response_format.rs` | `GenaiError`; the `*_from_file` helpers and MIME detection; safety settings; the typed `response_format` union |
 | `src/wire_enum.rs`, `src/wire_fields.rs`, `src/serde_util.rs` | Crate-private serde machinery: the `wire_enum!` string enums, the `extra` maps of the known variants (#491), and the protobuf-JSON int64 and lenient-timestamp helpers |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
-| `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `request`, `tools`, `response`, `resources`, `unknown_fields`). Past failures replay from `proptest-regressions/<source file>.txt`, so a property's seeds move with it |
+| `src/proptest_tests.rs`, `src/proptest_<feature>.rs` | Property tests (test-only): shared strategies in the root, then one file per feature (`content`, `steps`, `stream`, `request`, `tools`, `response`, `resources`, `unknown_fields`). Past failures replay from `proptest-regressions/<source file>.txt`, so a property's seeds move with it |
 | `fuzz/`, `src/fuzzing.rs` | cargo-fuzz targets (own workspace and lockfile, nightly; `fuzz/README.md`) and their entry points, the `#[doc(hidden)] __fuzz` module, compiled only under `cfg(fuzzing)` and in tests (`fuzzing_tests.rs` replays past crashes) |
 | `src/coverage_oracle/`, `tests/request_wire_oracle.rs`, `tests/ci_coverage.rs`, `tests/api_surface/`, `tests/live_verbs/` | The coverage oracle (test-only): request keys, response fields and binding classes against the committed snapshot, and live coverage per handle verb (see "Sources of truth" above and `docs/TESTING.md`) |
 
@@ -153,7 +160,9 @@ stored interaction and the types read from the Antigravity harness (D-034);
 and reasoned. The known
 variants of `Step`, `StepDelta`, `Content`, `Annotation`, `Tool`,
 `ResponseFormat` and `TranscriptionMode` (and `ToolChoice::AllowedTools`) do
-the same with an `extra` field, through `src/wire_fields.rs` (#491). The
+the same with an `extra` field, through `src/wire_fields.rs` (#491), and so
+do the known `StreamChunk` variants, with the SSE event's keys they do not
+read (#538). The
 guard's enum arm checks every deserializable union for an `Unknown` arm and
 an `extra` field on each known variant; a newtype variant, whose wrapper
 keys it cannot see, needs a named reason. Polling
@@ -170,7 +179,7 @@ date, in `docs/ENUM_WIRE_FORMATS.md` (D-032).
 
 - Interactions API field names are **snake_case**; send snake_case even if
   camelCase is also accepted. (The Files and File Search Store APIs are
-  camelCase.)
+  camelCase, paging included: `pageSize` and `pageToken`.)
 - Fields the endpoint rejects as *Vertex-only* are kept and documented;
   fields rejected as *Unknown parameter* are removed (D-005).
 
@@ -205,13 +214,17 @@ reaches the wire must use a real id.
   (`docs/FUNCTION_CALLING.md`).
 - `#[must_use]` on getters, handles and boolean checks.
 - Lints (`Cargo.toml`, `[workspace.lints]`, #501): every public item has a
-  doc comment, a public fallible function an `# Errors` section, and
-  clippy's `uninlined_format_args`, `assigning_clones`,
+  doc comment and a `Debug` impl, a public fallible function an `# Errors`
+  section, and clippy's `uninlined_format_args`, `assigning_clones`,
   `redundant_closure_for_method_calls` and `must_use_candidate` hold in
   src/, tests/ and examples/; `make clippy` denies warnings. Library code
-  does not `unwrap()` or `expect()`: a panic that cannot happen carries
-  `#[expect(clippy::expect_used, reason = "...")]`, and each test and
-  example crate root allows both (D-048). Every `unsafe` block has
+  does not `unwrap()`, `expect()` or call `panic!`, `unreachable!`,
+  `todo!` or `unimplemented!`: a panic that cannot happen carries
+  `#[expect(clippy::..., reason = "...")]`, and tests are exempt
+  (`clippy.toml`, each test and example crate root's allow, and each
+  library crate root's `cfg(test)` allow for its unit tests; D-048).
+  Every `#[allow]` and `#[expect]` gives its `reason = "..."`, and is an
+  `#[expect]` where the lint always fires. Every `unsafe` block has
   a `// SAFETY:` comment. `unreachable_patterns` is forbidden: a wildcard
   after every variant is listed is an error, and its allow cannot come
   back. The lint does not catch a `_ =>` after a partial list, so on an
@@ -319,11 +332,13 @@ wheel's protos with `python3`).
    D-009):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
 2. `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z" && git push origin vX.Y.Z`.
-   `release.yml` validates (including the live suite), publishes
+   `release.yml` validates (including the live suite, and that the
+   tagged commit's main push run of `rust.yml` passed every job), publishes
    `genai-rs-macros` then `genai-rs`, and creates the GitHub release from the
    `## [X.Y.Z]` CHANGELOG section. Never `cargo publish` or
    `gh release create` by hand.
-3. On failure: `validate` → re-run (the live suite can flake); tag/version
+3. On failure: `validate` → re-run (the live suite can flake; a red push
+   run → re-run its failed jobs, or fix main and tag the fix); tag/version
    mismatch → delete the tag, fix, re-tag; failed after `genai-rs-macros`
    published → bump the patch version and release again; `github-release` →
    re-run.
@@ -338,28 +353,39 @@ wheel's protos with `python3`).
   replays the fresh copies, and fails once the committed ones are over 90
   days old), fmt, shell-scripts (the script harnesses,
   shellcheck, the workflow parse check and actionlint over every workflow),
-  clippy (also the library without default features, as `make clippy`
+  clippy (also every target without default features, as `make clippy`
   does), doc, msrv, cross-platform (offline; stable and beta on Linux, macOS
   and Windows, but only Windows stable on a PR; checks the `antigravity`
-  feature off Linux; trybuild's `ui_tests` are skipped on beta), coverage,
-  build-metrics, main-push-status, scheduled-run-status. Live
+  feature off Linux, and runs clippy over it, every target, on Windows
+  stable, and its `process_tree` unit tests, the forced kill's libproc
+  path that Linux's test-antigravity cannot reach, on each macOS leg;
+  trybuild's `ui_tests` are skipped on beta), coverage,
+  build-metrics, main-push-status, scheduled-run-status. The coverage job
+  measures the `antigravity` feature too, with its scripted suite, and
+  fails under a line-coverage floor (`docs/TESTING.md`, "Line coverage"). Live
   jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each
   integration group runs every binary and lists the failures;
   `.config/nextest.toml` turns fail-fast off for every run and kills a test
-  hung past 10 minutes. A red scheduled run opens a `ci-health-escalation`
+  hung past 10 minutes. Every live nextest step keeps passing tests'
+  output and fails on more than 3 skip markers (10 for `release.yml`'s
+  whole-workspace run; `docs/TESTING.md`, "Skip markers"). A red scheduled run opens a `ci-health-escalation`
   issue (`scheduled-run-status`), as every scheduled workflow's does, and a
   red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
-  checks both, along with fail-fast, beta and the Windows PR leg.
+  checks both, along with fail-fast, beta, the Windows PR leg and the
+  cross-platform steps, the skip-marker budget, the coverage floor and
+  release's push-run gate.
   `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the
   five Integration Tests groups. A live group skipped on a fork PR counts as
   passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
-  `ci-flakiness-report.yml` (daily; counts failures and the tests nextest
-  retried to a pass, and fails, escalating, on a week's flake rate of 1%
-  or more, no live runs read, or a test retried in over 5% of its runs),
+  `ci-flakiness-report.yml` (daily; counts failures, the tests nextest
+  retried to a pass and the week's skip markers, and fails, escalating, on
+  a week's flake rate of 1% or more, no live runs read, a test retried in
+  over 5% of its runs, or a run listing that fails or reaches the API's
+  1,000-run ceiling),
   `release.yml`, `release-drafter.yml`, `claude.yml`,
   `claude-code-review.yml`, `antigravity-release-watch.yml` (daily; an
   `antigravity-release` issue when PyPI's `google-antigravity` differs from

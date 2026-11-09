@@ -21,15 +21,24 @@
 //! report sees them, trybuild's `ui_tests` stay off beta, every scheduled
 //! workflow and every push to main escalates its failures, a PR runs the
 //! Windows leg, the flakiness report reads every retry it claims to count,
-//! and Code Coverage writes its summary on every run.
+//! and Code Coverage writes its summary on every run. Two docs facts are
+//! guarded in `tests/doc_guards/`: `docs/TESTING.md`'s test-kind table
+//! places every test file under its kind, and every guide is doctested.
 
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
 mod ci_workflows;
+#[path = "api_surface/claims.rs"]
+mod claims;
+mod doc_guards;
 mod live_verbs;
 
 use std::collections::BTreeSet;
@@ -46,17 +55,33 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `(binary name, source)` for every top-level test file.
+/// `(binary name, source)` for every test binary: a top-level test file
+/// and every module file it compiles in (see [`module_files`]), so a live
+/// test in a submodule makes its binary live.
 fn test_sources() -> Vec<(String, String)> {
-    let dir = root().join("tests");
-    let mut sources: Vec<(String, String)> = std::fs::read_dir(&dir)
+    test_sources_in(&root().join("tests"))
+        .into_iter()
+        .map(|(name, files)| {
+            let text = files
+                .iter()
+                .map(|path| std::fs::read_to_string(path).expect("read test source"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (name, text)
+        })
+        .collect()
+}
+
+/// `(binary name, files)` for every top-level test file in `dir`: the file
+/// and the module files it reaches.
+fn test_sources_in(dir: &std::path::Path) -> Vec<(String, Vec<PathBuf>)> {
+    let mut sources: Vec<(String, Vec<PathBuf>)> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
         .map(|entry| entry.expect("dir entry").path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
         .map(|path| {
             let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-            let text = std::fs::read_to_string(&path).expect("read test source");
-            (name, text)
+            (name, module_files(&path))
         })
         .collect();
     sources.sort();
@@ -66,6 +91,82 @@ fn test_sources() -> Vec<(String, String)> {
         dir.display()
     );
     sources
+}
+
+/// `root` and every file module it declares, recursively, as rustc
+/// resolves them: `mod name;` (any visibility) loads a `#[path = "..."]`
+/// attribute's file, relative to the declaring file's directory, or else
+/// `name.rs` or `name/mod.rs` in the declaring file's directory when that
+/// file is a crate root, a `mod.rs` or loaded by `#[path]`, and in its
+/// `<stem>/` subdirectory otherwise. Inline modules (`mod name { ... }`)
+/// are part of their file already. A declared module whose file is missing
+/// fails, rather than leaving a binary's tests out.
+fn module_files(root: &std::path::Path) -> Vec<PathBuf> {
+    // Each file, and whether its nested modules resolve beside it.
+    let mut files = vec![(root.to_path_buf(), true)];
+    let mut next = 0;
+    while next < files.len() {
+        let (file, owns_dir) = files[next].clone();
+        next += 1;
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+        let dir = file.parent().expect("a file has a directory").to_path_buf();
+        let owns_dir = owns_dir || file.file_name().is_some_and(|name| name == "mod.rs");
+        let own_dir = if owns_dir {
+            dir.clone()
+        } else {
+            dir.join(file.file_stem().expect("a file has a stem"))
+        };
+        // Declarations at the start of a line only: an indented `mod x;`
+        // is in an inline module or, as in the scans that test themselves,
+        // a string literal.
+        let mut path_attr: Option<String> = None;
+        for line in text.lines().map(str::trim_end) {
+            // Attributes before the declaration, on its line or the ones
+            // above; `#[path]` is the one that matters.
+            let mut rest = line;
+            while let Some(attr) = rest.strip_prefix("#[") {
+                let Some(end) = attr.find(']') else { break };
+                if let Some(path) = attr[..end].strip_prefix("path = \"") {
+                    path_attr = path.strip_suffix('"').map(str::to_string);
+                }
+                rest = attr[end + 1..].trim_start();
+            }
+            if rest.is_empty() && rest.len() != line.len() {
+                continue;
+            }
+            let declared = ["mod ", "pub mod ", "pub(crate) mod ", "pub(super) mod "]
+                .iter()
+                .find_map(|prefix| rest.strip_prefix(prefix))
+                .and_then(|rest| rest.strip_suffix(';'))
+                .filter(|name| name.chars().all(|c| c.is_alphanumeric() || c == '_'));
+            let attr = path_attr.take();
+            let Some(name) = declared else {
+                continue;
+            };
+            let (found, by_path) = match attr {
+                Some(path) => (dir.join(path), true),
+                None => {
+                    let flat = own_dir.join(format!("{name}.rs"));
+                    if flat.exists() {
+                        (flat, false)
+                    } else {
+                        (own_dir.join(name).join("mod.rs"), false)
+                    }
+                }
+            };
+            assert!(
+                found.exists(),
+                "{} declares `mod {name};`, but {} does not exist",
+                file.display(),
+                found.display()
+            );
+            if !files.iter().any(|(known, _)| *known == found) {
+                files.push((found, by_path));
+            }
+        }
+    }
+    files.into_iter().map(|(file, _)| file).collect()
 }
 
 /// Binaries named in the matrix's `tests: "…"` lines.
@@ -128,6 +229,104 @@ fn every_live_test_binary_is_in_the_ci_matrix() {
     assert!(
         missing.is_empty(),
         "these binaries have live tests but no test-integration matrix group: {missing:?}"
+    );
+}
+
+/// The matrix guard reads a binary's submodules, not only its top-level
+/// file: a live test in `tests/<binary>/<module>.rs` makes the binary live.
+#[test]
+fn a_live_test_in_a_submodule_makes_its_binary_live() {
+    let dir = std::env::temp_dir().join(format!("ci_coverage_modules_{}", std::process::id()));
+    let nested = dir.join("tests");
+    std::fs::create_dir_all(nested.join("wired")).unwrap();
+    std::fs::create_dir_all(nested.join("shared")).unwrap();
+    std::fs::write(
+        nested.join("wired.rs"),
+        "mod shared;\n#[path = \"wired/calls.rs\"]\nmod calls;\nmod inline {\n}\n",
+    )
+    .unwrap();
+    std::fs::write(nested.join("shared/mod.rs"), "pub mod helpers;\n").unwrap();
+    std::fs::write(nested.join("shared/helpers.rs"), "// helpers\n").unwrap();
+    // A file loaded by `#[path]` resolves its own modules beside it.
+    std::fs::write(
+        nested.join("wired/calls.rs"),
+        "mod deeper;\n#[tokio::test]\n#[ignore = \"Requires API key\"]\nasync fn live() {}\n",
+    )
+    .unwrap();
+    std::fs::write(nested.join("wired/deeper.rs"), "// deeper\n").unwrap();
+
+    let sources = test_sources_in(&nested);
+    let text: String = sources[0]
+        .1
+        .iter()
+        .map(|f| std::fs::read_to_string(f).unwrap())
+        .collect();
+    std::fs::remove_dir_all(&dir).ok();
+    let (name, files) = &sources[0];
+    assert_eq!(name, "wired");
+    assert!(
+        ignore_reasons(&text).any(|reason| reason == LIVE_REASON),
+        "the submodule's live test was not read"
+    );
+    let relative: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.strip_prefix(&nested)
+                .unwrap()
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(
+        relative,
+        [
+            "wired.rs",
+            "shared/mod.rs",
+            "wired/calls.rs",
+            "shared/helpers.rs",
+            "wired/deeper.rs"
+        ]
+    );
+}
+
+/// Every module file under `tests/` is compiled into some test binary, so
+/// the guards above read it (trybuild's `ui/` cases and the fixtures are
+/// not modules).
+#[test]
+fn every_test_module_file_belongs_to_a_binary() {
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let tests = root().join("tests");
+    let reached: BTreeSet<PathBuf> = test_sources_in(&tests)
+        .into_iter()
+        .flat_map(|(_, files)| files)
+        .collect();
+    let mut all = Vec::new();
+    for entry in std::fs::read_dir(&tests).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if path.is_dir() && name != "ui" && name != "fixtures" {
+            rust_files(&path, &mut all);
+        }
+    }
+    assert!(all.len() > 20, "found too few module files: {all:?}");
+    let orphans: Vec<String> = all
+        .iter()
+        .filter(|path| !reached.contains(*path))
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(
+        orphans.is_empty(),
+        "no test binary compiles these files: {orphans:?}"
     );
 }
 
@@ -597,9 +796,240 @@ const ENDPOINTS_WITHOUT_A_VERB: &[(&str, &str)] = &[
     (
         "POST /{}/interactions",
         "Sent by `client.interaction()...create()` / `create_stream()` \
-         (`InteractionBuilder`, not a handle), which every live interaction test calls.",
+         (`InteractionBuilder`, not a handle), which every interaction test calls.",
     ),
 ];
+
+/// A reasoned list in `tests/`: `(file:LIST, [(entry, reason)])`.
+type ReasonedList = (String, Vec<(String, String)>);
+
+/// The reason [`reasoned_lists`] gives an entry whose reason is neither a
+/// string literal nor a `&str` constant, which the date check cannot read.
+const UNREADABLE: &str = "<a reason the scan cannot read>";
+
+/// Every reasoned list in the test sources under `dir`: each `const` or
+/// `static` slice of tuples whose last element is a `&str`, at any depth
+/// (inside a function or module too), as `(file:LIST, [(entry, reason)])`.
+/// A reason is a string literal or a `&str` constant of the same file; an
+/// entry is its tuple's first element. Trybuild's `ui/` sources and the
+/// fixtures hold no lists and are not read.
+fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
+    use syn::visit::Visit;
+
+    fn files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                if !path.ends_with("ui") && !path.ends_with("fixtures") {
+                    files(&path, out);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    fn last_is_str(ty: &syn::Type) -> bool {
+        let syn::Type::Reference(slice) = ty else {
+            return false;
+        };
+        let syn::Type::Slice(slice) = &*slice.elem else {
+            return false;
+        };
+        let syn::Type::Tuple(tuple) = &*slice.elem else {
+            return false;
+        };
+        tuple.elems.len() >= 2
+            && matches!(tuple.elems.last(), Some(syn::Type::Reference(r))
+                if matches!(&*r.elem, syn::Type::Path(p) if p.path.is_ident("str")))
+    }
+    #[derive(Default)]
+    struct Consts<'a> {
+        strings: std::collections::HashMap<String, String>,
+        lists: Vec<(String, &'a syn::Expr)>,
+    }
+    impl<'a> Visit<'a> for Consts<'a> {
+        fn visit_item_const(&mut self, item: &'a syn::ItemConst) {
+            self.found(&item.ident, &item.ty, &item.expr);
+        }
+        fn visit_item_static(&mut self, item: &'a syn::ItemStatic) {
+            self.found(&item.ident, &item.ty, &item.expr);
+        }
+    }
+    impl<'a> Consts<'a> {
+        fn found(&mut self, name: &syn::Ident, ty: &syn::Type, expr: &'a syn::Expr) {
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(text),
+                ..
+            }) = expr
+            {
+                self.strings.insert(name.to_string(), text.value());
+            } else if last_is_str(ty) {
+                self.lists.push((name.to_string(), expr));
+            }
+        }
+        /// A string literal's text, or a `&str` constant's of this file.
+        fn text(&self, expr: &syn::Expr) -> Option<String> {
+            match expr {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(text),
+                    ..
+                }) => Some(text.value()),
+                syn::Expr::Path(p) => p
+                    .path
+                    .get_ident()
+                    .and_then(|name| self.strings.get(&name.to_string()).cloned()),
+                _ => None,
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    files(dir, &mut paths);
+    paths.sort();
+    let mut out = Vec::new();
+    for path in paths {
+        let text = std::fs::read_to_string(&path).expect("read test source");
+        let file = syn::parse_file(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut consts = Consts::default();
+        consts.visit_file(&file);
+        let relative = path
+            .strip_prefix(root())
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        for (name, expr) in &consts.lists {
+            let syn::Expr::Reference(array) = expr else {
+                continue;
+            };
+            let syn::Expr::Array(array) = &*array.expr else {
+                continue;
+            };
+            let entries = array
+                .elems
+                .iter()
+                .filter_map(|elem| match elem {
+                    syn::Expr::Tuple(tuple) => {
+                        let (entry, reason) = (tuple.elems.first()?, tuple.elems.last()?);
+                        Some((
+                            consts.text(entry).unwrap_or_else(|| "?".to_string()),
+                            consts
+                                .text(reason)
+                                .unwrap_or_else(|| UNREADABLE.to_string()),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect();
+            out.push((format!("{relative}:{name}"), entries));
+        }
+    }
+    out
+}
+
+/// Every reason in a reasoned list anywhere in `tests/` that states a live
+/// fact dates it (D-010), as the coverage oracle's do
+/// (`tests/api_surface/claims.rs`): the wire oracle's lists, the endpoint
+/// map's, the response guard's and the live-verb map's, and any list a
+/// test adds.
+#[test]
+fn live_claims_are_dated() {
+    let lists = reasoned_lists(&root().join("tests"));
+    let names: BTreeSet<&str> = lists
+        .iter()
+        .filter_map(|(name, _)| name.rsplit(':').next())
+        .collect();
+    for known in [
+        "ALLOWED",
+        "NOT_SENT",
+        "FULL_NAMES",
+        "ENDPOINTS_WITHOUT_A_VERB",
+        "SENT_ONLY",
+        "VARIANTS_WITHOUT_EXTRA",
+        "NOT_HANDLES",
+    ] {
+        assert!(
+            names.contains(known),
+            "the scan missed the reasoned list {known}; it found {names:?}"
+        );
+    }
+    let borrowed: Vec<(&str, Vec<(&str, &str)>)> = lists
+        .iter()
+        .map(|(name, entries)| {
+            let entries = entries
+                .iter()
+                .map(|(entry, reason)| (entry.as_str(), reason.as_str()))
+                .collect();
+            (name.as_str(), entries)
+        })
+        .collect();
+    let unreadable: Vec<String> = lists
+        .iter()
+        .flat_map(|(name, entries)| {
+            entries
+                .iter()
+                .filter(|(_, reason)| reason == UNREADABLE)
+                .map(move |(entry, _)| format!("{name}: {entry}"))
+        })
+        .collect();
+    assert!(
+        unreadable.is_empty(),
+        "Reasons that are neither a string literal nor a `&str` constant of their \
+         file, which the date check cannot read:\n  {}",
+        unreadable.join("\n  ")
+    );
+    let undated = claims::undated_live_claims(&borrowed);
+    assert!(
+        undated.is_empty(),
+        "Reasons that state a live fact without its YYYY-MM date (D-010):\n  {}",
+        undated.join("\n  ")
+    );
+}
+
+/// The scan finds a list inside a function, reads a reason held in a
+/// constant, and leaves a slice whose last element is not a `&str` alone.
+#[test]
+fn reasoned_lists_are_found_wherever_they_are_declared() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    std::fs::create_dir_all(dir.join("ui")).unwrap();
+    std::fs::write(
+        dir.join("a.rs"),
+        r#"
+        const WHY: &str = "Rejected live.";
+        const TOP: &[(&str, &str)] = &[("a", "Served (live 2026-11-01)."), ("b", WHY)];
+        const MAP: &[(&str, &[&str])] = &[("x", &["y"])];
+        fn f() {
+            const INNER: &[(&str, &[&str], &str)] = &[("c", &[], "Ignored live.")];
+        }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("ui/broken.rs"), "fn {").unwrap();
+    let lists = reasoned_lists(dir);
+    let names: Vec<&str> = lists
+        .iter()
+        .map(|(name, _)| name.rsplit(':').next().unwrap())
+        .collect();
+    assert_eq!(names, ["TOP", "INNER"]);
+    assert_eq!(
+        lists[0].1,
+        [
+            ("a".to_string(), "Served (live 2026-11-01).".to_string()),
+            ("b".to_string(), "Rejected live.".to_string()),
+        ]
+    );
+    let borrowed: Vec<(&str, Vec<(&str, &str)>)> = lists
+        .iter()
+        .map(|(name, entries)| {
+            let entries = entries
+                .iter()
+                .map(|(entry, reason)| (entry.as_str(), reason.as_str()))
+                .collect();
+            (name.as_str(), entries)
+        })
+        .collect();
+    assert_eq!(claims::undated_live_claims(&borrowed).len(), 2);
+}
 
 /// `/{api_version}/agents/{agentsId}` -> `/{}/agents/{}`, the form the
 /// bindings dump writes.

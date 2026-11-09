@@ -257,9 +257,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content type); a directory comes back as a tar archive
   (`is_tar_archive()`). It is `GET` on the listing's path with `alt=media`
   (verified live 2026-11-05).
+- `ConversationBuilder` implements `Debug`, as every other public type
+  does: it prints the parent `InteractionBuilder` (without the client, so
+  without the API key) and the steps so far.
 
 ### Changed
 
+- **Breaking: every known `StreamChunk` variant has an `extra` field, and
+  `StreamChunk::Completed` is a struct variant,
+  `Completed { interaction, extra }`** (#538). `extra` is a
+  `serde_json::Map<String, serde_json::Value>` holding the SSE event's keys
+  the variant does not read, as they came, such as a key the API adds
+  beside the payload, which a `StreamChunk` used to drop;
+  `StreamChunk::extra()` reads it, and the chunk's serialized
+  `{chunk_type, data}` form writes and reads it as `extra`. It is empty for
+  every event the API sends today. A key the crate reads on another event
+  type is no longer parsed on one that does not read it, so a value the
+  crate could not read there no longer fails the event. The auto-function
+  stream passes on no chunk's `extra`: `AutoFunctionStreamChunk::Delta`
+  still carries the `StepDelta` alone. Migration:
+  `StreamChunk::Completed(response)` becomes
+  `StreamChunk::Completed { interaction: response, .. }` (or
+  `Completed { interaction, .. }`); a pattern that lists every field of a
+  known variant adds `..` (`StreamChunk::Error { message, code, .. }`); a
+  struct literal adds `extra: Default::default()`.
+- **Breaking: `FunctionDeclarationBuilder::add_parameter` takes the name as
+  `impl Into<String>`, and `InteractionBuilder::add_functions` takes
+  `impl IntoIterator<Item = FunctionDeclaration>`**, in place of `&str`
+  and `Vec<FunctionDeclaration>`. The name takes what the builder's `new`
+  and `with_description` take, so a `String` needs no `&`, and an array or
+  a mapped iterator of declarations needs no `vec!` or `collect()`.
+  Migration: a `&str`, `&String`, `String` or `Vec` argument compiles
+  unchanged. A `&&str` name (what iterating over `&["a", "b"]` yields), a
+  `&Box<str>` or a `&Cow<str>` has no `Into<String>`: dereference it
+  (`*name`) or pass `name.to_string()`. A `collect()` passed straight to
+  `add_functions` can no longer infer its collection (E0283): pass the
+  iterator without it, or write `collect::<Vec<_>>()`.
 - **Breaking: `TranscriptionMode::Smart` is a struct variant,
   `Smart { source_text: Option<String> }`**, for google-genai 3.0.0's
   `SmartTranscriptionMode.source_text`: the text the audio is expected to
@@ -482,6 +515,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field and the harness fell back to its environment's `GEMINI_API_KEY`.
   Code like `.with_api_key(env::var("X").unwrap_or_default())` hits this.
   Pass a real key, or leave out `with_api_key`.
+- **Breaking: `AntigravityError` has no `#[from]` conversions, and its
+  causes are explicit.** `Json` is removed. A harness message this client
+  cannot parse, which was `Json`, is now `Protocol`, as `Protocol`'s doc
+  always said, and `Protocol` is a struct variant,
+  `Protocol { message, source }`, whose `source` (also `source()`) is the
+  parse error when one caused it. `Io` is a struct variant,
+  `Io { message, source }`: `Media::from_file` names the path it could not
+  read in `message`. A `?` on a `serde_json::Error` or `std::io::Error` no
+  longer converts to `AntigravityError`. Migration: match
+  `AntigravityError::Protocol { message, .. }` for `Protocol(message)` and
+  `AntigravityError::Io { source, .. }` for `Io(source)`; drop `Json` arms
+  (a parse failure arrives as `Protocol`); and map your own `io` and
+  `serde_json` errors into your error type rather than through
+  `AntigravityError`.
 - **Breaking: a cut-off stream ends with the new
   `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
   the connection can end a stream body before `interaction.completed` or an
@@ -512,6 +559,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StreamInterrupted { source: None, .. }` where you matched that
   `MalformedResponse`; a retry loop built on `is_retryable()` now retries
   it. See "An unrecognized last event" in `docs/RELIABILITY.md`.
+- **Breaking: `GenaiError::is_retryable()` is true for a 408 and false for
+  the 5xx a retry cannot fix: 501, 505, 506, 508, 510 and 511.** A 408
+  means the server stopped waiting before the request arrived whole, so it
+  acted on nothing and the same request can succeed; google-genai retries
+  it too. Each of the six names a condition the same request meets on every
+  attempt (501 is Google's `UNIMPLEMENTED`), so a retry loop spent its
+  budget on them. One 501 can pass: the API also sends it when a remote MCP
+  server returns an error, as a real server does while it is down. Every
+  other 5xx stays retryable, including 507 and the unregistered codes some
+  proxies send; a status of 600 or more is no longer retryable, as
+  `docs/RELIABILITY.md` already said. The crate's own waits follow:
+  `wait_until_active` and a file search store import's wait now poll
+  through a 408 and end at once on the six.
+  Migration: a retry loop built on `is_retryable()` needs no change. To
+  keep retrying the six, or a status of 600 or more, test `matches!(e,
+  GenaiError::Api { status_code: 501 | 505 | 506 | 508 | 510 | 511 | 600..,
+  .. })` before `is_retryable()` (to keep only the MCP server's 501, also
+  match its message, "MCP server returned an error"); to stop retrying a
+  408, test `GenaiError::Api { status_code: 408, .. }` first.
 - **Breaking: `Client::new` and `ClientBuilder::build` set a 30 s connect
   timeout.** `DEFAULT_CONNECT_TIMEOUT` covers DNS, TCP and TLS. Before,
   there was none, so a black-holed route waited for the OS's timeout (about
@@ -719,8 +785,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.into_iter()` before any other iterator adapter (`.into_iter().map(..)`).
   A `for` loop over them is unchanged.
 - **Breaking: the large, rare payloads of the stream types are boxed**
-  (#490). `StreamChunk::Created { interaction }`, `StreamChunk::Completed`,
-  and `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
+  (#490). `StreamChunk::Created { interaction, .. }`,
+  `StreamChunk::Completed`, and
+  `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
   `Complete` and `MaxLoopsReached` hold a `Box<InteractionResponse>`;
   `StreamChunk`'s `usage`, `total_usage` and `step_usage` fields are
   `Option<Box<UsageMetadata>>`; and `StepDelta::ThoughtSummary`'s `content`
@@ -728,9 +795,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so every `StreamEvent`, a one-word text delta included, was 1.9 KB; it is
   216 bytes now. Migration: method calls and field reads go through the box
   unchanged (`response.as_text()`, `usage.total_tokens`); where you need the
-  value itself, write `*response`
-  (`StreamChunk::Completed(response) => Some(*response)`); build a chunk
-  with `Box::new(..)`.
+  value itself, dereference the box (`*response`, or
+  `StreamChunk::Completed { interaction, .. } => Some(*interaction)`);
+  build a chunk with `Box::new(..)`.
 - **Breaking: strict mode is the `--cfg genai_strict_unknown` flag; the
   `strict-unknown` Cargo feature is gone** (#490, D-030). Cargo unifies
   features across a build, so any crate that turned the feature on made
@@ -764,9 +831,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WebSocket { message, source }`** (#504). `source` is the transport's
   error, a `Box<dyn std::error::Error + Send + Sync>`, and `source()`
   returns it; the variant used to hold only its text. `message` says what
-  failed: connecting (with the port and attempt count), a read, or a send.
-  The `Display` text is `websocket error: {message}: {source}`, as before
-  for a failed connect or send. Migration: match
+  failed: a read or a send. (A connect that fails, with the port and
+  attempt count, reaches `spawn()`'s caller as `InitFailed`, whose message
+  holds this variant's text.) The `Display` text is
+  `websocket error: {message}: {source}`, as before for a failed send. Migration: match
   `AntigravityError::WebSocket { message, source }` where you matched
   `WebSocket(text)`, and `downcast_ref` the source for the transport's own
   error type.
@@ -868,6 +936,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   history (verified live 2026-11-06).
 - `detect_mime_type` is `#[must_use]`, so a call that discards the result
   warns.
+- The file search store and document listings page with `pageSize` and
+  `pageToken`, the camelCase pair the Files API and google-genai's bindings
+  use (#541); they sent `page_size` and `page_token`, which the API also
+  accepts, so paging behaves as before.
 
 ### Fixed
 
@@ -875,6 +947,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed
   harness was not found without `ANTIGRAVITY_HARNESS_PATH`.
+- On Windows, Antigravity harness discovery asks `python` for its
+  site-packages after `python3`. python.org's installer provides no
+  `python3` (often only the Microsoft Store's stub is there), so a wheel
+  installed with its `pip` was not found without `ANTIGRAVITY_HARNESS_PATH`.
+  `python` is started only when `python3`'s site-packages lack the harness.
+- Antigravity's `spawn()` no longer waits forever on a harness that
+  accepts the WebSocket connection but never answers the upgrade: each of
+  the 5 connect attempts gives up after 5 s and counts as failed, so
+  `spawn()` fails with `InitFailed` after about 26.5 s.
+- Antigravity's file watch (`triggers::on_file_change`): a poll that cannot
+  read a directory or entry under the watched path (a permission or I/O
+  error) is skipped, with one warning naming what could not be read,
+  instead of reporting every file there deleted and then added back when
+  it reads again; a directory the watch skips anyway (`.git`,
+  `node_modules`, …) still cannot fail a poll.
+  A watched path that is a symbolic link is followed, as `watchfiles`
+  follows its root (it read as an empty tree); links below it are still
+  not followed. A `poll_interval` under 10 ms, zero included, polls every
+  10 ms, as `PollOptions` does (D-047), rather than walking the tree back
+  to back.
+- `McpServer::with_timeout_seconds` said only that it bounds each call. On
+  harness 0.1.23 it bounds both each call and loading the server
+  (connecting and listing its tools, on the first turn), where a server
+  slower than it fails that turn; the rustdoc and `docs/ANTIGRAVITY.md` say
+  so.
 - The `backon` retry snippet in `docs/RELIABILITY.md` and
   `examples/retry_with_backoff.rs` let a server's `Retry-After` bypass
   `with_max_delay`: `adjust` replaces backon's delay after the cap, so a

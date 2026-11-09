@@ -2,7 +2,7 @@
 
 use super::context::HttpContext;
 use crate::errors::GenaiError;
-use crate::wire::WireEvent;
+use crate::wire::{WireEvent, truncate_utf8};
 use reqwest::Response;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -85,10 +85,10 @@ struct ErrorBody {
 /// raw body when it is not an envelope (an HTML proxy page, say).
 fn api_error_message(body: &str) -> String {
     let Ok(ErrorEnvelope { error }) = serde_json::from_str::<ErrorEnvelope>(body) else {
-        return truncate_for_context(body, ERROR_BODY_PREVIEW_LENGTH);
+        return truncate_utf8(body, ERROR_BODY_PREVIEW_LENGTH).into_owned();
     };
     let Some(message) = error.message else {
-        return truncate_for_context(body, ERROR_BODY_PREVIEW_LENGTH);
+        return truncate_utf8(body, ERROR_BODY_PREVIEW_LENGTH).into_owned();
     };
     // The integer `code` only repeats the HTTP status, so it is not a label.
     let string_code = match error.code {
@@ -157,7 +157,7 @@ fn parse_retry_after(value: &str) -> Option<std::time::Duration> {
 
 /// Formats a JSON parse error with a preview of the raw JSON.
 pub fn format_json_parse_error(json_str: &str, error: serde_json::Error) -> String {
-    let preview = truncate_for_context(json_str, ERROR_BODY_PREVIEW_LENGTH);
+    let preview = truncate_utf8(json_str, ERROR_BODY_PREVIEW_LENGTH);
     format!("JSON parse error: {error} | Context: {preview}")
 }
 
@@ -171,7 +171,7 @@ pub fn deserialize_with_context<T: DeserializeOwned>(
     type_context: &str,
 ) -> Result<T, GenaiError> {
     serde_json::from_str(json_str).map_err(|e| {
-        let preview = truncate_for_context(json_str, ERROR_BODY_PREVIEW_LENGTH);
+        let preview = truncate_utf8(json_str, ERROR_BODY_PREVIEW_LENGTH);
         GenaiError::MalformedResponse(format!(
             "Failed to parse {type_context}: {e} | JSON: {preview}"
         ))
@@ -183,48 +183,15 @@ pub fn deserialize_with_context<T: DeserializeOwned>(
 /// [`GenaiError::MalformedResponse`] naming the content type, with a preview
 /// of the body. Not a cut-off stream: no stream ever started.
 pub(crate) fn not_an_event_stream(content_type: &str, body: &str) -> GenaiError {
-    let preview = truncate_for_context(body, ERROR_BODY_PREVIEW_LENGTH);
+    let preview = truncate_utf8(body, ERROR_BODY_PREVIEW_LENGTH);
     GenaiError::MalformedResponse(format!(
         "expected an SSE stream (text/event-stream), got {content_type}: {preview}"
     ))
 }
 
-/// Truncates a string to specified length, adding "..." if truncated.
-///
-/// Uses character-boundary-aware slicing to prevent panics on multi-byte UTF-8 characters.
-fn truncate_for_context(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        // Find a valid UTF-8 character boundary at or before max_len
-        // We need to ensure the character END position is <= max_len
-        let truncate_at = s
-            .char_indices()
-            .take_while(|(i, c)| i + c.len_utf8() <= max_len)
-            .last()
-            .map(|(i, c)| i + c.len_utf8())
-            .unwrap_or(0);
-        format!("{}...", &s[..truncate_at])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_truncate_for_context_short_string() {
-        let result = truncate_for_context("Short", 100);
-        assert_eq!(result, "Short");
-    }
-
-    #[test]
-    fn test_truncate_for_context_long_string() {
-        let long_str = "a".repeat(300);
-        let result = truncate_for_context(&long_str, 200);
-        assert_eq!(result.len(), 203); // 200 + "..."
-        assert!(result.ends_with("..."));
-    }
 
     #[test]
     fn test_format_json_parse_error() {
@@ -235,44 +202,6 @@ mod tests {
         assert!(result.contains("JSON parse error"));
         assert!(result.contains("Context:"));
         assert!(result.contains(r#"{"invalid": }"#));
-    }
-
-    #[test]
-    fn test_truncate_for_context_utf8_boundary() {
-        // Test with multi-byte UTF-8 characters (emojis are 4 bytes each)
-        let emoji_str = "x".repeat(198) + "🎉"; // 198 + 4 = 202 bytes total
-        let result = truncate_for_context(&emoji_str, 200);
-
-        // Should truncate before the emoji to avoid splitting it
-        // Result should be 198 x's + "..." = 201 bytes
-        assert_eq!(result.len(), 201); // 198 + 3 for "..."
-        assert!(result.ends_with("..."));
-        assert!(result.starts_with("xxx")); // Should start with x's
-        assert!(!result.contains("🎉")); // Should not include emoji
-        // Verify result is valid UTF-8 (this would panic if we sliced mid-character)
-        assert!(result.is_char_boundary(result.len() - 3)); // before "..."
-    }
-
-    #[test]
-    fn test_truncate_for_context_exactly_at_boundary() {
-        // String is exactly max_len bytes
-        let exact = "a".repeat(200);
-        let result = truncate_for_context(&exact, 200);
-        assert_eq!(result, exact); // No truncation needed
-    }
-
-    #[test]
-    fn test_truncate_for_context_multibyte_characters() {
-        // Test with various multi-byte UTF-8: emoji (4 bytes), Chinese (3 bytes), accented (2 bytes)
-        let mixed = "Hello 世界 🌍 Café"; // Mix of 1-byte, 2-byte, 3-byte, and 4-byte chars
-        let result = truncate_for_context(mixed, 15);
-
-        // Should produce valid UTF-8 without panicking
-        assert!(result.ends_with("..."));
-        // Verify all characters in result are valid
-        for ch in result.chars() {
-            assert!(ch.is_ascii() || !ch.is_ascii()); // Tautology, but ensures no panic
-        }
     }
 
     #[test]
@@ -294,7 +223,7 @@ mod tests {
     #[test]
     fn test_deserialize_with_context_error_includes_context() {
         #[derive(serde::Deserialize, Debug)]
-        #[allow(dead_code)]
+        #[expect(dead_code, reason = "only parsed; the field is never read")]
         struct TestData {
             required_field: String,
         }
@@ -321,7 +250,7 @@ mod tests {
     #[test]
     fn test_deserialize_with_context_truncates_long_json() {
         #[derive(serde::Deserialize, Debug)]
-        #[allow(dead_code)]
+        #[expect(dead_code, reason = "only parsed; the field is never read")]
         struct TestData {
             id: String,
         }

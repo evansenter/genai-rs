@@ -26,6 +26,15 @@
 # step header (plain nextest output) counts whole: the caller chose what
 # to pass.
 #
+# Skip markers are counted in the same runs: a line of a test's output
+# that starts with `SEMANTIC_VALIDATION_SKIPPED` or
+# `LIVE_TOOL_EVIDENCE_SKIPPED`, a live test that passed without verifying
+# what it tests (docs/TESTING.md, "Skip markers"). A job checks its own
+# run against a budget; this counts them across runs, so a test that skips
+# in run after run shows. Each is put on the test whose status line came
+# last before it: nextest prints a test's output after that line
+# (`--success-output=final`, and a failure's output).
+#
 # Example smoke runs are counted too, in any step (their loops in
 # rust.yml retry by hand, with no NEXTEST_RETRIES): each example opens a
 # `::group::cargo run --example <name>` group, one run of it, and prints
@@ -37,13 +46,17 @@
 #               "flaky": 1, "failed_tries": 1, "runs": 40}, ...],
 #    "examples_run": E, "examples_retried": R,
 #    "examples": [{"name": "streaming", "flaky": 1, "failed_tries": 1,
-#                  "runs": 30}, ...]}
+#                  "runs": 30}, ...],
+#    "skip_markers": S,
+#    "skips": [{"binary": "tools_and_config_tests", "name": "test_y",
+#               "markers": 2, "runs": 40}, ...]}
 # `tests_run` sums the counted runs' `Summary` lines; `flaky` is the
 # number of (run, test) pairs that passed on a retry. `binary` is the test
 # binary without the crate prefix (`lib` for the library's unit tests).
 # A flaky test's `runs` is the number of counted runs it ran in, which the
-# report needs for a test's own flake share. Only flaky tests and retried
-# examples are listed.
+# report needs for a test's own flake share. Only flaky tests, retried
+# examples and tests that printed a skip marker are listed; a marker
+# printed before any status line in its run has an empty `name`.
 
 set -euo pipefail
 
@@ -57,7 +70,7 @@ command -v jq >/dev/null 2>&1 || {
 # mawk). ESC is passed in rather than written as `\x1b`, which mawk does
 # not understand in a regex.
 "${AWK:-awk}" -v esc=$'\033' '
-  FNR == 1 { header_seen = 0; in_header = 0; retried_step = 0; pending = "" }
+  FNR == 1 { header_seen = 0; in_header = 0; retried_step = 0; pending = ""; last_test = "" }
   {
     line = $0
     sub(/\r$/, "", line)
@@ -114,7 +127,15 @@ command -v jq >/dev/null 2>&1 || {
     if (header_seen && !retried_step) next
 
     # One nextest run starts each section; flakes are counted per run.
-    if (line ~ /^ *Starting [0-9]+ tests? across /) { run++ }
+    if (line ~ /^ *Starting [0-9]+ tests? across /) { run++; last_test = "" }
+
+    # A skip marker, at the start of a line of the test output that
+    # follows its status line. (The `::warning::` naming the markers, which
+    # the integration loop prints, starts with `##[warning]`.)
+    if (w[1] ~ /^(SEMANTIC_VALIDATION|LIVE_TOOL_EVIDENCE)_SKIPPED/) {
+      markers[last_test]++
+      next
+    }
 
     if (words < 4) next
 
@@ -136,6 +157,7 @@ command -v jq >/dev/null 2>&1 || {
     if (index(binary, "::") > 0) sub(/^[^:]*::/, "", binary)
     else binary = "lib"
     ran[run SUBSEP binary SUBSEP test] = 1
+    last_test = binary SUBSEP test
 
     # `FLAKY 2/3 [ 0.011s] (2/4) crate::binary test` and
     # `TRY 2 PASS [ 0.011s] (2/4) crate::binary test`.
@@ -158,7 +180,16 @@ command -v jq >/dev/null 2>&1 || {
       printf "flaky\t%s\t%s\t%d\n", k[2], k[3], failed[key]
       flaky_test[k[2] SUBSEP k[3]] = 1
     }
-    # The runs each flaky test ran in, for its own share.
+    for (key in markers) {
+      if (key == "") {
+        printf "marker\t\t\t%d\n", markers[key]
+        continue
+      }
+      split(key, k, SUBSEP)
+      printf "marker\t%s\t%s\t%d\n", k[1], k[2], markers[key]
+      flaky_test[key] = 1
+    }
+    # The runs each flaky or skipping test ran in, for its own share.
     for (key in ran) {
       split(key, k, SUBSEP)
       if ((k[2] SUBSEP k[3]) in flaky_test) runs_of[k[2] SUBSEP k[3]]++
@@ -204,6 +235,17 @@ command -v jq >/dev/null 2>&1 || {
             runs: ([$example_runs[.[1]] // 0, (.[2] | tonumber)] | max)
           })
         | sort_by(-.flaky, .name)
+      ),
+      skip_markers: ([$rows[] | select(.[0] == "marker") | .[3] | tonumber] | add // 0),
+      skips: (
+        [$rows[] | select(.[0] == "marker")]
+        | map({
+            binary: .[1],
+            name: .[2],
+            markers: (.[3] | tonumber),
+            runs: ($runs[.[1] + "\t" + .[2]] // 0)
+          })
+        | sort_by(-.markers, .name)
       )
     }
 '

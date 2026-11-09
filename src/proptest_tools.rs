@@ -45,7 +45,7 @@ pub(super) fn arb_allowed_tools() -> impl Strategy<Value = AllowedTools> {
         .prop_map(|(mode, tools)| AllowedTools {
             mode,
             tools,
-            ..Default::default()
+            extra: serde_json::Map::new(),
         })
 }
 

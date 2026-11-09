@@ -22,6 +22,7 @@
 //! `fuzzing_tests.rs` report it.
 #![expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "a fuzz entry point reports a failed check by panicking, as a test does"
 )]
 

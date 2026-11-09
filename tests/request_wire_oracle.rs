@@ -16,19 +16,26 @@
 //! or listed in [`QUERY_ALLOWED`], and every binding query parameter is sent
 //! by some verb or listed in [`NOT_SENT`], each with its reason. The test
 //! calls every verb of every resource handle, with every list builder
-//! option set (both are checked), so a misspelled key, a key the API
-//! dropped, and a parameter a new release adds all fail it, and so does a
-//! request to a path no endpoint takes.
+//! option and every request type's query option set (all three are
+//! checked; the last through `query_options`), so a misspelled key, a key
+//! the API dropped, and a parameter a new release adds all fail it, and so
+//! does a request to a path no endpoint takes.
 
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
 mod api_surface;
 mod common;
 mod live_verbs;
+#[path = "request_wire_oracle/query_options.rs"]
+mod query_options;
 
 use api_surface::Surface;
 use common::http_stub::{Recorded, Reply, Stub};
@@ -628,16 +635,9 @@ fn verbs_with_a_body_are_found_through_methods() {
 /// `alt` is a Google API system parameter, accepted on every method and
 /// listed in no method's request class.
 const ALT: &str = "`alt` is a Google API system parameter, which every method takes and no \
-     request class lists: `alt=sse` asks for server-sent events (the live stream, resume and \
-     create-stream tests read them) and `alt=media` for a file's bytes \
-     (`EnvironmentFiles::download`, live in environment_files_tests).";
-
-/// The store and document listings take the snake_case paging pair.
-const SNAKE_PAGING: &str = "The store and document listings take `page_size` and `page_token` \
-     as well as the bindings' `pageSize` and `pageToken` (live 2026-09-27, \
-     docs/ENUM_WIRE_FORMATS.md \"File Search\"), and the crate sends the snake_case pair \
-     through the shared `with_paging`; the live paging tests in file_search_stores_tests read \
-     the pages back.";
+     request class lists: `alt=sse` asks for an SSE stream (the stream, resume and \
+     create-stream tests read one) and `alt=media` for a file's bytes \
+     (`EnvironmentFiles::download`, read back in environment_files_tests).";
 
 /// Query keys the crate sends that its endpoint's binding request does not
 /// list, each with its reason, by site (`METHOD /path?key`).
@@ -645,16 +645,6 @@ const QUERY_ALLOWED: &[(&str, &str)] = &[
     ("GET /{}/environments/{}/files/{}?alt", ALT),
     ("GET /{}/interactions/{}?alt", ALT),
     ("POST /{}/interactions?alt", ALT),
-    ("GET /{}/fileSearchStores?page_size", SNAKE_PAGING),
-    ("GET /{}/fileSearchStores?page_token", SNAKE_PAGING),
-    (
-        "GET /{}/fileSearchStores/{}/documents?page_size",
-        SNAKE_PAGING,
-    ),
-    (
-        "GET /{}/fileSearchStores/{}/documents?page_token",
-        SNAKE_PAGING,
-    ),
 ];
 
 /// Binding query parameters no verb sends, each with its reason, by site.
@@ -664,16 +654,6 @@ const NOT_SENT: &[(&str, &str)] = &[
         "Not modeled: the API parses the filter, but every expression tried is a \
          `400 Invalid filter expression` and the syntax is undocumented (live \
          2026-11-05, docs/INTERACTIONS_API_GAP.md \"Resource residue\").",
-    ),
-    ("GET /{}/fileSearchStores?pageSize", SNAKE_PAGING),
-    ("GET /{}/fileSearchStores?pageToken", SNAKE_PAGING),
-    (
-        "GET /{}/fileSearchStores/{}/documents?pageSize",
-        SNAKE_PAGING,
-    ),
-    (
-        "GET /{}/fileSearchStores/{}/documents?pageToken",
-        SNAKE_PAGING,
     ),
     (
         "GET /{}/files/{}:download?alt",
@@ -724,8 +704,8 @@ const FULL_NAMES: &[(&str, &[&str], &str)] = &[
     (
         "{clean_id}",
         &["fileSearchStores/{}/media/{}"],
-        "file_search_stores.download_media's media ID: google-genai rejects one \
-         without `/media/`, and names the route `GET /{name=fileSearchStores/*/media/*}`.",
+        "file_search_stores.download_media's media ID: google-genai's client refuses \
+         one without `/media/`, and names the route `GET /{name=fileSearchStores/*/media/*}`.",
     ),
     (
         "{operationName}",
@@ -733,8 +713,8 @@ const FULL_NAMES: &[(&str, &[&str], &str)] = &[
             "fileSearchStores/{}/operations/{}",
             "fileSearchStores/{}/upload/operations/{}",
         ],
-        "The operations the API serves: an import's and a store upload's \
-         (docs/ENUM_WIRE_FORMATS.md, \"File Search\").",
+        "The operations the API serves: an import's and a store upload's (live \
+         2026-11-05, docs/ENUM_WIRE_FORMATS.md \"File Search\").",
     ),
 ];
 
@@ -1518,9 +1498,9 @@ fn options_set(
 }
 
 /// Every verb of every resource handle is called by the query test above,
-/// and every option of every list builder is set there, so every query
-/// string the crate builds is checked. (A request type's own options, such
-/// as `EnvironmentFileUpload`'s, are set there by hand.)
+/// and every option of every list builder is set there, as is every query
+/// option of a request type (`WebhookUpdate::with_update_mask`, found by
+/// `query_options`), so every query string the crate builds is checked.
 #[test]
 fn every_verb_is_called_by_the_query_test() {
     const TEST: &str = "every_query_key_a_verb_sends_is_a_binding_query_parameter";
@@ -1547,7 +1527,8 @@ fn every_verb_is_called_by_the_query_test() {
         missing.join("\n  ")
     );
 
-    let builders = list_builder_options(&live_verbs::src_files(), &handles);
+    let src = live_verbs::src_files();
+    let builders = list_builder_options(&src, &handles);
     assert!(
         builders.len() >= 11,
         "found too few list builders: {:?}",
@@ -1564,6 +1545,50 @@ fn every_verb_is_called_by_the_query_test() {
         unset.is_empty(),
         "list builder options the query test does not set (set each on its verb's \
          builder there):\n  {}",
+        unset.join("\n  ")
+    );
+
+    let trace = query_options::query_fields(&src);
+    assert!(
+        trace.unmodeled.is_empty(),
+        "query values the trace cannot follow to a field, so an option they carry \
+         would go unchecked (teach tests/request_wire_oracle/query_options.rs the \
+         shape):\n  {}",
+        trace
+            .unmodeled
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+    let fields = trace.fields;
+    for (ty, field) in [
+        ("WebhookUpdate", "update_mask"),
+        ("CredentialUpdate", "update_mask"),
+        ("EnvironmentFileUpload", "overwrite"),
+        ("EnvironmentFileUpload", "extract"),
+    ] {
+        assert!(
+            fields.contains(&(ty.to_string(), field.to_string())),
+            "the query field discovery missed {ty}.{field}; it found {fields:?}"
+        );
+    }
+    let (options, unassigned) = query_options::query_options(&src, &fields);
+    assert!(
+        unassigned.is_empty(),
+        "query fields no public `with_*` option of their type assigns as \
+         `self.<field> = ..`, so the test cannot find the option that sets them:\n  {}",
+        unassigned.join("\n  ")
+    );
+    let set = query_options::query_options_set(&file, TEST, &src, &options);
+    let unset: Vec<String> = options
+        .difference(&set)
+        .map(|(ty, option)| format!("{ty}::{option}(..)"))
+        .collect();
+    assert!(
+        unset.is_empty(),
+        "request-type query options the query test does not set (call each on the \
+         value it passes to its verb there):\n  {}",
         unset.join("\n  ")
     );
 }

@@ -205,11 +205,20 @@ pub(super) fn arb_interaction_response() -> impl Strategy<Value = InteractionRes
 // StreamChunk Strategy
 // =============================================================================
 
+/// A known chunk's `extra`: a few keys it does not read, any JSON each.
+fn arb_chunk_extra() -> impl Strategy<Value = serde_json::Map<String, serde_json::Value>> {
+    proptest::collection::btree_map("[a-z_]{1,12}", arb_json_value(), 0..3)
+        .prop_map(|entries| entries.into_iter().collect())
+}
+
 pub(super) fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
     prop_oneof![
         // Created variant
-        arb_interaction_response().prop_map(|interaction| StreamChunk::Created {
-            interaction: Box::new(interaction)
+        (arb_interaction_response(), arb_chunk_extra()).prop_map(|(interaction, extra)| {
+            StreamChunk::Created {
+                interaction: Box::new(interaction),
+                extra,
+            }
         }),
         // StatusUpdate variant
         (
@@ -217,45 +226,68 @@ pub(super) fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
             arb_interaction_status(),
             proptest::option::of(arb_usage_metadata()),
             proptest::option::of(arb_identifier()),
+            arb_chunk_extra(),
         )
-            .prop_map(|(interaction_id, status, usage, continuation_token)| {
-                StreamChunk::StatusUpdate {
-                    interaction_id,
-                    status,
-                    usage: usage.map(Box::new),
-                    continuation_token,
+            .prop_map(
+                |(interaction_id, status, usage, continuation_token, extra)| {
+                    StreamChunk::StatusUpdate {
+                        interaction_id,
+                        status,
+                        usage: usage.map(Box::new),
+                        continuation_token,
+                        extra,
+                    }
                 }
-            }),
+            ),
         // StepStart variant
-        (any::<usize>(), arb_step())
-            .prop_map(|(index, step)| StreamChunk::StepStart { index, step }),
+        (any::<usize>(), arb_step(), arb_chunk_extra())
+            .prop_map(|(index, step, extra)| { StreamChunk::StepStart { index, step, extra } }),
         // StepDelta variant
         (
             any::<usize>(),
             arb_step_delta(),
-            proptest::option::of(arb_usage_metadata())
+            proptest::option::of(arb_usage_metadata()),
+            arb_chunk_extra(),
         )
-            .prop_map(|(index, delta, total_usage)| StreamChunk::StepDelta {
-                index,
-                delta,
-                total_usage: total_usage.map(Box::new)
-            }),
+            .prop_map(
+                |(index, delta, total_usage, extra)| StreamChunk::StepDelta {
+                    index,
+                    delta,
+                    total_usage: total_usage.map(Box::new),
+                    extra,
+                }
+            ),
         // StepStop variant
         (
             any::<usize>(),
             proptest::option::of(arb_usage_metadata()),
             proptest::option::of(arb_usage_metadata()),
+            arb_chunk_extra(),
         )
-            .prop_map(|(index, usage, step_usage)| StreamChunk::StepStop {
+            .prop_map(|(index, usage, step_usage, extra)| StreamChunk::StepStop {
                 index,
                 usage: usage.map(Box::new),
                 step_usage: step_usage.map(Box::new),
+                extra,
             }),
         // Completed variant
-        arb_interaction_response().prop_map(|r| StreamChunk::Completed(Box::new(r))),
+        (arb_interaction_response(), arb_chunk_extra()).prop_map(|(r, extra)| {
+            StreamChunk::Completed {
+                interaction: Box::new(r),
+                extra,
+            }
+        }),
         // Error variant
-        (arb_text(), proptest::option::of(arb_identifier()))
-            .prop_map(|(message, code)| { StreamChunk::Error { message, code } }),
+        (
+            arb_text(),
+            proptest::option::of(arb_identifier()),
+            arb_chunk_extra(),
+        )
+            .prop_map(|(message, code, extra)| StreamChunk::Error {
+                message,
+                code,
+                extra,
+            }),
         // Unknown variant for forward compatibility
         (arb_unknown_type(), arb_json_value())
             .prop_map(|(chunk_type, data)| StreamChunk::Unknown { chunk_type, data }),
@@ -630,7 +662,11 @@ fn recorded_seed_requires_action_completed_chunk_roundtrips() {
         updated: Some(timestamp("2022-08-29T09:00:39Z")),
         ..Default::default()
     };
-    assert_value_roundtrip(&StreamChunk::Completed(Box::new(response))).unwrap();
+    assert_value_roundtrip(&StreamChunk::Completed {
+        interaction: Box::new(response),
+        extra: Default::default(),
+    })
+    .unwrap();
 }
 
 /// Seed `a34c4f88` (`stream_chunk_roundtrip` or
@@ -647,6 +683,10 @@ fn recorded_seed_completed_chunk_with_unknown_status_roundtrips() {
         },
         ..Default::default()
     };
-    assert_value_roundtrip(&StreamChunk::Completed(Box::new(response.clone()))).unwrap();
+    assert_value_roundtrip(&StreamChunk::Completed {
+        interaction: Box::new(response.clone()),
+        extra: Default::default(),
+    })
+    .unwrap();
     assert_value_roundtrip(&AutoFunctionStreamChunk::Complete(Box::new(response))).unwrap();
 }

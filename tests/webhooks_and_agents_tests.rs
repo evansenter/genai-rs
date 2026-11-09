@@ -12,14 +12,18 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
 mod common;
 
 use common::{
-    TINY_WAV_BASE64, assert_stored, get_client, stored_echo, test_resource_name,
-    test_source_content,
+    TINY_WAV_BASE64, assert_stored, get_client, stored_echo, stored_echo_when_present,
+    test_resource_name, test_source_content,
 };
 use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
@@ -796,9 +800,11 @@ async fn test_antigravity_config_accepted() {
             Err(e) => println!("interactions().cancel({id}) failed (tolerated): {e}"),
         }
         // Accepted is not applied: read the stored agent_config back
-        // (#492). After the cancel: while the run starts, a read returns a
-        // sparse record without agent_config (2026-11-05).
-        stored = stored_echo(&client, id, "/agent_config").await;
+        // (#492). After the cancel, and again until it is there: while the
+        // run starts, a read returns a sparse record without agent_config
+        // (2026-11-05), and one read after the cancel still met it in three
+        // CI runs on 2026-11-07.
+        stored = stored_echo_when_present(&client, id, "/agent_config").await;
     }
     if let Some(env_id) = &response.environment_id {
         let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
@@ -811,6 +817,57 @@ async fn test_antigravity_config_accepted() {
         }
     }
     assert_stored("AntigravityConfig", &sent, stored);
+}
+
+/// The read-back the two agent-config probes rely on: a record that lacks
+/// `agent_config` at first is read again until it holds it, and one that
+/// never does comes back empty once the wait is over. On a paused clock,
+/// against the stub.
+#[tokio::test(start_paused = true)]
+async fn stored_echo_when_present_reads_again_until_the_field_is_stored() {
+    use common::http_stub::{Reply, Stub};
+    use common::{STORED_ECHO_WAIT, stored_echo_when_present};
+
+    let sparse = || {
+        Reply::json(
+            200,
+            serde_json::json!({"id": "int-1", "status": "in_progress"}),
+        )
+    };
+    let stored = serde_json::json!({"type": "antigravity", "max_total_tokens": "200000"});
+    let stub = Stub::replying(vec![
+        sparse(),
+        sparse(),
+        Reply::json(
+            200,
+            serde_json::json!({"id": "int-1", "status": "cancelled", "agent_config": stored}),
+        ),
+    ])
+    .await;
+    let client = stub.paused_clock_client();
+    let started = tokio::time::Instant::now();
+    let read = stored_echo_when_present(&client, "int-1", "/agent_config").await;
+    assert_eq!(read.expect("the reads succeed"), Some(stored));
+    assert_eq!(stub.requests().len(), 3, "read until the field was there");
+    assert_eq!(started.elapsed(), std::time::Duration::from_millis(1500));
+
+    // A field that never arrives: reads until the wait is spent, then the
+    // last, empty read.
+    let stub = Stub::replying((0..8).map(|_| sparse()).collect()).await;
+    let client = stub.paused_clock_client();
+    let started = tokio::time::Instant::now();
+    let read = stored_echo_when_present(&client, "int-1", "/agent_config").await;
+    assert_eq!(read.expect("the reads succeed"), None);
+    assert!(
+        started.elapsed() <= STORED_ECHO_WAIT,
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        stub.requests().len(),
+        7,
+        "reads at 0, 0.5, 1.5, 3.5, 5.5, 7.5 and 9.5 s"
+    );
 }
 
 // =============================================================================
@@ -863,13 +920,14 @@ async fn test_deep_research_config_knobs_accepted() {
     // Cancel first, so nothing below can leave the run going (a background
     // Deep Research run is the costliest leak), then read the stored
     // agent_config back (#492) and delete the run. The read is after the
-    // cancel as in the Antigravity probe: while a run starts, its record
-    // can lack agent_config (seen there, 2026-11-05).
+    // cancel, and repeated until agent_config is there, as in the
+    // Antigravity probe: while a run starts, its record can lack it (seen
+    // there, 2026-11-05).
     match client.interactions().cancel(&id).await {
         Ok(_) => println!("Cancelled interaction {id}"),
         Err(e) => println!("interactions().cancel({id}) failed (tolerated): {e}"),
     }
-    let stored = stored_echo(&client, &id, "/agent_config").await;
+    let stored = stored_echo_when_present(&client, &id, "/agent_config").await;
     let _ = client.interactions().delete(&id).await;
     assert_stored("DeepResearchConfig", &sent, stored);
 }

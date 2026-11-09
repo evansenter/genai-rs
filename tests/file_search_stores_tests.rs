@@ -24,6 +24,10 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
 
@@ -549,14 +553,14 @@ async fn test_bytes_upload_indexes_and_lists_across_pages() {
             println!("sent {} list request(s)", lists.len());
             assert!(
                 lists.len() >= 2,
-                "two documents at page_size=1 need two pages: {lists:?}"
+                "two documents at pageSize=1 need two pages: {lists:?}"
             );
             for (i, url) in lists.iter().enumerate() {
                 assert!(
-                    url.contains("page_size=1"),
+                    url.contains("pageSize=1"),
                     "page {i} dropped the page size: {url}"
                 );
-                assert_eq!(url.contains("page_token="), i > 0, "page {i}: {url}");
+                assert_eq!(url.contains("pageToken="), i > 0, "page {i}: {url}");
             }
         }
     })
