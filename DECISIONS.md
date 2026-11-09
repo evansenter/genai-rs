@@ -2202,3 +2202,49 @@ not a required check, so it shows on the PR without blocking it; making it
 required is the owner's call. The job takes a few minutes longer for the
 antigravity build and the scripted suite. A release can wait on its push
 run, and a red leg there stops it before anything is published.
+
+## D-NEXT-H6 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
+
+**Context.** #504's final grade put Docs at A-: five contradictions and
+five enforcement holes. Two of the contradictions were tables that drift
+as files are added (`docs/TESTING.md`'s test kinds called every other
+test file live; nine were offline), and nothing required a new guide to
+be doctested, nor a Rust block outside the doctested guides to compile;
+one sat in a `text` fence.
+
+**Decision.**
+- `tests/doc_guards/` checks the test-kind table against the test crates.
+  A crate is live when any of its module files has a
+  `#[ignore = "Requires API key"]` test, and a guard when its code (not
+  its comments or strings) never names `genai_rs`, `genai_rs_macros` or
+  `trybuild`: it reads the repository rather than exercising the library.
+  Each crate is in exactly one row, live ones under a kind that needs a
+  key, guards in the Guards row. The live row names its files instead of
+  saying "the other files", so a new file fails until it is placed.
+- The same module requires every `docs/*.md`, and every top-level
+  Markdown file with a Rust block, in `src/lib.rs`'s `doc_tests`, except
+  `NOT_DOCTESTED`'s four, each with its reason: the two maintainer notes,
+  `CHANGELOG.md` and `CLAUDE.md`. An exemption the module no longer needs
+  fails too.
+- `check_dated_facts.sh` requires a Rust block in a Markdown file
+  `doc_tests` leaves out to be `ignore`d with a reason, exempting
+  `CHANGELOG.md`'s history, and rejects Rust in a `text` block (a `let`
+  or `use` statement, a field assignment, a `fn`, `struct`, `enum`,
+  `trait` or `impl` header, or a derive, test or tokio attribute). An
+  untagged block in a file that is not doctested counts as text, as
+  GitHub renders it.
+
+Rejected: converting `CHANGELOG.md`'s 28 migration blocks to
+`rust,ignore` with reasons. They are history, written against the API of
+their release, and the reason line would say the same thing 28 times.
+Rejected: a looser Rust heuristic for `text` blocks (any `::`, any `;`).
+The repository's text blocks hold file trees, wire logs and program
+output, and only statement and item shapes tell Rust from those without
+guessing.
+
+**Consequences.** A new test file, or a new guide, fails `make test`
+until it is placed in the table or in `doc_tests`. A Rust block in a
+README under `examples/` or in a fixture must be `ignore`d with its
+reason. Rust written in a `text` block on a line the heuristic does not
+know (a bare expression) still passes; such a block is rare and a
+reviewer reads it.
