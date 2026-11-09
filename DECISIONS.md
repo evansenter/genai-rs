@@ -1158,17 +1158,25 @@ fact (a release date in a guide) has to be phrased without one or added to
 the script's `NAMES`.
 
 **Amended 2026-11-08 (#504's H6).** A date is no longer only ISO: the
-script also reads a slashed date (`2026/11/05`, `11/05/2026`) and one with
-the month named (`November 5, 2026`, `Nov 5, 2026`, `5 November 2026`,
-`November 2026`), and still skips one followed by a time, such as an
-HTTP date in a `Retry-After` example. The reason line on an `ignore` fence
-is required in every doc comment of every Rust file, test code and
-`tests/` included, since those are where a fence went without one; the
-date rule still skips them. Two rules keep every Rust block compiled or
-explained: a Rust block in a Markdown file that `src/lib.rs`'s `doc_tests`
-does not include must be `ignore`d with a reason (`CHANGELOG.md` is exempt
-as history), and a `text` block may not hold a Rust statement or item
-header (D-NEXT-H6).
+script also reads an unpadded ISO day (`2026-11-5`), a slashed date
+(`2026/11/05`, `11/05/2026`), a dotted one (`2026.11.05`, `05.11.2026`),
+one dashed with the year last (`11-05-2026`) and one with the month named
+(`November 5, 2026`, `Nov 5, 2026`, `5 November 2026`, `November 2026`),
+also when hard-wrapped prose breaks it across two lines, since a named
+date has spaces to break at. It skips a date followed by a time with
+seconds, a timestamp such as an HTTP date in a `Retry-After` example; a
+time without seconds is how prose dates an observation, so that date is
+read, in every form alike. A date with no year or a two-digit one
+(`Nov 5`, `'26`) is not read: matching one would flag ordinary prose. The
+reason line on an `ignore` fence is required in every doc comment of
+every Rust file, test code and `tests/` included, since those are where a
+fence went without one; the date rule still skips them. Three rules keep
+every Rust block compiled or explained (D-NEXT-H6): a Rust block nothing
+compiles must be `ignore`d with a reason, whether in a Markdown file that
+`src/lib.rs`'s `doc_tests` does not include (`CHANGELOG.md` is exempt as
+history) or in a doc comment outside the library's non-test code; a fence
+tagged `rs` or `Rust`, which rustdoc never compiles, fails anywhere; and a
+`text` block may not hold a Rust statement or item header.
 
 ## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
 
@@ -2216,22 +2224,42 @@ one sat in a `text` fence.
 - `tests/doc_guards/` checks the test-kind table against the test crates.
   A crate is live when any of its module files has a
   `#[ignore = "Requires API key"]` test, and a guard when its code (not
-  its comments or strings) never names `genai_rs`, `genai_rs_macros` or
-  `trybuild`: it reads the repository rather than exercising the library.
-  Each crate is in exactly one row, live ones under a kind that needs a
-  key, guards in the Guards row. The live row names its files instead of
-  saying "the other files", so a new file fails until it is placed.
-- The same module requires every `docs/*.md`, and every top-level
-  Markdown file with a Rust block, in `src/lib.rs`'s `doc_tests`, except
-  `NOT_DOCTESTED`'s four, each with its reason: the two maintainer notes,
-  `CHANGELOG.md` and `CLAUDE.md`. An exemption the module no longer needs
-  fails too.
-- `check_dated_facts.sh` requires a Rust block in a Markdown file
-  `doc_tests` leaves out to be `ignore`d with a reason, exempting
-  `CHANGELOG.md`'s history, and rejects Rust in a `text` block (a `let`
-  or `use` statement, a field assignment, a `fn`, `struct`, `enum`,
-  `trait` or `impl` header, or a derive, test or tokio attribute). An
-  untagged block in a file that is not doctested counts as text, as
+  its comments or strings) uses the library for nothing but a constant:
+  it never names `genai_rs_macros` or `trybuild`, nor `genai_rs` except
+  as `genai_rs::SOME_CONSTANT`, which a guard may check the repository
+  against. Each crate is in exactly one row, live ones under a kind that
+  needs a key, guards in the Guards row. The live row names its files
+  instead of saying "the other files", so a new file fails until it is
+  placed. A row places a file by naming it as `tests/<name>.rs`, or bare
+  in the live row's ``In `tests/`:`` list, outside parentheses; a file
+  named inside parentheses is a reference, which only has to exist.
+- The same module requires every Markdown file under `docs/`, at any
+  depth, and every top-level one with a Rust block (a fence rustdoc
+  reads as Rust, or one tagged `rs` or `Rust`), in `src/lib.rs`'s
+  `doc_tests`, except `NOT_DOCTESTED`'s four, each with its reason: the
+  two maintainer notes, `CHANGELOG.md` and `CLAUDE.md`. An include counts
+  where the doctest run compiles it: `src/lib.rs` is parsed with `syn`,
+  so a commented-out include is not one, and an include under a `cfg`
+  that CI's doctest run (a debug build with every feature on Linux)
+  leaves out, such as `cfg(any())`, does not count. An exemption the
+  module no longer needs fails too: for a file doctested or gone, or a
+  top-level file that holds no Rust any more.
+- `check_dated_facts.sh` requires a Rust block that nothing compiles to
+  be `ignore`d with a reason, exempting `CHANGELOG.md`'s history. That is
+  a block in a Markdown file `doc_tests` leaves out (it reads the includes
+  as the guard does, comments stripped and each `cfg` evaluated), or in a
+  doc comment outside the library's non-test code: under `tests/`,
+  `examples/` or `fuzz/`, in a test file or `#[cfg(test)]` item, or in a
+  module compiled only under such a `cfg`. A block is Rust when its info
+  string names `rust`, a rustdoc attribute or an `edition`, and, in a doc
+  comment, when it is untagged. A fence tagged `rs` or `Rust` fails
+  anywhere: GitHub shows it as Rust, and rustdoc reads it as another
+  language and never compiles it. The script rejects Rust in a `text`
+  block: a `let` (on one line or several, destructuring, or `let ...
+  else`) or `use` statement, a field assignment, a `fn`, `struct`,
+  `enum`, `trait` or `impl` header, an `if let`, `while let` or `match`
+  header with its body, or a derive, test or tokio attribute. An untagged
+  block in a Markdown file that is not doctested counts as text, as
   GitHub renders it.
 
 Rejected: converting `CHANGELOG.md`'s 28 migration blocks to
@@ -2241,10 +2269,19 @@ Rejected: a looser Rust heuristic for `text` blocks (any `::`, any `;`).
 The repository's text blocks hold file trees, wire logs and program
 output, and only statement and item shapes tell Rust from those without
 guessing.
+Rejected: a `known bug: ...` ignore reason that `tests/ci_coverage.rs`
+accepts, for a failing test parked until its fix. `make test-all` and
+`release.yml` run every ignored test, so a parked failure would fail the
+release; a known bug gets an issue, and its test lands with the fix
+(`docs/TESTING.md`).
 
 **Consequences.** A new test file, or a new guide, fails `make test`
 until it is placed in the table or in `doc_tests`. A Rust block in a
-README under `examples/` or in a fixture must be `ignore`d with its
-reason. Rust written in a `text` block on a line the heuristic does not
-know (a bare expression) still passes; such a block is rare and a
-reviewer reads it.
+README under `examples/`, in a fixture, or in a doc comment of a test
+helper or an example must be `ignore`d with its reason. Known limits:
+Rust written in a `text` block on a line the heuristic does not know (a
+bare expression) still passes, as rare blocks a reviewer reads; a `cfg`
+the evaluators do not know counts as left out, so an include behind one
+fails the guard until it is taught; and a cross-reference to another
+row's file written outside parentheses reads as a second placement and
+fails.
