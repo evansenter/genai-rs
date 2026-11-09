@@ -694,15 +694,16 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     env:
-      # Library code only (D-058): every report below leaves out the
-      # test-only sources a test build compiles into the library: the
+      # Library files only (D-058): every report below leaves out the
+      # test-only files a test build compiles into the library: the
       # unit-test files (`*_tests.rs` and `tests.rs`, which cargo-llvm-cov's
       # own default leaves out too), the property tests, the coverage
       # oracle, the tracing test recorder and the fuzzing entry points.
       # Counted, their 6,000-odd nearly covered lines diluted a drop in the
-      # library's own. tests/ci_workflows/coverage.rs holds the pattern to
-      # the module tree: it matches every module only a test build
-      # compiles, and nothing else.
+      # library's own. An inline `#[cfg(test)] mod tests` in a library file
+      # is beyond a filename pattern and still counts. tests/ci_workflows/
+      # coverage.rs holds the pattern to the module tree: it matches every
+      # module file only a test build compiles, and nothing else.
       COVERAGE_IGNORE: '(_tests|/tests)\.rs$|/src/(proptest_|coverage_oracle/|test_subscriber\.rs$|fuzzing)'
     steps:
       - uses: actions/checkout@v4

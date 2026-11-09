@@ -9,7 +9,7 @@
 //! fails its step over a budget of them. `coverage` checks that the Code
 //! Coverage job writes its summary, over the packages it measured, on every
 //! run, measures the `antigravity` feature with its scripted suite and
-//! library code alone, fails under a floor that nothing can skip or ignore,
+//! library files alone, fails under a floor that nothing can skip or ignore,
 //! and that a Codecov upload fails the job on an error. `release` checks
 //! that a release publishes only a commit whose main push run of
 //! `rust.yml` is green on every job but the ones a push skips by design,
@@ -277,9 +277,9 @@ fn steps(job: &str) -> Vec<String> {
     steps
 }
 
-/// What would let `step` fail without failing its job, each named: a
-/// step-level `if:`, which can skip it, or `continue-on-error` on the step
-/// or on `job`, which ignores its failure (`false` is the default, and
+/// What would let `step` fail without failing its job, each named: an
+/// `if:` on the step or on `job`, which can skip it, or `continue-on-error`
+/// on either, which ignores its failure (`false` is the default, and
 /// allowed). Empty when the step runs on every run and its failure fails
 /// the job.
 fn failure_escapes(job: &str, step: &str) -> Vec<String> {
@@ -305,6 +305,12 @@ fn failure_escapes(job: &str, step: &str) -> Vec<String> {
         }
     }
     for line in job.lines() {
+        // The job's own keys sit at 4 spaces.
+        if let Some(condition) = line.strip_prefix("    if:") {
+            found.push(format!(
+                "a job-level `if:{condition}`, which can skip the job and the step with it"
+            ));
+        }
         if let Some(value) = line.strip_prefix("    continue-on-error:")
             && value.trim() != "false"
         {
@@ -412,8 +418,8 @@ fn fails_the_step(line: &str) -> bool {
 /// `workflows`, and how many such steps there are. Each step keeps passing
 /// tests' output (`--success-output=final`), where the markers are, counts
 /// both kinds, and over a budget fails: its over-budget branch exits 1 or
-/// sets `rc=1`, and a step that sets `rc` exits with it, or lists its
-/// test as failed, afterwards.
+/// sets `rc=1`, and a step that sets `rc` exits with it afterwards, or
+/// lists its binary as failed in a list that, when not empty, exits 1.
 fn skip_budget_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) {
     let mut live = 0;
     let mut problems = Vec::new();
@@ -444,9 +450,21 @@ fn skip_budget_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) 
                         .any(|part| part.trim().trim_start_matches("then ") == "rc=1")
                 });
                 let after = budget.map_or(&[][..], |at| &lines[at..]);
-                let rc_fails = after.iter().any(|line| {
-                    *line == "exit \"$rc\"" || line.starts_with("[ \"$rc\" -eq 0 ] || failed+=")
-                });
+                let exits_rc = after.contains(&"exit \"$rc\"");
+                let lists_failed = after
+                    .iter()
+                    .any(|line| line.starts_with("[ \"$rc\" -eq 0 ] || failed+="));
+                // A list of failed binaries fails the step only if a
+                // non-empty one exits 1.
+                let failed_exits = after
+                    .iter()
+                    .position(|line| line.starts_with("if [ \"${#failed[@]}\" -gt 0 ]"))
+                    .is_some_and(|at| {
+                        if_branch(after, at).iter().any(|line| {
+                            line.split(';')
+                                .any(|part| part.trim().trim_start_matches("then ") == "exit 1")
+                        })
+                    });
                 for (ok, what) in [
                     (keeps_output, "no --success-output=final on its nextest run"),
                     (counts, "does not count both skip markers"),
@@ -459,8 +477,12 @@ fn skip_budget_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) 
                         "its over-budget branch neither exits 1 nor sets rc=1, so the step passes",
                     ),
                     (
-                        !sets_rc || rc_fails,
+                        !sets_rc || exits_rc || lists_failed,
                         "sets rc=1 over budget but never exits with it (`exit \"$rc\"`)",
+                    ),
+                    (
+                        !lists_failed || failed_exits,
+                        "lists a failed binary, but a non-empty list does not exit 1, so the step passes",
                     ),
                 ] {
                     if !ok {
@@ -540,6 +562,12 @@ fn the_skip_budget_check_catches_what_it_claims_to() {
             "            [ \"$rc\" -eq 0 ] || failed+=(\"$test\")\n",
             "            true\n",
         ),
+        // ... or lists the binary as failed, but a failed list exits 0.
+        mutate(
+            "rust.yml",
+            "            echo \"::error::failed: ${failed[*]}\"\n            exit 1\n",
+            "            echo \"::error::failed: ${failed[*]}\"\n            exit 0\n",
+        ),
         // No budget, or the markers' output dropped.
         mutate(
             "rust.yml",
@@ -582,6 +610,12 @@ fn the_failure_escape_check_reads_the_step_and_its_job() {
     );
     let lenient = "    runs-on: x\n    continue-on-error: true\n    steps:\n";
     assert!(!failure_escapes(lenient, step).is_empty());
+    let skipped = "    runs-on: x\n    if: github.event_name != 'pull_request'\n    steps:\n";
+    assert!(!failure_escapes(skipped, step).is_empty());
+    // A step's `if:` is the step's, not the job's.
+    let job_with_step_if =
+        "    runs-on: x\n    steps:\n      - name: Other\n        if: always()\n";
+    assert!(failure_escapes(job_with_step_if, step).is_empty());
 }
 
 #[test]

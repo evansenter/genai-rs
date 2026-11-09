@@ -1,6 +1,7 @@
 //! The Code Coverage job reports somewhere every run, measures the
-//! `antigravity` feature with its scripted suite, counts library code alone,
-//! and fails under a floor that nothing skips or ignores (#504, D-058).
+//! `antigravity` feature with its scripted suite, counts library files
+//! alone, and fails under a floor that nothing skips or ignores (#504,
+//! D-058).
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -249,9 +250,11 @@ fn library_files() -> &'static [(String, bool)] {
 /// measures the feature in both of its runs, the unit tests and the
 /// key-free scripted harness suite (which tests most of it); every report
 /// leaves out the test-only files by one `COVERAGE_IGNORE` pattern, which
-/// matches every module only a test build compiles and no other; and a
-/// step after the summary fails under a floor near the measured value,
-/// with no `if:` and no `continue-on-error` to skip it or ignore its
+/// matches every module file only a test build compiles and no other (an
+/// inline `#[cfg(test)] mod tests { .. }` in a library file is beyond a
+/// filename pattern, and still counted); and a step after the summary fails
+/// under a floor near the measured value, with no `if:` and no
+/// `continue-on-error`, on the step or its job, to skip it or ignore its
 /// failure.
 fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
     let (job, all) = coverage_job(workflow);
@@ -431,10 +434,14 @@ fn the_coverage_check_catches_what_it_claims_to() {
             "    name: Code Coverage\n",
             "    name: Code Coverage\n    continue-on-error: true\n",
         ),
-        // ... or the step skipped.
+        // ... or the step skipped, or its job.
         workflow.replace(
             floor,
             &format!("        if: github.event_name == 'push'\n{floor}"),
+        ),
+        workflow.replace(
+            "    name: Code Coverage\n",
+            "    name: Code Coverage\n    if: github.event_name != 'pull_request'\n",
         ),
         // The floor dropped to nothing.
         workflow.replace("--fail-under-lines 93", "--fail-under-lines 0"),
