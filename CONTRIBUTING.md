@@ -37,9 +37,11 @@ above its fence, in a guide or in rustdoc; prefer `no_run` with hidden
 (`tests/doc_guards/` fails until it does). `make test-scripts` fails on an
 `ignore` fence without its reason; on a Rust block that nothing doctests
 and is not `ignore`d with a reason (one in a Markdown file `doc_tests`
-leaves out, `CHANGELOG.md`'s history aside, or in a doc comment under
-`tests/`, `examples/` or test code); on a fence tagged `rs` or `Rust`,
-which rustdoc never compiles; on Rust fenced as `text`; and on a dated
+leaves out, `CHANGELOG.md`'s history aside, or in a doc comment, of any
+form, under `tests/`, `examples/`, test code or a `cfg` the doctest run
+leaves out); on a `cfg` in the library's non-test code that it cannot
+evaluate; on a fence tagged `rs` or `Rust`, which rustdoc never compiles;
+on Rust fenced as `text`; and on a dated
 live fact outside its home (D-032), through
 `.github/scripts/check_dated_facts.sh`.
 

@@ -2285,3 +2285,32 @@ the evaluators do not know counts as left out, so an include behind one
 fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
+
+**Amended 2026-11-09 (I-20).** Four holes in `check_dated_facts.sh`
+passed a scratch copy, though no instance was in the tree:
+- "A module compiled only under such a `cfg`" held only for a file module
+  (`mod x;`): a doc block on an inline item under a `cfg` the doctest run
+  leaves out (a `#[cfg(windows)]` fn, an inline `#[cfg(all(test, unix))]`
+  mod) passed. The script now evaluates the `cfg` of every inline item, from
+  the doc comments and attributes above it to its end, and a file's inner
+  `#![cfg]`; an include inside a gated inline module no longer counts.
+- It read only `///` and `//!` lines. It now reads every form rustdoc does:
+  `/** */` and `/*! */` blocks, and `#[doc = "..."]` and `#![doc = "..."]`
+  with their escapes and raw strings. A small lexer finds them, so a string
+  literal or a plain comment that looks like one is no longer read as doc
+  text either.
+- A bare expression in a `text` block passed. A line that ends in `?;` or
+  `.await` now reads as Rust; other bare expressions still pass, for the
+  reason the looser heuristic was rejected.
+- Both `cfg` evaluators, the script's and `tests/doc_guards/`', read a name
+  they did not know as false, which `not(..)` turns true, so "counts as
+  left out" held only without a `not`. Each now knows what CI's doctest run
+  sets (`doctest`, `unix`, `debug_assertions`, every feature,
+  `target_os = "linux"`, `target_family = "unix"`) and what it does not
+  (`test`, `windows`, `miri`, `fuzzing`, `docsrs`, `genai_strict_unknown`,
+  any other `target_os` or `target_family`), and fails on any other name or
+  key, such as `target_arch`, naming it. The script evaluates every `cfg` in
+  the library's non-test code, so a new one is taught before it lands.
+
+The known limits are now a bare expression that ends otherwise, and a
+cross-reference to another row's file outside parentheses.

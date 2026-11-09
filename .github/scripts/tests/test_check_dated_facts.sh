@@ -13,8 +13,11 @@
 # rules: a reason on every `ignore`, test code included; no Rust block
 # nothing compiles (in a file nothing doctests, behind an include that is
 # commented out or under a `cfg` the doctest run leaves out, or in a doc
-# comment outside the library's non-test code); no `rs` or `Rust` fence;
-# and no Rust in a text block.
+# comment outside the library's non-test code, an inline item or module
+# under such a `cfg` included); a `cfg` the check cannot evaluate; no `rs`
+# or `Rust` fence; and no Rust in a text block, a bare `?;` or `.await`
+# line included. Every rule reads every doc-comment form: `///`, `//!`,
+# `/** */`, `/*! */`, `#[doc = "..."]` and `#![doc = "..."]`.
 
 set -euo pipefail
 
@@ -377,6 +380,96 @@ printf '%s\n' '//! <!-- ignore: a test crate is not doctested -->' '//! ```rust,
 run_check "$T"
 expect "library doc blocks, a Linux-only module's included, and tests/ ignore and text blocks pass" 0 "No dated live fact"
 
+# An inline item or module under a cfg the doctest run leaves out is never
+# doctested either, its doc comments above or below the attribute
+# included; the code after it is again.
+base_tree "$T"
+printf '%s\n' '' '/// ```' '/// let x = 1;' '/// ```' '#[cfg(windows)]' 'pub fn kill() {}' \
+  '/// ```' '/// let y = 2;' '/// ```' 'pub fn after() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a Rust block on an inline cfg(windows) fn fails" 1 "src/lib.rs:14: a Rust block in this doc comment never compiles"
+expect "only the gated item's block fails" 1 "1 finding(s)"
+
+base_tree "$T"
+printf '%s\n' '' '#[cfg(all(test, unix))]' 'mod helpers {' '    /// Builds a store.' '    ///' \
+  '    /// ```rust' '    /// let x = 1;' '    /// ```' '    pub fn build() {}' '}' \
+  '/// ```' '/// let y = 2;' '/// ```' 'pub fn after() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a Rust block in an inline cfg(all(test, unix)) module fails" 1 "src/lib.rs:18: a Rust block in this doc comment never compiles"
+expect "the code after the gated module is doctested again" 1 "1 finding(s)"
+
+base_tree "$T"
+printf '%s\n' '' '#[cfg(all(' '    unix,' '    not(target_os = "linux"),' '))]' '/// ```' '/// let x = 1;' '/// ```' \
+  'pub fn bsd() {}' '/// ```' '/// let y = 2;' '/// ```' '#[cfg(any(target_os = "linux", not(windows)))]' \
+  'pub fn linux() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a multi-line cfg the doctest run leaves out gates its item" 1 "src/lib.rs:18: a Rust block in this doc comment never compiles"
+expect "a cfg that holds does not" 1 "1 finding(s)"
+
+base_tree "$T"
+printf '%s\n' '' '```rust' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' '    #[cfg(windows)]' '    mod windows_only {' \
+  '        #[doc = include_str!("../docs/GUIDE.md")]' '        mod guide {}' '    }' '}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "an include inside a gated inline module doctests nothing" 1 "docs/GUIDE.md:15: a Rust block here never compiles"
+
+# A cfg name the check does not know fails, rather than reading as false
+# (which `not(..)` would turn into true), in the library's non-test code;
+# test code and tests/ are not evaluated.
+base_tree "$T"
+printf '%s\n' '' '#[cfg(not(target_arch = "x86_64"))]' 'pub fn other() {}' '#[cfg(target_pointer_width = "64")]' \
+  'mod wide;' '#[cfg(sanitize)]' 'pub fn sanitized() {}' >>"$T/src/lib.rs"
+printf '%s\n' '#[cfg(target_arch = "x86_64")]' 'fn helper() {}' >"$T/src/lib_tests.rs"
+printf '%s\n' '#![cfg(target_arch = "x86_64")]' '#[test] fn t() {}' >"$T/tests/live.rs"
+run_check "$T"
+expect "an unknown cfg key fails, under not() too" 1 "src/lib.rs:14: this check cannot evaluate \`cfg(not(target_arch = \"x86_64\"))\` (it does not know \`target_arch\`)"
+expect "an unknown cfg on a file module fails" 1 "src/lib.rs:16: this check cannot evaluate \`cfg(target_pointer_width = \"64\")\`"
+expect "an unknown cfg name fails" 1 "src/lib.rs:18: this check cannot evaluate \`cfg(sanitize)\` (it does not know \`sanitize\`)"
+expect "test code and tests/ are not evaluated" 1 "3 finding(s)"
+
+base_tree "$T"
+printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' '    #[cfg(target_env = "gnu")]' \
+  '    #[doc = include_str!("../docs/GUIDE.md")]' '    mod guide {}' '}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "an unknown cfg on an include fails" 1 "src/lib.rs:16: this check cannot evaluate \`cfg(target_env = \"gnu\")\`"
+
+base_tree "$T"
+mkdir -p "$T/src/http"
+printf '%s\n' '#![cfg(windows)]' '/// ```' '/// let x = 1;' '/// ```' 'pub fn win() {}' >"$T/src/http/mod.rs"
+run_check "$T"
+expect "a file whose inner cfg the doctest run leaves out is not doctested" 1 "src/http/mod.rs:2: a Rust block in this doc comment never compiles"
+
+# Rules 1 to 4 read every doc-comment form: `/** */`, `/*! */`, and
+# `#[doc = "..."]` and `#![doc = "..."]`, `\n` escapes and raw strings
+# included; a string or a plain comment that looks like one is not read.
+base_tree "$T"
+printf '%s\n' '' '/**' ' * Reads a store.' ' *' ' * ```ignore' ' * x' ' * ```' ' */' 'pub fn block() {}' \
+  '/** Seen live 2026-11-05. */' 'pub fn dated() {}' >>"$T/src/lib.rs"
+printf '%s\n' '/*!' 'Helpers.' '' '```rust' 'let x = 1;' '```' '*/' >"$T/tests/helpers.rs"
+run_check "$T"
+expect "an ignore fence in a /** */ comment needs a reason" 1 "src/lib.rs:17: an ignore fence needs a"
+expect "a date in a /** */ comment fails" 1 "src/lib.rs:22: dated live fact (2026-11-05) in a doc comment"
+expect "a Rust block in a /*! */ comment of a tests/ helper fails" 1 "tests/helpers.rs:4: a Rust block in this doc comment never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '#[doc = "```ignore"]' '#[doc = "x"]' '#[doc = "```"]' 'pub fn attr() {}' \
+  '#[doc = "Reads a store.\n\n```text\nlet x = y;\n```"]' 'pub fn escaped() {}' \
+  '#[doc = r#"Stored (live 2026-11-01)."#]' 'pub fn raw() {}' >>"$T/src/lib.rs"
+printf '%s\n' '#![doc = "```rust"]' '#![doc = "let x = 1;"]' '#![doc = "```"]' >"$T/tests/helpers.rs"
+run_check "$T"
+expect "an ignore fence in #[doc] text needs a reason" 1 "src/lib.rs:14: an ignore fence needs a"
+expect "Rust in a text fence behind \\n escapes fails" 1 "src/lib.rs:18: Rust in a text block never compiles"
+expect "a date in a raw #[doc] string fails" 1 "src/lib.rs:20: dated live fact (2026-11-01) in a doc comment"
+expect "a Rust block in #![doc] text of a tests/ helper fails" 1 "tests/helpers.rs:1: a Rust block in this doc comment never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '#[doc = "<!-- ignore: a fragment -->"]' '#[doc = "```ignore"]' '#[doc = "x"]' '#[doc = "```"]' \
+  'pub fn reasoned() {}' 'pub fn strings() {' '    let _ = "/** ```ignore */";' \
+  '    let _ = "#[doc = \"```ignore\"]";' '    let _ = r#"' '/// Seen live 2026-11-05.' '"#;' \
+  '    /* /** ```ignore */ */' '    let _ = '"'"'"'"'"';' '}' '/*** 2026-11-05 ***/' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a reasoned #[doc] ignore passes; literals and plain comments are not doc text" 0 "No dated live fact"
+
 # Rule 4: Rust in a text block.
 base_tree "$T"
 printf '%s\n' '' '```text' 'let mut response = InteractionResponse::default();' \
@@ -406,6 +499,15 @@ for body in $'let response = client\n    .interaction()\n    .create()\n    .awa
   printf '%s\n' '' '```text' "$body" '```' >>"$T/docs/GUIDE.md"
   run_check "$T"
   expect "a text fence holding '${body%%$'\n'*}' fails" 1 "docs/GUIDE.md:16: Rust in a text block never compiles"
+done
+
+# A bare expression: a line that ends in `?;` or `.await`.
+for line in 'client.interaction().with_text("x").create().await?;' 'agent.chat("hi").await' \
+  'stream.next().await;' 'serde_json::to_string(&request)?;'; do
+  base_tree "$T"
+  printf '%s\n' '' '```text' "$line" '```' >>"$T/docs/GUIDE.md"
+  run_check "$T"
+  expect "a text fence holding '$line' fails" 1 "docs/GUIDE.md:16: Rust in a text block never compiles"
 done
 
 base_tree "$T"
