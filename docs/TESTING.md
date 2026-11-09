@@ -597,7 +597,11 @@ checks on it:
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a
   path no endpoint takes. A template that keeps a full resource name
-  (`{operationName}`) matches only the names `FULL_NAMES` gives it.
+  (`{operationName}`) matches only the names `FULL_NAMES` gives it. Every
+  key goes through `with_query`: `query_keys_are_added_only_through_with_query`
+  fails on a string literal in `src/http/`'s library code that holds
+  `?key=` or `&key=` (`format!("{url}&chunked=true")`), which a verb could
+  send only when an input the test does not set calls for it.
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each

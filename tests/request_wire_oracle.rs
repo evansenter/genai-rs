@@ -19,7 +19,10 @@
 //! option and every request type's query option set (all three are
 //! checked; the last through `query_options`), so a misspelled key, a key
 //! the API dropped, and a parameter a new release adds all fail it, and so
-//! does a request to a path no endpoint takes.
+//! does a request to a path no endpoint takes. A key written into a URL
+//! string rather than added through `with_query` fails
+//! `query_keys_are_added_only_through_with_query` (`query_literals`), since
+//! the verb may never be called with it set here.
 
 #![allow(
     clippy::unwrap_used,
@@ -34,6 +37,8 @@
 mod api_surface;
 mod common;
 mod live_verbs;
+#[path = "request_wire_oracle/query_literals.rs"]
+mod query_literals;
 #[path = "request_wire_oracle/query_options.rs"]
 mod query_options;
 
