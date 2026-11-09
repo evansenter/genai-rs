@@ -1331,7 +1331,7 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         problems.join("\n  ")
     );
     let differences = spec_query::spec_query_findings(
-        &spec_query::all_spec_endpoints(),
+        &spec_query::spec_copies(),
         &endpoints,
         &requests,
         spec_query::SPEC_QUERY,

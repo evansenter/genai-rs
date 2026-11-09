@@ -15,9 +15,12 @@
 //!   cannot say (they record names only), so the crate's handling of each
 //!   is stated.
 //!
-//! So a parameter added to a spec copy, or removed from it, or a change to
-//! whether one is required, fails offline, and the daily watch
-//! (`watch_spec_urls.sh`) sees the served specs' parameters change.
+//! Each spec copy is diffed on its own, and its findings begin with its
+//! version (`v1beta GET /{}/agents?parent: required`), so a reason given
+//! for one copy does not cover the other. So a parameter added to a spec
+//! copy, or removed from it, or a change to whether one is required, fails
+//! offline even where the other copy still has it as it was, and the daily
+//! watch (`watch_spec_urls.sh`) sees the served specs' parameters change.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,9 +29,9 @@ use serde_json::Value;
 use super::api_surface;
 use super::endpoints_for;
 
-/// The spec snapshots whose operations are checked: v1 holds the
-/// interactions only, with the parameters v1beta gives them.
-const SPECS: [&str; 2] = ["openapi-v1beta.json", "openapi-v1.json"];
+/// The spec snapshots whose operations are checked, each with the version
+/// its findings begin with. v1 holds the interactions only.
+const SPECS: [(&str, &str); 2] = [("v1beta", "openapi-v1beta.json"), ("v1", "openapi-v1.json")];
 
 /// Why `parent` on the agents endpoints is not modeled as the spec has it.
 const PARENT_IGNORED: &str = "The spec's `parent` (`projects/{project}/locations/{location}`, \
@@ -36,38 +39,45 @@ const PARENT_IGNORED: &str = "The spec's `parent` (`projects/{project}/locations
      one) or none is the same agent, and a listing with any value or none lists every agent \
      (live 2026-11-09, docs/INTERACTIONS_API_GAP.md \"Spec-only query parameters\").";
 
-/// The differences between the specs' query parameters and the bindings',
-/// each with its reason, as `METHOD /path?key: kind`.
+/// Why the interaction read's `include_input` is not in the spec.
+const INCLUDE_INPUT: &str = "`Interactions::get_with_input` sends it, and the stored input \
+     comes back as a `user_input` step (live 2026-11-04, docs/INTERACTIONS_API_GAP.md \
+     \"Coverage oracle\"); the spec does not list it.";
+
+/// The differences between each spec copy's query parameters and the
+/// bindings', each with its reason, as `VERSION METHOD /path?key: kind`.
 pub const SPEC_QUERY: &[(&str, &str)] = &[
     (
-        "GET /{}/agents?parent: required",
+        "v1beta GET /{}/agents?parent: required",
         "Optional in the bindings, and on `ListAgents`, whose `with_parent` sends it \
          only when set: the spec's `parent` (`projects/{project}/locations/{location}`, \
          required) is ignored, so a listing with any value or none lists every agent \
          (live 2026-11-09, docs/INTERACTIONS_API_GAP.md \"Spec-only query parameters\").",
     ),
-    ("POST /{}/agents?parent: spec only", PARENT_IGNORED),
-    ("POST /{}/agents?parent: required", PARENT_IGNORED),
+    ("v1beta POST /{}/agents?parent: spec only", PARENT_IGNORED),
+    ("v1beta POST /{}/agents?parent: required", PARENT_IGNORED),
     (
-        "POST /{}/webhooks?webhook_id: spec only",
+        "v1beta POST /{}/webhooks?webhook_id: spec only",
         "Not modeled: the endpoint takes it and ignores it, so a created webhook gets an \
          ID the server generates whatever the value (live 2026-11-09, \
          docs/INTERACTIONS_API_GAP.md \"Spec-only query parameters\").",
     ),
     (
-        "GET /{}/triggers/{}/executions?filter: spec only",
+        "v1beta GET /{}/triggers/{}/executions?filter: spec only",
         "Not modeled: ignored, so every expression, a malformed `(((` and one no \
          execution matches included, lists every execution (live 2026-11-09, \
          docs/INTERACTIONS_API_GAP.md \"Spec-only query parameters\").",
     ),
     (
-        "GET /{}/interactions/{}?include_input: bindings only",
-        "`Interactions::get_with_input` sends it, and the stored input comes back as a \
-         `user_input` step (live 2026-11-04, docs/INTERACTIONS_API_GAP.md \"Coverage \
-         oracle\"); the spec does not list it.",
+        "v1beta GET /{}/interactions/{}?include_input: bindings only",
+        INCLUDE_INPUT,
     ),
     (
-        "PATCH /{}/webhooks/{}?update_mask: bindings only",
+        "v1 GET /{}/interactions/{}?include_input: bindings only",
+        INCLUDE_INPUT,
+    ),
+    (
+        "v1beta PATCH /{}/webhooks/{}?update_mask: bindings only",
         "`WebhookUpdate::with_update_mask` sends it, as the bindings define it; the spec \
          puts the mask in a wrapped update body (`UpdateWebhookRequest`) instead. The \
          endpoint takes the query parameter and ignores it, applying the fields in the \
@@ -121,34 +131,55 @@ pub fn spec_endpoints(snapshot: &Value) -> SpecEndpoints {
         .collect()
 }
 
-/// Every spec snapshot's operations, merged: a parameter is required when
-/// either spec says so.
-pub fn all_spec_endpoints() -> SpecEndpoints {
-    let mut out = SpecEndpoints::new();
-    for file in SPECS {
-        let snapshot = api_surface::read_json(file);
-        for (endpoint, query) in spec_endpoints(&snapshot) {
-            let merged = out.entry(endpoint).or_default();
-            for (name, required) in query {
-                *merged.entry(name).or_default() |= required;
-            }
-        }
-    }
-    out
+/// Each spec snapshot's operations, by its version.
+pub fn spec_copies() -> Vec<(&'static str, SpecEndpoints)> {
+    SPECS
+        .iter()
+        .map(|(version, file)| (*version, spec_endpoints(&api_surface::read_json(file))))
+        .collect()
 }
 
-/// Every difference between `spec`'s query parameters and `bindings'`, as
-/// `METHOD /path?key: kind` (see the module doc), that `reasoned` does not
-/// list, and every `reasoned` entry no difference matches. `requests` are
-/// the `(method, target)` pairs the query test captured: a spec-only
-/// parameter one of them sends is not a difference here, since the bindings
-/// check already holds that key to its reason.
+/// Every difference between each spec copy's query parameters and
+/// `bindings'`, as `VERSION METHOD /path?key: kind` (see the module doc),
+/// that `reasoned` does not list, and every `reasoned` entry no difference
+/// matches. `requests` are the `(method, target)` pairs the query test
+/// captured: a spec-only parameter one of them sends is not a difference
+/// here, since the bindings check already holds that key to its reason.
 pub fn spec_query_findings(
-    spec: &SpecEndpoints,
+    specs: &[(&str, SpecEndpoints)],
     bindings: &BTreeMap<String, BTreeSet<String>>,
     requests: &[(String, String)],
     reasoned: &[(&str, &str)],
 ) -> Vec<String> {
+    let mut differences: BTreeMap<String, &str> = BTreeMap::new();
+    for (version, spec) in specs {
+        differences.extend(
+            copy_differences(spec, bindings, requests)
+                .into_iter()
+                .map(|(site, what)| (format!("{version} {site}"), what)),
+        );
+    }
+    let mut problems: Vec<String> = differences
+        .iter()
+        .filter(|(key, _)| !reasoned.iter().any(|(entry, _)| entry == key))
+        .map(|(key, what)| format!("{key}: {what} (list it in SPEC_QUERY with the reason)"))
+        .collect();
+    problems.extend(
+        reasoned
+            .iter()
+            .filter(|(entry, _)| !differences.contains_key(*entry))
+            .map(|(entry, _)| format!("SPEC_QUERY: {entry} matches nothing; delete the entry")),
+    );
+    problems
+}
+
+/// One spec copy's differences from `bindings`, as `METHOD /path?key: kind`
+/// with what each is.
+fn copy_differences(
+    spec: &SpecEndpoints,
+    bindings: &BTreeMap<String, BTreeSet<String>>,
+    requests: &[(String, String)],
+) -> BTreeMap<String, &'static str> {
     let mut sent: BTreeSet<String> = BTreeSet::new();
     for (method, target) in requests {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
@@ -160,7 +191,7 @@ pub fn spec_query_findings(
         }
     }
     let none = BTreeSet::new();
-    let mut differences: BTreeMap<String, &str> = BTreeMap::new();
+    let mut differences = BTreeMap::new();
     for (endpoint, params) in spec {
         let binding = bindings.get(endpoint).unwrap_or(&none);
         for (name, required) in params {
@@ -185,35 +216,33 @@ pub fn spec_query_findings(
             );
         }
     }
-    let mut problems: Vec<String> = differences
-        .iter()
-        .filter(|(key, _)| !reasoned.iter().any(|(entry, _)| entry == key))
-        .map(|(key, what)| format!("{key}: {what} (list it in SPEC_QUERY with the reason)"))
-        .collect();
-    problems.extend(
-        reasoned
-            .iter()
-            .filter(|(entry, _)| !differences.contains_key(*entry))
-            .map(|(entry, _)| format!("SPEC_QUERY: {entry} matches nothing; delete the entry")),
-    );
-    problems
+    differences
 }
 
 /// The snapshots carry each operation's query parameters, and both specs
-/// load: an inert loader would pass the check above vacuously.
+/// load, each on its own: an inert loader would pass the check above
+/// vacuously.
 #[test]
 fn spec_snapshots_carry_query_parameters() {
-    let spec = all_spec_endpoints();
-    assert!(spec.len() > 30, "too few spec operations: {}", spec.len());
+    let copies: BTreeMap<&str, SpecEndpoints> = spec_copies().into_iter().collect();
+    let (v1beta, v1) = (&copies["v1beta"], &copies["v1"]);
+    assert!(
+        v1beta.len() > 30,
+        "too few v1beta operations: {}",
+        v1beta.len()
+    );
+    assert!(v1.len() >= 4, "too few v1 operations: {}", v1.len());
     assert_eq!(
-        spec["GET /{}/webhooks"],
+        v1beta["GET /{}/webhooks"],
         BTreeMap::from([("page_size".into(), false), ("page_token".into(), false)])
     );
-    assert_eq!(
-        spec["GET /{}/interactions/{}"],
-        BTreeMap::from([("last_event_id".into(), false), ("stream".into(), false)])
-    );
-    for file in SPECS {
+    for spec in [v1beta, v1] {
+        assert_eq!(
+            spec["GET /{}/interactions/{}"],
+            BTreeMap::from([("last_event_id".into(), false), ("stream".into(), false)])
+        );
+    }
+    for (_, file) in SPECS {
         let snapshot = api_surface::read_json(file);
         let endpoints: BTreeSet<String> = snapshot["endpoints"]
             .as_array()
@@ -264,10 +293,12 @@ fn schema_refs(schema: &Value) -> Vec<String> {
     }
 }
 
-/// A parameter added to the spec, one removed from it, and one whose
-/// required flag changes are each a finding; a spec-only parameter a verb
-/// sends is the bindings check's to reason about; and a reasoned entry that
-/// matches nothing is stale.
+/// A parameter added to a spec copy, one removed from it, and one whose
+/// required flag changes are each a finding, named by the copy, even where
+/// the other copy still has it as it was; a reason for one copy does not
+/// cover the other; a spec-only parameter a verb sends is the bindings
+/// check's to reason about; and a reasoned entry that matches nothing is
+/// stale.
 #[test]
 fn a_spec_query_parameter_change_is_a_finding() {
     let bindings: BTreeMap<String, BTreeSet<String>> = BTreeMap::from([
@@ -277,7 +308,7 @@ fn a_spec_query_parameter_change_is_a_finding() {
         ),
         ("POST /{}/things".to_string(), BTreeSet::new()),
     ]);
-    let spec = |extra: &[(&str, &str, bool)], drop: &str| -> SpecEndpoints {
+    let copy = |extra: &[(&str, &str, bool)], drop: &str| -> SpecEndpoints {
         let mut spec = SpecEndpoints::from([
             (
                 "GET /{}/things".to_string(),
@@ -295,40 +326,48 @@ fn a_spec_query_parameter_change_is_a_finding() {
             .remove(drop);
         spec
     };
+    // Copy `a` as given, beside an unchanged copy `b`.
+    let specs = |a: SpecEndpoints| vec![("a", a), ("b", copy(&[], ""))];
     let requests = vec![(
         "GET".to_string(),
         "/v1beta/things?page_size=5&page_token=t".to_string(),
     )];
-    let check = |spec: &SpecEndpoints, reasoned: &[(&str, &str)]| {
-        spec_query_findings(spec, &bindings, &requests, reasoned)
+    let check = |specs: &[(&str, SpecEndpoints)], reasoned: &[(&str, &str)]| {
+        spec_query_findings(specs, &bindings, &requests, reasoned)
     };
 
-    assert!(check(&spec(&[], ""), &[]).is_empty());
-    let added = check(&spec(&[("POST /{}/things", "thing_id", false)], ""), &[]);
+    assert!(check(&specs(copy(&[], "")), &[]).is_empty());
+    let added = check(
+        &specs(copy(&[("POST /{}/things", "thing_id", false)], "")),
+        &[],
+    );
     assert_eq!(added.len(), 1, "{added:?}");
-    assert!(added[0].starts_with("POST /{}/things?thing_id: spec only"));
-    let removed = check(&spec(&[], "page_token"), &[]);
+    assert!(added[0].starts_with("a POST /{}/things?thing_id: spec only"));
+    let removed = check(&specs(copy(&[], "page_token")), &[]);
     assert_eq!(removed.len(), 1, "{removed:?}");
-    assert!(removed[0].starts_with("GET /{}/things?page_token: bindings only"));
-    let required = check(&spec(&[("GET /{}/things", "page_size", true)], ""), &[]);
+    assert!(removed[0].starts_with("a GET /{}/things?page_token: bindings only"));
+    let required = check(
+        &specs(copy(&[("GET /{}/things", "page_size", true)], "")),
+        &[],
+    );
     assert_eq!(required.len(), 1, "{required:?}");
-    assert!(required[0].starts_with("GET /{}/things?page_size: required"));
+    assert!(required[0].starts_with("a GET /{}/things?page_size: required"));
 
     // Sent though only the spec lists it: the bindings check reasons about it.
     let sent = vec![("GET".to_string(), "/v1beta/things?filter=x".to_string())];
-    let with_filter = spec(&[("GET /{}/things", "filter", false)], "");
+    let with_filter = specs(copy(&[("GET /{}/things", "filter", false)], ""));
     assert!(spec_query_findings(&with_filter, &bindings, &sent, &[]).is_empty());
 
-    let reasoned = [("POST /{}/things?thing_id: spec only", "Ignored.")];
-    assert!(
-        check(
-            &spec(&[("POST /{}/things", "thing_id", false)], ""),
-            &reasoned
-        )
-        .is_empty()
-    );
+    // A reason is for one copy: a copy that loses the parameter makes it
+    // stale, and one that gains it needs its own.
+    let thing_id = || copy(&[("POST /{}/things", "thing_id", false)], "");
+    let reasoned = [("a POST /{}/things?thing_id: spec only", "Ignored.")];
+    assert!(check(&specs(thing_id()), &reasoned).is_empty());
     assert_eq!(
-        check(&spec(&[], ""), &reasoned),
-        ["SPEC_QUERY: POST /{}/things?thing_id: spec only matches nothing; delete the entry"]
+        check(&specs(copy(&[], "")), &reasoned),
+        ["SPEC_QUERY: a POST /{}/things?thing_id: spec only matches nothing; delete the entry"]
     );
+    let both = check(&[("a", thing_id()), ("b", thing_id())], &reasoned);
+    assert_eq!(both.len(), 1, "{both:?}");
+    assert!(both[0].starts_with("b POST /{}/things?thing_id: spec only"));
 }

@@ -508,7 +508,7 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
 The spec gives three endpoints a query parameter the bindings lack, and the
 bindings give two one the spec lacks. `tests/request_wire_oracle.rs` lists
 each difference in `SPEC_QUERY` with its reason (`spec_query.rs`), along
-with the parameters the spec marks required. Probed on 2026-11-09, with the
+with the parameters the spec marks required, each spec copy on its own. Probed on 2026-11-09, with the
 test resources deleted afterwards. These endpoints take an unknown query
 key without complaint (`bogus_param=1` on a webhook or agent create), so
 being accepted shows nothing; what each did is below. None is modeled: an

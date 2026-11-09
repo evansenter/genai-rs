@@ -2306,18 +2306,21 @@ query key there, and the wrapper is a `400 Unknown parameter`
   `watch_spec_urls.sh` now flags a served spec whose parameters or bodies
   change.
 - The query test diffs the specs' parameters against the bindings' and
-  what the verbs send (`tests/request_wire_oracle/spec_query.rs`). A spec
-  parameter the bindings lack that no verb sends, a binding parameter the
-  spec lacks, and a parameter the spec marks required are findings until
-  `SPEC_QUERY` gives the reason, so a parameter added to or removed from a
-  spec copy, or one made required, fails offline. A spec-only key a verb
-  does send is left to the bindings check, where it needs a
-  `QUERY_ALLOWED` reason.
+  what the verbs send (`tests/request_wire_oracle/spec_query.rs`), each
+  spec copy on its own. A spec parameter the bindings lack that no verb
+  sends, a binding parameter the spec lacks, and a parameter the spec
+  marks required are findings until `SPEC_QUERY` gives the reason for that
+  copy, so a parameter added to or removed from either copy, or one made
+  required, fails offline. The copies are not merged: v1 lists only
+  parameters v1beta also has, so a merged view would never see one
+  removed from v1. A spec-only key a verb does send is left to the
+  bindings check, where it needs a `QUERY_ALLOWED` reason.
 - None of the three is modeled. Each is reasoned in `SPEC_QUERY` and dated
   in the gap tracker: an option that changes nothing would pass every
   structural test and claim a feature the API lacks (D-010).
   `ListAgents::with_parent` stays, since the bindings define the
-  parameter (D-004), and its rustdoc says the API ignores it.
+  parameter (D-004), and its rustdoc, `docs/RESOURCES.md` and
+  `docs/AGENTS_AND_BACKGROUND.md` say the API ignores it.
 - The spec's request bodies are kept in the snapshot but not diffed: a
   request is checked against its binding class, which leads the spec on
   requests (D-040).
