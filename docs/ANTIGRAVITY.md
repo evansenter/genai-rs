@@ -119,11 +119,16 @@ Windows wheel ships, as the Python SDK does. Step 3 asks `python` there
 because python.org's Windows installer provides no `python3`; `python` is
 started only when `python3`'s site-packages lack the harness.
 
-A miss returns `AntigravityError::HarnessNotFound` listing every location
-searched. The search runs on tokio's blocking pool, not on your runtime's
-threads, and each interpreter gets 10 seconds to list its site-packages
-before the search moves on (on Windows from `python3` to `python`, then to
-`PATH`). The read of the installed wheel's version beside the binary gets
+A path given in step 1 or 2 is the harness, as the Python SDK takes the
+variable's: when it is not a file, `spawn()` fails with
+`AntigravityError::HarnessNotFound` naming it, and nothing else is searched,
+so a mistyped path cannot start a different harness. An empty
+`ANTIGRAVITY_HARNESS_PATH` counts as unset. Any other miss returns
+`HarnessNotFound` listing every location searched. The search runs on
+tokio's blocking pool, not on your runtime's threads, and each interpreter
+gets 10 seconds to list its site-packages before the search moves on (on
+Windows from `python3` to `python`, then to `PATH`). The read of the
+installed wheel's version beside the binary gets
 the same 10 seconds, on a thread of its own, so a read abandoned at the
 limit does not hold up your runtime's shutdown. File checks and the start
 of the binary itself are not bounded.

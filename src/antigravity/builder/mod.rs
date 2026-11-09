@@ -138,8 +138,10 @@ impl std::fmt::Debug for AgentBuilder {
 }
 
 impl AgentBuilder {
-    /// Sets an explicit path to the `localharness` binary, bypassing
-    /// discovery.
+    /// Sets an explicit path to the `localharness` binary, in place of
+    /// discovery: `ANTIGRAVITY_HARNESS_PATH`, site-packages and `PATH` are
+    /// not searched. When the path is not a file, `spawn()` fails with
+    /// [`AntigravityError::HarnessNotFound`] naming it.
     #[must_use]
     pub fn with_harness_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.harness_path = Some(path.into());
@@ -587,7 +589,9 @@ impl AgentBuilder {
     ///   alongside a gate they bypass without
     ///   [`Self::with_ungated_subagents`], or when a model or a Gemini base
     ///   URL is configured without a non-blank API key.
-    /// - [`AntigravityError::HarnessNotFound`] when discovery fails.
+    /// - [`AntigravityError::HarnessNotFound`] when discovery fails, or
+    ///   when the path [`Self::with_harness_path`] or
+    ///   `ANTIGRAVITY_HARNESS_PATH` names is not a file.
     /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
     ///   with the harness's stderr tail when startup fails.
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {

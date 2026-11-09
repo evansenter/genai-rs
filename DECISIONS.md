@@ -2285,3 +2285,28 @@ the evaluators do not know counts as left out, so an include behind one
 fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
+
+---
+
+## D-NEXT-I2-a — A harness path the caller names is used as given (2026-11-09)
+
+**Context.** When the path given with `with_harness_path` or
+`ANTIGRAVITY_HARNESS_PATH` did not exist, discovery added it to
+`searched` and went on to site-packages and `PATH`, so a typo silently
+ran a different harness. `with_harness_path`'s rustdoc said it bypassed
+discovery, and the Python SDK returns the variable's path as given
+(#504's I-8).
+
+**Decision.** A named path is the harness or nothing: when it is not a
+file, discovery returns `HarnessNotFound` listing that one path, marked
+"(not a file)", and searches nothing else. The explicit path wins over
+the variable, even when the variable names a real binary, as it always
+did. An empty `ANTIGRAVITY_HARNESS_PATH` counts as unset, as it does in
+Python, where the empty string is false.
+
+Rejected: a warning and fall-through. The fall-through is the bug: the
+harness it finds may be another version, with another protocol.
+
+**Consequences.** Breaking for a setup that relied on the fall-through:
+fix or remove the path.
+

@@ -88,7 +88,8 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 /// extended):
 ///
 /// 1. Explicit path from the builder.
-/// 2. `ANTIGRAVITY_HARNESS_PATH` environment variable.
+/// 2. `ANTIGRAVITY_HARNESS_PATH` environment variable, when set and not
+///    empty.
 /// 3. `google/antigravity/bin/localharness` inside `python3`'s
 ///    site-packages directories, then (on Windows) `python`'s
 ///    ([`PYTHONS`]).
@@ -96,6 +97,10 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 ///
 /// On Windows steps 3 and 4 look for `localharness.exe` first
 /// ([`HARNESS_FILE_NAMES`]).
+///
+/// A path named in step 1 or 2 is the harness, as the reference SDK takes
+/// the variable's: when it is not a file, discovery fails naming it rather
+/// than search on, so a mistyped path cannot start another harness.
 ///
 /// An interpreter is asked for its site-packages only when the steps
 /// before it find nothing, so an explicit path costs no interpreter
@@ -161,8 +166,8 @@ async fn off_runtime<T: Send + 'static>(
 /// Pure discovery core, separated for unit testing. `names` are the binary's
 /// file names to look for in site-packages and on `PATH`. `site_dirs` yields
 /// each interpreter's site-packages directories in turn; it is advanced only
-/// while the explicit path, the environment variable and the interpreters
-/// before miss.
+/// when neither an explicit path nor the environment variable is given, and
+/// while the interpreters before miss. An empty `env_path` counts as unset.
 fn discover_in(
     names: &[&str],
     explicit: Option<&Path>,
@@ -170,23 +175,24 @@ fn discover_in(
     site_dirs: impl IntoIterator<Item = Vec<PathBuf>>,
     path_var: Option<&std::ffi::OsStr>,
 ) -> Result<PathBuf, AntigravityError> {
-    let mut searched = Vec::new();
-
+    // A named path is the harness or nothing: searching on would run
+    // whatever else is installed in its place.
+    let named = |path: &Path, label: String| {
+        if path.is_file() {
+            Ok(path.to_path_buf())
+        } else {
+            Err(AntigravityError::HarnessNotFound {
+                searched: vec![format!("{label} (not a file)")],
+            })
+        }
+    };
     if let Some(path) = explicit {
-        if path.is_file() {
-            return Ok(path.to_path_buf());
-        }
-        searched.push(format!("explicit path {}", path.display()));
+        return named(path, format!("explicit path {}", path.display()));
     }
-
-    if let Some(path) = env_path {
-        if path.is_file() {
-            return Ok(path.to_path_buf());
-        }
-        searched.push(format!("{HARNESS_PATH_ENV}={}", path.display()));
-    } else if explicit.is_none() {
-        searched.push(format!("{HARNESS_PATH_ENV} (unset)"));
+    if let Some(path) = env_path.filter(|path| !path.as_os_str().is_empty()) {
+        return named(path, format!("{HARNESS_PATH_ENV}={}", path.display()));
     }
+    let mut searched = vec![format!("{HARNESS_PATH_ENV} (unset)")];
 
     let mut any_site_dirs = false;
     for site_dirs in site_dirs {
