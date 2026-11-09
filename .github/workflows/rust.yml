@@ -641,6 +641,51 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: cargo nextest run --features antigravity --cargo-profile release --lib -E 'test(/process_tree/)'
 
+  # The macOS legs above run on main pushes and the schedule only, so a PR
+  # that breaks process_tree.rs's libproc lookup would first fail on main.
+  # This job runs those tests on macOS for a PR that changes the process
+  # code (src/antigravity/process*.rs) or this workflow, and passes without
+  # building otherwise. Not a required check: it does not run on pushes.
+  process-tree-macos:
+    name: Process Tree (macOS)
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    steps:
+      # A pull request's checkout is its merge commit: its first parent is
+      # the base, so the diff between them is what the merge would change.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check whether the process code changed
+        id: paths
+        run: |
+          set -euo pipefail
+          # In doubt (not a merge commit), test.
+          if ! git rev-parse -q --verify 'HEAD^2' >/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed_files=$(git diff --name-only 'HEAD^1' HEAD)
+          changed=false
+          while IFS= read -r path; do
+            case "$path" in
+              src/antigravity/process*.rs|.github/workflows/rust.yml)
+                echo "Process code changed: $path"
+                changed=true
+                ;;
+            esac
+          done <<< "$changed_files"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.paths.outputs.changed == 'true'
+      - uses: taiki-e/install-action@cargo-nextest
+        if: steps.paths.outputs.changed == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.paths.outputs.changed == 'true'
+      - name: Test the antigravity process tree
+        if: steps.paths.outputs.changed == 'true'
+        run: cargo nextest run --features antigravity --lib -E 'test(/process_tree/)'
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
@@ -848,7 +893,7 @@ jobs:
     # never both run). tests/ci_workflows/ enforces it. Jobs that skip
     # pushes report `skipped` here, which neither escalates nor blocks the
     # resolve.
-    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics]
+    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, process-tree-macos, cross-platform, coverage, build-metrics]
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'evansenter'
     runs-on: ubuntu-latest
     permissions:
@@ -891,7 +936,7 @@ jobs:
     # tests/ci_coverage.rs enforces it. Push- or PR-only jobs report
     # `skipped` here, which neither escalates nor blocks the resolve (as
     # main-push-status always does on a schedule).
-    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics, main-push-status]
+    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, captured-fixtures, fmt, shell-scripts, clippy, doc, msrv, process-tree-macos, cross-platform, coverage, build-metrics, main-push-status]
     if: always() && github.event_name == 'schedule' && github.repository_owner == 'evansenter'
     runs-on: ubuntu-latest
     permissions:
