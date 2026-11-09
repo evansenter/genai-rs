@@ -409,29 +409,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: a string passed to Antigravity's `with_system_instructions`
   is added to the harness's own prompt instead of replacing it**, as in the
   Python SDK, so the harness's tool guidance, safety rules, workspace list,
-  skills list and built-in subagents stay (D-023). To replace the prompt as
-  before, pass `SystemInstructions::custom(text)`. The same holds for
+  skills list and built-in subagents stay (D-023). The same holds for
   `Subagent::with_system_instructions`, whose sections are now titled
   `user_system_instructions` instead of `System`. The workspace note this
   crate adds now goes only with custom instructions; the harness's prompt
   lists the workspaces itself (verified on 0.1.23). Both setters take
-  `impl Into<SystemInstructions>`: a `&str`, `String`, `&String`,
-  `Cow<str>` or `Box<str>` compiles unchanged, while a value of a generic
-  `T: Into<String>` needs `.into()` to a `String` first.
+  `impl Into<SystemInstructions>`. Migration: to replace the prompt as
+  before, pass `SystemInstructions::custom(text)`. A `&str`, `String`,
+  `&String`, `Cow<str>` or `Box<str>` compiles unchanged, while a value of
+  a generic `T: Into<String>` needs `.into()` to a `String` first.
 - **Breaking: Antigravity's `chat` and `send_streaming` take
-  `impl Into<Prompt>` instead of `impl Into<String>`.** A `&str`, `String`,
-  `&String`, `Cow<str>` or `Box<str>` argument compiles unchanged. A value
-  of a generic `T: Into<String>` does not: call `.into()` to make it a
-  `String` first.
+  `impl Into<Prompt>` instead of `impl Into<String>`.** Migration: a
+  `&str`, `String`, `&String`, `Cow<str>` or `Box<str>` argument compiles
+  unchanged. A value of a generic `T: Into<String>` does not: call
+  `.into()` to make it a `String` first.
 - **Breaking: `BuiltinTool::StartSubagent` is `BuiltinTool::InvokeSubagent`,
   and the subagent tool is named `invoke_subagent` everywhere**: in
   `ToolAction::tool_name()`, in the pre-tool hook's `ToolInvocation`, and as
-  a policy target. Rename the variant and any string match;
+  a policy target. Migration: rename the variant and any string match;
   `policy::deny("start_subagent")` and the other constructors still target
   it.
 - **Breaking: enabling the subagent builtin no longer offers the model
   `define_subagent`**, with which it writes subagents of its own at runtime
-  (D-023). Call `with_define_subagent_tool(true)` to keep it.
+  (D-023). Migration: call `with_define_subagent_tool(true)` to keep it.
 - **Breaking: Antigravity's `spawn()` refuses subagents beside a gate they
   bypass** (#520, D-042). Harness 0.1.23 applies neither policies,
   the pre-tool hook nor workspace containment to a subagent's own tool
@@ -453,36 +453,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evaluator.** A named tool still beats `mcp_<server>_*`, which beats `"*"`;
   within a tier, deny now beats confirm/ask, which beats allow, where the
   first registered rule used to win. `[allow("t"), deny("t")]` now denies
-  `t`. Remove the rule you do not want, or narrow it with `when`. `Policy`
-  is no longer `PartialEq`/`Eq`, as it can hold closures.
+  `t`. `Policy` is no longer `PartialEq`/`Eq`, as it can hold closures.
+  Migration: remove the rule you do not want, or narrow it with `when`, and
+  drop any `==` between two policies.
 - **Breaking: a call the pre-tool hook or a policy denied surfaces as
   `ToolAction::Denied { name, args }`**, named and with the arguments it was
   judged on. It was a `ToolAction::Error` named `"error"`, as the harness's
-  error step carries no action. Match on `Denied` (the event's decision is
-  unchanged).
+  error step carries no action. Migration: match on `Denied` where you
+  matched that `Error` (the event's decision is unchanged).
 - **Breaking: `AntigravityAgent::shutdown()` returns
   `AntigravityError::HarnessExited`** with the exit code and stderr tail when
   the harness exits with a failure status after stdin closes, as the Python
   SDK raises. Escalated exits (SIGTERM, SIGKILL) still return `Ok`.
+  Migration: handle the `Err` where `shutdown()` was treated as
+  infallible, or discard it (`let _ =`) where a failed exit after the
+  session does not matter.
 - **Breaking: Antigravity protocol types changed with the new options.**
   `HarnessSideTools.run_command` and `.subagents` are `RunCommandToolConfig`
-  and `SubagentsConfig` (`ToolToggle::new(on).into()` builds the old
-  shape); `InputEvent::CallHookResponse` and
+  and `SubagentsConfig`; `InputEvent::CallHookResponse` and
   `OutputPayload::CallHookRequest` hold a `Box`; `HookVerdict`,
   `GeminiModelOptions`, `McpServerConfig`, `CustomAgent`,
-  `SystemInstructionPart`, `PolicyConfig` and `HarnessConfig` gained fields
-  (build them with `..Default::default()`).
+  `SystemInstructionPart`, `PolicyConfig` and `HarnessConfig` gained fields.
+  Migration: `ToolToggle::new(on).into()` builds the old shape of the two
+  tools, `Box::new` wraps the hook payloads, and `..Default::default()`
+  fills the new fields.
 - **Breaking: Antigravity hooks run on a dedicated thread, not on the
   thread driving the turn.** A hook that blocks (`on_pre_tool`,
   `on_post_tool`, `on_questions`) therefore no longer stalls the runtime,
   and the turn deadline still fires. A hook abandoned at the deadline runs
   on until it returns, but holds up neither runtime shutdown nor process
   exit. A hook no longer sees the turn's thread-local state, a tokio
-  `task_local!` scoped around the turn, or the turn's current tracing span;
-  take such state in through the hook's captures, and enter a span inside
-  the hook if its events should nest under one.
+  `task_local!` scoped around the turn, or the turn's current tracing span.
   `tokio::runtime::Handle::current()` still works inside one. A panicking
-  hook still panics the turn.
+  hook still panics the turn. Migration: take such state in through the
+  hook's captures, and enter a span inside the hook if its events should
+  nest under one.
 - **Breaking: the Antigravity turn deadline covers this crate's own work in
   the turn.** A custom tool or hook still running when `with_turn_timeout`'s
   budget runs out now ends the turn with `AntigravityError::Timeout`, whose
@@ -496,9 +501,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to one CPU), it holds the thread that drives the timer until it returns;
   make such a tool `async`, or call `spawn_blocking` inside it. A tool that
   read a tokio `task_local!` of the turn's task no longer sees it; pass the
-  value as an argument or through the tool service's state. Raise the
-  budget, or call `without_turn_timeout()`, for tools that legitimately run
-  long.
+  value as an argument or through the tool service's state. Migration:
+  raise the budget, or call `without_turn_timeout()`, for tools that
+  legitimately run long.
 - **Breaking: unparseable Antigravity pre-tool hook arguments fail
   closed.** When the harness sends tool arguments that are not valid JSON
   and a pre-tool hook is set, the call is denied before the hook runs, with
@@ -506,7 +511,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate allows. Without a hook, name-based policies decide as before. A
   custom tool call whose arguments decode in neither of the harness's
   encodings is answered with an error instead of running the tool on
-  `Null`. Well-formed calls are unaffected.
+  `Null`. Migration: none; well-formed calls are unaffected.
 - **Breaking: a blank Antigravity API key counts as no key.**
   `with_api_key("")` (or whitespace) together with `with_model` or
   `with_gemini_base_url` now fails at `spawn()` with
@@ -514,7 +519,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sent to the harness. Before, an empty key went on the wire as an unset
   field and the harness fell back to its environment's `GEMINI_API_KEY`.
   Code like `.with_api_key(env::var("X").unwrap_or_default())` hits this.
-  Pass a real key, or leave out `with_api_key`.
+  Migration: pass a real key, or leave out `with_api_key`.
 - **Breaking: `AntigravityError` has no `#[from]` conversions, and its
   causes are explicit.** `Json` is removed. A harness message this client
   cannot parse, which was `Json`, is now `Protocol`, as `Protocol`'s doc
@@ -1207,9 +1212,9 @@ every item probed live; #463).
 
 - **Breaking: `genai-rs` no longer turns on tokio's full feature set.** It
   asks for `fs` and `time` (plus `io-util`, `net`, `process`, `rt` and `sync`
-  with the `antigravity` feature). A crate that wrote `#[tokio::main]` while
-  relying on genai-rs to enable `rt-multi-thread` and `macros` must now
-  enable them itself.
+  with the `antigravity` feature). Migration: a crate that wrote
+  `#[tokio::main]` while relying on genai-rs to enable `rt-multi-thread` and
+  `macros` enables them in its own tokio dependency.
 - `GenaiError::is_retryable()` is false for an HTTP error from a request
   that can't be built (a scheme-less `with_base_url`, a rejected header) or a
   redirect loop. They fail identically every time, and a retry loop spent its
@@ -1219,7 +1224,8 @@ every item probed live; #463).
   0.1.23's new `runWorkflow` toggle (disabled), which 0.1.18 rejects at init,
   and models the new non-terminal `TrajectoryState::WaitingForSubagents`,
   which otherwise read as version drift. The full harness suite passes on
-  0.1.23.
+  0.1.23. Migration: install `google-antigravity==0.1.23`; an older
+  harness fails at init.
 - **Breaking: Antigravity agents are confined to their workspaces by default.** The
   harness contains its file tools only when the client sends a policy
   config, which this crate never did: an agent could read any file the
@@ -1227,19 +1233,24 @@ every item probed live; #463).
   0.1.18 and 0.1.23). With a workspace configured, `spawn()` now sends one;
   a read outside the workspaces fails with `Access to path "…" is denied`.
   The harness still allows the system temp directory and
-  `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
-  restores the old behavior, and an explicit `true` with no workspace fails
-  `spawn()` instead of running unconfined.
+  `~/.gemini/antigravity/brain`. An explicit
+  `with_workspace_containment(true)` with no workspace fails `spawn()`
+  instead of running unconfined. Migration: an agent that must reach files
+  outside its workspaces calls `AgentBuilder::with_workspace_containment(false)`,
+  which restores the old behavior.
 - **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
   `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
   `store: false` stream's status updates carry no interaction ID (verified
   live 2026-11-01), and the crate dropped them with a `warn!`; they now reach
-  the caller. Background streams send `usage` mid-run.
+  the caller. Background streams send `usage` mid-run. Migration: a
+  pattern that lists `StatusUpdate`'s fields adds `..` or the new ones, and
+  code that read `interaction_id` as a `String` handles `None`.
 - **Breaking: removed `GenerationConfig::presence_penalty` and
   `frequency_penalty`, with `with_presence_penalty()` and
   `with_frequency_penalty()`.** The API rejects both (`400 Unknown parameter
   'presence_penalty' at 'generation_config'`, 2026-11-01), and google-genai
   2.34.0 does not list them, so any request that set one failed.
+  Migration: remove the calls; no request that made one succeeded.
 - A stream whose body ends before `interaction.completed` or an error event
   now ends with `Err(GenaiError::MalformedResponse)`, so a cut-off connection
   can't pass for a finished stream. A stream whose last event is
