@@ -2308,3 +2308,58 @@ through the agent.
 **Consequences.** Links to `src/antigravity/agent.rs:<line>` for the
 initialization exchange or the session hooks, written before 2026-11-09,
 point at the old layout.
+
+---
+
+## D-NEXT-I3-a — Every message to the harness has a deadline, and a dropped connection reads as closed (2026-11-09)
+
+**Context.** No deadline covered the Antigravity client's WebSocket sends
+(#504, I-7). `chat()` and `send_streaming()` sent the message before the
+turn deadline started, the halt before a turn went out before the drain
+budget started, `Session::close` took the sink's lock outside its bound,
+and the send itself had none. A send of 16 MB to a peer that had
+completed the upgrade and stopped reading was still blocked after 5 s,
+so a wedged harness held a turn with a large prompt (inline media) past
+`with_turn_timeout`, against its rustdoc. Separately, a harness that
+crashed or was killed ended the connection without a close frame, which
+tungstenite reports as an error: the turn failed with a `WebSocket` read
+error carrying no stderr, where `ConnectionClosed` says it is for exactly
+that case and carries the harness's stderr.
+
+**Decision.**
+- A turn's state, and so its deadline, is created before its message is
+  sent, and the send is bounded by that deadline. A send that times out
+  fails the turn with `Timeout` (`agent turn (the harness did not take the
+  message)`) and leaves the turn unfinished, so the next turn halts and
+  drains it first (D-041).
+- The halt-and-drain budget starts before the halt is sent and bounds the
+  send.
+- `close()` takes the sink's lock, sends the close frame and flushes, all
+  within its 500 ms.
+- Every send is bounded by `SEND_TIMEOUT`, 30 s, the wait for the sink
+  included, and fails with `Timeout` past it. A harness that reads takes
+  even tens of megabytes over loopback in well under a second, so 30 s is
+  never a slow harness; it matches the initialization and session-end
+  budgets. It covers what has no deadline of its own: `cancel()`, a
+  trigger's delivery, the session-end request, the initialization message,
+  and the message of a turn with no timeout. A turn whose timeout is longer
+  gets the earlier of the two.
+- A read that finds the connection ended without a close frame, or reset
+  or aborted by the peer, returns end-of-stream, as a close frame does. A
+  turn and `next_trigger_turn` then fail with `ConnectionClosed` and the
+  stderr tail, and initialization with `InitFailed`.
+
+Rejected: bounding only the turn's send. It leaves `cancel()`, trigger
+delivery and shutdown able to hang on the same harness, and a turn with
+no timeout. Rejected: reporting a failed send as `ConnectionClosed`. The
+sink handle that cancels and delivers triggers has no harness to read the
+stderr from, so sends keep `WebSocket`.
+
+**Consequences.** A send that times out leaves the rest of its frame
+queued in the sink, and the next message goes out behind it: if the
+harness reads again, it gets the abandoned message, then the next turn's
+halt. A paused-clock test drives `chat()` and `send_streaming()` against a
+stand-in harness that stops reading (`agent_tests.rs`), `session.rs`'s
+tests check the send bound, the close bound and a dropped connection, and
+the scripted `lifecycle.rs` kills the harness mid-turn and while
+`next_trigger_turn` waits.
