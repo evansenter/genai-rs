@@ -70,8 +70,10 @@ POINTER = re.compile(
     r"\b(?:tracked\s+(?:in|by|on|at)\s+#(\d+)|see\s+#(\d+)\s+for\b|until\s+#(\d+))",
     re.I,
 )
-# What starts a comment or a quote, dropped from a wrapped line's next one.
-LEAD = re.compile(r"^\s*(?://[/!]?|#+|\*|>|--)?\s*")
+# What starts a comment or a quote, dropped from a wrapped line's next one:
+# a marker followed by a space, so the `#12` a hard-wrapped Markdown line
+# can start with stays.
+LEAD = re.compile(r"^\s*(?:(?://[/!]?|#+|\*|>|--)(?=\s|$))?\s*")
 
 
 def gh(*args):

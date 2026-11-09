@@ -130,6 +130,21 @@ grep -qF 'src/lib.rs:3: "tracked in #539" names #539' <<<"$out" ||
     fail "a pointer wrapped across two comment lines was missed: $out"
 issue 539 open "Files API: a chosen upload name"
 
+# Hard-wrapped Markdown can break just before the `#N`, so the next line
+# starts with it: that `#` is the issue's, not a heading's or a comment's.
+W="$WORK/wrapped"
+mkdir -p "$W"
+git -C "$W" init -q
+printf '%s\n' 'Prose that is tracked in' '#500 and more.' 'Also see' '#12 for the rest.' \
+    '- An item wrapped until' '  #404.' '' '## Not a pointer: tracked in' '# 500 heading' >"$W/GUIDE.md"
+git -C "$W" add GUIDE.md
+run --print "$W"
+expect_rc "--print, pointers wrapped before the #" 1
+for want in 'GUIDE.md:1: "tracked in #500" names #500' 'GUIDE.md:3: "see #12 for" names #12' \
+    'GUIDE.md:5: "until #404" names #404' '3 pointer(s) to 3 issue(s); 3 name a closed one.'; do
+    grep -qF -- "$want" <<<"$out" || fail "a pointer wrapped before its # was missed: $want"$'\n'"$out"
+done
+
 # No issue yet: one is filed, labeled, listing each finding, with the
 # marker; an issue with a similar title is not ours.
 GH_LIST=$OTHER run "$T"
