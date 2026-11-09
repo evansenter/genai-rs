@@ -297,7 +297,15 @@ impl AntigravityAgent {
         if is_main && let Some(reason) = &update.stop_reason {
             turn.stop_reason = Some(reason.clone());
         }
-        let error = non_blank(update.error.as_deref());
+        // Harness 0.1.23 can report the error that ends its run on a
+        // non-terminal update (a 503 while waiting for subagents) and then
+        // go idle without it, so the main trajectory's first error is kept
+        // for the terminal update.
+        if is_main && let Some(error) = non_blank(update.error.as_deref()) {
+            turn.trajectory_error
+                .get_or_insert_with(|| error.to_string());
+        }
+        let error = non_blank(update.error.as_deref()).or(turn.trajectory_error.as_deref());
         // A turn the pre-turn hook refused ends in one of the failing
         // states below, carrying the hook's reason.
         let denied = turn.pre_turn_denied;
@@ -482,6 +490,10 @@ pub(super) struct TurnState {
     /// (from a system error step), so a turn the harness then ends with an
     /// error is a [`TurnFailure::ModelBackend`].
     backend_status: Option<u32>,
+    /// The first error a main-trajectory state update carried this turn,
+    /// which fails the turn when it ends even if the terminal update has
+    /// none.
+    trajectory_error: Option<String>,
 }
 
 impl TurnState {
@@ -510,6 +522,7 @@ impl TurnState {
             draining: false,
             pre_turn_denied: false,
             backend_status: None,
+            trajectory_error: None,
         }
     }
 

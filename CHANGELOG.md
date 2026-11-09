@@ -987,6 +987,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AgentBuilder`'s, which printed the values given to `add_model_header`
   and `add_harness_env`. `dbg!` or `tracing::debug!(?value)` undid the
   wire inspector's redaction.
+- An Antigravity turn whose model call failed after the agent delegated to
+  a subagent (a 503 with no retries left) fails with
+  `AntigravityError::Turn`, as one without a subagent does. Harness 0.1.23
+  reports that error before the turn's final state, so `chat` returned
+  `Ok` with the error only in `errors()`, and the next call failed on the
+  closed connection.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed

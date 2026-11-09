@@ -2319,7 +2319,12 @@ printed their source's text in `Display` while also returning it from
   - `ModelBackend` for a system error step with an HTTP error status:
     400, 401 and 403 fail the turn at once, as before; any other (a 503
     whose retries ran out) is remembered, and the error that then ends
-    the main trajectory is that failure, with its status. The step's
+    the main trajectory is that failure, with its status. The main
+    trajectory's first error is remembered too, so it fails the turn
+    when it arrives before the terminal update: after a delegation,
+    0.1.23 reports a 503 while waiting for subagents and then goes idle
+    with no error, and `chat` returned `Ok` with the error in
+    `errors()` on a session that was gone. The step's
     `httpCode` holds gRPC codes too (a failed MCP load carries 2), so
     only 400 to 599 count.
   - `Denied` for a turn whose pre-turn hook this client answered with a
@@ -2327,7 +2332,7 @@ printed their source's text in `Display` while also returning it from
     hook's verdict is recorded on the turn, rather than the reason
     matched in the harness's message.
   - `Cancelled` for a main trajectory cancelled with no denial;
-    `Trajectory` for one that went idle with an error otherwise; `Hook`
+    `Trajectory` for one that ended with an error otherwise; `Hook`
     for a hook thread that did not start or ended without a result.
 - `TurnFailure::ends_session()` is true for `ModelBackend` and
   `Trajectory`. Scripted against harness 0.1.23: 400, 401, 403, a 503

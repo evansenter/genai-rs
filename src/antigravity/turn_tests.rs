@@ -213,6 +213,46 @@ fn test_a_failed_trajectory_names_its_kind() {
 }
 
 #[test]
+fn test_an_error_on_a_non_terminal_update_fails_the_turn_at_its_end() {
+    // 0.1.23, after a delegation: the main trajectory's error arrives while
+    // it waits for subagents, and the idle that follows carries none.
+    for (status, expected) in [
+        (Some(503), TurnFailure::ModelBackend { status: 503 }),
+        (None, TurnFailure::Trajectory),
+    ] {
+        let mut turn = TurnState::new(None, None);
+        turn.backend_status = status;
+        let waiting = trajectory_update(
+            Some("root"),
+            TrajectoryState::WaitingForSubagents,
+            Some("model unreachable: Error 503"),
+        );
+        AntigravityAgent::process_trajectory_update(&waiting, &mut turn).unwrap();
+        // A later update without the error does not clear it.
+        let running = trajectory_update(Some("root"), TrajectoryState::Running, Some(""));
+        AntigravityAgent::process_trajectory_update(&running, &mut turn).unwrap();
+        let idle = trajectory_update(Some("root"), TrajectoryState::Idle, None);
+        let err = AntigravityAgent::process_trajectory_update(&idle, &mut turn).unwrap_err();
+        let AntigravityError::Turn { kind, message } = &err else {
+            panic!("expected a Turn error: {err:?}");
+        };
+        assert_eq!(*kind, expected);
+        assert_eq!(message, "model unreachable: Error 503");
+        assert!(!turn.finished);
+    }
+
+    // A subagent's error is the subagent's: the parent turn still finishes.
+    let mut turn = TurnState::new(None, None);
+    turn.main_trajectory = Some("root".to_string());
+    let mut sub = trajectory_update(Some("sub"), TrajectoryState::Running, Some("sub failed"));
+    sub.parent_trajectory_id = Some("root".to_string());
+    AntigravityAgent::process_trajectory_update(&sub, &mut turn).unwrap();
+    let idle = trajectory_update(Some("root"), TrajectoryState::Idle, None);
+    AntigravityAgent::process_trajectory_update(&idle, &mut turn).unwrap();
+    assert!(turn.finished);
+}
+
+#[test]
 fn test_backend_status_reads_http_errors_on_system_steps_only() {
     let step = |source: &str, code: u32| -> StepUpdate {
         serde_json::from_value(serde_json::json!({
