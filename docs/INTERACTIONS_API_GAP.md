@@ -34,15 +34,17 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
 Rank 2 disagrees with rank 1 in both directions, which is why nothing from
-the bindings is modeled until it is probed. From the 2.25.0 sweep:
+the bindings is modeled until it is probed. The 2.25.0 sweep found both:
 
-- **Bindings list surface the API rejects:** `cached_content` and
+- **The bindings listed surface the API rejected:** `cached_content` and
   `transcription_config.language_hints` (`400 Unknown parameter`), the
-  `service_tier: "deferred"` value, and the string arm of `environment.env`.
-- **The API accepts surface the bindings lack:** the tool types
-  `filesystem`, `tool_search`, `manage_task`, `schedule`, `bash`; the
-  annotation types `in_context_file_citation` and `reference_metadata`; and
-  extra usage and environment fields.
+  `service_tier: "deferred"` value (named Vertex-only and modeled since the
+  2.34.0 sweep), and the string arm of `environment.env`.
+- **The API accepted surface the bindings lacked:** the tool types
+  `filesystem`, `tool_search`, `manage_task`, `schedule`, `bash` (rejected
+  with a 400 since the 2.34.0 sweep); the annotation types
+  `in_context_file_citation` and `reference_metadata`; and extra usage and
+  environment fields.
 
 ## Coverage oracle (2026-11-04)
 
@@ -220,6 +222,16 @@ from here rather than repeated.
   identity in `docs/ENUM_WIRE_FORMATS.md`. An
   interaction can end in `requires_action` after every MCP call was
   answered (see [Server-side changes](#server-side-changes-live-2026-10-01)).
+  A create whose `mcp_server` the API cannot use fails with a status that
+  says why (2026-11-05): a server it cannot reach is `500 An internal error
+  occurred while connecting to the MCP server.`, a URL that is no MCP
+  server `501 MCP server returned an error. Please check the server
+  configuration.`, and a malformed tool `400 Unknown parameter ...`. The
+  501's message names the server's error, so a real server that fails
+  (one that is down) should get it too; that case was not observed. It is
+  the one 501 that can pass, which is why `docs/RELIABILITY.md` and
+  `docs/ERROR_HANDLING.md` single it out. `classify_mcp_create_error` in
+  `tests/tools_and_config_tests.rs` sorts the three.
 - **File search** can't be combined with `google_search` or `url_context`
   (2026-08-16: `400 '<other>' and 'file_search' cannot be combined in the
   same request. Please choose one to continue.`); `code_execution` is

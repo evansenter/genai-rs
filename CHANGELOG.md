@@ -785,8 +785,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.into_iter()` before any other iterator adapter (`.into_iter().map(..)`).
   A `for` loop over them is unchanged.
 - **Breaking: the large, rare payloads of the stream types are boxed**
-  (#490). `StreamChunk::Created { interaction }`, `StreamChunk::Completed`,
-  and `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
+  (#490). `StreamChunk::Created { interaction, .. }`,
+  `StreamChunk::Completed`, and
+  `AutoFunctionStreamChunk::ExecutingFunctions { response, .. }`,
   `Complete` and `MaxLoopsReached` hold a `Box<InteractionResponse>`;
   `StreamChunk`'s `usage`, `total_usage` and `step_usage` fields are
   `Option<Box<UsageMetadata>>`; and `StepDelta::ThoughtSummary`'s `content`
@@ -794,9 +795,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so every `StreamEvent`, a one-word text delta included, was 1.9 KB; it is
   216 bytes now. Migration: method calls and field reads go through the box
   unchanged (`response.as_text()`, `usage.total_tokens`); where you need the
-  value itself, write `*response`
-  (`StreamChunk::Completed(response) => Some(*response)`); build a chunk
-  with `Box::new(..)`.
+  value itself, dereference the box (`*response`, or
+  `StreamChunk::Completed { interaction, .. } => Some(*interaction)`);
+  build a chunk with `Box::new(..)`.
 - **Breaking: strict mode is the `--cfg genai_strict_unknown` flag; the
   `strict-unknown` Cargo feature is gone** (#490, D-030). Cargo unifies
   features across a build, so any crate that turned the feature on made

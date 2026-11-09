@@ -52,7 +52,8 @@ request meets on every attempt:
 - 501 Not Implemented: the server does not support the method or feature
   (Google's `UNIMPLEMENTED`). One kind can pass: the API also answers 501
   when a remote MCP server (an `mcp_server` tool) returns an error, with a
-  message saying "MCP server returned an error". A URL that is no MCP
+  message saying "MCP server returned an error"
+  ([live record](INTERACTIONS_API_GAP.md#tools)). A URL that is no MCP
   server gets that on every attempt, but so does a real one while it is
   down. To retry it, match the 501 and that message before calling
   `is_retryable()`.

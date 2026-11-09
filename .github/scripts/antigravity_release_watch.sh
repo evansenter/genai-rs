@@ -103,8 +103,9 @@ python3 -I "$HERE/dump_sdk_options.py" --lenient "$LATEST_DIR" \
   > "$WORK/latest.options" 2> "$WORK/latest.problems"
 diff "$WORK/pinned.options" "$WORK/latest.options" > "$WORK/options.diff" || [ $? -eq 1 ]
 
-# Where the Python SDK chooses its transport. #494 is waiting on it making the
-# Interactions-mode transport (use_interactions_api) its default.
+# Where the Python SDK chooses its transport. The #494 decision (D-018) is
+# revisited once the SDK makes the Interactions-mode transport
+# (use_interactions_api) its default.
 grep -rn --include='*.py' 'use_interactions_api' "$LATEST_DIR/google/antigravity" 2>/dev/null \
   | grep -v -e '_test\.py:' -e '_pb2\.py:' | sed "s|$LATEST_DIR/||" | cut -c1-200 | head -20 \
   > "$WORK/transport.txt" || true
