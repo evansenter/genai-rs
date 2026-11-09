@@ -599,14 +599,17 @@ checks on it:
   path no endpoint takes. A template that keeps a full resource name
   (`{operationName}`) matches only the names `FULL_NAMES` gives it. The
   specs' query parameters are diffed against the bindings' and what the
-  verbs send (`request_wire_oracle/spec_query.rs`): a spec parameter the
-  bindings lack that no verb sends, a binding parameter the spec lacks,
-  and one the spec marks required each need a reason in `SPEC_QUERY`, so
-  a parameter added to or removed from a spec copy fails. Every
-  key goes through `with_query`: `query_keys_are_added_only_through_with_query`
-  fails on a string literal in `src/http/`'s library code that holds
-  `?key=` or `&key=` (`format!("{url}&chunked=true")`), which a verb could
-  send only when an input the test does not set calls for it.
+  verbs send (`request_wire_oracle/spec_query.rs`), each spec copy on its
+  own: a spec parameter the bindings lack that no verb sends, a binding
+  parameter the spec lacks, and one the spec marks required each need a
+  reason in `SPEC_QUERY` for that copy, so a parameter added to or removed
+  from either copy fails. Keys go through `with_query`:
+  `query_keys_are_added_only_through_with_query` fails on what else in
+  `src/http/`'s library code would add one, which a verb could send only
+  when an input the test does not set calls for it: a string literal that
+  holds `?key=` or `&key=` (`format!("{url}&chunked=true")`), a `'?'` or
+  `'&'` character or a string ending in one outside `with_query`, and
+  reqwest's `.query(..)` or `url`'s query setters.
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each

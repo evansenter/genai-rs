@@ -2364,8 +2364,13 @@ condition the query test does not meet, reached no check.
   field spells out, by `Class.field`.
 - The oracle's `reasons()` and `tests/ci_coverage.rs`'s
   `reasoned_lists()` fail on a reason that is empty or only white space.
-- `query_keys_are_added_only_through_with_query` fails on a string
-  literal in `src/http/`'s library code that holds `?key=` or `&key=`.
+- `query_keys_are_added_only_through_with_query` fails on what in
+  `src/http/`'s library code would add a query key other than through
+  `with_query`: a string literal that holds `?key=` or `&key=`, a query
+  separator outside `with_query` (a `'?'` or `'&'` character, or a string
+  ending in one), and reqwest's or `url`'s own query builders. It finds
+  the usual ways to write a query, not every one: a separator the code
+  computes gets past it.
 
 Rejected: exempting the strategies, which are sampled for union arms and
 enum values while the literals cover the fields. Only three constructor

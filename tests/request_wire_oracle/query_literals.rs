@@ -1,12 +1,21 @@
-//! Every query key the crate sends goes through `with_query`
-//! (`src/http/common.rs`), whose values `query_options` traces to the
-//! options that set them, and which the query test sees on the wire. A key
-//! written into a URL string instead (`format!("{url}&chunked=true")`)
-//! reaches the wire from a verb the query test may never call with it set,
-//! so `src/http/`'s library code holds no string literal with a query key
-//! in it: `?key=` or `&key=`, the key spelled out or interpolated
-//! (`?{key}=`), in a macro's arguments too. Test modules and doc comments
-//! are left out.
+//! Query keys go on the wire through `with_query` (`src/http/common.rs`),
+//! whose values `query_options` traces to the options that set them, and
+//! which the query test sees on the wire. A key added any other way
+//! (`format!("{url}&chunked=true")`) reaches the wire from a verb the query
+//! test may never call with it set, so `src/http/`'s library code holds,
+//! outside `with_query` itself:
+//!
+//! - no string literal with a query key in it: `?key=` or `&key=`, the key
+//!   spelled out or interpolated (`?{key}=`);
+//! - no query separator, which a key written without one would need: a
+//!   `'?'` or `'&'` character, or a string ending in `?` or `&`
+//!   (`url.push('&'); url.push_str("chunked=true")`);
+//! - no other query builder: reqwest's `.query(..)`, `Url::set_query` or
+//!   `Url::query_pairs_mut`.
+//!
+//! Macro arguments are read too; test modules and doc comments are left
+//! out. The scan finds the usual ways to write a query, not every one: a
+//! separator the code computes (`char::from(38)`) gets past it.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -35,10 +44,13 @@ fn macro_exprs(mac: &syn::Macro) -> Vec<syn::Expr> {
         .unwrap_or_default()
 }
 
-/// The string literals holding a query key, as `"literal"`.
+/// The literals and calls that add to a query string other than through
+/// `with_query`: a literal as Rust spells it, a call as `.method(..)`.
 #[derive(Default)]
 struct Literals {
     found: Vec<String>,
+    /// Inside `with_query`, whose separators are the sanctioned ones.
+    in_with_query: bool,
 }
 
 impl<'ast> Visit<'ast> for Literals {
@@ -54,7 +66,10 @@ impl<'ast> Visit<'ast> for Literals {
 
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
         if !is_test(&node.attrs) {
+            let outer = self.in_with_query;
+            self.in_with_query = node.sig.ident == "with_query";
             visit::visit_item_fn(self, node);
+            self.in_with_query = outer;
         }
     }
 
@@ -66,9 +81,32 @@ impl<'ast> Visit<'ast> for Literals {
 
     fn visit_lit_str(&mut self, node: &'ast syn::LitStr) {
         let text = node.value();
-        if holds_query_key(&text) {
+        let separator = !self.in_with_query && (text.ends_with('?') || text.ends_with('&'));
+        if holds_query_key(&text) || separator {
             self.found.push(format!("{text:?}"));
         }
+    }
+
+    fn visit_lit_char(&mut self, node: &'ast syn::LitChar) {
+        let c = node.value();
+        if !self.in_with_query && (c == '?' || c == '&') {
+            self.found.push(format!("{c:?}"));
+        }
+    }
+
+    /// reqwest's `RequestBuilder::query` and `url`'s query setters; a
+    /// `.query()` that takes nothing reads a parsed URL's query.
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        let method = node.method.to_string();
+        let builds = match method.as_str() {
+            "query" => !node.args.is_empty(),
+            "set_query" | "query_pairs_mut" => true,
+            _ => false,
+        };
+        if builds {
+            self.found.push(format!(".{method}(..)"));
+        }
+        visit::visit_expr_method_call(self, node);
     }
 
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
@@ -87,7 +125,8 @@ fn holds_query_key(text: &str) -> bool {
     PATTERN.is_match(text)
 }
 
-/// Every string literal holding a query key in `file`'s library code.
+/// Every literal and call in `file`'s library code that adds to a query
+/// string other than through `with_query`.
 fn query_keys_in(file: &syn::File) -> Vec<String> {
     let mut literals = Literals::default();
     literals.visit_file(file);
@@ -127,15 +166,18 @@ fn query_keys_are_added_only_through_with_query() {
     }
     assert!(
         found.is_empty(),
-        "query keys written into a string, out of the query checks' sight (add each \
-         through `with_query`, which the query test traces and checks):\n  {}",
+        "query keys or separators written outside `with_query`, out of the query checks' \
+         sight (add each key through `with_query`, which the query test traces and \
+         checks):\n  {}",
         found.join("\n  ")
     );
 }
 
 /// The verifier's mutation is caught, in a `format!` and in a bare literal,
-/// with the key spelled out or interpolated; a test module's literal, a doc
-/// comment, a path, and `with_query`'s own separators are not.
+/// with the key spelled out or interpolated, and so are a separator held in
+/// a variable and reqwest's own query builder; a test module's literal, a
+/// doc comment, a path, a parsed URL's query read, and `with_query`'s own
+/// separators are not.
 #[test]
 fn a_query_key_in_a_string_is_found() {
     let file: syn::File = syn::parse_quote! {
@@ -144,10 +186,21 @@ fn a_query_key_in_a_string_is_found() {
             let url = format!("{start_url}&chunked=true");
             let other = format!("{}?{}={}", base, key, value);
             tracing::debug!("Uploading to {url}");
-            url.push(if url.contains('?') { '&' } else { '?' });
             let path = format!("{}:rotateSigningSecret", webhook_url(ctx, id));
             const SUFFIX: &str = "?alt=sse";
             format!("{}={}", key, value)
+        }
+        fn with_separator(mut url: String) -> String {
+            let sep = if url.contains('?') { '&' } else { '?' };
+            let joined = format!("{url}{sep}chunked=true");
+            url.push_str(concat!("{url}", "&"));
+            client.put(&url).query(&[("chunked", "true")]);
+            parsed.query().is_none()
+        }
+        fn with_query(mut url: String, pairs: Vec<String>) -> String {
+            url.push(if url.contains('?') { '&' } else { '?' });
+            url.push_str(&pairs.join("&"));
+            url
         }
         #[cfg(test)]
         mod tests {
@@ -162,6 +215,11 @@ fn a_query_key_in_a_string_is_found() {
             r#""{start_url}&chunked=true""#,
             r#""{}?{}={}""#,
             r#""?alt=sse""#,
+            "'?'",
+            "'&'",
+            "'?'",
+            r#""&""#,
+            ".query(..)",
         ]
     );
 }

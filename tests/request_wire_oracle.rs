@@ -19,12 +19,12 @@
 //! option and every request type's query option set (all three are
 //! checked; the last through `query_options`), so a misspelled key, a key
 //! the API dropped, and a parameter a new release adds all fail it, and so
-//! does a request to a path no endpoint takes. The specs' parameters are
-//! diffed against the bindings' and what the verbs send (`spec_query`),
+//! does a request to a path no endpoint takes. Each spec copy's parameters
+//! are diffed against the bindings' and what the verbs send (`spec_query`),
 //! each difference listed with its reason. A key written into a URL
-//! string rather than added through `with_query` fails
-//! `query_keys_are_added_only_through_with_query` (`query_literals`), since
-//! the verb may never be called with it set here.
+//! string, or a separator for one, rather than added through `with_query`
+//! fails `query_keys_are_added_only_through_with_query` (`query_literals`),
+//! since the verb may never be called with it set here.
 
 #![allow(
     clippy::unwrap_used,
