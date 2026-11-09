@@ -372,8 +372,11 @@ when the week breaches a target (D-046):
   needs a retry every few runs.
 
 The report lists the week's runs by creation date, up to 1,000 (about 115
-a week now); a listing that reaches the limit fails the report rather than
-leave runs out. It also adds up the [skip markers](#skip-markers) the retry
+a week now), the most the API lists for a filtered listing: a larger
+`--limit` lists no more. A listing that reaches that ceiling fails the
+report rather than leave runs out, and so does a listing that fails; a
+busier week needs a shorter `DAYS_BACK`, or the window listed in
+date-bounded parts and joined. It also adds up the [skip markers](#skip-markers) the retry
 jobs printed across the week, with the tests that printed them: each job
 budgets only its own run's, so a test that skips its check in run after
 run shows only here. That row is reported, not a target.

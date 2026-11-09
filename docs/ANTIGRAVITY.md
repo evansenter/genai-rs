@@ -153,7 +153,10 @@ agent.shutdown().await?;   // graceful: the harness persists its trajectory
 ```
 
 `spawn()` launches the harness, performs the stdio handshake, connects to
-its localhost WebSocket, and initializes the conversation. `shutdown()`
+its localhost WebSocket, and initializes the conversation. The connect
+makes up to five attempts with backoff between them, each given 5
+seconds, so a harness that accepts the connection but never answers
+fails `spawn()` with `InitFailed` after about 26.5 seconds. `shutdown()`
 closes the WebSocket and stdin (the harness's graceful-exit signal; the
 harness then stops the commands it started itself), and escalates to
 SIGTERM/SIGKILL only if it lingers. Dropping the agent without `shutdown()`
@@ -1372,8 +1375,12 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 (cancellation, pre-turn denial, fatal model-backend errors), `Timeout`,
 `ToolDispatch`, `WebSocket` (with the transport error as its source),
 `Protocol` (a harness message this client could not parse, with the parse
-error as its source, or a turn that ended without its final event) and
-`Io` (a file `Media::from_file` could not read, named in its message).
+error as its source, a turn that ended without its final event, or a
+message this client could not encode) and `Io` (a file `Media::from_file`
+could not read, named in its message, or harness discovery cut short by
+the runtime shutting down; the I/O error is its source). No variant
+converts from another error type with `?`: map your own I/O and JSON
+errors yourself.
 
 A fatal model-backend error (an HTTP 400 from the model endpoint) fails the
 turn with `Turn` and, on harness 0.1.23, ends the session as well: the

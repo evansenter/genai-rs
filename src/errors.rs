@@ -203,6 +203,8 @@ impl GenaiError {
     ///   Every other 5xx is retryable, including 507 Insufficient Storage
     ///   (temporary, per RFC 4918) and codes no RFC registers, such as a
     ///   proxy's 520 to 599.
+    /// - **A status of 600 or more**: no HTTP status class, so not a server
+    ///   error
     /// - **Invalid input**: Request validation failures
     /// - **Malformed response**: API contract violations, including a
     ///   stream event that does not parse

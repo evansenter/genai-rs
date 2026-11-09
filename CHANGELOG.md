@@ -830,9 +830,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WebSocket { message, source }`** (#504). `source` is the transport's
   error, a `Box<dyn std::error::Error + Send + Sync>`, and `source()`
   returns it; the variant used to hold only its text. `message` says what
-  failed: connecting (with the port and attempt count), a read, or a send.
-  The `Display` text is `websocket error: {message}: {source}`, as before
-  for a failed connect or send. Migration: match
+  failed: a read or a send. (A connect that fails, with the port and
+  attempt count, reaches `spawn()`'s caller as `InitFailed`, whose message
+  holds this variant's text.) The `Display` text is
+  `websocket error: {message}: {source}`, as before for a failed send. Migration: match
   `AntigravityError::WebSocket { message, source }` where you matched
   `WebSocket(text)`, and `downcast_ref` the source for the transport's own
   error type.

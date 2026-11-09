@@ -41,7 +41,7 @@ let response = client.execute(request.clone()).await?;
 | `Api` with 501, 505, 506, 508, 510 or 511 | No |
 | `Timeout(_)` (request-level timeout) | Yes |
 | `StreamInterrupted { .. }` (a stream cut off before its terminal event) | Yes; see [Cut-off streams](#cut-off-streams) |
-| Any other `Api` status (400, 401, 403, 404, ...) | No |
+| Any other `Api` status (400, 401, 403, 404, ..., and 600 or more) | No |
 | `Internal`, `InvalidInput`, `MalformedResponse`, `PollTimeout`, `ProcessingFailed`, `Stream`, `ClientBuild` | No |
 
 A 408 means the server stopped waiting before the request arrived whole, so

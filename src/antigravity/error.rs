@@ -90,8 +90,10 @@ pub enum AntigravityError {
     /// before the close). Spawn a new agent after one.
     #[error("agent turn failed: {0}")]
     Turn(String),
-    /// WebSocket transport error: the connection to the harness could not
-    /// be opened, or a read or send on it failed.
+    /// WebSocket transport error: a read or send on the connection to the
+    /// harness failed. A connect that fails during `spawn()` is
+    /// [`InitFailed`](Self::InitFailed) instead, whose `message` holds this
+    /// error's text, beside the harness's `stderr`.
     #[error("websocket error: {message}: {source}")]
     WebSocket {
         /// What was being done: connecting, reading or sending.

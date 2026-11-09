@@ -211,14 +211,15 @@ reaches the wire must use a real id.
   (`docs/FUNCTION_CALLING.md`).
 - `#[must_use]` on getters, handles and boolean checks.
 - Lints (`Cargo.toml`, `[workspace.lints]`, #501): every public item has a
-  doc comment, a public fallible function an `# Errors` section, and
-  clippy's `uninlined_format_args`, `assigning_clones`,
+  doc comment and a `Debug` impl, a public fallible function an `# Errors`
+  section, and clippy's `uninlined_format_args`, `assigning_clones`,
   `redundant_closure_for_method_calls` and `must_use_candidate` hold in
   src/, tests/ and examples/; `make clippy` denies warnings. Library code
   does not `unwrap()`, `expect()` or call `panic!`, `unreachable!`,
   `todo!` or `unimplemented!`: a panic that cannot happen carries
   `#[expect(clippy::..., reason = "...")]`, and tests are exempt
-  (`clippy.toml`, and each test and example crate root's allow; D-048).
+  (`clippy.toml`, each test and example crate root's allow, and each
+  library crate root's `cfg(test)` allow for its unit tests; D-048).
   Every `#[allow]` and `#[expect]` gives its `reason = "..."`, and is an
   `#[expect]` where the lint always fires. Every `unsafe` block has
   a `// SAFETY:` comment. `unreachable_patterns` is forbidden: a wildcard
@@ -353,7 +354,9 @@ wheel's protos with `python3`).
   does), doc, msrv, cross-platform (offline; stable and beta on Linux, macOS
   and Windows, but only Windows stable on a PR; checks the `antigravity`
   feature off Linux, and runs clippy over it, every target, on Windows
-  stable; trybuild's `ui_tests` are skipped on beta), coverage,
+  stable, and its `process_tree` unit tests, the forced kill's libproc
+  path that Linux's test-antigravity cannot reach, on each macOS leg;
+  trybuild's `ui_tests` are skipped on beta), coverage,
   build-metrics, main-push-status, scheduled-run-status. The coverage job
   measures the `antigravity` feature too, with its scripted suite, and
   fails under a line-coverage floor (`docs/TESTING.md`, "Line coverage"). Live
@@ -361,19 +364,25 @@ wheel's protos with `python3`).
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each
   integration group runs every binary and lists the failures;
   `.config/nextest.toml` turns fail-fast off for every run and kills a test
-  hung past 10 minutes. A red scheduled run opens a `ci-health-escalation`
+  hung past 10 minutes. Every live nextest step keeps passing tests'
+  output and fails on more than 3 skip markers (`docs/TESTING.md`, "Skip
+  markers"). A red scheduled run opens a `ci-health-escalation`
   issue (`scheduled-run-status`), as every scheduled workflow's does, and a
   red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
-  checks both, along with fail-fast, beta and the Windows PR leg.
+  checks both, along with fail-fast, beta, the Windows PR leg and the
+  cross-platform steps, the skip-marker budget, the coverage floor and
+  release's push-run gate.
   `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the
   five Integration Tests groups. A live group skipped on a fork PR counts as
   passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
-  `ci-flakiness-report.yml` (daily; counts failures and the tests nextest
-  retried to a pass, and fails, escalating, on a week's flake rate of 1%
-  or more, no live runs read, or a test retried in over 5% of its runs),
+  `ci-flakiness-report.yml` (daily; counts failures, the tests nextest
+  retried to a pass and the week's skip markers, and fails, escalating, on
+  a week's flake rate of 1% or more, no live runs read, a test retried in
+  over 5% of its runs, or a run listing that fails or reaches the API's
+  1,000-run ceiling),
   `release.yml`, `release-drafter.yml`, `claude.yml`,
   `claude-code-review.yml`, `antigravity-release-watch.yml` (daily; an
   `antigravity-release` issue when PyPI's `google-antigravity` differs from
