@@ -1305,7 +1305,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   send in progress only within its half-second bound, and any other send
   (`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
   message of a turn with no timeout) gives up after 30 s with `Timeout`
-  (#504, D-NEXT-I3-a).
+  (#504, D-066).
 - Antigravity: a harness that dies mid-turn, or while `next_trigger_turn`
   waits, fails the call with `AntigravityError::ConnectionClosed` and the
   tail of the harness's stderr, as that variant says. A connection that

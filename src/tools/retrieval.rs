@@ -73,7 +73,7 @@ pub struct ExaAiSearchConfig {
 }
 
 // Prints the key as `[REDACTED]`, and `custom_config` through the wire's
-// walk, which redacts a key nested there too (D-NEXT-I4-a).
+// walk, which redacts a key nested there too (D-067).
 impl std::fmt::Debug for ExaAiSearchConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -122,7 +122,7 @@ pub struct ParallelAiSearchConfig {
 }
 
 // Prints a set key as `[REDACTED]`, and `custom_config` through the wire's
-// walk, which redacts a key nested there too (D-NEXT-I4-a).
+// walk, which redacts a key nested there too (D-067).
 impl std::fmt::Debug for ParallelAiSearchConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {

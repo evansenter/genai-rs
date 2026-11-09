@@ -207,7 +207,7 @@ pub enum Tool {
 }
 
 // Hand-written only for `McpServer`'s header values, which are secrets such
-// as an `Authorization` token (D-NEXT-I4-a); every other field prints as the
+// as an `Authorization` token (D-067); every other field prints as the
 // derive would. Each arm lists its fields, so a new one fails to compile here.
 impl std::fmt::Debug for Tool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -513,7 +513,7 @@ test resources deleted afterwards. These endpoints take an unknown query
 key without complaint (`bogus_param=1` on a webhook or agent create), so
 being accepted shows nothing; what each did is below. None is modeled: an
 option that changes nothing would claim a feature the API does not have
-(D-010, D-NEXT-I1).
+(D-010, D-060).
 
 - **`webhook_id` on webhook create** (the spec: "If not specified, the
   server will generate a unique ID"): ignored. A create with

@@ -143,7 +143,7 @@ pub struct AllowlistEntry {
 }
 
 // A transform's header values are secrets, such as an injected API key
-// (D-NEXT-I4-a).
+// (D-067).
 impl std::fmt::Debug for AllowlistEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -214,7 +214,7 @@ pub struct EnvVar {
 }
 
 // A plain value is often a secret: a key the sandbox's code reads
-// (D-NEXT-I4-a).
+// (D-067).
 impl std::fmt::Debug for EnvVar {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -470,7 +470,7 @@ pub struct RemoteEnvironment {
 // An `env` the crate could not read (one entry not an `EnvVar`) is kept
 // whole in `extra`, where its values are as secret as in `env`: every string
 // beneath it prints redacted, since a value cannot be told from a name there
-// (D-NEXT-I4-a). The rest of `extra` prints as it is.
+// (D-067). The rest of `extra` prints as it is.
 impl std::fmt::Debug for RemoteEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {

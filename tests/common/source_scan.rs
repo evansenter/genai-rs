@@ -1,4 +1,4 @@
-//! The source scans the guards share (D-NEXT-I4-b): one recursive `.rs`
+//! The source scans the guards share (D-068): one recursive `.rs`
 //! walker, and one discovery of the resource handles (D-016) and their
 //! public methods.
 //!

@@ -1,4 +1,4 @@
-//! What a hand-written `Debug` prints in place of a secret (D-NEXT-I4-a).
+//! What a hand-written `Debug` prints in place of a secret (D-067).
 //!
 //! A type that holds a secret prints it as [`REDACTED`] and keeps the names
 //! around it: the field's, and a header's or an environment variable's. The

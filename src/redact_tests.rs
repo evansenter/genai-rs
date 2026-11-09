@@ -1,4 +1,4 @@
-//! The sentinel test for D-NEXT-I4-a: every public type that holds a secret,
+//! The sentinel test for D-067: every public type that holds a secret,
 //! formatted with `Debug`, alone and inside the requests, responses and
 //! builders that carry it, prints no secret.
 

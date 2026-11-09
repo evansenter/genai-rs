@@ -185,7 +185,7 @@ pub enum WireEvent {
 
 // A request body can hold a retrieval `api_key`, MCP header values or a
 // credential's secret, and a response body a rotated signing secret: printed
-// through the wire's own walk (D-NEXT-I4-a). Matched without a wildcard, so
+// through the wire's own walk (D-067). Matched without a wildcard, so
 // a new event kind fails to compile here until it is printed or redacted.
 impl std::fmt::Debug for WireEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

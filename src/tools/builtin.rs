@@ -152,7 +152,7 @@ pub struct McpServerConfig {
     headers: Option<HashMap<String, String>>,
 }
 
-// Header values are secrets, such as an `Authorization` token (D-NEXT-I4-a).
+// Header values are secrets, such as an `Authorization` token (D-067).
 impl std::fmt::Debug for McpServerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
