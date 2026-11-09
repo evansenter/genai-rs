@@ -49,7 +49,8 @@
 #    attributes above it to its end, and a file whose inner `#![cfg]` leaves
 #    it out. Every `cfg` in the library's non-test code must be one the
 #    check can evaluate: a name or key it does not know (`target_arch`,
-#    say) is a finding, not a guess. Anywhere else
+#    say) is a finding, not a guess. One inside an item already left out
+#    (an inline `#[cfg(test)] mod tests`, say) is not evaluated. Anywhere else
 #    (tests/, examples/, fuzz/, a Markdown file not included), a block
 #    rustdoc would read as Rust (a fence whose info string names `rust` or
 #    a rustdoc attribute such as `no_run` or `edition2021`, or, in a doc
@@ -464,6 +465,10 @@ def gated_lines(path, lexed, report):
     code_lines = lexed.code.split("\n")
     gated = set()
     for m in LINE_ATTR_RUN.finditer(lexed.code):
+        # Inside an item already left out (an inline `#[cfg(test)] mod
+        # tests`, say): never compiled, so its cfgs are not evaluated.
+        if lexed.line(m.start(1)) in gated:
+            continue
         if attrs_hold(lexed, m.start(1), m.end(1), where):
             continue
         first = lexed.line(m.start(1))
@@ -499,8 +504,11 @@ def gated_modules(path, lexed, gated, report):
     own = here if base in ("lib.rs", "main.rs", "mod.rs") else os.path.join(here, base[:-3])
     modules = []
     for m in MOD_DECL.finditer(lexed.code):
-        holds = attrs_hold(lexed, m.start(1), m.end(1), path if report else None)
-        if holds and lexed.line(m.start(2)) not in gated:
+        # One inside a gated item is left out whatever its own cfg, which
+        # is then not evaluated.
+        if lexed.line(m.start(2)) not in gated and attrs_hold(
+            lexed, m.start(1), m.end(1), path if report else None
+        ):
             continue
         found = None
         for attr in ATTR_ONE.finditer(lexed.code, m.start(1), m.end(1)):

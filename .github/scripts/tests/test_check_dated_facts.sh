@@ -427,6 +427,16 @@ expect "an unknown cfg on a file module fails" 1 "src/lib.rs:16: this check cann
 expect "an unknown cfg name fails" 1 "src/lib.rs:18: this check cannot evaluate \`cfg(sanitize)\` (it does not know \`sanitize\`)"
 expect "test code and tests/ are not evaluated" 1 "3 finding(s)"
 
+# Nor is a cfg inside an item the doctest run already leaves out: an
+# inline test module's, on a test or a file module, or a windows-only
+# module's.
+base_tree "$T"
+printf '%s\n' '' '#[cfg(test)]' 'mod more_tests {' '    #[cfg(target_arch = "x86_64")]' '    #[test]' \
+  '    fn only_x86() {}' '    #[cfg(target_arch = "x86_64")]' '    mod x86;' '}' '#[cfg(windows)]' \
+  'mod win {' '    #[cfg(target_arch = "x86_64")]' '    pub fn f() {}' '}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a cfg inside a gated item is not evaluated" 0 "No dated live fact"
+
 base_tree "$T"
 printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' '    #[cfg(target_env = "gnu")]' \
   '    #[doc = include_str!("../docs/GUIDE.md")]' '    mod guide {}' '}' >>"$T/src/lib.rs"

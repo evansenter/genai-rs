@@ -2326,7 +2326,9 @@ passed a scratch copy, though no instance was in the tree:
   (`test`, `windows`, `miri`, `fuzzing`, `docsrs`, `genai_strict_unknown`,
   any other `target_os` or `target_family`), and fails on any other name or
   key, such as `target_arch`, naming it. The script evaluates every `cfg` in
-  the library's non-test code, so a new one is taught before it lands.
+  the library's non-test code, so a new one is taught before it lands; not
+  one inside an item already left out, such as an inline
+  `#[cfg(test)] mod tests`, which the doctest run never compiles.
 
 The known limits are now a bare expression that ends otherwise, and a
 cross-reference to another row's file outside parentheses.
