@@ -40,9 +40,12 @@ date (private items included); dated evidence for the code beside it goes
 in a `//` comment, and tests keep theirs. `make test-scripts` runs
 `.github/scripts/check_dated_facts.sh`, which fails on a date anywhere
 else (ISO or not), on a code fence marked `ignore` without an
-`<!-- ignore: reason -->` line directly above it, on a Rust block in a
-Markdown file that `src/lib.rs`'s `doc_tests` leaves out, and on Rust in a
-`text` block. `tests/doc_guards/` requires every guide in `doc_tests`.
+`<!-- ignore: reason -->` line directly above it, on a Rust block that
+nothing compiles and is not `ignore`d with that reason (in a Markdown file
+`src/lib.rs`'s `doc_tests` leaves out, `CHANGELOG.md`'s history aside, or
+in a doc comment outside the library's non-test code), on a fence tagged
+`rs` or `Rust` (rustdoc never compiles one), and on Rust in a `text`
+block. `tests/doc_guards/` requires every guide in `doc_tests`.
 
 An issue number in a doc or a comment is one of two things, told apart
 by what it claims rather than its wording (D-051). A provenance tag names

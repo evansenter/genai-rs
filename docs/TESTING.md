@@ -14,13 +14,20 @@ follow.
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
 | Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`, the workflow guards in `tests/ci_workflows/` and the doc guards in `tests/doc_guards/`), `tests/model_literals.rs`, `tests/module_size.rs` (D-014's size bars), `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
-| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, a reason above every `ignore` fence, and no Rust fence that nothing compiles) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
+| CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, a reason above every `ignore` fence, and every Rust block compiled or `ignore`d with its reason, `CHANGELOG.md`'s history aside) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | In `tests/`: `api_canary_tests.rs`, `binding_parity_tests.rs`, `credentials_tests.rs`, `environment_files_tests.rs`, `error_handling_tests.rs`, `file_search_stores_tests.rs`, `files_api_tests.rs`, `function_calling_tests.rs`, `interactions_api_tests.rs`, `multimodal_tests.rs`, `multiturn_tests.rs`, `processing_steps_tests.rs`, `streaming_multiturn_tests.rs`, `streaming_resume_tests.rs`, `temp_file_tests.rs`, `tool_service_tests.rs`, `tools_and_config_tests.rs`, `voices_tests.rs`, `webhooks_and_agents_tests.rs`. Each live test is `#[ignore = "Requires API key"]`; a file's offline tests run in `make test` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`#[doc = include_str!(..)]` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
 | Scripted harness | `tests/antigravity_scripted.rs`; each test is `#[ignore = "Requires localharness binary"]` | No, only `localharness` | See [Scripted harness tests](#scripted-harness-tests) |
 | Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
 | Fuzz | `fuzz/` (cargo-fuzz targets over `src/fuzzing.rs`; failing inputs replayed by `src/fuzzing_tests.rs`) | No | `cargo +nightly fuzz run <target>` in `fuzz/`; see [fuzz/README.md](../fuzz/README.md) |
+
+`tests/doc_guards/` holds this table to `tests/`: each top-level test file
+is placed in exactly one row, a live one in a row that needs a key and a
+guard (a file that uses the library for nothing but a constant) in the
+Guards row. A row places a file by naming it with its `tests/` prefix, or
+bare in the live row's list, outside parentheses; a file named inside
+parentheses is a reference, which only has to exist.
 
 ```bash
 make test                                             # everything offline
@@ -64,11 +71,12 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   tests are one file per resource in `tests/http_mock_resources/` (plus
   `paging.rs`, `ids.rs` and `errors.rs`), declared from it with `#[path]`
   so they build into the one binary.
-- **Known bugs**, when there are any, go in
-  `tests/http_mock_resources/known_bugs.rs` as failing tests ignored with a
-  `known bug: ...` reason until fixed. A subdirectory, because
-  `ci_coverage.rs` scans only top-level files. Run them with
-  `cargo nextest run --test http_mock_resources --run-ignored only`.
+- **Known bugs** get an issue, and the offline test of the behavior the
+  fix must produce lands with the fix. Don't park a failing test behind
+  `#[ignore]` until then: `make test-all` and `release.yml` run every
+  ignored test, and `ci_coverage.rs`, which reads every module file a test
+  binary compiles, fails on an ignore reason other than the live one and
+  takes a binary with any ignored test for a live one.
 
 Prefer an offline test for anything that doesn't depend on model behavior;
 it's fast and runs on every PR.
@@ -215,12 +223,14 @@ must not flake.
 ### Rules
 
 - **Ignore reason.** A live test is `#[ignore = "Requires API key"]`, that
-  exact string. `tests/ci_coverage.rs` fails if any top-level `tests/*.rs`
-  file uses another reason, except the two Antigravity suites, whose
+  exact string. `tests/ci_coverage.rs` fails if any test file (a top-level
+  `tests/*.rs` or a module file it compiles in) uses another reason,
+  except in the two Antigravity suites, whose
   key-free tests are `#[ignore = "Requires localharness binary"]`
   (`antigravity_harness` and `antigravity_scripted`, which run in the
   `test-antigravity` job rather than the matrix).
-- **CI matrix.** Every top-level file with a live test must be listed in
+- **CI matrix.** Every test binary with a live test, in its top-level file
+  or a module file it compiles in, must be listed in
   exactly one `test-integration` group in `.github/workflows/rust.yml`.
   `ci_coverage.rs` fails on a missing binary, a binary listed twice, or a
   listed binary with no file.
