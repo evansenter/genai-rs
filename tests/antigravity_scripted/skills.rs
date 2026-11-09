@@ -109,23 +109,35 @@ async fn test_scripted_skill_allowed_and_dependent_tools_change_nothing_on_this_
     );
     agent.shutdown().await.expect("shutdown");
 
-    // An allowed tool still goes through the policies after the lookup.
-    let workspace = scratch_dir("agy-scripted-allowed");
-    let file = write_file(&workspace, "a.txt", "ALLOWED-6206");
-    let mut script = looks_up_the_skill();
-    script.insert(1, view_file(&file));
-    let fake = FakeGemini::start(script).await;
-    let mut agent = scripted_agent(&fake)
-        .add_workspace(workspace.path().to_string_lossy())
-        .add_policy(policy::deny_all())
-        .add_policy(policy::allow("lookup_skill"))
-        .add_inline_skill(probe_skill().add_allowed_tool("view_file"))
-        .spawn()
-        .await
-        .expect("spawn");
-    agent.chat("use the skill").await.expect("turn");
-    let told = function_response_text(&fake, 2);
-    assert!(told.contains("Denied by policy"), "{told}");
-    assert!(!told.contains("ALLOWED-6206"), "{told}");
-    agent.shutdown().await.expect("shutdown");
+    // The allowed list neither grants nor restricts after the lookup: a
+    // tool on it still goes through the policies, and one off it still
+    // runs where the policies allow it.
+    for on_the_list in [true, false] {
+        let workspace = scratch_dir("agy-scripted-allowed");
+        let file = write_file(&workspace, "a.txt", "ALLOWED-6206");
+        let mut script = looks_up_the_skill();
+        script.insert(1, view_file(&file));
+        let fake = FakeGemini::start(script).await;
+        let builder = scripted_agent(&fake).add_workspace(workspace.path().to_string_lossy());
+        let builder = if on_the_list {
+            builder
+                .add_policy(policy::deny_all())
+                .add_policy(policy::allow("lookup_skill"))
+                .add_inline_skill(probe_skill().add_allowed_tool("view_file"))
+        } else {
+            builder
+                .add_policy(policy::allow_all())
+                .add_inline_skill(probe_skill().add_allowed_tool("list_dir"))
+        };
+        let mut agent = builder.spawn().await.expect("spawn");
+        agent.chat("use the skill").await.expect("turn");
+        let told = function_response_text(&fake, 2);
+        if on_the_list {
+            assert!(told.contains("Denied by policy"), "{told}");
+            assert!(!told.contains("ALLOWED-6206"), "{told}");
+        } else {
+            assert!(told.contains("ALLOWED-6206"), "{told}");
+        }
+        agent.shutdown().await.expect("shutdown");
+    }
 }

@@ -567,7 +567,8 @@ own:
   change neither the skill's listing nor its lookup's answer, nor the
   tools declared after the lookup (a deferred MCP tool named as
   dependent stays undeclared), nor how a later call is gated (a call to
-  an allowed tool is still denied under `deny_all()`), verified
+  an allowed tool is still denied under `deny_all()`, and a call to a
+  tool off the list still runs under `allow_all()`), verified
   2026-11-09 with `test_scripted_skill_allowed_and_dependent_tools_change_nothing_on_this_harness`.
 - `RetryConfig::with_jitter` is random by design. The backoff test sets
   it to 0, which makes the harness's waits exact, but a nonzero range
