@@ -8,7 +8,7 @@ name: API Surface Sweep
 # exactly what happened between 2.17.0 and 2.18.1 — `Content::Video.processing`
 # (a ~127x token-cost lever) and a widened `speech_config` union both landed
 # unnoticed, and neither was documented on ai.google.dev, so only a bindings
-# diff could have caught them. See #421.
+# diff could have caught them (#421).
 #
 # This job diffs the latest google-genai release against the version recorded
 # in .github/last-swept-sdk-version and opens/updates an issue when the

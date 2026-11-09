@@ -404,7 +404,7 @@ fn an_undated_live_claim_is_rejected() {
         "Served on function_call steps (live 2026-07).",
         "Empty; `Voices::delete` reads no body.",
         "The SDK's sentinel for an unset field, not API surface.",
-        "A key the envelope adds is not kept (D-034; tracked in #538).",
+        "A key the envelope adds is kept in `extra` (D-034, from #538).",
     ] {
         assert!(!undated_live_claim(fine), "{fine}");
     }

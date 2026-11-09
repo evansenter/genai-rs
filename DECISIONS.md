@@ -1865,14 +1865,16 @@ among them, remained (outside this file and `CHANGELOG.md`), on rules and
 code those issues introduced. Both issues are closed, and #504 asked whether such
 tags stay.
 
-**Decision.** They stay. A provenance tag, `(#N)` beside a rule or a
-behavior, names where it came from, as a decision number does; a closed
-issue still holds the discussion behind it, and the rule has not changed
-because the issue closed. A pointer ("see #N", "tracked in #N", "until #N
-lands", "#493 item 7") sends the reader to the issue for what is still
-open, so it names an open issue only: when the issue closes, the outcome
-is stated in place and the pointer goes. `CLAUDE.md` states the rule
-beside D-032's.
+**Decision.** They stay. A reference is told by what it claims, not by
+its form (amended below). A provenance tag names where a rule or a
+behavior was decided or found, as a decision number does: `(#N)` beside
+it, or "#493 item 3" on what that item added. A closed issue still holds
+the discussion behind it, and the rule has not changed because the issue
+closed. A pointer claims that the issue holds current status or pending
+work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
+item M" while that item is still open), so it names an open issue only:
+when the issue closes, the outcome is stated in place and the pointer
+goes. `CLAUDE.md` states the rule beside D-032's.
 
 Rejected: removing every reference to a closed issue. It would delete the
 only link from the `extra` maps to the reasoning behind them, and the
@@ -1885,6 +1887,18 @@ without guessing.
 **Consequences.** A reviewer, not a script, catches a pointer left on a
 closed issue. Closing an issue that a pointer names means editing that
 sentence in the same change.
+
+**Amended 2026-11-08 (#504's H6).** The decision first told a pointer by
+its form, listing "#493 item 7" among the pointers. By that reading the
+tags naming #493's items on the code they added (closed #493's provenance)
+were pointers to a closed issue, and so were "See #421" in
+`api-surface-sweep.yml` and "See #431" in `report_scheduled_failure.sh`,
+which name the history behind each. A reference is now told by what it
+claims: current status or pending work makes it a pointer, where
+something was decided or found makes it a provenance tag, whatever the
+wording. A sentence that could be read either way is reworded to say
+which it is, as those two now do. Still no check: telling the two apart
+means reading what the sentence claims.
 
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 

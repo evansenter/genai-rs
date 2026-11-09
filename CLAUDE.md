@@ -44,14 +44,15 @@ else (ISO or not), on a code fence marked `ignore` without an
 Markdown file that `src/lib.rs`'s `doc_tests` leaves out, and on Rust in a
 `text` block. `tests/doc_guards/` requires every guide in `doc_tests`.
 
-An issue number in a doc or a comment is one of two things
-(D-051). A provenance tag, `(#491)`, names the issue a rule or
-behavior came from, and stays when the issue closes, as a decision number
-does. A pointer ("see #N", "tracked in #N", "until #N lands", "#N item
-M") sends the reader to the issue for what is still open, so it names an
-open issue only: when the issue closes, state the outcome in place and
-drop the pointer. Nothing checks this, since an issue's state needs the
-network.
+An issue number in a doc or a comment is one of two things, told apart
+by what it claims rather than its wording (D-051). A provenance tag names
+where a rule or behavior was decided or found (`(#491)`, or "#493 item 3"
+on what that item added), and stays when the issue closes, as a decision
+number does. A pointer claims the issue holds current status or pending
+work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
+item M" while that item is open), so it names an open issue only: when
+the issue closes, state the outcome in place and drop the pointer.
+Nothing checks this, since an issue's state needs the network.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the
