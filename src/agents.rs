@@ -333,8 +333,8 @@ paging::list_builder! {
     ///
     /// End it with [`send`](Self::send) for one page, or
     /// [`pages`](Self::pages) / [`items`](Self::items) to follow
-    /// `next_page_token` to the end of the list. The page size and `parent`
-    /// filter are sent with every page.
+    /// `next_page_token` to the end of the list. The page size and
+    /// `parent` are sent with every page.
     ///
     /// # Example
     ///
@@ -388,7 +388,13 @@ paging::list_builder! {
 }
 
 impl ListAgents<'_> {
-    /// Sets the `parent` resource filter. Sent with every page.
+    /// Sets the `parent` query parameter, the resource to list agents
+    /// from (`projects/{project}/locations/{location}` in the spec). Sent
+    /// with every page.
+    ///
+    /// The API ignores it: a listing with any value, or none, lists every
+    /// agent the key owns (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query
+    /// parameters").
     pub fn with_parent(mut self, parent: impl Into<String>) -> Self {
         self.parent = Some(parent.into());
         self

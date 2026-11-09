@@ -534,7 +534,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, and each endpoint's query parameters (with whether each is required) and request body; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -552,12 +552,12 @@ checks on it:
   key), plus proptest samples for the union arms and enum values.
   `request_values_are_full_literals` (`request/fills.rs`) fails on a
   `default()` fill, other than a whole `extra` map, in those literals and
-  in every strategy the oracle samples. It also fails on a value the
-  oracle builds through a constructor, a call to an associated function
-  of a crate type (`CustomMetadata::string`, `Tool::code_execution()`, the
+  in every strategy the oracle samples. It also fails, in both, on a
+  value built through a constructor, a call to an associated function of
+  a crate type (`CustomMetadata::string`, `Tool::code_execution()`, the
   first call of a builder), since one can leave a new field unset out of
   the oracle's sight; `TRUSTED` there lists the few it allows, each with
-  the reason the value still sets every field (the agent configs'
+  the reason the value still sets every field (such as the agent configs'
   `fully_populated()` and `FunctionParameters::new`, whose fields are
   private, and `WebhookInput::from`, which destructures every field). An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
@@ -597,7 +597,12 @@ checks on it:
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a
   path no endpoint takes. A template that keeps a full resource name
-  (`{operationName}`) matches only the names `FULL_NAMES` gives it. Every
+  (`{operationName}`) matches only the names `FULL_NAMES` gives it. The
+  specs' query parameters are diffed against the bindings' and what the
+  verbs send (`request_wire_oracle/spec_query.rs`): a spec parameter the
+  bindings lack that no verb sends, a binding parameter the spec lacks,
+  and one the spec marks required each need a reason in `SPEC_QUERY`, so
+  a parameter added to or removed from a spec copy fails. Every
   key goes through `with_query`: `query_keys_are_added_only_through_with_query`
   fails on a string literal in `src/http/`'s library code that holds
   `?key=` or `&key=` (`format!("{url}&chunked=true")`), which a verb could
