@@ -544,7 +544,7 @@ the new wheel's keys against the pin's.
 "Not modeled" rows give the reason, and
 `every_parity_row_maps_its_keys_and_gives_a_reason_when_not_modeled`
 (`parity.rs`, key-free) fails on a row that maps nothing, or whose
-genai-rs cell names no backticked API ("Not modeled", or any other
+genai-rs cell says "Not modeled" or names no backticked API (whatever its
 wording) with an empty Notes cell. Each modeled setting is shown changing
 the harness's behavior by a test in `tests/antigravity_scripted/`
 (D-010): the model request it sends, the tools it declares, a tool's
