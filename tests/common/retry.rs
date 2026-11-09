@@ -22,9 +22,9 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 /// Known model-side flakes worth retrying: Spanner UTF-8 errors (#60), and
 /// 400s that pass on re-run: "invalid json syntax" from structured output,
 /// the bare "there was a problem processing your request" burst, and any 400
-/// that tells the caller to retry (`malformed_tool_call`). The API now
-/// reports `malformed_tool_call` on a `200` instead, as a failed
-/// interaction; [`is_transient_failure`] matches that form.
+/// that tells the caller to retry, which is how the API used to report
+/// `malformed_tool_call`. It now reports that on a `200` instead, as a
+/// failed interaction; [`is_transient_failure`] matches that form.
 ///
 /// `too_many_tool_calls` is never retried, whatever its message says: it is
 /// the url_context loop under a response schema, a known server bug, and a
@@ -57,9 +57,10 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
                 // loud on the first attempt.
                 || (*status_code == 400
                     && lower.contains("there was a problem processing your request"))
-                // The model produced a broken tool call, and the API says
-                // so: "...Please retry the request." (A loop says it too,
-                // and is turned away above.)
+                // The model produced a broken tool call, and the API said
+                // so in a 400: "...Please retry the request." It now says it
+                // in a failed interaction instead (`is_transient_failure`).
+                // (A loop says it too, and is turned away above.)
                 || (*status_code == 400 && lower.contains("please retry the request"))
         }
         _ => false,

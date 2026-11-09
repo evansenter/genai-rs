@@ -98,11 +98,11 @@ mod google_search {
     /// Turn 2 sends the search tool again: tools are not inherited through
     /// `previous_interaction_id`. Without it, the model, seeing search steps
     /// in its history, sometimes emits a search call it has no tool for,
-    /// and the turn ends in `malformed_tool_call` (as a 400, or as
-    /// `status: failed` with that error code) or `requires_action`: 13 of
-    /// 99 CI runs needed a retry for it (2026-11-01 to 2026-11-06), and 1 of
-    /// 6 live turns failed that way without the tool against 0 of 6 with it
-    /// (2026-11-07). One more run failed the old turn-2 check, which held a
+    /// and the turn ends in `malformed_tool_call` (a 400 through
+    /// 2026-11-04, then `status: failed` with that error code) or
+    /// `requires_action`: 13 of 99 CI runs needed a retry for it
+    /// (2026-11-01 to 2026-11-06), and 1 of 6 live turns failed that way
+    /// without the tool against 0 of 6 with it (2026-11-07). One more run failed the old turn-2 check, which held a
     /// fresh forecast to turn 1's.
     ///
     /// Turn 2 names no place ("there"), so only the carried-over context

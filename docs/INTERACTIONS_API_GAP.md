@@ -667,10 +667,10 @@ modeled on 2026-11-05; see [Interaction residue](#interaction-residue-2026-11-05
 |---|---|
 | `cached_content` (re-added, deprecated) | Still `400 Unknown parameter 'cached_content'`. Stays removed (D-005). |
 | `transcription_config.language_hints` | `400 Unknown parameter` |
-| `input` optional on create | The API still answers `400 Missing input.` in every form tried |
-| `service_tier: "deferred"` | `400 The value 'deferred' is not supported` |
+| `input` optional on create | Superseded: the API answered `400 Missing input.` in every form tried then. A stored decode's continuation now takes no input, and a request with neither input nor a continuation token is a misleading `404` that `build()` heads off ([Interaction residue](#interaction-residue-2026-11-05)) |
+| `service_tier: "deferred"` | Superseded: the API answered `400 The value 'deferred' is not supported` then. The 2.25.0 → 2.34.0 sweep found it named Vertex-only and modeled it as `ServiceTier::Deferred` (D-005; [Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)) |
 | String arm of `environment.env` | `Invalid input at 'environment'`. Preserved in `extra` if read. |
-| Server-only tool types (`bash`, `filesystem`, `tool_search`, `manage_task`, `schedule`) | Absent from the bindings. Accepted bare, but `bash`/`filesystem` end in `400 malformed_tool_call` and the rest do nothing on a raw model. Revisit when they reach the bindings. |
+| Server-only tool types (`bash`, `filesystem`, `tool_search`, `manage_task`, `schedule`) | Superseded: absent from the bindings, they were accepted bare then, and `bash`/`filesystem` ended in `400 malformed_tool_call` while the rest did nothing on a raw model. The 2.25.0 → 2.34.0 sweep found them rejected with a 400 that lists the supported tool types ([Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)). |
 | Annotation types `in_context_file_citation`, `reference_metadata` | Server enum only. They land in `Annotation::Unknown`. |
 | Environment `storage` field | Server only. Preserved in `Environment::extra`. |
 | Path-parameter renames (`interactionsId`, `agentsId`, ...) and new MIME literals (`audio/webm`, `video/jpeg2000`) | Cosmetic. MIME types are open strings. |

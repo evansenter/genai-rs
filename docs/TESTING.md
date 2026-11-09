@@ -309,11 +309,12 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 
 `is_transient_error` matches Spanner UTF-8 errors and three 400s (`invalid
 json syntax`, `there was a problem processing your request`, and `please
-retry the request`, the API's advice on `malformed_tool_call`), but never
-`too_many_tool_calls`, the url_context loop, whatever its message says; see
+retry the request`, the API's advice on `malformed_tool_call` when it
+reported one as a `400`), but never `too_many_tool_calls`, the url_context
+loop, whatever its message says; see
 [Error Handling](ERROR_HANDLING.md#known-transient-errors). A broken tool
-call now usually comes back as a `200` instead: an interaction whose
-`status` is `failed` and whose `errors` carry `malformed_tool_call`
+call now comes back as a `200` instead: an interaction whose `status` is
+`failed` and whose `errors` carry `malformed_tool_call`
 ([live record](INTERACTIONS_API_GAP.md#tools)). `retry_on_transient`, and
 so `retry_request!`, retries that too (`is_transient_failure`), when the
 operation returns an `InteractionResponse` or an `AutoFunctionResult`, and

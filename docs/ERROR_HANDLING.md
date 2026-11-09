@@ -73,11 +73,11 @@ status (`tests/common/retry.rs`, `is_transient_error`):
 | `Api` whose message contains both `spanner` and `utf-8` | Google backend issue seen on stateful conversations (#60) |
 | `Api` 400 containing `invalid json syntax` | The model occasionally emits invalid JSON (structured output, or a malformed function call) |
 | `Api` 400 containing `there was a problem processing your request` | Server-side bursts that pass on re-run |
-| `Api` 400 containing `please retry the request`, unless it names `too_many_tool_calls` | The API says so itself after a broken tool call (`malformed_tool_call`). A tool-call loop (`too_many_tool_calls`) is not retried whatever its message says: the same request loops again (see the [gap tracker](INTERACTIONS_API_GAP.md)), and each attempt runs to the 60-call limit |
+| `Api` 400 containing `please retry the request`, unless it names `too_many_tool_calls` | How the API used to report a broken tool call (`malformed_tool_call`), with its own advice to retry; it now reports one in a `200` (below), and the match stays for the `400` form. A tool-call loop (`too_many_tool_calls`) is not retried whatever its message says: the same request loops again (see the [gap tracker](INTERACTIONS_API_GAP.md)), and each attempt runs to the 60-call limit |
 
-A broken tool call is now usually not an error at all: the API answers
-`200` with an interaction whose `status` is `failed` and whose `errors`
-carry the code `malformed_tool_call`, with the same advice to retry
+A broken tool call is no longer an error at all: the API answers `200`
+with an interaction whose `status` is `failed` and whose `errors` carry
+the code `malformed_tool_call`, with the same advice to retry
 ([live record](INTERACTIONS_API_GAP.md#tools)). Neither predicate sees a
 response, so check it too; the integration suite retries it
 (`is_transient_failure`), and still not a `too_many_tool_calls`. A
