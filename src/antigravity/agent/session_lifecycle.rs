@@ -8,12 +8,14 @@ use crate::antigravity::protocol::{self, InputEvent, OutputPayload};
 use crate::antigravity::turn::TurnState;
 use crate::antigravity::{AntigravityAgent, AntigravityError};
 
-/// How long to wait for the `initializeConversationResponse` (and for the
-/// session-start hook's request after it).
-const INIT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the initialization may take, sending its message included,
+/// until the `initializeConversationResponse` arrives (and, separately, how
+/// long to wait for the session-start hook's request after it).
+pub(super) const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long `shutdown()` waits for the session-end hooks to run.
-const SESSION_END_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long `shutdown()` gives the session-end hooks, sending the request
+/// to run them included.
+pub(super) const SESSION_END_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl AntigravityAgent {
     /// Answers the session-start hook, which the harness calls right after
@@ -66,15 +68,22 @@ impl AntigravityAgent {
     /// answers its hook calls until it confirms. Best-effort and bounded by
     /// [`SESSION_END_TIMEOUT`]: shutdown proceeds either way.
     pub(super) async fn end_session(&mut self) {
-        if let Err(e) = self
-            .session
-            .send(&InputEvent::SessionEndRequest(true))
-            .await
-        {
-            tracing::warn!("Could not ask the harness to end the session: {e}");
-            return;
-        }
         let deadline = tokio::time::Instant::now() + SESSION_END_TIMEOUT;
+        let request = InputEvent::SessionEndRequest(true);
+        match self.session.send_before(&request, deadline).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::warn!("Could not ask the harness to end the session: {e}");
+                return;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "The harness did not take the session-end request within \
+                     {SESSION_END_TIMEOUT:?}."
+                );
+                return;
+            }
+        }
         let mut state = TurnState::new(None, None);
         loop {
             let event = match tokio::time::timeout_at(deadline, self.session.next_event()).await {
@@ -103,13 +112,25 @@ impl AntigravityAgent {
         }
     }
 
+    /// Sends the initialization and waits for its answer, all within
+    /// [`INIT_TIMEOUT`]. Every failure is
+    /// [`AntigravityError::InitFailed`] with the harness's stderr tail.
     pub(in crate::antigravity) async fn initialize(
         &mut self,
         init: protocol::InitializeConversationEvent,
     ) -> Result<(), AntigravityError> {
-        self.session.send_raw(&init).await?;
-
         let deadline = tokio::time::Instant::now() + INIT_TIMEOUT;
+        let not_sent = match self.session.send_before(&init, deadline).await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(e.to_string()),
+            Err(_) => Some(format!(
+                "the harness did not take the initialization message within {INIT_TIMEOUT:?}"
+            )),
+        };
+        if let Some(message) = not_sent {
+            let stderr = self.harness.stderr_tail().await;
+            return Err(AntigravityError::InitFailed { message, stderr });
+        }
         loop {
             let event = match tokio::time::timeout_at(deadline, self.session.next_event()).await {
                 Ok(Ok(Some(event))) => event,

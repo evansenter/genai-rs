@@ -2328,22 +2328,28 @@ that case and carries the harness's stderr.
 
 **Decision.**
 - A turn's state, and so its deadline, is created before its message is
-  sent, and the send is bounded by that deadline. A send that times out
-  fails the turn with `Timeout` (`agent turn (the harness did not take the
-  message)`) and leaves the turn unfinished, so the next turn halts and
-  drains it first (D-041).
+  sent, and the send is bounded by that deadline alone, however long. A
+  send that times out fails the turn with `Timeout` (`agent turn (the
+  harness did not take the message)`, the turn timeout) and leaves the
+  turn unfinished, so the next turn halts and drains it first (D-041).
 - The halt-and-drain budget starts before the halt is sent and bounds the
-  send.
+  send. So do the initialization's budget (`INIT_TIMEOUT`) and the
+  session-end budget (`SESSION_END_TIMEOUT`), each 30 s: the wait for the
+  answer gets what the send left. An initialization message that fails or
+  times out fails `spawn()` with `InitFailed` and the stderr tail, as a
+  failed read during initialization already did.
 - `close()` takes the sink's lock, sends the close frame and flushes, all
   within its 500 ms.
-- Every send is bounded by `SEND_TIMEOUT`, 30 s, the wait for the sink
-  included, and fails with `Timeout` past it. A harness that reads takes
-  even tens of megabytes over loopback in well under a second, so 30 s is
-  never a slow harness; it matches the initialization and session-end
-  budgets. It covers what has no deadline of its own: `cancel()`, a
-  trigger's delivery, the session-end request, the initialization message,
-  and the message of a turn with no timeout. A turn whose timeout is longer
-  gets the earlier of the two.
+- Every other send is bounded by `SEND_TIMEOUT`, 30 s, the wait for the
+  sink included, and fails with `Timeout` past it: `cancel()`, a
+  trigger's delivery, a reply to the harness mid-turn, and the message of
+  a turn with no timeout. A harness that reads takes even tens of
+  megabytes over loopback in well under a second, so 30 s is never a slow
+  harness. A send with a budget of its own goes through
+  `Session::send_before`, which has no `SEND_TIMEOUT` inside it, so the
+  error names that budget. A mid-turn reply keeps `SEND_TIMEOUT` inside
+  the turn deadline: a turn whose timeout is longer fails at 30 s with the
+  send's `Timeout` when the harness stops reading mid-turn.
 - A read that finds the connection ended without a close frame, or reset
   or aborted by the peer, returns end-of-stream, as a close frame does. A
   turn and `next_trigger_turn` then fail with `ConnectionClosed` and the
@@ -2351,7 +2357,10 @@ that case and carries the harness's stderr.
 
 Rejected: bounding only the turn's send. It leaves `cancel()`, trigger
 delivery and shutdown able to hang on the same harness, and a turn with
-no timeout. Rejected: reporting a failed send as `ConnectionClosed`. The
+no timeout. Rejected: nesting `SEND_TIMEOUT` inside the turn deadline. A
+turn under the default 300 s timeout then failed at 30 s, with an
+`operation` and `timeout` naming neither the turn nor its budget, against
+`with_turn_timeout`'s rustdoc. Rejected: reporting a failed send as `ConnectionClosed`. The
 sink handle that cancels and delivers triggers has no harness to read the
 stderr from, so sends keep `WebSocket`.
 
@@ -2359,7 +2368,9 @@ stderr from, so sends keep `WebSocket`.
 queued in the sink, and the next message goes out behind it: if the
 harness reads again, it gets the abandoned message, then the next turn's
 halt. A paused-clock test drives `chat()` and `send_streaming()` against a
-stand-in harness that stops reading (`agent_tests.rs`), `session.rs`'s
-tests check the send bound, the close bound and a dropped connection, and
-the scripted `lifecycle.rs` kills the harness mid-turn and while
-`next_trigger_turn` waits.
+stand-in harness that stops reading, under a 10 s and the default turn
+timeout, and another holds the sink across the initialization and the
+session-end request (`agent_tests.rs`). `session.rs`'s tests check the
+send bound, a send bounded by a later deadline alone, the close bound and
+a dropped connection, and the scripted `lifecycle.rs` kills the harness
+mid-turn and while `next_trigger_turn` waits.

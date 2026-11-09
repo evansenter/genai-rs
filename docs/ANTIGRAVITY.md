@@ -963,11 +963,14 @@ the turn on time, with the `Timeout`'s `operation` naming it
 stamped before your message is sent, so it bounds the send too: a harness
 that has stopped reading fails the turn on time (`agent turn (the harness
 did not take the message)`) instead of holding it, however large the
-prompt. Every other message to the harness has a bound of its own: the
-halt before a turn counts against the five-second drain budget, the close
-in `shutdown()` gives up after half a second, and any other send (a
-`cancel()`, a trigger's delivery, the message of a turn with no timeout)
-gives up after 30 seconds, as a `Timeout` where the call returns an error.
+prompt, at the turn timeout you set, however long. Every other message to
+the harness has a bound of its own: the halt before a turn counts against
+the five-second drain budget, the initialization in `spawn()` and the
+session-end request in `shutdown()` against their 30-second budgets, the
+close in `shutdown()` gives up after half a second, and any other send (a
+`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
+message of a turn with no timeout) gives up after 30 seconds, as a
+`Timeout` where the call returns an error.
 
 Each custom tool call runs on a tokio task of its own, and a call the
 deadline abandons is aborted: an async tool stops at its next `.await`. A
