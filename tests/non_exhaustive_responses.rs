@@ -327,19 +327,19 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::ExecutingFunctions",
-        LOOP_CHUNK,
+        ROUND_VERDICT,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::FunctionResults",
-        LOOP_CHUNK,
+        LOOP_MADE,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::Complete",
-        LOOP_CHUNK,
+        ROUND_VERDICT,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::MaxLoopsReached",
-        LOOP_CHUNK,
+        LOOP_MADE,
     ),
     (
         "src/content/video_processing.rs:VideoProcessing::Static",
@@ -361,12 +361,18 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
     ),
 ];
 
-/// Why the auto-function loop's own chunks keep no `extra`. `Delta`, passed
-/// on from a `step.delta` event, keeps that event's (D-054).
-const LOOP_CHUNK: &str = "made by the auto-function loop, not passed on from one SSE event: \
-     a round's response assembled from its stream, or the loop's own executions, each keeping \
-     its own `extra`. The round's lifecycle events, `interaction.completed` among them, are \
-     the loop's to read, so their envelope keys reach `execute_stream()` only (D-054)";
+/// Why an auto-function chunk with no SSE event behind it keeps no `extra`.
+const LOOP_MADE: &str = "made by the auto-function loop, with no SSE event behind it: the \
+     loop's executions, or its verdict once the rounds run out; the results and the response \
+     inside keep their own `extra`";
+
+/// Why the loop's verdict on a round keeps no `extra`. `Delta`, passed on
+/// from a `step.delta` event, keeps that event's (D-054).
+const ROUND_VERDICT: &str = "the loop's verdict on a round's `interaction.completed` event: \
+     the interaction keeps its own `extra`, but the keys beside it in the event reach \
+     `execute_stream()` only. A scope line, not a principle: the map is empty on every event \
+     the API sends today, as `step.delta`'s is, and carrying it would make these two variants \
+     take an `extra` too, two breaking changes the owner has not asked for (D-034)";
 
 /// Why an `InputEvent` arm keeps no `extra`.
 const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \

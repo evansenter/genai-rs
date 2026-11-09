@@ -1294,17 +1294,21 @@ list above too: it is `Delta { delta, extra }`, with the `step.delta`
 event's `extra` (D-054), and the auto-function stream passes on an event of
 a type the crate does not know as `AutoFunctionStreamChunk::Unknown`, where
 it dropped it with a warning. The guard's `AUTO_FUNCTION_CHUNK` exemption
-is gone. The loop's own chunks are exempt under `LOOP_CHUNK`, a narrower
-reason: `ExecutingFunctions`, `Complete` and `MaxLoopsReached` hold a
-round's response, assembled from its stream, and `FunctionResults` the
-loop's executions, each keeping its own `extra`; none is passed on from one
-event. The round's lifecycle events (`interaction.created`,
-`status_update`, `step.start`, `step.stop` and `interaction.completed`) are
-the loop's to read, so their envelope keys reach `execute_stream()` only.
-Rejected: the completed event's `extra` on `Complete`, `ExecutingFunctions`
-and `MaxLoopsReached`, three more breaking changes for a map that is empty
-on every event the API sends, where the delta, the frequent event, now
-carries its own.
+is gone. Four chunks keep a row, under two narrower reasons.
+`FunctionResults` and `MaxLoopsReached` are made by the loop with no SSE
+event behind them (`LOOP_MADE`): its executions, and its verdict once the
+rounds run out. `ExecutingFunctions` and `Complete` are its verdict on one
+round's `interaction.completed` event (`ROUND_VERDICT`): the interaction
+keeps its own `extra`, but the keys beside it in the event are not passed
+on, nor are the round's `interaction.created`, `status_update`,
+`step.start` and `step.stop` events, which the loop reads without yielding.
+Those reach `execute_stream()` only. That line is scope, not principle:
+the completed event's map is empty on every event the API sends today, as
+`step.delta`'s is, and `Delta` carries its own because I-11 named it.
+Carrying the completed event's would make `ExecutingFunctions` and
+`Complete(response)`, the pattern every auto-function caller writes for the
+stream's last chunk, take an `extra` too: two more breaking changes,
+left for the owner to ask for.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
