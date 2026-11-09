@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 mod coverage;
 mod flakiness;
 mod release;
+mod sweep;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
