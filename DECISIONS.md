@@ -1171,7 +1171,7 @@ read, in every form alike. A date with no year or a two-digit one
 reason line on an `ignore` fence is required in every doc comment of
 every Rust file, test code and `tests/` included, since those are where a
 fence went without one; the date rule still skips them. Three rules keep
-every Rust block compiled or explained (D-NEXT-H6): a Rust block nothing
+every Rust block compiled or explained (D-059): a Rust block nothing
 compiles must be `ignore`d with a reason, whether in a Markdown file that
 `src/lib.rs`'s `doc_tests` does not include (`CHANGELOG.md` is exempt as
 history) or in a doc comment outside the library's non-test code; a fence
@@ -2211,7 +2211,7 @@ required is the owner's call. The job takes a few minutes longer for the
 antigravity build and the scripted suite. A release can wait on its push
 run, and a red leg there stops it before anything is published.
 
-## D-NEXT-H6 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
+## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
 **Context.** #504's final grade put Docs at A-: five contradictions and
 five enforcement holes. Two of the contradictions were tables that drift
