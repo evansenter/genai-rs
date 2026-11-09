@@ -446,21 +446,20 @@ impl AntigravityAgent {
             let event = match tokio::time::timeout_at(deadline, self.session.next_event()).await {
                 Ok(Ok(Some(event))) => event,
                 Ok(Ok(None)) => {
-                    return Err(AntigravityError::InitFailed {
-                        message: "harness closed the connection before the session-start hook"
-                            .to_string(),
-                        stderr: self.harness.stderr_tail().await,
-                    });
+                    return Err(AntigravityError::init_failed(
+                        "harness closed the connection before the session-start hook",
+                        self.harness.stderr_tail().await,
+                    ));
                 }
                 Ok(Err(e)) => return Err(e),
                 Err(_) => {
-                    return Err(AntigravityError::InitFailed {
-                        message: format!(
+                    return Err(AntigravityError::init_failed(
+                        format!(
                             "the harness did not call the session-start hook within \
                              {INIT_TIMEOUT:?}"
                         ),
-                        stderr: self.harness.stderr_tail().await,
-                    });
+                        self.harness.stderr_tail().await,
+                    ));
                 }
             };
             let is_start = matches!(
@@ -537,24 +536,25 @@ impl AntigravityAgent {
                 Ok(Ok(Some(event))) => event,
                 Ok(Ok(None)) => {
                     let stderr = self.harness.stderr_tail().await;
-                    return Err(AntigravityError::InitFailed {
-                        message: "harness closed the connection during initialization".to_string(),
+                    return Err(AntigravityError::init_failed(
+                        "harness closed the connection during initialization",
                         stderr,
-                    });
+                    ));
                 }
                 Ok(Err(e)) => {
                     let stderr = self.harness.stderr_tail().await;
-                    return Err(AntigravityError::InitFailed {
-                        message: e.to_string(),
+                    return Err(AntigravityError::init_failed_by(
+                        "reading the initialization response failed",
                         stderr,
-                    });
+                        e,
+                    ));
                 }
                 Err(_) => {
                     let stderr = self.harness.stderr_tail().await;
-                    return Err(AntigravityError::InitFailed {
-                        message: format!("no initialization response within {INIT_TIMEOUT:?}"),
+                    return Err(AntigravityError::init_failed(
+                        format!("no initialization response within {INIT_TIMEOUT:?}"),
                         stderr,
-                    });
+                    ));
                 }
             };
             match event.payload {
@@ -647,7 +647,7 @@ impl AntigravityAgent {
             matches!(event.payload, Some(OutputPayload::TrajectoryStateUpdate(_)));
         let result = self.process_event(event, turn).await;
         let harness_failed_it =
-            trajectory_update && matches!(result, Err(AntigravityError::Turn(_)));
+            trajectory_update && matches!(result, Err(AntigravityError::Turn { .. }));
         if turn.finished || harness_failed_it {
             self.turn_unfinished = false;
         }
@@ -746,7 +746,7 @@ impl AntigravityAgent {
                     };
                     match processed {
                         Ok(()) => state.queue.clear(),
-                        Err(AntigravityError::Turn(message)) => {
+                        Err(AntigravityError::Turn { message, .. }) => {
                             // The stale turn's cancellation or its own
                             // fatal error: expected terminals. Keep
                             // draining until silence in case more turns

@@ -41,6 +41,13 @@ pub enum AntigravityError {
         message: String,
         /// Tail of the harness's stderr.
         stderr: String,
+        /// The error that failed the step, when one did: the
+        /// [`WebSocket`](Self::WebSocket) error of a connect that never
+        /// succeeded, or the error reading the harness's reply. Also
+        /// returned by [`source()`](std::error::Error::source), and not
+        /// repeated in this error's `Display`.
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
     },
     /// The harness closed the connection unexpectedly (it likely crashed).
     #[error("harness connection closed: {message}\nharness stderr:\n{stderr}")]
@@ -79,27 +86,35 @@ pub enum AntigravityError {
         /// The configured budget.
         timeout: Duration,
     },
-    /// The turn failed (model backend error, cancellation, or pre-turn
-    /// denial).
+    /// The turn failed. `kind` says why, and
+    /// [`TurnFailure::ends_session`] whether the agent can run another
+    /// turn: match on it, not on `message`.
     ///
-    /// A fatal model backend error (an HTTP 400 from the model endpoint)
-    /// ends the harness session too, on harness 0.1.23: the harness closes
-    /// its WebSocket, so the agent's next call fails with
+    /// When it cannot ([`TurnFailure::ModelBackend`] and
+    /// [`TurnFailure::Trajectory`], on harness 0.1.23), the harness has
+    /// closed its WebSocket, so the agent's next call fails with
     /// [`WebSocket`](Self::WebSocket) (or
     /// [`ConnectionClosed`](Self::ConnectionClosed), when its send got out
     /// before the close). Spawn a new agent after one.
-    #[error("agent turn failed: {0}")]
-    Turn(String),
+    #[error("agent turn failed ({kind}): {message}")]
+    Turn {
+        /// Why the turn failed.
+        kind: TurnFailure,
+        /// The harness's message, or the pre-turn hook's reason for a
+        /// [`TurnFailure::Denied`] turn.
+        message: String,
+    },
     /// WebSocket transport error: a read or send on the connection to the
     /// harness failed. A connect that fails during `spawn()` is
-    /// [`InitFailed`](Self::InitFailed) instead, whose `message` holds this
-    /// error's text, beside the harness's `stderr`.
-    #[error("websocket error: {message}: {source}")]
+    /// [`InitFailed`](Self::InitFailed) instead, with this error as its
+    /// source, beside the harness's `stderr`.
+    #[error("websocket error: {message}")]
     WebSocket {
         /// What was being done: connecting, reading or sending.
         message: String,
         /// The transport's error, also returned by
-        /// [`source()`](std::error::Error::source).
+        /// [`source()`](std::error::Error::source), and not repeated in
+        /// this error's `Display`.
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
@@ -111,22 +126,89 @@ pub enum AntigravityError {
         /// What went wrong.
         message: String,
         /// The parse or encode error, when one caused it, also returned by
-        /// [`source()`](std::error::Error::source).
+        /// [`source()`](std::error::Error::source), and not repeated in
+        /// this error's `Display`.
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
     },
     /// A local I/O operation failed: reading a file
     /// ([`Media::from_file`](super::Media::from_file)), or harness
     /// discovery cut short by the runtime shutting down.
-    #[error("I/O error: {message}: {source}")]
+    #[error("I/O error: {message}")]
     Io {
         /// What was being done, naming the path when there is one.
         message: String,
         /// The I/O error, also returned by
-        /// [`source()`](std::error::Error::source).
+        /// [`source()`](std::error::Error::source), and not repeated in
+        /// this error's `Display`.
         #[source]
         source: std::io::Error,
     },
+}
+
+/// Why a turn failed: the `kind` of [`AntigravityError::Turn`].
+///
+/// [`ends_session`](Self::ends_session) says whether the agent can run
+/// another turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TurnFailure {
+    /// The model backend failed a model call, and the turn with it: with a
+    /// status the harness does not retry (400, 401 or 403), or with one
+    /// whose retries ran out (a 503 under
+    /// [`RetryConfig::with_max_api_retries(0)`](crate::antigravity::RetryConfig::with_max_api_retries),
+    /// say). The harness ends the session too
+    /// ([`ends_session`](Self::ends_session)).
+    ModelBackend {
+        /// The HTTP status the model backend answered with.
+        status: u32,
+    },
+    /// The pre-turn hook
+    /// ([`on_pre_turn`](crate::antigravity::AgentBuilder::on_pre_turn))
+    /// refused the turn; the error's `message` is its reason. No model call
+    /// was made, and the agent stays usable.
+    Denied,
+    /// The harness cancelled the turn of its own accord, other than for a
+    /// pre-turn denial ([`Denied`](Self::Denied)). A turn stopped by
+    /// [`CancelHandle::cancel`](crate::antigravity::CancelHandle::cancel)
+    /// resolves normally instead, with the output it had. Not taken to end
+    /// the session.
+    Cancelled,
+    /// The harness ended the turn with an error of its own, not the model
+    /// backend's: an MCP server that failed to load, say. On harness
+    /// 0.1.23 its run ends with the turn
+    /// ([`ends_session`](Self::ends_session)).
+    Trajectory,
+    /// A hook could not run: its thread could not start, or ended without
+    /// a result. The harness may still be mid-turn; the agent's next turn
+    /// halts it first.
+    Hook,
+}
+
+impl TurnFailure {
+    /// Whether the harness ended the session with the turn, so the agent's
+    /// next call fails on the connection
+    /// ([`WebSocket`](AntigravityError::WebSocket) or
+    /// [`ConnectionClosed`](AntigravityError::ConnectionClosed)) and a new
+    /// agent must be spawned. True for [`ModelBackend`](Self::ModelBackend)
+    /// and [`Trajectory`](Self::Trajectory), whose errors end the harness's
+    /// run on harness 0.1.23.
+    #[must_use]
+    pub const fn ends_session(&self) -> bool {
+        matches!(self, Self::ModelBackend { .. } | Self::Trajectory)
+    }
+}
+
+impl std::fmt::Display for TurnFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ModelBackend { status } => write!(f, "model backend error, HTTP {status}"),
+            Self::Denied => f.write_str("denied by the pre-turn hook"),
+            Self::Cancelled => f.write_str("cancelled by the harness"),
+            Self::Trajectory => f.write_str("the harness ended it with an error"),
+            Self::Hook => f.write_str("a hook could not run"),
+        }
+    }
 }
 
 fn exit_description(code: Option<i32>) -> String {
@@ -149,7 +231,38 @@ impl AntigravityError {
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::Protocol {
-            message: format!("{message}: {source}"),
+            message: message.to_string(),
+            source: Some(Box::new(source)),
+        }
+    }
+
+    /// A [`Turn`](Self::Turn) error of `kind`.
+    pub(crate) fn turn(kind: TurnFailure, message: impl Into<String>) -> Self {
+        Self::Turn {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    /// An [`InitFailed`](Self::InitFailed) error with no underlying cause.
+    pub(crate) fn init_failed(message: impl Into<String>, stderr: String) -> Self {
+        Self::InitFailed {
+            message: message.into(),
+            stderr,
+            source: None,
+        }
+    }
+
+    /// An [`InitFailed`](Self::InitFailed) error caused by `source`;
+    /// `message` says what was being done.
+    pub(crate) fn init_failed_by(
+        message: &str,
+        stderr: String,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::InitFailed {
+            message: message.to_string(),
+            stderr,
             source: Some(Box::new(source)),
         }
     }
@@ -160,11 +273,23 @@ impl AntigravityError {
     /// version is the likeliest explanation.
     pub(crate) fn with_version_note(self, harness_version: Option<&str>) -> Self {
         match (self, process::version_mismatch(harness_version)) {
-            (Self::InitFailed { message, stderr }, Some(note)) => Self::InitFailed {
+            (
+                Self::InitFailed {
+                    message,
+                    stderr,
+                    source,
+                },
+                Some(note),
+            ) => Self::InitFailed {
                 message: format!("{message} ({note})"),
                 stderr,
+                source,
             },
             (error, _) => error,
         }
     }
 }
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;

@@ -41,6 +41,50 @@ fn unexecutable_harness() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
+/// A stand-in harness that completes the stdio handshake with a WebSocket
+/// port nothing listens on (1), then waits for stdin to close.
+#[cfg(unix)]
+fn harness_with_a_dead_port() -> (tempfile::TempDir, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("localharness");
+    // The frame: a little-endian length of 2, then OutputConfig's field 1
+    // (port) as the varint 1.
+    std::fs::write(
+        &path,
+        "#!/bin/sh\nprintf '\\002\\000\\000\\000\\010\\001'\ncat >/dev/null\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (dir, path)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_failed_connect_is_init_failed_with_the_websocket_error_as_its_source() {
+    let (_dir, path) = harness_with_a_dead_port();
+    let err = AntigravityAgent::builder()
+        .with_harness_path(&path)
+        .spawn()
+        .await
+        .unwrap_err();
+    let AntigravityError::InitFailed { message, .. } = &err else {
+        panic!("expected InitFailed, got {err:?}");
+    };
+    let source = std::error::Error::source(&err).expect("the connect error is the source");
+    let Some(AntigravityError::WebSocket {
+        message: connect, ..
+    }) = source.downcast_ref()
+    else {
+        panic!("the source is the WebSocket error: {source:?}");
+    };
+    assert!(connect.contains("port 1"), "{connect}");
+    assert!(
+        !err.to_string().contains(connect.as_str()),
+        "Display leaves the cause to source(): {message}"
+    );
+}
+
 #[tokio::test]
 async fn test_spawn_write_tools_allowed_with_policy() {
     let (_dir, path) = unexecutable_harness();
@@ -87,6 +131,24 @@ async fn test_spawn_model_without_api_key_is_config_error() {
 }
 
 #[test]
+fn test_add_tool_service_appends() {
+    struct NoTools;
+    impl ToolService for NoTools {
+        fn tools(&self) -> Vec<Arc<dyn crate::CallableFunction>> {
+            Vec::new()
+        }
+    }
+    let builder = AgentBuilder::default()
+        .add_tool_service(Arc::new(NoTools))
+        .add_tool_service(Arc::new(NoTools));
+    assert_eq!(
+        builder.tool_services.len(),
+        2,
+        "a second call keeps the first"
+    );
+}
+
+#[test]
 fn turn_budget_resolves_unset_to_the_default_and_opt_out_to_none() {
     // The distinction that matters: "never chose" must not be the same
     // as "chose unlimited", or the default could not exist at all.
@@ -126,24 +188,6 @@ fn harness_config_falls_back_to_a_real_model_when_none_is_set() {
     let config = builder.build_harness_config(&dispatcher);
 
     assert_eq!(config.models[0].name.as_deref(), Some(crate::DEFAULT_MODEL));
-}
-
-#[test]
-fn test_add_tool_service_appends() {
-    struct NoTools;
-    impl ToolService for NoTools {
-        fn tools(&self) -> Vec<Arc<dyn crate::CallableFunction>> {
-            Vec::new()
-        }
-    }
-    let builder = AgentBuilder::default()
-        .add_tool_service(Arc::new(NoTools))
-        .add_tool_service(Arc::new(NoTools));
-    assert_eq!(
-        builder.tool_services.len(),
-        2,
-        "a second call keeps the first"
-    );
 }
 
 #[test]

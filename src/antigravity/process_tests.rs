@@ -564,17 +564,14 @@ fn test_version_mismatch_notes_only_a_known_different_version() {
     assert!(note.contains("0.1.18") && note.contains(SUPPORTED_HARNESS_VERSION));
 
     // An init failure carries the note; other errors are untouched.
-    let init = AntigravityError::InitFailed {
-        message: "unknown field \"runWorkflow\"".to_string(),
-        stderr: String::new(),
-    }
-    .with_version_note(Some("0.1.18"));
+    let init = AntigravityError::init_failed("unknown field \"runWorkflow\"", String::new())
+        .with_version_note(Some("0.1.18"));
     let AntigravityError::InitFailed { message, .. } = init else {
         panic!("variant must be kept");
     };
     assert!(message.starts_with("unknown field") && message.contains("0.1.18"));
-    let other = AntigravityError::Turn("x".to_string()).with_version_note(Some("0.1.18"));
-    assert!(matches!(other, AntigravityError::Turn(m) if m == "x"));
+    let other = AntigravityError::Config("x".to_string()).with_version_note(Some("0.1.18"));
+    assert!(matches!(other, AntigravityError::Config(m) if m == "x"));
 }
 
 #[test]

@@ -306,9 +306,19 @@ async fn test_scripted_retry_config_decides_whether_a_503_ends_the_turn() {
         .await
         .expect("spawn");
     let err = agent.chat("hi").await.unwrap_err();
+    let AntigravityError::Turn { kind, .. } = &err else {
+        panic!("a 503 with no retries left must fail the turn: {err:?}");
+    };
+    assert_eq!(*kind, TurnFailure::ModelBackend { status: 503 });
+    // The harness's run ended with the turn, as `ends_session()` says.
+    assert!(kind.ends_session());
+    let next = agent.chat("again").await.unwrap_err();
     assert!(
-        matches!(&err, AntigravityError::Turn(m) if m.contains("503")),
-        "{err:?}"
+        matches!(
+            next,
+            AntigravityError::WebSocket { .. } | AntigravityError::ConnectionClosed { .. }
+        ),
+        "the call after a 503 that ended the turn must fail on the connection, got {next:?}"
     );
     drop(agent);
 

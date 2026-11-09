@@ -1826,6 +1826,14 @@ its major version part of genai-rs's; a caller who needs it downcasts.
 `WebSocket { message, source }`. A `tokio-tungstenite` upgrade changes
 what a downcast finds, not genai-rs's API.
 
+*Amended 2026-11-09 (I-6).* `Display` no longer carries the cause's
+text: an error whose `source()` returns the cause leaves it to the chain,
+so a reporter that walks `source()` (anyhow, eyre, a `while let` loop)
+prints it once, not twice. A caller that prints only the top error now
+sees what was being done, not why; walk the chain for that. The connect
+failure `spawn()` reports as `InitFailed` keeps this error as its source
+(D-NEXT-I2).
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
@@ -2143,6 +2151,10 @@ of 800 lines, changes on three lines and grows by none: the two
 carries the parse error's text in `message`, so a printed error still
 says what failed.
 
+*Amended 2026-11-09 (I-6).* `Protocol`'s and `Io`'s `Display` no longer
+carry the source's text, as D-049's amendment gives for `WebSocket`:
+`message` says what was being done, and `source()` says why.
+
 ---
 
 ## D-057 — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
@@ -2285,6 +2297,73 @@ the evaluators do not know counts as left out, so an include behind one
 fails the guard until it is taught; and a cross-reference to another
 row's file written outside parentheses reads as a second placement and
 fails.
+
+---
+
+## D-NEXT-I2 — A failed Antigravity turn names its kind, and whether the session survived (2026-11-09)
+
+**Context.** `AntigravityError::Turn(String)` carried every turn
+failure, so a caller had to read the message ("model backend error (HTTP
+400)") to know whether to respawn, against the guide's "match on
+variants, never on message text", and the scripted tests matched on that
+text. `spawn()` turned a failed WebSocket connect into `InitFailed` with
+the error's text and no `source()`. And `WebSocket`, `Protocol` and `Io`
+printed their source's text in `Display` while also returning it from
+`source()`, so a chain reporter printed each cause twice (#504's I-6).
+
+**Decision.**
+- `Turn { kind: TurnFailure, message }`. `TurnFailure` is
+  `#[non_exhaustive]`, `Copy`: `ModelBackend { status }`, `Denied`,
+  `Cancelled`, `Trajectory` and `Hook`. The kinds follow what the turn
+  loop can tell apart without reading the harness's text:
+  - `ModelBackend` for a system error step with an HTTP error status:
+    400, 401 and 403 fail the turn at once, as before; any other (a 503
+    whose retries ran out) is remembered, and the error that then ends
+    the main trajectory is that failure, with its status. The step's
+    `httpCode` holds gRPC codes too (a failed MCP load carries 2), so
+    only 400 to 599 count.
+  - `Denied` for a turn whose pre-turn hook this client answered with a
+    denial, by whichever failing state the trajectory then reaches. The
+    hook's verdict is recorded on the turn, rather than the reason
+    matched in the harness's message.
+  - `Cancelled` for a main trajectory cancelled with no denial;
+    `Trajectory` for one that went idle with an error otherwise; `Hook`
+    for a hook thread that did not start or ended without a result.
+- `TurnFailure::ends_session()` is true for `ModelBackend` and
+  `Trajectory`. Scripted against harness 0.1.23: 400, 401, 403, a 503
+  with no retries, and an MCP server slower than its timeout all end the
+  harness's run ("executor run failed") and close the WebSocket, so the
+  next call fails with `WebSocket` or `ConnectionClosed`; a pre-turn
+  denial keeps the session. The tests assert each. `Cancelled` and
+  `Hook` are not taken to end it: no cancellation other than a denial's
+  was seen, and a hook failure is this client's, after which the next
+  turn halts the harness as for any turn left unfinished.
+- `message` is the harness's text (or the hook's reason) alone; the
+  error's `Display` names the kind: `agent turn failed (denied by the
+  pre-turn hook): <reason>`.
+- `InitFailed` has a `source: Option<Box<dyn Error + Send + Sync>>`:
+  the `WebSocket` error of a connect that failed, or the error reading
+  the harness's initialization reply. `init_failed` and `init_failed_by`
+  construct it, so `agent.rs` changes on its constructor lines and grows
+  by none.
+- No variant's `Display` repeats its source's text (D-049 and D-056,
+  amended).
+
+Rejected: a kind for an MCP load failure. The only signal is the
+harness's message text, which is what typed kinds exist to stop callers
+from parsing; it stays `Trajectory`, whose message names the server.
+Rejected: `ends_session()` on `AntigravityError` itself. Whether a
+`WebSocket` or `ConnectionClosed` error leaves an agent usable is
+already plain (it does not), and the question callers asked was about a
+failed turn.
+
+**Consequences.** Breaking, with a CHANGELOG migration: a
+`Turn(message)` pattern becomes `Turn { kind, message }`, and
+`InitFailed { message, stderr }` gains `source` (match with `..`). A
+caller that printed only the top error of a `WebSocket`, `Protocol`,
+`Io` or `InitFailed` sees the step that failed, not the cause. The
+session-ending claim is the 0.1.23 harness's; a harness bump that keeps
+a session after one of these shows up as a failing scripted test.
 
 ---
 

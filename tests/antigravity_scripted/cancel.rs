@@ -290,7 +290,13 @@ async fn test_scripted_a_turn_the_harness_failed_is_not_halted_again() {
 
     let err = agent.chat(FIRST).await.unwrap_err();
     assert!(
-        matches!(&err, AntigravityError::Turn(m) if m.contains("pre-turn-denied-6301")),
+        matches!(
+            &err,
+            AntigravityError::Turn {
+                kind: TurnFailure::Denied,
+                ..
+            }
+        ),
         "{err:?}"
     );
     let response = agent.chat(SECOND).await.expect("the turn after the denial");

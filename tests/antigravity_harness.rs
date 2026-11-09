@@ -778,11 +778,11 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         // Not what 0.1.10 through 0.1.23 do, but the turn loop still maps a
         // harness STATE_CANCELLED here; accept it rather than fail if the
         // harness changes its mind, and say so loudly.
-        Err(AntigravityError::Turn(message)) => {
+        Err(AntigravityError::Turn { kind, message }) => {
             println!(
                 "note: this harness reported cancellation as a Turn error \
-                 ({message:?}) — 0.1.23 ended the turn as Finished. Update the \
-                 CancelHandle docs if this is the new behavior."
+                 ({kind}: {message:?}) — 0.1.23 ended the turn as Finished. Update \
+                 the CancelHandle docs if this is the new behavior."
             );
         }
         Err(other) => panic!("unexpected error from a cancelled turn: {other:?}"),

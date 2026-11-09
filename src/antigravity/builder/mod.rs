@@ -632,10 +632,11 @@ impl AgentBuilder {
             Err(e) => {
                 let stderr = harness.stderr_tail().await;
                 harness.kill().await;
-                return Err(AntigravityError::InitFailed {
-                    message: e.to_string(),
+                return Err(AntigravityError::init_failed_by(
+                    "connecting to the harness failed",
                     stderr,
-                });
+                    e,
+                ));
             }
         };
 

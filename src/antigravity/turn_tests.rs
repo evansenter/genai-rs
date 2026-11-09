@@ -127,7 +127,11 @@ fn test_main_trajectory_cancelled_fails_turn() {
     turn.main_trajectory = Some("main".to_string());
     let update = trajectory_update(Some("main"), TrajectoryState::Cancelled, Some("halted"));
     let err = AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap_err();
-    assert!(matches!(&err, AntigravityError::Turn(m) if m == "halted"));
+    let AntigravityError::Turn { kind, message } = &err else {
+        panic!("expected a Turn error: {err:?}");
+    };
+    assert_eq!(*kind, TurnFailure::Cancelled);
+    assert_eq!(message, "halted", "the harness's error is the message");
 }
 
 #[test]
@@ -137,7 +141,92 @@ fn test_cancelled_before_any_step_fails_turn() {
     let mut turn = TurnState::new(None, None);
     let update = trajectory_update(Some("t-0"), TrajectoryState::Cancelled, None);
     let err = AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap_err();
-    assert!(matches!(&err, AntigravityError::Turn(m) if m == "turn cancelled"));
+    assert!(
+        matches!(
+            &err,
+            AntigravityError::Turn {
+                kind: TurnFailure::Cancelled,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn test_a_failed_trajectory_names_its_kind() {
+    // The main trajectory's failing ends: idle with an error, and
+    // cancelled. A turn the pre-turn hook refused is Denied by either.
+    let cases = [
+        (
+            TrajectoryState::Idle,
+            Some("MCP load failed"),
+            false,
+            TurnFailure::Trajectory,
+        ),
+        (
+            TrajectoryState::Cancelled,
+            None,
+            false,
+            TurnFailure::Cancelled,
+        ),
+        (
+            TrajectoryState::Cancelled,
+            Some("no-9920"),
+            true,
+            TurnFailure::Denied,
+        ),
+        (
+            TrajectoryState::Idle,
+            Some("no-9921"),
+            true,
+            TurnFailure::Denied,
+        ),
+    ];
+    for (state, error, denied, expected) in cases {
+        let mut turn = TurnState::new(None, None);
+        turn.pre_turn_denied = denied;
+        let update = trajectory_update(Some("root"), state.clone(), error);
+        let err = AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap_err();
+        let AntigravityError::Turn { kind, .. } = &err else {
+            panic!("expected a Turn error: {err:?}");
+        };
+        assert_eq!(*kind, expected, "{state:?} {error:?} denied={denied}");
+    }
+
+    // After the backend failed a model call, the error that ends the turn
+    // is that failure, with its status.
+    let mut turn = TurnState::new(None, None);
+    turn.backend_status = Some(503);
+    let update = trajectory_update(Some("root"), TrajectoryState::Idle, Some("unreachable"));
+    let err = AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AntigravityError::Turn {
+                kind: TurnFailure::ModelBackend { status: 503 },
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn test_backend_status_reads_http_errors_on_system_steps_only() {
+    let step = |source: &str, code: u32| -> StepUpdate {
+        serde_json::from_value(serde_json::json!({
+            "trajectoryId": "root", "stepIndex": 1, "state": "STATE_ERROR",
+            "source": source,
+            "error": {"errorMessage": "Agent execution terminated due to error.", "httpCode": code}
+        }))
+        .unwrap()
+    };
+    assert_eq!(backend_status(&step("SOURCE_SYSTEM", 503)), Some(503));
+    assert_eq!(backend_status(&step("SOURCE_SYSTEM", 400)), Some(400));
+    // gRPC's UNKNOWN, which 0.1.23 sends for a failed MCP load.
+    assert_eq!(backend_status(&step("SOURCE_SYSTEM", 2)), None);
+    assert_eq!(backend_status(&step("SOURCE_MODEL", 503)), None);
 }
 
 #[test]

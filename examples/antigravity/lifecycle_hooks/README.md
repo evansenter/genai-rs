@@ -37,4 +37,5 @@ cargo run --example lifecycle_hooks --features antigravity
 - **Hooks are synchronous**, each on a thread of its own and bounded by
   the turn deadline.
 - **`on_pre_turn` can refuse a turn** (`TurnDecision::deny`); the turn
-  fails with `AntigravityError::Turn` and the agent stays usable.
+  fails with `AntigravityError::Turn` of kind `TurnFailure::Denied`, and
+  the agent stays usable.

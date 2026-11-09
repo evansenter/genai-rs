@@ -529,6 +529,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a parse failure arrives as `Protocol`); and map your own `io` and
   `serde_json` errors into your error type rather than through
   `AntigravityError`.
+- **Breaking: a failed Antigravity turn is
+  `AntigravityError::Turn { kind, message }`, and `kind` says why.** `kind`
+  is the new `TurnFailure` (`#[non_exhaustive]`): `ModelBackend { status }`
+  (the model backend failed a call: a 400, 401 or 403, or a 503 whose
+  retries ran out), `Trajectory` (the harness ended the turn with an error
+  of its own, such as an MCP server that failed to load), `Denied` (the
+  pre-turn hook refused the turn; `message` is its reason), `Cancelled`
+  (the harness cancelled the turn) or `Hook` (a hook's thread did not run).
+  `TurnFailure::ends_session()` is true for `ModelBackend` and
+  `Trajectory`, after which harness 0.1.23 closes the session and the
+  agent's next call fails with `WebSocket` or `ConnectionClosed`. `message`
+  is the harness's text alone, and `Display` names the kind. Migration:
+  match `AntigravityError::Turn { kind, message }` where you matched
+  `Turn(message)`, and decide on `kind` (or `kind.ends_session()` for
+  whether to spawn a new agent) where you searched the message for "HTTP
+  400" or a reason.
+- **Breaking: `AntigravityError::InitFailed` has a `source` field, and no
+  Antigravity error repeats its source's text in `Display`.** A WebSocket
+  connect that fails during `spawn()`, and a failed read of the harness's
+  initialization reply, are `InitFailed` errors whose `source()` is the
+  `WebSocket` error (it held only the text). `WebSocket`, `Protocol`, `Io`
+  and `InitFailed` print what was being done; `source()` gives the cause,
+  so a reporter that walks the chain prints each cause once. Migration:
+  match `InitFailed { message, stderr, .. }`, and walk `source()` (or use
+  a reporter that does) where you printed only the top error and want the
+  cause.
 - **Breaking: `AgentBuilder::with_tool_service` is `add_tool_service`.**
   It appends, so each call registers another service; the `with_` prefix
   says a second call replaces. Migration: rename the call.
@@ -842,9 +868,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error, a `Box<dyn std::error::Error + Send + Sync>`, and `source()`
   returns it; the variant used to hold only its text. `message` says what
   failed: a read or a send. (A connect that fails, with the port and
-  attempt count, reaches `spawn()`'s caller as `InitFailed`, whose message
-  holds this variant's text.) The `Display` text is
-  `websocket error: {message}: {source}`, as before for a failed send. Migration: match
+  attempt count, reaches `spawn()`'s caller as `InitFailed`, with this
+  error as its source.) The `Display` text is `websocket error: {message}`;
+  the transport's text is the source's. Migration: match
   `AntigravityError::WebSocket { message, source }` where you matched
   `WebSocket(text)`, and `downcast_ref` the source for the transport's own
   error type.
