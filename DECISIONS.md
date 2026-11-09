@@ -2310,3 +2310,36 @@ harness it finds may be another version, with another protocol.
 **Consequences.** Breaking for a setup that relied on the fall-through:
 fix or remove the path.
 
+---
+
+## D-NEXT-I2-b — Antigravity types that hold a secret print it redacted (2026-11-09)
+
+**Context.** The crate's rule is that a type holding a secret prints it
+redacted (`Client`, `CredentialConfig`), so `dbg!` or
+`tracing::debug!(?value)` cannot undo the wire inspector's redaction.
+`protocol::GeminiApiEndpoint` printed its API key, and it,
+`VertexEndpoint`, `McpHttpTransport`, `McpStdioTransport` and
+`McpServer` printed header and environment values; through
+`HarnessOptions`, `AgentBuilder`'s `Debug` printed the model headers and
+the harness environment (#504's I-9, the Antigravity half).
+
+**Decision.** Hand-written `Debug` for each, through
+`src/antigravity/redact.rs`: an API key prints as `"[REDACTED]"` (the
+crate's spelling), and a header or environment map keeps its names and
+redacts every value, as the wire inspector redacts `env`, `headers` and
+`httpHeaders` whole. The crate-private handshake types get the same
+(`InputConfig`'s environment, `OutputConfig`'s per-process token). Each
+impl destructures its struct without `..`, so a new field fails to
+compile until it is placed. `HarnessConfig`, `ModelConfig`,
+`McpServerConfig` and `InitializeConversationEvent` keep derived `Debug`,
+which reaches the redacting impls. The Python SDK's `AgentConfig` is
+`HarnessConfig` on the wire here, so the sentinel test formats it, the
+init event and `AgentBuilder`, beside each type above.
+
+Not redacted: MCP command arguments and URLs, and the Gemini base URL.
+They are not secrets by design, and hiding them would hide what a debug
+print is for; a credential belongs in a header or the environment.
+
+**Consequences.** `Debug` output changes for these types; their
+`Serialize` output, which the harness needs, does not.
+

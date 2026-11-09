@@ -31,6 +31,8 @@
 //! `ClientInfo.os` (4), `ClientInfo.os_version` (5) — which are all
 //! optional to the harness.
 
+use super::redact::{REDACTED, RedactedValues};
+
 /// Protobuf wire type for varint-encoded scalars.
 const WIRE_VARINT: u32 = 0;
 /// Protobuf wire type for 64-bit fixed-width scalars.
@@ -45,7 +47,9 @@ const WIRE_FIXED32: u32 = 5;
 /// Mirrors `antigravity.localharness.InputConfig`. Fields at their proto3
 /// defaults (empty string, `0`, `None`) are omitted from the encoding, which
 /// matches the reference (protobuf) encoder byte-for-byte.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// `Debug` redacts the environment variables' values, keeping their names.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct InputConfig {
     /// Directory where the harness persists trajectories (`save_dir`).
     pub storage_directory: String,
@@ -75,14 +79,44 @@ pub struct ClientInfo {
 
 /// Handshake reply read from the harness's stdout.
 ///
-/// Mirrors `antigravity.localharness.OutputConfig`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Mirrors `antigravity.localharness.OutputConfig`. `Debug` redacts the
+/// token.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct OutputConfig {
     /// TCP port of the harness's WebSocket server.
     pub port: i32,
     /// Per-process auth token, sent as the `x-goog-api-key` header when
     /// connecting to the WebSocket. This is *not* a Gemini API key.
     pub api_key: String,
+}
+
+impl std::fmt::Debug for InputConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            storage_directory,
+            port,
+            bind_address,
+            client_info,
+            env,
+        } = self;
+        f.debug_struct("InputConfig")
+            .field("storage_directory", storage_directory)
+            .field("port", port)
+            .field("bind_address", bind_address)
+            .field("client_info", client_info)
+            .field("env", &RedactedValues(env))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for OutputConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { port, api_key: _ } = self;
+        f.debug_struct("OutputConfig")
+            .field("port", port)
+            .field("api_key", &REDACTED)
+            .finish()
+    }
 }
 
 /// Errors produced while decoding a handshake frame.

@@ -54,6 +54,7 @@ mod process;
 mod process_tree;
 mod prompt;
 pub mod protocol;
+mod redact;
 mod session;
 mod streaming;
 mod subagent;

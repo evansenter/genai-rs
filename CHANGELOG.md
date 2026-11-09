@@ -953,6 +953,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `Debug` output of the Antigravity types that hold a secret no longer
+  prints it: `protocol::GeminiApiEndpoint`'s API key, and the header and
+  environment variable values of `protocol::GeminiApiEndpoint`,
+  `VertexEndpoint`, `McpHttpTransport`, `McpStdioTransport` and
+  `McpServer` print as `"[REDACTED]"`, their names kept. So does
+  `AgentBuilder`'s, which printed the values given to `add_model_header`
+  and `add_harness_env`. `dbg!` or `tracing::debug!(?value)` undid the
+  wire inspector's redaction.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed

@@ -117,7 +117,7 @@ impl std::fmt::Debug for AgentBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentBuilder")
             .field("harness_path", &self.harness_path)
-            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("api_key", &super::redact::redacted(self.api_key.as_ref()))
             .field("gemini_base_url", &self.gemini_base_url)
             .field("model", &self.model)
             .field("workspaces", &self.workspaces)
