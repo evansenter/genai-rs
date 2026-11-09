@@ -160,13 +160,22 @@ pub(crate) fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
 /// the string and the object form (kept in strict mode too).
 pub(super) fn arb_transcription_mode() -> impl Strategy<Value = TranscriptionMode> {
     prop_oneof![
-        proptest::option::of(arb_text()).prop_map(TranscriptionMode::smart),
+        // Literals, not the constructors: the coverage oracle samples this,
+        // and a constructor could leave a new field unset (its `fills` scan).
+        proptest::option::of(arb_text()).prop_map(|source_text| TranscriptionMode::Smart {
+            source_text,
+            extra: serde_json::Map::new(),
+        }),
         (
             proptest::option::of(arb_identifier()),
             proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
         )
             .prop_map(|(diarization_mode, timestamp_granularities)| {
-                TranscriptionMode::verbatim(diarization_mode, timestamp_granularities)
+                TranscriptionMode::Verbatim {
+                    diarization_mode,
+                    timestamp_granularities,
+                    extra: serde_json::Map::new(),
+                }
             }),
         arb_unknown_type().prop_map(|mode_type| TranscriptionMode::Unknown {
             data: serde_json::Value::String(mode_type.clone()),

@@ -18,11 +18,9 @@
 //! a full literal (`Tool::code_execution()`) sets a new field to whatever
 //! its author chose there, out of the oracle's sight. So the scan also fails
 //! on a call to an associated function of a crate type (`Type::name(..)`,
-//! or `Type::name` passed as a value, which begins every builder chain) in
-//! the oracle's own files, unless [`TRUSTED`] lists it with the reason it
-//! sets every field. The strategies are sampled for their union arms and
-//! enum values, which a constructor call does not hide; the literals here
-//! cover the fields.
+//! or `Type::name` passed as a value, which begins every builder chain), in
+//! the oracle's files and in the strategies it reaches alike, unless
+//! [`TRUSTED`] lists it with the reason the value still sets every field.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -35,13 +33,20 @@ use super::super::Allowed;
 /// builds still sets every field: the type's fields are private, so the
 /// full literal sits beside the type, and a check catches a field it
 /// leaves sending no key; or it destructures every field of a full literal
-/// by name. Any other `Type::name(..)` of a crate type in the oracle fails
-/// [`request_values_are_full_literals`].
+/// by name. Any other `Type::name(..)` of a crate type in the oracle, or in
+/// a strategy it samples, fails [`request_values_are_full_literals`].
 pub(in crate::coverage_oracle) const TRUSTED: &[Allowed] = &[
     ("AntigravityConfig::fully_populated", AGENT_CONFIG),
     ("CodeMenderConfig::fully_populated", AGENT_CONFIG),
     ("DeepResearchConfig::fully_populated", AGENT_CONFIG),
     ("DynamicConfig::fully_populated", AGENT_CONFIG),
+    (
+        "NetworkConfig::allowlist",
+        "In `arb_network_config` (src/proptest_resources.rs), sampled for the allowlist \
+         arm: `allowlist` builds the variant from its one argument, every field but \
+         `extra`, the caller's keys, and the oracle's `network()` literal sets the \
+         same fields.",
+    ),
     (
         "FunctionParameters::new",
         "The fields are private to src/tools/function.rs, so the oracle cannot write \
@@ -228,28 +233,35 @@ fn functions(files: &[syn::File]) -> BTreeMap<String, Vec<syn::ItemFn>> {
 }
 
 /// What the scan found: the fills, the strategies it followed, and every
-/// associated function the oracle's own files name.
+/// associated function named there, each with where.
 struct Found {
     fills: Vec<String>,
     reached: BTreeSet<String>,
-    associated: BTreeSet<String>,
+    associated: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// The fills in `oracle` (every item), and in the strategies of
 /// `strategy_files` that `oracle` samples, followed through every function
 /// of `strategy_files` they name. Also the strategies reached, so a caller
-/// can tell the scan saw them, and the associated functions the oracle
-/// names.
+/// can tell the scan saw them, and the associated functions both name.
 fn fills_in(oracle: &[syn::File], strategy_files: &[syn::File]) -> Found {
     let mut fills = Vec::new();
     let mut roots = BTreeSet::new();
-    let mut associated = BTreeSet::new();
+    let mut associated: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut note = |scan: &Scan| {
+        for path in &scan.associated {
+            associated
+                .entry(path.clone())
+                .or_default()
+                .insert(scan.within.clone());
+        }
+    };
     for file in oracle {
         let mut scan = Scan::new("the oracle");
         scan.visit_file(file);
+        note(&scan);
         fills.append(&mut scan.fills);
         roots.append(&mut scan.strategies);
-        associated.append(&mut scan.associated);
     }
     let defined = functions(strategy_files);
     let mut reached = BTreeSet::new();
@@ -260,6 +272,7 @@ fn fills_in(oracle: &[syn::File], strategy_files: &[syn::File]) -> Found {
         }
         for item in defined.get(&name).into_iter().flatten() {
             let mut scan = scan_fn(item);
+            note(&scan);
             fills.append(&mut scan.fills);
             queue.extend(
                 scan.names
@@ -278,30 +291,32 @@ fn fills_in(oracle: &[syn::File], strategy_files: &[syn::File]) -> Found {
 /// The calls among `associated` to a constructor of one of `types` that
 /// `trusted` does not list, and the `trusted` entries none of them matched.
 fn untrusted_constructors(
-    associated: &BTreeSet<String>,
+    associated: &BTreeMap<String, BTreeSet<String>>,
     types: &BTreeSet<String>,
     trusted: &[Allowed],
 ) -> (Vec<String>, Vec<String>) {
-    let constructors: BTreeSet<&String> = associated
+    let constructors: BTreeMap<&String, &BTreeSet<String>> = associated
         .iter()
-        .filter(|path| {
+        .filter(|(path, _)| {
             path.split_once("::")
                 .is_some_and(|(ty, _)| types.contains(ty))
         })
         .collect();
     let untrusted = constructors
         .iter()
-        .filter(|path| !trusted.iter().any(|(entry, _)| entry == *path))
-        .map(|path| {
-            format!(
-                "the oracle: `{path}` builds a value through a constructor, which can \
-                 leave a new field unset"
-            )
+        .filter(|(path, _)| !trusted.iter().any(|(entry, _)| entry == *path))
+        .flat_map(|(path, within)| {
+            within.iter().map(move |within| {
+                format!(
+                    "{within}: `{path}` builds a value through a constructor, which can \
+                     leave a new field unset"
+                )
+            })
         })
         .collect();
     let stale = trusted
         .iter()
-        .filter(|(entry, _)| !constructors.iter().any(|path| path == entry))
+        .filter(|(entry, _)| !constructors.keys().any(|path| path == entry))
         .map(|(entry, _)| format!("TRUSTED: {entry} is called nowhere; delete the entry"))
         .collect();
     (untrusted, stale)
@@ -516,10 +531,10 @@ fn a_default_fill_is_found_where_the_oracle_reaches() {
     );
 }
 
-/// A constructor of a crate type in the oracle is a finding unless trusted,
-/// called or passed as a value; a variant, a constant, a foreign type's
-/// function and a strategy's constructor are not; and a trusted entry
-/// nothing calls is stale. The `CustomMetadata` mutation the scan exists
+/// A constructor of a crate type, in the oracle or a strategy it samples,
+/// is a finding unless trusted, called or passed as a value; a variant, a
+/// constant, a foreign type's function and an unsampled strategy's
+/// constructor are not; and a trusted entry nothing calls is stale. The `CustomMetadata` mutation the scan exists
 /// for: a field added to it is left to `Default` by `CustomMetadata::string`.
 #[test]
 fn a_constructor_call_in_the_oracle_is_found() {
@@ -538,6 +553,9 @@ fn a_constructor_call_in_the_oracle_is_found() {
         fn arb_config() -> impl Strategy<Value = Config> {
             Just(Config::new())
         }
+        fn arb_unsampled() -> impl Strategy<Value = Config> {
+            Just(Config::other())
+        }
     };
     let found = fills_in(&[oracle], &[strategy_files]);
     let types: BTreeSet<String> = ["Config", "CustomMetadata", "EnvVar", "ServiceTier", "Tool"]
@@ -550,18 +568,19 @@ fn a_constructor_call_in_the_oracle_is_found() {
         ("Tool::url_context", "A full literal."),
     ];
     let (untrusted, stale) = untrusted_constructors(&found.associated, &types, trusted);
-    let named = |path: &str| {
+    let named = |within: &str, path: &str| {
         format!(
-            "the oracle: `{path}` builds a value through a constructor, which can leave a \
+            "{within}: `{path}` builds a value through a constructor, which can leave a \
              new field unset"
         )
     };
     assert_eq!(
         untrusted,
         [
-            named("CustomMetadata::string"),
-            named("EnvVar::credential"),
-            named("VideoProcessing::segment"),
+            named("arb_config", "Config::new"),
+            named("the oracle", "CustomMetadata::string"),
+            named("the oracle", "EnvVar::credential"),
+            named("the oracle", "VideoProcessing::segment"),
         ]
     );
     assert_eq!(

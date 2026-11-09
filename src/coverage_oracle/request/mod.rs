@@ -4,10 +4,10 @@
 //! no `..Default::default()` and no constructor between them and the value,
 //! so a field added to one of these structs fails to compile here until it
 //! is populated and checked. `fills` scans this directory, and the
-//! strategies it samples, for a `default()` fill, and this directory for a
-//! call to a crate type's associated function (`CustomMetadata::string`),
-//! which can leave a new field unset, unless its `TRUSTED` list gives the
-//! reason one sets every field. (The agent configs keep their fields
+//! strategies it samples, for a `default()` fill and for a call to a crate
+//! type's associated function (`CustomMetadata::string`), which can leave
+//! a new field unset, unless its `TRUSTED` list gives the reason one sets
+//! every field. (The agent configs keep their fields
 //! private, so each builds its own literal, `fully_populated()` in
 //! `src/request/agent_config.rs`; `agent_configs_set_every_field` fails on
 //! a field there that sends no key.) Samples from the proptest strategies
