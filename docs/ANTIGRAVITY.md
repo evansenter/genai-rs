@@ -872,9 +872,10 @@ while let Some(event) = stream.next().await {
         }
         AgentEvent::ToolCallDispatched { name, .. } => eprintln!("[custom tool] {name}"),
         AgentEvent::Finished(response) => { println!(); break; }
-        // Transient errors are harness-internal noise (the turn continues);
-        // only `Severe` ones matter. Turn-ending failures arrive as
-        // `AntigravityError::Turn` from the call, not as this event.
+        // Transient errors are harness-internal noise (the turn usually
+        // continues); only `Severe` ones matter. Turn-ending failures
+        // arrive as `AntigravityError::Turn` from the stream, whatever
+        // events came before.
         AgentEvent::Error { message, severity } => match severity {
             ErrorSeverity::Severe => eprintln!("[error] {message}"),
             _ => {} // ignore transient noise
@@ -907,10 +908,13 @@ while let Some(event) = stream.next().await {
   delta.
 - **`Error { message, severity }`** — `severity` is an `ErrorSeverity`.
   Transient errors are harness-internal noise (retried internally; the turn
-  continues) — essentially every error event today. `Severe` marks a
-  serious mid-turn error (e.g. a fatal model-backend status that did not abort
-  the turn); genuinely turn-*ending* failures surface as
-  `AntigravityError::Turn` from `chat`/`send_streaming`, never as this event.
+  usually continues) — essentially every error event today. Not always: a
+  model call whose retries ran out arrives as a `Transient` event just
+  before the turn fails with `TurnFailure::ModelBackend` and the session
+  ends. `Severe` marks a serious mid-turn error (e.g. a fatal model-backend
+  status that did not abort the turn). Whether the turn failed is decided
+  by its result: turn-*ending* failures surface as `AntigravityError::Turn`
+  from `chat`/`send_streaming`, never as this event alone.
 
 The stream borrows the agent mutably for the turn. To cancel from another
 task, take a handle first:
@@ -948,8 +952,10 @@ the next `chat`/`send_streaming` halts it and discards its events before
 sending your input (half a second when nothing is left running, five
 seconds at most), so each later turn gets its own reply. A turn that failed
 on this side before the harness ended it is halted the same way; one the
-harness failed itself (a pre-turn denial) is not. A fatal model error ends
-the whole session instead (see [Errors](#errors)). Until that next call the
+harness failed itself (a pre-turn denial) is not. A failure whose
+`ends_session()` is true (a model backend error, or the harness ending the
+turn with an error of its own) ends the whole session instead (see
+[Errors](#errors)). Until that next call the
 harness may keep working on the abandoned turn, so use `cancel()` to stop
 a turn at once and keep its partial output.
 `next_trigger_turn` does not halt anything first: called after an abandoned
@@ -1100,8 +1106,10 @@ let builder = AntigravityAgent::builder()
   started or was resumed (`ForwardLooking`). A turn that reaches one ends
   early with its `stop_reason`.
 - **Retries**: `RetryConfig::new().with_max_api_retries(0)` fails a turn on
-  the first 503; `RetryConfig::benchmark()` is the Python SDK's preset for
-  long evaluation runs.
+  the first 503, as `TurnFailure::ModelBackend { status: 503 }`, which ends
+  the session too: spawn a new agent after it (see [Errors](#errors)).
+  `RetryConfig::benchmark()` is the Python SDK's preset for long evaluation
+  runs.
 - **Compaction** costs a model call that writes the summary
   (`on_compaction` sees it). The threshold must leave room for the
   harness's own prompt and tools (about 2,700 tokens on 0.1.23 with the
