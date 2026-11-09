@@ -355,8 +355,13 @@ into the log, so the antigravity job's offline suite, which shares its
 log, stays out of it.
 
 So a live test makes no retries of its own beyond `retry_request!`'s
-transport and transient errors (D-052): the report counts a retry
-nextest makes, and never sees one inside the test. When a known model or
+transport and transient errors (D-052). The report counts a retry nextest
+makes, and `retry_request!` prints `TRANSIENT_RETRIED <test> <code>` before
+each retry it makes inside the test, which the report counts per test:
+the code is the model-side flake's name (`malformed_tool_call`,
+`invalid_json`, `processing_error`, `please_retry`, `spanner_utf8`) or the
+transport failure's (the HTTP status, `timeout`, `network`,
+`stream_interrupted`). When a known model or
 server failure has a cause the test controls, remove it: send the tools a
 follow-up turn needs, since they are not carried over, or a request shape
 the server handles, found by live probes and recorded with its numbers in
@@ -370,16 +375,21 @@ to three interactions for an event id with text on both sides).
 
 The rolling report lists retried tests and examples beside failed ones,
 with the week's rate: tests that passed only on a retry, over live test
-runs. The report fails, and so escalates like any red scheduled workflow,
-when the week breaches a target (D-046):
+runs. It lists the in-test retries too, as a row and a table of the tests
+that made them, with their codes. The report fails, and so escalates like
+any red scheduled workflow, when the week breaches a target (D-046):
 
 - the rate is 1% or more;
 - no live test runs were read, so there is no rate (shown as `n/a`, not
   `0.00%`);
-- a chronic flake: a test or example that passed only on a retry in more
-  than 5% of the runs it ran in, and in at least two. The report lists
-  each with its share. A low rate across the suite can hide one test that
-  needs a retry every few runs.
+- a chronic flake: a test or example that needed a retry in more than 5%
+  of the runs it ran in, and in at least two. A run counts when nextest
+  retried the test to a pass, or when the test retried a model-side flake
+  inside itself; a transport retry inside the test (a 429, a 5xx, a
+  timeout) is the shared key's load, not the test's flake, and is listed
+  only (D-052). The report lists each chronic flake with its share. A low
+  rate across the suite can hide one test that needs a retry every few
+  runs. The 1% rate stays nextest's alone.
 
 The report lists the week's runs by creation date, up to 1,000 (about 115
 a week now), the most the API lists for a filtered listing: a larger
@@ -520,11 +530,17 @@ catch a wrong wire key; the coverage oracle below can.
 The Code Coverage job in `rust.yml` measures the workspace with the
 `antigravity` feature: the offline suite, then the key-free scripted
 harness suite, merged into one report that goes to the job summary on
-every run. The job then fails when line coverage is under its floor
-(`--fail-under-lines`), set just under the value measured when it was
-last raised (D-058): raise it in `rust.yml` as coverage grows, and
-lower it only with the reason in the commit. `tests/ci_workflows/coverage.rs`
-checks the job keeps all of this.
+every run. Every report counts library code only: `COVERAGE_IGNORE` leaves
+out the test-only sources a test build compiles into the library (the
+unit-test files, the property tests, the coverage oracle, the tracing test
+recorder and the fuzzing entry points). The job then fails when line
+coverage is under its floor (`--fail-under-lines`), set just under the
+value measured when it was last raised (D-058): raise it in `rust.yml` as
+coverage grows, and lower it only with the reason in the commit.
+`tests/ci_workflows/coverage.rs` checks the job keeps all of this: that
+the pattern matches every module only a test build compiles and no
+library file, and that nothing (an `if:`, or `continue-on-error` on the
+step or the job) can skip the floor or ignore its failure.
 
 ## Coverage oracle
 

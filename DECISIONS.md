@@ -1985,6 +1985,34 @@ the last attempt as it came. As in the `400` form, a failure that names
 the case that met it most, is fixed at its cause (it resends the tool);
 the retry is for the broken call a model makes now and then anywhere.
 
+**Amended 2026-11-09 (I-14).** The retry stays, and the flakiness report
+now sees it. Before #545, nextest retried a broken tool call and the
+report counted it; in the week before the fix, the `400` form was retried
+inside the test in 16 jobs, where the report could not see it, so the
+amendment above hid the flake it kept retrying. `retry_on_transient`
+prints `TRANSIENT_RETRIED <test> <code>` alone on a line before every
+retry: the test named by its thread, which libtest names after it, and
+the code by what is retried, the model-side flake (`malformed_tool_call`,
+`invalid_json`, `processing_error`, `please_retry`, `spanner_utf8`) or
+the transport failure (the HTTP status, `timeout`, `network`,
+`stream_interrupted`). `count_retried_flakes.sh` counts the markers per
+test in the runs it already counts, each on the test whose status line
+precedes it, as it does skip markers, and `summary.json` and the report
+carry them as a row and a table, with their codes.
+
+A run with a model-side in-test retry counts toward the test's chronic
+share (D-046), as a run nextest retried does, and once when nextest
+retried that run too: the flake the report counted before #545 is counted
+again, and a test that needs one in more than 5% of its runs, and in at
+least two, fails the report. Transport retries are listed, not held to a
+target: they are the shared key's load and the server's capacity, which a
+test meets in proportion to the requests it sends, not a flake of the
+feature under test. The 1% weekly rate stays nextest's alone, as D-046
+defined it: an in-test retry is per request, not per test run.
+`tests/ci_workflows/flakiness.rs` checks that every retry branch prints
+the marker, and that the counter reads the same word and takes the same
+codes for transport.
+
 ## D-053 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
 
 **Context.** `is_retryable()` called every 5xx transient and every 4xx but
@@ -2210,6 +2238,51 @@ not a required check, so it shows on the PR without blocking it; making it
 required is the owner's call. The job takes a few minutes longer for the
 antigravity build and the scripted suite. A release can wait on its push
 run, and a red leg there stops it before anything is published.
+
+**Amended 2026-11-09 (I-13, I-15, I-16).** The #504 grade of 2026-11-08
+found two guard holes, a release gate that let any job be skipped, a
+coverage figure diluted by test code, and macOS process-tree tests that no
+PR ran.
+- Coverage counts library code only. Every `cargo llvm-cov report` passes
+  `--ignore-filename-regex "$COVERAGE_IGNORE"`, which leaves out the
+  test-only sources a test build compiles into the library: the property
+  tests, the coverage oracle, the tracing test recorder, the fuzzing entry
+  points, and the unit-test files cargo-llvm-cov's own default already
+  left out. Their 6,000-odd lines, nearly all covered, diluted a drop in
+  the library's own coverage by about a fifth: the floor of 94 over every
+  line held the library at about 92.5%. The floor is now 93, just under
+  the library's 93.51% of 21,980 lines measured on macOS on the merged
+  Wave H tree (2026-11-09), and the grader's 93.09% for H4's tree on Linux.
+  CI runs Linux; should the merged tree's first run there read under 93,
+  the floor drops to just under that figure, with the reason in the commit.
+  `tests/ci_workflows/coverage.rs` walks each crate's module tree with
+  `syn` and checks the pattern matches every module only a test build
+  compiles (a `cfg(test)` or `cfg(any(fuzzing, test))` declaration, and
+  what it declares) and no other file.
+- Nothing skips the floor or ignores its failure: the guard rejects an
+  `if:` on its step and `continue-on-error` on the step or the job, the
+  check `release.rs` now shares (`failure_escapes`).
+- A skip budget fails its step: the guard requires the over-budget branch
+  to exit 1 or set `rc=1`, and a step that sets `rc` to exit with it or
+  list its binary as failed afterwards. A branch that only printed the
+  error passed every check before.
+- The release gate lets only the jobs a push skips by design be skipped,
+  named in `check_release_push_run.sh`'s `SKIPPED_ON_PUSH`: Captured
+  Fixtures Refresh, Process Tree (macOS) and Scheduled Run Status. It wants
+  exactly `CROSS_PLATFORM_LEGS`, six, Cross Platform legs. A skipped live
+  group or escalation job, or a matrix that shrank or grew, stops the
+  release. `tests/ci_workflows/release.rs` holds the list to the `rust.yml`
+  jobs whose `if:` leaves pushes out, and the count to the matrix off a
+  PR.
+- A PR that changes the process code runs the macOS process-tree tests:
+  `process-tree-macos`, on macos-latest, runs on every PR and diffs the
+  merge commit against its base, and runs `cargo nextest run --features
+  antigravity --lib -E 'test(/process_tree/)'` only when
+  `src/antigravity/process*.rs` or `rust.yml` changed, or when it cannot
+  tell. One job with a change check, as `fuzz.yml` decides whether to
+  fuzz, rather than a `paths:` filter, which would stop every `rust.yml`
+  job; `rust.yml` is in the filter so that a change to the job runs it.
+  It is not a required check, and on a push it is skipped by design.
 
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
