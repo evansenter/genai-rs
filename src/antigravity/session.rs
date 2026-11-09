@@ -47,7 +47,7 @@ const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 /// a send still pending after this means the harness has stopped reading.
 /// Callers with a budget of their own (the turn deadline, the
 /// halt-and-drain budget) bound the send by it as well.
-pub(crate) const SEND_TIMEOUT: Duration = Duration::from_secs(30);
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Session-scoped wire-inspection context.
 ///

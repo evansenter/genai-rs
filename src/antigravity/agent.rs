@@ -588,8 +588,9 @@ impl AntigravityAgent {
     /// protocol-required requests (confirmations, hooks) so the harness
     /// never deadlocks, discarding everything surfaced — until the stream
     /// stays silent for [`HALT_DRAIN_SILENCE`] or [`HALT_DRAIN_BUDGET`],
-    /// which the halt's send counts against, runs out. Stale-turn errors (including the halt's own cancellation)
-    /// are logged and swallowed; only transport health matters here.
+    /// which the halt's send counts against, runs out. Stale-turn errors
+    /// (including the halt's own cancellation) are logged and swallowed;
+    /// only transport health matters here.
     ///
     /// Returns whether the stream went silent: `false` when the budget ran
     /// out or the transport failed first.
