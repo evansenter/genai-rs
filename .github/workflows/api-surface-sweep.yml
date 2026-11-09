@@ -27,6 +27,9 @@ name: API Surface Sweep
 # snapshots and opens an issue when one drifts or its URL stops serving
 # (the URLs' record is in the gap tracker).
 #
+# And it flags issue pointers ("tracked in #N", "see #N for", "until #N")
+# that name a closed issue, on a rolling issue of their own (D-051).
+#
 # The same dump, resolved (`--json`), is the coverage oracle's snapshot in
 # `tests/fixtures/api_surface/`. Each run checks that the committed copy
 # matches the baseline release, and a run that finds new surface attaches
@@ -476,6 +479,24 @@ jobs:
             tests/fixtures/api_surface/openapi-v1beta.json \
             tests/fixtures/api_surface/openapi-v1.json
 
+      # D-051: a pointer names an open issue only, and nothing offline can
+      # read an issue's state. This finds the pointer phrasings CLAUDE.md
+      # lists outside the history and fixtures, looks each issue up, and
+      # opens or updates one rolling `documentation` issue listing those that
+      # name a closed issue; a clean run closes it. It reads wording only, so
+      # whether a listed sentence is a stale pointer or a provenance tag
+      # worded like one stays the writer's call. Findings leave the run
+      # green; a failed `gh` call turns it red. `!cancelled()`: it does not
+      # depend on the steps above.
+      - name: Flag issue pointers that name a closed issue
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          .github/scripts/check_issue_pointers.sh
+
       # The coverage oracle (`src/coverage_oracle/`) reads the committed
       # bindings snapshot (#488). Offline, `make test-scripts` checks only
       # that it is for the baseline release and not empty
@@ -517,9 +538,10 @@ jobs:
           reported on the sweep's own \`api-sweep\` issue and leave this run
           green. A red run means the sweep could not complete: PyPI or the wheel
           download failed, the bindings dump could not read a wheel, the spec
-          watch could not read a snapshot or update its issue, or the committed
-          snapshot no longer matches the baseline release (the last step names
-          it). Check the run log."
+          watch could not read a snapshot or update its issue, the
+          issue-pointer check could not look up an issue or update its own, or
+          the committed snapshot no longer matches the baseline release (the
+          last step names it). Check the run log."
 
       - name: Clear the failure issue once the run recovers
         if: success() && github.event_name == 'schedule'

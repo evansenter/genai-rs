@@ -55,7 +55,11 @@ number does. A pointer claims the issue holds current status or pending
 work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
 item M" while that item is open), so it names an open issue only: when
 the issue closes, state the outcome in place and drop the pointer.
-Nothing checks this, since an issue's state needs the network.
+The daily `api-surface-sweep` lists each "tracked in #N", "see #N for"
+and "until #N" that names a closed issue on a rolling `documentation`
+issue (`check_issue_pointers.sh`). It reads wording only: it does not tell
+a pointer from a provenance tag worded like one, and it misses a pointer
+worded otherwise, a bare "#N item M" included.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the

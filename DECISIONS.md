@@ -1908,6 +1908,22 @@ wording. A sentence that could be read either way is reworded to say
 which it is, as those two now do. Still no check: telling the two apart
 means reading what the sentence claims.
 
+**Amended 2026-11-09 (I-19).** A narrow check exists now, one that reads
+wording rather than claims. The daily api-surface-sweep runs
+`.github/scripts/check_issue_pointers.sh`: it finds the pointer phrasings
+above ("tracked in #N", or by, on or at; "see #N for"; "until #N"), on one
+line or wrapped across two, in the tracked files outside `CHANGELOG.md`,
+`DECISIONS.md`, fixtures and the script harnesses, looks each issue up
+with `gh`, and lists every one that names a closed issue, or no issue, on
+one rolling `documentation` issue that a clean run closes.
+`tests/ci_workflows/sweep.rs` requires the step. It does not judge whether
+a listed sentence is a stale pointer or a provenance tag worded like one;
+either way the sentence is reworded, as above. It misses a pointer worded
+any other way, which a reviewer still catches, and it does not match a
+bare "#N item M", the form this decision also gives a provenance tag. It
+runs daily, not in `make test-scripts` or on a PR: an issue closed
+elsewhere would turn an unrelated PR red.
+
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
 **Context.** D-046 made the flakiness report fail on any test that needs a
