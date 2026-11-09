@@ -380,10 +380,11 @@ const fn is_retryable_status(status_code: u16) -> bool {
         | 429 => true,
         // Not Implemented: the server does not support the method or
         // feature (Google's `UNIMPLEMENTED`), and that does not change
-        // between attempts. The API also sends it for a remote MCP
-        // server's error, which can pass when that server is down; the
-        // status alone cannot tell the two apart, so the caller who wants
-        // that one retried matches its message (docs/RELIABILITY.md).
+        // between attempts. The API also sends it when a remote MCP
+        // server answered with an error, which can pass (a server the API
+        // cannot reach gets a 500 instead); the status alone cannot tell
+        // the two apart, so the caller who wants that one retried matches
+        // its message (docs/RELIABILITY.md).
         501
         // HTTP Version Not Supported: every attempt uses the same version.
         | 505
