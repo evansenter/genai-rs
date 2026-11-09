@@ -184,13 +184,25 @@ fn test_discovery_missing_named_path_is_not_found() {
     let path_dir = dir.path().join("bin");
     touch_executable(&found_elsewhere);
     touch_executable(&path_dir.join("localharness"));
+    // (explicit, env, what the location names, the fix the message gives)
+    let env_fix = format!("Point {HARNESS_PATH_ENV} at");
     let cases = [
-        (Some(&missing), None, "explicit path"),
+        (
+            Some(&missing),
+            None,
+            "explicit path",
+            "Point `with_harness_path` at",
+        ),
         // The explicit path wins over the variable, even a valid one.
-        (Some(&missing), Some(&found_elsewhere), "explicit path"),
-        (None, Some(&missing), HARNESS_PATH_ENV),
+        (
+            Some(&missing),
+            Some(&found_elsewhere),
+            "explicit path",
+            "Point `with_harness_path` at",
+        ),
+        (None, Some(&missing), HARNESS_PATH_ENV, env_fix.as_str()),
     ];
-    for (explicit, env, named) in cases {
+    for (explicit, env, named, fix) in cases {
         let err = discover_in(
             HARNESS_FILE_NAMES,
             explicit.map(PathBuf::as_path),
@@ -206,6 +218,13 @@ fn test_discovery_missing_named_path_is_not_found() {
         assert!(
             searched[0].contains(named) && searched[0].contains(&missing.display().to_string()),
             "{searched:?}"
+        );
+        // The message points at the path that was named, not at an
+        // install or a variable that would not be read.
+        let message = err.to_string();
+        assert!(
+            message.contains(fix) && !message.contains("pip install"),
+            "{message}"
         );
     }
 }

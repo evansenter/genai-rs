@@ -100,7 +100,9 @@ fn wheel_site_packages() -> Option<PathBuf> {
             .map(Path::to_path_buf)
             .filter(|dir| dir.join("google/antigravity/types.py").is_file())
     };
-    if let Some(path) = std::env::var_os("ANTIGRAVITY_HARNESS_PATH") {
+    // As `spawn()` takes it: a non-empty variable is the harness, and an
+    // empty one is unset.
+    if let Some(path) = std::env::var_os("ANTIGRAVITY_HARNESS_PATH").filter(|p| !p.is_empty()) {
         return from_binary(PathBuf::from(path));
     }
     let site = std::process::Command::new("python3")

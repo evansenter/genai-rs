@@ -21,6 +21,10 @@ use crate::wire::WireEvent;
 /// reference Python SDK honors).
 pub(crate) const HARNESS_PATH_ENV: &str = "ANTIGRAVITY_HARNESS_PATH";
 
+/// How a [`HarnessNotFound`](AntigravityError::HarnessNotFound) for the
+/// builder's path names it, which its `Display` advice keys on.
+pub(crate) const EXPLICIT_PATH_LABEL: &str = "explicit path ";
+
 /// The directory of the harness binary inside a Python site-packages
 /// directory (from the `google-antigravity` wheel).
 const SITE_PACKAGES_BIN_DIR: &str = "google/antigravity/bin";
@@ -187,7 +191,7 @@ fn discover_in(
         }
     };
     if let Some(path) = explicit {
-        return named(path, format!("explicit path {}", path.display()));
+        return named(path, format!("{EXPLICIT_PATH_LABEL}{}", path.display()));
     }
     if let Some(path) = env_path.filter(|path| !path.as_os_str().is_empty()) {
         return named(path, format!("{HARNESS_PATH_ENV}={}", path.display()));

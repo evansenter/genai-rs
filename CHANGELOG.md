@@ -561,10 +561,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: a harness path the caller names is used as given.** When the
   path from `AgentBuilder::with_harness_path` or `ANTIGRAVITY_HARNESS_PATH`
   is not a file, `spawn()` fails with `AntigravityError::HarnessNotFound`
-  naming it. It used to search site-packages and `PATH` next, so a
-  mistyped path silently ran another harness. An empty
-  `ANTIGRAVITY_HARNESS_PATH` counts as unset. Migration: fix the path, or
-  remove it to let discovery search.
+  naming it, and its message says to fix that path. It used to search
+  site-packages and `PATH` next, so a mistyped path silently ran another
+  harness. An empty `ANTIGRAVITY_HARNESS_PATH` counts as unset. Migration:
+  fix the path, or remove it to let discovery search.
 - **Breaking: a cut-off stream ends with the new
   `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
   the connection can end a stream body before `interaction.completed` or an

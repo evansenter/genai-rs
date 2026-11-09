@@ -2386,7 +2386,10 @@ file, discovery returns `HarnessNotFound` listing that one path, marked
 "(not a file)", and searches nothing else. The explicit path wins over
 the variable, even when the variable names a real binary, as it always
 did. An empty `ANTIGRAVITY_HARNESS_PATH` counts as unset, as it does in
-Python, where the empty string is false.
+Python, where the empty string is false. The error's message tells the
+caller to fix that path (`with_harness_path`, or the variable, which can
+also be unset), not to install the harness or set the variable, which
+would not be read.
 
 Rejected: a warning and fall-through. The fall-through is the bug: the
 harness it finds may be another version, with another protocol.

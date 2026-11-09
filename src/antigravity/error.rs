@@ -15,12 +15,13 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AntigravityError {
-    /// The `localharness` binary could not be found.
+    /// The `localharness` binary could not be found: the path
+    /// [`with_harness_path`](super::AgentBuilder::with_harness_path) or
+    /// `ANTIGRAVITY_HARNESS_PATH` named is not a file (the only location
+    /// listed), or the search found none.
     #[error(
-        "localharness binary not found. Searched: {searched:?}. \
-         Install it with `pip install google-antigravity=={SUPPORTED_HARNESS_VERSION}` \
-         or set {}.",
-        process::HARNESS_PATH_ENV
+        "localharness binary not found. Searched: {searched:?}. {}",
+        not_found_advice(searched)
     )]
     HarnessNotFound {
         /// The locations that were searched, in order.
@@ -208,6 +209,27 @@ impl std::fmt::Display for TurnFailure {
             Self::Trajectory => f.write_str("the harness ended it with an error"),
             Self::Hook => f.write_str("a hook could not run"),
         }
+    }
+}
+
+/// What fixes a [`AntigravityError::HarnessNotFound`]: the path the caller
+/// named, when discovery stopped at it (a fix elsewhere would not be read),
+/// or else installing the harness.
+fn not_found_advice(searched: &[String]) -> String {
+    let named = |label: &str| matches!(searched, [only] if only.starts_with(label));
+    if named(process::EXPLICIT_PATH_LABEL) {
+        "Point `with_harness_path` at the localharness binary.".to_string()
+    } else if named(&format!("{}=", process::HARNESS_PATH_ENV)) {
+        format!(
+            "Point {0} at the localharness binary, or unset it to search for one.",
+            process::HARNESS_PATH_ENV
+        )
+    } else {
+        format!(
+            "Install it with `pip install google-antigravity=={SUPPORTED_HARNESS_VERSION}` \
+             or set {}.",
+            process::HARNESS_PATH_ENV
+        )
     }
 }
 
