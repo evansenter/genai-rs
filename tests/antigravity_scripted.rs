@@ -50,12 +50,15 @@ use serde_json::{Value, json};
 const PLACEHOLDER_KEY: &str = "scripted-placeholder-key";
 
 /// An agent wired to `fake`, with a turn budget far below the suite's
-/// 10-minute hang guard.
+/// 10-minute hang guard, and the fake's app data directory, so the
+/// harness's working files go with the test rather than into the runner's
+/// `~/.gemini/antigravity` (a test that sets its own keeps it).
 fn scripted_agent(fake: &FakeGemini) -> AgentBuilder {
     AntigravityAgent::builder()
         .with_api_key(PLACEHOLDER_KEY)
         .with_model(genai_rs::DEFAULT_MODEL)
         .with_gemini_base_url(fake.base_url())
+        .with_app_data_dir(fake.app_data_dir())
         .with_turn_timeout(Duration::from_secs(60))
 }
 
