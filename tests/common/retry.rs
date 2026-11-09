@@ -175,6 +175,7 @@ where
 
 /// `retry_on_transient` with the per-attempt clones written for you.
 ///
+/// <!-- ignore: rustdoc does not doctest a test crate's modules, and the call needs a live client; the live suites compile it -->
 /// ```ignore
 /// let response = retry_request!([client, prev_id] => {
 ///     stateful_builder(&client)

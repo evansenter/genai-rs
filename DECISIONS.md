@@ -1157,6 +1157,19 @@ fact from any other date in the files it reads, so a date that is not a
 fact (a release date in a guide) has to be phrased without one or added to
 the script's `NAMES`.
 
+**Amended 2026-11-08 (#504's H6).** A date is no longer only ISO: the
+script also reads a slashed date (`2026/11/05`, `11/05/2026`) and one with
+the month named (`November 5, 2026`, `Nov 5, 2026`, `5 November 2026`,
+`November 2026`), and still skips one followed by a time, such as an
+HTTP date in a `Retry-After` example. The reason line on an `ignore` fence
+is required in every doc comment of every Rust file, test code and
+`tests/` included, since those are where a fence went without one; the
+date rule still skips them. Two rules keep every Rust block compiled or
+explained: a Rust block in a Markdown file that `src/lib.rs`'s `doc_tests`
+does not include must be `ignore`d with a reason (`CHANGELOG.md` is exempt
+as history), and a `text` block may not hold a Rust statement or item
+header (D-NEXT-H6).
+
 ## D-033 — The janitor takes a sourceless environment only when it is empty and idle (2026-11-06)
 
 **Context.** The leaked-resource janitor (#492) deletes only resources

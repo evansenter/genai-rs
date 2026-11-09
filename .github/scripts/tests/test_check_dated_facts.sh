@@ -7,8 +7,10 @@
 # and the finding. The interesting parts are what the check must not read:
 # D-032's exceptions (the homes, DECISIONS.md and CHANGELOG.md, test code,
 # `//` comments in src/), a link to a home's dated heading, a timestamp, the
-# API revision; and the test-code boundary, an inline `#[cfg(test)]` module
-# that must not hide the code after it.
+# API revision; the test-code boundary, an inline `#[cfg(test)]` module
+# that must not hide the code after it; the date forms beyond ISO; and the
+# fence rules: a reason on every `ignore`, test code included, no Rust block
+# in a file nothing doctests, and no Rust in a text block.
 
 set -euo pipefail
 
@@ -206,6 +208,7 @@ expect "an empty reason fails" 1 "an ignore fence needs"
 
 base_tree "$T"
 printf '%s\n' '````markdown' '```rust,ignore' 'x' '```' '````' '```rust' 'fn ignore() {}' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '#[doc = include_str!("../docs/GUIDE.md")]' 'mod guide {}' >>"$T/src/lib.rs"
 run_check "$T"
 expect "a fence quoted inside a longer fence, and ignore as code, pass" 0 "No dated live fact"
 
@@ -218,6 +221,94 @@ base_tree "$T"
 printf '%s\n' '' '/// <!-- ignore: a fragment -->' '/// ```ignore' '/// x' '/// ```' 'pub fn quoted() {}' >>"$T/src/lib.rs"
 run_check "$T"
 expect "a rustdoc ignore fence with a reason passes" 0 "No dated live fact"
+
+# Rule 1 reads a date however it is written, not only as ISO.
+for form in 'November 5, 2026' 'Nov 5, 2026' 'Nov. 5 2026' '5 November 2026' \
+  '2026/11/05' '11/05/2026' 'November 2026'; do
+  base_tree "$T"
+  printf '%s\n' '' "The API accepted it ($form)." >>"$T/docs/GUIDE.md"
+  run_check "$T"
+  expect "a date written as '$form' fails" 1 "docs/GUIDE.md:15: dated live fact ($form)"
+done
+
+base_tree "$T"
+printf '%s\n' '' '/// Seen on Nov 5, 2026.' 'pub fn seen() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "a named-month date in a doc comment fails" 1 "src/lib.rs:14: dated live fact (Nov 5, 2026) in a doc comment"
+
+base_tree "$T"
+printf '%s\n' '' 'A `Retry-After` of `Wed, 21 Oct 2015 07:28:00 GMT` waits until then.' \
+  'Logged at 2026/11/05 10:30 and 11/05/2026, 10:30.' 'Version 1/2 of 3.' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "an HTTP date, a slashed timestamp and a fraction pass" 0 "No dated live fact"
+
+# Rule 2 reaches every doc comment: test code and tests/ too, where rule 1
+# does not look.
+base_tree "$T"
+printf '%s\n' '//! Shared helpers.' '//! ```ignore' '//! mod common;' '//! ```' >"$T/tests/helpers.rs"
+run_check "$T"
+expect "an ignore fence in a tests/ helper needs a reason" 1 "tests/helpers.rs:2: an ignore fence needs a"
+
+base_tree "$T"
+printf '%s\n' '//! Shared helpers (2026-11-05).' '//! <!-- ignore: a test crate is not doctested -->' \
+  '//! ```ignore' '//! mod common;' '//! ```' >"$T/tests/helpers.rs"
+run_check "$T"
+expect "a tests/ helper's reasoned ignore fence, and its date, pass" 0 "No dated live fact"
+
+base_tree "$T"
+printf '%s\n' '/// ```ignore' '/// x' '/// ```' 'fn fixture() {}' >"$T/src/lib_tests.rs"
+run_check "$T"
+expect "an ignore fence in a unit-test file needs a reason" 1 "src/lib_tests.rs:1: an ignore fence needs a"
+
+base_tree "$T"
+printf '%s\n' '#[cfg(test)]' '/// ```rust,ignore' '/// x' '/// ```' 'fn helper() {' '}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "an ignore fence on a gated test item needs a reason" 1 "src/lib.rs:14: an ignore fence needs a"
+
+# Rule 3: a Rust block in Markdown that nothing doctests.
+base_tree "$T"
+printf '%s\n' '' '```rust' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a rust fence in a guide src/lib.rs does not include fails" 1 "docs/GUIDE.md:15: a Rust block here never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '```rust,no_run' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '```no_run' 'let x = 1;' '```' >"$T/README.md"
+run_check "$T"
+expect "a no_run fence is Rust too" 1 "docs/GUIDE.md:15: a Rust block here never compiles"
+expect "a bare rustdoc attribute is Rust too" 1 "README.md:2: a Rust block here never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '```rust' 'let x = 1;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '#[cfg(doctest)]' 'mod doc_tests {' '    #[doc = include_str!("../docs/GUIDE.md")]' '    mod guide {}' '}' >>"$T/src/lib.rs"
+printf '%s\n' '' '```rust' 'client.old_call();' '```' >>"$T/CHANGELOG.md"
+run_check "$T"
+expect "a doctested guide's rust fence, and CHANGELOG's, pass" 0 "No dated live fact"
+
+# Rule 4: Rust in a text block.
+base_tree "$T"
+printf '%s\n' '' '```text' 'let mut response = InteractionResponse::default();' \
+  'response.status = InteractionStatus::Completed;' '```' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a let statement in a text fence fails, naming its line" 1 "docs/GUIDE.md:16: Rust in a text block never compiles"
+
+base_tree "$T"
+printf '%s\n' '' '```text' 'response.status = InteractionStatus::Completed;' '```' >>"$T/docs/GUIDE.md"
+printf '%s\n' '' '```' 'use genai_rs::Client;' '```' >"$T/README.md"
+run_check "$T"
+expect "a field assignment in a text fence fails" 1 "docs/GUIDE.md:16: Rust in a text block"
+expect "an untagged fence in an undoctested file is read as text" 1 "README.md:3: Rust in a text block"
+
+base_tree "$T"
+printf '%s\n' '' '/// ```text' '/// #[derive(Debug)]' '/// ```' 'pub fn shown() {}' >>"$T/src/lib.rs"
+run_check "$T"
+expect "Rust in a rustdoc text fence fails" 1 "src/lib.rs:15: Rust in a text block"
+
+base_tree "$T"
+printf '%s\n' '' '```text' 'src/' '  mod.rs        Re-exports the public API' '  agent.rs      fn-free notes' \
+  'with_content() set? -> Yes' 'Harness up. conversation_id=Some("...")' '```' >>"$T/docs/GUIDE.md"
+run_check "$T"
+expect "a file tree and program output in a text fence pass" 0 "No dated live fact"
 
 # Every finding is listed, not just the first.
 base_tree "$T"
@@ -236,7 +327,7 @@ expect "two arguments are a usage error" 2 "Usage:"
 # The real tree, from the repo root: the default ROOT reads it.
 rc=0
 out=$(cd "$HERE/../../.." && bash "$SCRIPT" 2>&1) || rc=$?
-expect "the checkout follows both rules" 0 "No dated live fact outside its home"
+expect "the checkout follows every rule" 0 "No dated live fact outside its home"
 
 echo
 if [ "$failures" -gt 0 ]; then

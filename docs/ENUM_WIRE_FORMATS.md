@@ -1233,9 +1233,11 @@ isn't in its `REQUEST_SIDE` exemption list. The rule:
 Outside the crate the attribute blocks struct literals and
 `..Default::default()`, but not `T::default()` plus field assignment:
 
-```text
+```rust
+# use genai_rs::{InteractionResponse, InteractionStatus};
 let mut response = InteractionResponse::default();
 response.status = InteractionStatus::Completed;
+# assert_eq!(response.status, InteractionStatus::Completed);
 ```
 
 Types with neither `Default` nor a constructor need a JSON fixture:

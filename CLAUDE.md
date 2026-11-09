@@ -39,8 +39,10 @@ harness version, with the dated record in
 date (private items included); dated evidence for the code beside it goes
 in a `//` comment, and tests keep theirs. `make test-scripts` runs
 `.github/scripts/check_dated_facts.sh`, which fails on a date anywhere
-else, and on a code fence marked `ignore` without an
-`<!-- ignore: reason -->` line directly above it.
+else (ISO or not), on a code fence marked `ignore` without an
+`<!-- ignore: reason -->` line directly above it, on a Rust block in a
+Markdown file that `src/lib.rs`'s `doc_tests` leaves out, and on Rust in a
+`text` block. `tests/doc_guards/` requires every guide in `doc_tests`.
 
 An issue number in a doc or a comment is one of two things
 (D-051). A provenance tag, `(#491)`, names the issue a rule or

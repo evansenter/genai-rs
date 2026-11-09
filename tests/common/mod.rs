@@ -1,6 +1,7 @@
 //! Common test utilities shared across all integration test files.
 //!
 //! Usage in test files:
+//! <!-- ignore: rustdoc does not doctest a test crate's modules; every test file that uses them compiles these lines -->
 //! ```ignore
 //! mod common;
 //! use common::*;

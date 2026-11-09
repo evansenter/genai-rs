@@ -39,7 +39,8 @@ test-all:
 # An empty glob, for the harnesses or for any directory shellcheck lints, is
 # an error that names it, not a pass or shellcheck's "No such file" (#456).
 # check_dated_facts.sh then reads the checkout itself: D-032's one home per
-# dated live fact, and a reason above every `ignore` code fence.
+# dated live fact, a reason above every `ignore` code fence, no Rust block in
+# Markdown that nothing doctests, and no Rust in a text block.
 test-scripts:
 	@for tool in jq python3; do \
 		command -v "$$tool" >/dev/null 2>&1 || { \

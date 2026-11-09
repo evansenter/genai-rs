@@ -33,8 +33,11 @@ run in CI only, not in `make test` (see D-009). They include the guides in
 block run `cargo test --workspace --doc --all-features`. A block that cannot
 compile is `rust,ignore` with an `<!-- ignore: reason -->` line directly
 above its fence, in a guide or in rustdoc; prefer `no_run` with hidden
-(`# `) setup lines. `make test-scripts` fails on an `ignore` fence without
-one, and on a dated live fact outside its home (D-032), through
+(`# `) setup lines. A new guide goes in `doc_tests` too
+(`tests/doc_guards/` fails until it does). `make test-scripts` fails on an
+`ignore` fence without its reason, on a Rust block that nothing doctests
+(in a Markdown file `doc_tests` leaves out), on Rust fenced as `text`, and
+on a dated live fact outside its home (D-032), through
 `.github/scripts/check_dated_facts.sh`.
 
 `make test-scripts` exercises `setup-dev.sh` against the checkout's real
