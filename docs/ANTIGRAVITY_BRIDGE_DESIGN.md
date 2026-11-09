@@ -548,15 +548,33 @@ genai-rs cell says "Not modeled" or names no backticked API (whatever its
 wording) with an empty Notes cell. Each modeled setting is shown changing
 the harness's behavior by a test in `tests/antigravity_scripted/`
 (D-010): the model request it sends, the tools it declares, a tool's
-result, the turn's outcome, or what it writes to disk. Three kinds of row
-have no such test of their own, by nature. A constructor or preset that
-only builds a value the harness never sees as such (`Media::from_file`,
-`RetryConfig::benchmark`, `Capabilities::none` and `all`) is unit-tested
-on the value, whose setting is scripted. A response accessor (`text`,
-`thoughts`, `usage`, `conversation_id()`, …) reads what the tests assert
-on rather than changing it. And `Media::with_description` changes
-nothing: harness 0.1.23 does not pass it to the model, which the media
-test asserts so that the day it does is noticed.
+result, the turn's outcome and its stop reason, the time between its
+model retries, or what it writes to disk. The budget caps and scope, the
+retry backoff and the output retries are in `limits.rs`, an inline
+skill's metadata and dependent skills in `skills.rs`, and a subagent's
+behavior in `subagents.rs`. Four kinds of row have no such test of their
+own:
+
+- A constructor or preset that only builds a value the harness never
+  sees as such (`Media::from_file`, `RetryConfig::benchmark`,
+  `Capabilities::none` and `all`) is unit-tested on the value, whose
+  setting is scripted.
+- A response accessor (`text`, `thoughts`, `usage`, `conversation_id()`,
+  …) reads what the tests assert on rather than changing it.
+- A setting harness 0.1.23 ignores has nothing to show, and a scripted
+  test asserts that it changes nothing, so the day the harness honors it
+  is noticed. `Media::with_description` is not passed to the model (the
+  media test). `InlineSkill::add_allowed_tool` and `add_dependent_tool`
+  change neither the skill's listing nor its lookup's answer, nor the
+  tools declared after the lookup (a deferred MCP tool named as
+  dependent stays undeclared), nor how a later call is gated (a call to
+  an allowed tool is still denied under `deny_all()`, and a call to a
+  tool off the list still runs under `allow_all()`), verified
+  2026-11-09 with `test_scripted_skill_allowed_and_dependent_tools_change_nothing_on_this_harness`.
+- `RetryConfig::with_jitter` is random by design. The backoff test sets
+  it to 0, which makes the harness's waits exact, but a nonzero range
+  moves each wait by a random amount that no bounded test tells apart
+  from scheduling noise.
 
 ### Agent and session
 
@@ -671,7 +689,7 @@ test asserts so that the day it does is noticed.
 | Python SDK option | genai-rs | Notes |
 |---|---|---|
 | `AgentConfig.skills_paths` | `add_skills_path` | |
-| `AgentConfig.inline_skills`, `InlineSkill.name`, `InlineSkill.description`, `InlineSkill.content`, `InlineSkill.allowed_tools`, `InlineSkill.dependent_tools`, `InlineSkill.dependent_skills`, `InlineSkill.metadata` | `add_inline_skill(InlineSkill::new(..))` | Not combinable with skills paths, as in Python. |
+| `AgentConfig.inline_skills`, `InlineSkill.name`, `InlineSkill.description`, `InlineSkill.content`, `InlineSkill.allowed_tools`, `InlineSkill.dependent_tools`, `InlineSkill.dependent_skills`, `InlineSkill.metadata` | `add_inline_skill(InlineSkill::new(..))` | Not combinable with skills paths, as in Python. `visibility: hidden` metadata keeps a skill out of the prompt's list, and a lookup's answer names its dependent skills. `allowed_tools` and `dependent_tools` change nothing on 0.1.23 (see above). |
 | `AgentConfig.mcp_servers`, `McpStdioServer.command`, `McpStdioServer.args`, `McpStdioServer.type`, `McpStreamableHttpServer.url`, `McpStreamableHttpServer.type` | `add_mcp_server(McpServer::stdio / http)` | |
 | `McpStdioServer.env` | `McpServer::add_env` | |
 | `McpStreamableHttpServer.headers` | `McpServer::add_header` | |
@@ -680,8 +698,8 @@ test asserts so that the day it does is noticed.
 | `BaseMcpServerConfig.timeout_seconds` | `with_timeout_seconds` | On 0.1.23, bounds both loading the server (connecting and listing its tools; a slower server fails the turn that loads it) and each call (a slower one returns an error to the model). |
 | `BaseMcpServerConfig.force_all_tools_eager` | `with_force_all_tools_eager` | Tools declared by name instead of behind `call_mcp_tool`. |
 | `McpStreamableHttpServer.timeout`, `McpStreamableHttpServer.sse_read_timeout`, `McpStreamableHttpServer.terminate_on_close` | Not modeled | The Python SDK does not send them to the harness either (its `_to_mcp_server_proto` drops them), so they change nothing on the local harness. |
-| `AgentConfig.budget_config`, `BudgetConfig.max_model_calls`, `BudgetConfig.max_tool_calls`, `BudgetConfig.max_input_tokens`, `BudgetConfig.max_output_tokens`, `BudgetConfig.max_total_tokens`, `BudgetConfig.scope`, `BudgetScope.LIFETIME`, `BudgetScope.FORWARD_LOOKING` | `with_budget(Budget)` | A reached cap surfaces as `ChatResponse::stop_reason`. |
-| `AgentConfig.retry_config`, `RetryConfig.api_retry`, `RetryConfig.model_output_retry`, `ModelAPIRetryConfig.max_retries`, `ModelAPIRetryConfig.initial_sleep_duration_ms`, `ModelAPIRetryConfig.exponential_multiplier`, `ModelAPIRetryConfig.jitter_range`, `ModelOutputRetryConfig.max_retries` | `with_retry(RetryConfig)` | |
+| `AgentConfig.budget_config`, `BudgetConfig.max_model_calls`, `BudgetConfig.max_tool_calls`, `BudgetConfig.max_input_tokens`, `BudgetConfig.max_output_tokens`, `BudgetConfig.max_total_tokens`, `BudgetConfig.scope`, `BudgetScope.LIFETIME`, `BudgetScope.FORWARD_LOOKING` | `with_budget(Budget)` | A reached cap surfaces as `ChatResponse::stop_reason`, each cap with its own. The scope shows on a resume: `Lifetime` counts the calls made before it, `ForwardLooking` does not. |
+| `AgentConfig.retry_config`, `RetryConfig.api_retry`, `RetryConfig.model_output_retry`, `ModelAPIRetryConfig.max_retries`, `ModelAPIRetryConfig.initial_sleep_duration_ms`, `ModelAPIRetryConfig.exponential_multiplier`, `ModelAPIRetryConfig.jitter_range`, `ModelOutputRetryConfig.max_retries` | `with_retry(RetryConfig)` | With no jitter the waits are exact: the initial backoff, then that times the multiplier at each retry (0.1.23's defaults: 4 s and 2, verified 2026-11-09). A call to an undeclared tool counts as malformed output. |
 | `RetryConfig.benchmark` | `RetryConfig::benchmark` | |
 
 ### Hooks

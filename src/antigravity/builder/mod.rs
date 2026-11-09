@@ -417,6 +417,11 @@ impl AgentBuilder {
     /// Sets a wall-clock budget per turn. When exceeded, `chat` /
     /// `send_streaming` fail with [`AntigravityError::Timeout`].
     ///
+    /// The budget starts before the message is sent and bounds the send
+    /// too, so a harness that has stopped reading fails the turn on time
+    /// rather than holding it. A halt of an earlier turn, sent first when
+    /// one is still running, has a five-second budget of its own.
+    ///
     /// Defaults to [`DEFAULT_TURN_TIMEOUT`]. Raise it for agents that
     /// legitimately run long (deep subagent trees, many tool calls); lower
     /// it for interactive use where a stall should surface fast.

@@ -271,6 +271,61 @@ async fn test_scripted_a_503_after_delegating_fails_the_turn() {
 
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
+async fn test_scripted_subagent_agent_behavior_frames_its_prompt() {
+    use genai_rs::antigravity::AgentBehavior;
+
+    // Each behavior writes its own sections into the subagent's system
+    // prompt (0.1.23, 2026-11-09): autonomous, the default, a
+    // non-interactive section; interactive, an artifacts section instead;
+    // minimal, neither, nor the MCP section the other two carry.
+    let cases = [
+        (
+            None,
+            ["<non_interactive_mode>", "<mcp_servers>"],
+            "<artifacts>",
+        ),
+        (
+            Some(AgentBehavior::Interactive),
+            ["<artifacts>", "<mcp_servers>"],
+            "<non_interactive_mode>",
+        ),
+        (
+            Some(AgentBehavior::Minimal),
+            ["<identity>", "<communication_style>"],
+            "<mcp_servers>",
+        ),
+    ];
+    for (behavior, present, absent) in cases {
+        let fake = delegating_model().await;
+        let mut subagent = helper();
+        if let Some(behavior) = behavior {
+            subagent = subagent.with_agent_behavior(behavior);
+        }
+        let mut agent = delegating_agent(&fake, vec![subagent])
+            .spawn()
+            .await
+            .expect("spawn");
+        agent.chat("delegate").await.expect("turn");
+        let prompt = fake.system_prompt(helper_request(&fake).await);
+        for section in present {
+            assert!(
+                prompt.contains(section),
+                "{behavior:?}: {section}: {prompt}"
+            );
+        }
+        assert!(!prompt.contains(absent), "{behavior:?}: {absent}: {prompt}");
+        if behavior == Some(AgentBehavior::Minimal) {
+            assert!(!prompt.contains("<non_interactive_mode>"), "{prompt}");
+            assert!(!prompt.contains("<artifacts>"), "{prompt}");
+        }
+        // The root agent keeps the default.
+        assert!(fake.system_prompt(0).contains("<non_interactive_mode>"));
+        agent.shutdown().await.expect("shutdown");
+    }
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
 async fn test_scripted_subagent_skills_choose_the_skills_a_subagent_sees() {
     let first = skill_dir("first-skill", "FIRST-MARK-5101");
     let second = skill_dir("second-skill", "SECOND-MARK-5102");

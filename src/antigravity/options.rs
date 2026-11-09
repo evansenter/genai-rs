@@ -384,14 +384,18 @@ impl InlineSkill {
         }
     }
 
-    /// Adds a tool the skill may use.
+    /// Adds a tool the skill may use. Harness 0.1.23 does nothing with the
+    /// list: a call to a tool outside it still runs, and one to a tool in
+    /// it is still gated by the policies.
     #[must_use]
     pub fn add_allowed_tool(mut self, tool: impl Into<String>) -> Self {
         self.allowed_tools.push(tool.into());
         self
     }
 
-    /// Adds a tool loaded when the skill is looked up.
+    /// Adds a tool for the harness to load when the skill is looked up.
+    /// Harness 0.1.23 does not: the tools it declares after a lookup are
+    /// the ones it declared before.
     #[must_use]
     pub fn add_dependent_tool(mut self, tool: impl Into<String>) -> Self {
         self.dependent_tools.push(tool.into());
