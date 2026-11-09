@@ -689,6 +689,17 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    env:
+      # Library code only (D-058): every report below leaves out the
+      # test-only sources a test build compiles into the library: the
+      # unit-test files (`*_tests.rs` and `tests.rs`, which cargo-llvm-cov's
+      # own default leaves out too), the property tests, the coverage
+      # oracle, the tracing test recorder and the fuzzing entry points.
+      # Counted, their 6,000-odd nearly covered lines diluted a drop in the
+      # library's own. tests/ci_workflows/coverage.rs holds the pattern to
+      # the module tree: it matches every module only a test build
+      # compiles, and nothing else.
+      COVERAGE_IGNORE: '(_tests|/tests)\.rs$|/src/(proptest_|coverage_oracle/|test_subscriber\.rs$|fuzzing)'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -715,14 +726,14 @@ jobs:
           cargo llvm-cov clean --workspace
           cargo llvm-cov nextest --workspace --features antigravity --no-report
           cargo llvm-cov nextest --workspace --features antigravity --no-report --run-ignored all -E 'binary(antigravity_scripted)'
-          cargo llvm-cov report --workspace --lcov --output-path lcov.info
+          cargo llvm-cov report --workspace --ignore-filename-regex "$COVERAGE_IGNORE" --lcov --output-path lcov.info
       # Every run, token or not: with no Codecov upload, the job summary is
       # where the coverage is read. `--workspace` as above: without it the
       # report covers the root package only, not genai-rs-macros.
       - name: Coverage summary
         run: |
           set -euo pipefail
-          cargo llvm-cov report --workspace --summary-only | tee coverage-summary.txt
+          cargo llvm-cov report --workspace --ignore-filename-regex "$COVERAGE_IGNORE" --summary-only | tee coverage-summary.txt
           {
             echo "## Code coverage"
             echo
@@ -731,11 +742,13 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       # After the summary, so a drop below the floor is shown before it
-      # fails the job. The floor sits just under the line coverage measured
-      # when it was set (D-058): raise it as coverage grows, and lower
-      # it only with the reason in the commit.
+      # fails the job. The floor sits just under the library's line
+      # coverage measured when it was set (D-058): raise it as coverage
+      # grows, and lower it only with the reason in the commit. No `if:` and
+      # no `continue-on-error`, here or on the job: tests/ci_workflows/
+      # rejects both, so a drop always fails the job.
       - name: Enforce the coverage floor
-        run: cargo llvm-cov report --workspace --fail-under-lines 94
+        run: cargo llvm-cov report --workspace --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines 93
       # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,
       # and the summary above stands in; with one, a failed upload fails the
       # job instead of passing with nothing uploaded.

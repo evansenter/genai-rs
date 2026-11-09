@@ -274,6 +274,45 @@ fn steps(job: &str) -> Vec<String> {
     steps
 }
 
+/// What would let `step` fail without failing its job, each named: a
+/// step-level `if:`, which can skip it, or `continue-on-error` on the step
+/// or on `job`, which ignores its failure (`false` is the default, and
+/// allowed). Empty when the step runs on every run and its failure fails
+/// the job.
+fn failure_escapes(job: &str, step: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for (i, line) in step.lines().enumerate() {
+        // The step's own keys sit at 8 spaces, the first one after `- `.
+        let key = if i == 0 {
+            line.strip_prefix("      - ")
+        } else {
+            line.strip_prefix("        ")
+                .filter(|rest| !rest.starts_with(' '))
+        };
+        let Some(key) = key else {
+            continue;
+        };
+        if key.starts_with("if:") {
+            found.push(format!("a step-level `{key}`, which can skip it"));
+        }
+        if let Some(value) = key.strip_prefix("continue-on-error:")
+            && value.trim() != "false"
+        {
+            found.push(format!("`{key}` on the step, which ignores its failure"));
+        }
+    }
+    for line in job.lines() {
+        if let Some(value) = line.strip_prefix("    continue-on-error:")
+            && value.trim() != "false"
+        {
+            found.push(format!(
+                "`continue-on-error:{value}` on its job, which ignores its failure"
+            ));
+        }
+    }
+    found
+}
+
 /// A step that runs nextest against the live API: it runs `nextest run`
 /// with the repository's key in its env (the scripted harness step blanks
 /// the key, and the unit-test steps have none).
@@ -385,6 +424,30 @@ fn live_nextest_steps_keep_and_budget_skip_markers() {
         "live nextest steps must keep and budget their skip markers:\n  {}",
         problems.join("\n  ")
     );
+}
+
+#[test]
+fn the_failure_escape_check_reads_the_step_and_its_job() {
+    let job = "    runs-on: x\n    steps:\n";
+    let step = "      - name: Floor\n        run: check\n        env:\n          if: not-a-key\n";
+    assert!(failure_escapes(job, step).is_empty());
+    for broken in [
+        "      - name: Floor\n        if: always()\n        run: check\n",
+        "      - if: github.event_name == 'push'\n        run: check\n",
+        "      - name: Floor\n        continue-on-error: true\n        run: check\n",
+        "      - name: Floor\n        continue-on-error: ${{ matrix.ok }}\n        run: check\n",
+    ] {
+        assert!(!failure_escapes(job, broken).is_empty(), "{broken}");
+    }
+    assert!(
+        failure_escapes(
+            job,
+            "      - name: Floor\n        continue-on-error: false\n        run: check\n"
+        )
+        .is_empty()
+    );
+    let lenient = "    runs-on: x\n    continue-on-error: true\n    steps:\n";
+    assert!(!failure_escapes(lenient, step).is_empty());
 }
 
 #[test]
