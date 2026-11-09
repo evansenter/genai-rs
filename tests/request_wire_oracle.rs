@@ -19,7 +19,9 @@
 //! option and every request type's query option set (all three are
 //! checked; the last through `query_options`), so a misspelled key, a key
 //! the API dropped, and a parameter a new release adds all fail it, and so
-//! does a request to a path no endpoint takes. A key written into a URL
+//! does a request to a path no endpoint takes. The specs' parameters are
+//! diffed against the bindings' and what the verbs send (`spec_query`),
+//! each difference listed with its reason. A key written into a URL
 //! string rather than added through `with_query` fails
 //! `query_keys_are_added_only_through_with_query` (`query_literals`), since
 //! the verb may never be called with it set here.
@@ -41,6 +43,8 @@ mod live_verbs;
 mod query_literals;
 #[path = "request_wire_oracle/query_options.rs"]
 mod query_options;
+#[path = "request_wire_oracle/spec_query.rs"]
+mod spec_query;
 
 use api_surface::Surface;
 use common::http_stub::{Recorded, Reply, Stub};
@@ -1325,6 +1329,18 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         problems.is_empty(),
         "query strings that do not fit google-genai's endpoints:\n  {}",
         problems.join("\n  ")
+    );
+    let differences = spec_query::spec_query_findings(
+        &spec_query::all_spec_endpoints(),
+        &endpoints,
+        &requests,
+        spec_query::SPEC_QUERY,
+    );
+    assert!(
+        differences.is_empty(),
+        "query parameters where the OpenAPI specs differ from the bindings and the \
+         crate:\n  {}",
+        differences.join("\n  ")
     );
 }
 
