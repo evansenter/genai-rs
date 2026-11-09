@@ -124,6 +124,8 @@ mod hooks;
 #[cfg(unix)]
 #[path = "antigravity_scripted/lifecycle.rs"]
 mod lifecycle;
+#[path = "antigravity_scripted/limits.rs"]
+mod limits;
 #[path = "antigravity_scripted/mcp.rs"]
 mod mcp;
 #[path = "antigravity_scripted/options.rs"]
@@ -132,6 +134,8 @@ mod options;
 mod parity;
 #[path = "antigravity_scripted/policies.rs"]
 mod policies;
+#[path = "antigravity_scripted/skills.rs"]
+mod skills;
 #[path = "antigravity_scripted/subagents.rs"]
 mod subagents;
 #[path = "antigravity_scripted/triggers.rs"]

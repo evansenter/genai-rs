@@ -1171,6 +1171,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tail of the harness's stderr, as that variant says. A connection that
   ended without a close frame, as a crashed or killed harness's does, read
   as a `WebSocket` error with no stderr.
+- `InlineSkill::add_dependent_tool` said the tool is loaded when the skill
+  is looked up. Harness 0.1.23 loads nothing, and does nothing with
+  `add_allowed_tool` either: a call to a tool outside the list still runs,
+  and one inside it is still gated by the policies. Both rustdocs say so,
+  and a scripted test notices the day the harness starts to honor them.
 - `docs/CONVERSATIONS.md` no longer suggests a follow-up turn can simply
   drop a built-in tool. After a turn that used Google Search, a follow-up
   sent without it sometimes ends `failed` with a `malformed_tool_call`
