@@ -18,8 +18,12 @@
 #   4. No `## [...]` heading appears twice, anywhere. A keep-both merge can
 #      produce two `## [Unreleased]`; rule 1 would then check each copy
 #      separately, and extract_changelog_section.sh ships only one of them.
+#   5. Every breaking entry (a list item that starts `- **Breaking`) says
+#      what to do about it in a `Migration:` of its own (CLAUDE.md, D-007).
+#      An entry runs from its `- ` to the next line that is neither blank
+#      nor indented. Checked where rule 1 is.
 #
-# Fenced code blocks are skipped for all four. An unclosed fence is itself
+# Fenced code blocks are skipped for all five. An unclosed fence is itself
 # reported: otherwise everything after it would go unchecked and pass.
 #
 # Output: one `<file>:<line>: <problem>` per violation, on stdout.
@@ -47,6 +51,16 @@ fi
 awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}" '
     function report(msg) { printf "%s:%d: %s\n", file, NR, msg; bad = 1 }
 
+    # Rule 5: the breaking entry that just ended has its migration.
+    function finish_entry() {
+        if (breaking && !migration) {
+            printf "%s:%d: breaking entry with no \"Migration:\": %s\n", file, entry_line, entry_head
+            bad = 1
+        }
+        breaking = 0
+        migration = 0
+    }
+
     # Fences toggle on their own line; nothing inside one is structure.
     /^[[:space:]]*```/ {
         fenced = !fenced
@@ -59,6 +73,18 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
     /^(<<<<<<< |<<<<<<<$|=======$|>>>>>>> |>>>>>>>$)/ {
         report("merge-conflict marker")
     }
+
+    # A line that is neither blank nor indented ends a list entry; one that
+    # starts a breaking entry where rule 1 checks begins the next.
+    /^[^[:space:]]/ {
+        finish_entry()
+        if (checked && /^- \*\*Breaking/) {
+            breaking = 1
+            entry_line = NR
+            entry_head = $0
+        }
+    }
+    breaking && /Migration:/ { migration = 1 }
 
     /^###? / {
         if (NR > 1 && prev !~ /^[[:space:]]*$/) {
@@ -94,6 +120,7 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
     { prev = $0 }
 
     END {
+        finish_entry()
         if (fenced) {
             printf "%s:%d: unclosed code fence; nothing after it was checked\n", file, fence_line
             bad = 1

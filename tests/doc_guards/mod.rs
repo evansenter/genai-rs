@@ -468,8 +468,9 @@ const NOT_DOCTESTED: &[(&str, &str)] = &[
 /// The repository-relative Markdown files `lib_rs`'s `doc_tests` module
 /// includes as docs (`#[doc = include_str!("../<path>")]` on one of its
 /// items) where the doctest run compiles them: in code, not a comment, and
-/// under no `cfg` that run leaves out ([`cfg_holds`]).
-fn doctested(lib_rs: &str) -> BTreeSet<String> {
+/// under no `cfg` that run leaves out ([`cfg_holds`]). An error names a
+/// `cfg` on the module or an include that [`cfg_holds`] cannot evaluate.
+fn doctested(lib_rs: &str) -> Result<BTreeSet<String>, String> {
     let file = syn::parse_file(lib_rs).unwrap_or_else(|e| panic!("cannot parse src/lib.rs: {e}"));
     let module = file
         .items
@@ -483,18 +484,18 @@ fn doctested(lib_rs: &str) -> BTreeSet<String> {
         .content
         .as_ref()
         .expect("doc_tests is an inline module");
-    if !module.attrs.iter().all(cfg_attr_holds) {
-        return BTreeSet::new();
+    if !cfg_attrs_hold(&module.attrs)? {
+        return Ok(BTreeSet::new());
     }
-    items
-        .iter()
-        .filter_map(|item| match item {
-            syn::Item::Mod(module) => Some(&module.attrs),
-            _ => None,
-        })
-        .filter(|attrs| attrs.iter().all(cfg_attr_holds))
-        .flat_map(|attrs| attrs.iter().filter_map(included_doc))
-        .collect()
+    let mut included = BTreeSet::new();
+    for item in items {
+        if let syn::Item::Mod(module) = item
+            && cfg_attrs_hold(&module.attrs)?
+        {
+            included.extend(module.attrs.iter().filter_map(included_doc));
+        }
+    }
+    Ok(included)
 }
 
 /// The repository-relative path `attr` includes as docs, if it is
@@ -516,49 +517,86 @@ fn included_doc(attr: &syn::Attribute) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Whether `attr` is no `cfg`, or one that holds in the doctest run.
-fn cfg_attr_holds(attr: &syn::Attribute) -> bool {
-    !attr.path().is_ident("cfg") || attr.parse_args().is_ok_and(|meta| cfg_holds(&meta))
+/// Whether every `cfg` among `attrs` holds in the doctest run. Each is
+/// evaluated, so one it cannot evaluate is an error even beside one that
+/// does not hold.
+fn cfg_attrs_hold(attrs: &[syn::Attribute]) -> Result<bool, String> {
+    let mut holds = true;
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("cfg")) {
+        let meta: syn::Meta = attr
+            .parse_args()
+            .map_err(|e| format!("a `cfg` it cannot parse ({e})"))?;
+        holds &= cfg_holds(&meta)?;
+    }
+    Ok(holds)
 }
+
+/// The names CI's doctest run sets, and the ones it knows it does not.
+const CFG_TRUE: &[&str] = &["doctest", "unix", "debug_assertions"];
+const CFG_FALSE: &[&str] = &[
+    "test",
+    "windows",
+    "miri",
+    "fuzzing",
+    "docsrs",
+    "genai_strict_unknown",
+];
 
 /// Whether a `cfg` predicate holds in CI's doctest run, a debug build with
 /// every feature on Linux: `doctest`, `unix`, `debug_assertions`, every
 /// `feature = "..."`, `target_os = "linux"` and `target_family = "unix"`
-/// do; any other name (`test`, `fuzzing`, an empty `any()`) does not.
-/// `check_dated_facts.sh` reads includes the same way.
-fn cfg_holds(meta: &syn::Meta) -> bool {
+/// do; `test`, `windows`, `miri`, `fuzzing`, `docsrs`,
+/// `genai_strict_unknown`, another `target_os` or `target_family`, and an
+/// empty `any()` do not. Any other name or key (`target_arch`, say) is an
+/// error naming it, rather than a guess: read as false, `not(..)` would
+/// turn it true. `check_dated_facts.sh` reads includes the same way.
+fn cfg_holds(meta: &syn::Meta) -> Result<bool, String> {
     use syn::punctuated::Punctuated;
+    let name = |path: &syn::Path| {
+        path.get_ident()
+            .map_or_else(|| "a path".to_string(), ToString::to_string)
+    };
     match meta {
-        syn::Meta::Path(path) => ["doctest", "unix", "debug_assertions"]
-            .iter()
-            .any(|name| path.is_ident(name)),
+        syn::Meta::Path(path) => {
+            let name = name(path);
+            if CFG_TRUE.contains(&name.as_str()) {
+                Ok(true)
+            } else if CFG_FALSE.contains(&name.as_str()) {
+                Ok(false)
+            } else {
+                Err(format!("`{name}`, which it does not know"))
+            }
+        }
         syn::Meta::NameValue(pair) => {
+            let key = name(&pair.path);
             let syn::Expr::Lit(syn::ExprLit {
                 lit: syn::Lit::Str(value),
                 ..
             }) = &pair.value
             else {
-                return false;
+                return Err(format!("`{key} = ..` with a value that is not a string"));
             };
             let value = value.value();
-            pair.path.is_ident("feature")
-                || (pair.path.is_ident("target_os") && value == "linux")
-                || (pair.path.is_ident("target_family") && value == "unix")
+            match key.as_str() {
+                "feature" => Ok(true),
+                "target_os" => Ok(value == "linux"),
+                "target_family" => Ok(value == "unix"),
+                _ => Err(format!("`{key} = \"{value}\"`, which it does not know")),
+            }
         }
         syn::Meta::List(list) => {
-            let Ok(nested) =
-                list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
-            else {
-                return false;
-            };
-            if list.path.is_ident("all") {
-                nested.iter().all(cfg_holds)
-            } else if list.path.is_ident("any") {
-                nested.iter().any(cfg_holds)
-            } else if list.path.is_ident("not") {
-                nested.len() == 1 && !cfg_holds(&nested[0])
-            } else {
-                false
+            let nested = list
+                .parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                .map_err(|e| format!("a `cfg` it cannot parse ({e})"))?;
+            let values = nested
+                .iter()
+                .map(cfg_holds)
+                .collect::<Result<Vec<bool>, String>>()?;
+            match name(&list.path).as_str() {
+                "all" => Ok(values.iter().all(|v| *v)),
+                "any" => Ok(values.iter().any(|v| *v)),
+                "not" if values.len() == 1 => Ok(!values[0]),
+                other => Err(format!("`{other}(..)`, which it does not know")),
             }
         }
     }
@@ -603,7 +641,15 @@ fn holds_rust(text: &str) -> bool {
 /// longer applies, because `doc_tests` includes the file, the file is
 /// gone, or a top-level file holds no Rust any more.
 fn undoctested(lib_rs: &str, files: &[(String, String)], exempt: &[(&str, &str)]) -> Vec<String> {
-    let included = doctested(lib_rs);
+    let included = match doctested(lib_rs) {
+        Ok(included) => included,
+        Err(e) => {
+            return vec![format!(
+                "src/lib.rs's doc_tests has {e}: teach cfg_holds here, and in \
+                 .github/scripts/check_dated_facts.sh, whether CI's doctest run sets it"
+            )];
+        }
+    };
     let exempt: BTreeSet<&str> = exempt.iter().map(|(path, _)| *path).collect();
     let mut problems = Vec::new();
     for (path, text) in files {
@@ -676,7 +722,7 @@ fn every_guide_is_doctested() {
     let lib_rs = std::fs::read_to_string(root().join("src/lib.rs")).unwrap();
     let files = guide_candidates(&root());
     assert!(
-        doctested(&lib_rs).len() > 20,
+        doctested(&lib_rs).unwrap().len() > 20,
         "found too few doc_tests includes"
     );
     let problems = undoctested(&lib_rs, &files, NOT_DOCTESTED);
@@ -732,7 +778,7 @@ fn only_an_include_the_doctest_run_compiles_counts() {
     let counted = |item: &str| {
         let lib_rs =
             format!("#[cfg(doctest)]\nmod doc_tests {{\n    {item}\n    mod guide {{}}\n}}\n");
-        doctested(&lib_rs).contains("docs/GUIDE.md")
+        doctested(&lib_rs).unwrap().contains("docs/GUIDE.md")
     };
     for on in [
         include.to_string(),
@@ -752,7 +798,64 @@ fn only_an_include_the_doctest_run_compiles_counts() {
         assert!(!counted(&off), "{off}");
     }
     let gated = format!("#[cfg(any())]\nmod doc_tests {{\n    {include}\n    mod guide {{}}\n}}\n");
-    assert!(doctested(&gated).is_empty());
+    assert!(doctested(&gated).unwrap().is_empty());
+}
+
+/// A `cfg` name or key the evaluator does not know is an error naming it,
+/// on the module or an include, under `not` or beside a false `cfg`, and
+/// the guard reports it; read as false, `not(target_arch = ..)` counted.
+#[test]
+fn an_unknown_cfg_fails_rather_than_reading_false() {
+    let include = "#[doc = include_str!(\"../docs/GUIDE.md\")]";
+    let wrap = |module: &str, item: &str| {
+        format!("{module}\nmod doc_tests {{\n    {item}\n    mod guide {{}}\n}}\n")
+    };
+    for (lib_rs, named) in [
+        (
+            wrap(
+                "#[cfg(doctest)]",
+                &format!("#[cfg(not(target_arch = \"x86_64\"))] {include}"),
+            ),
+            "`target_arch = \"x86_64\"`",
+        ),
+        (
+            wrap(
+                "#[cfg(doctest)]",
+                &format!("#[cfg(any(test, sanitize))] {include}"),
+            ),
+            "`sanitize`",
+        ),
+        (
+            wrap(
+                "#[cfg(doctest)]",
+                &format!("#[cfg(test)] #[cfg(sanitize)] {include}"),
+            ),
+            "`sanitize`",
+        ),
+        (
+            wrap("#[cfg(all(doctest, target_env = \"gnu\"))]", include),
+            "`target_env = \"gnu\"`",
+        ),
+        (
+            wrap("#[cfg(doctest)]", &format!("#[cfg(nope(unix))] {include}")),
+            "`nope(..)`",
+        ),
+    ] {
+        let error = doctested(&lib_rs).unwrap_err();
+        assert!(error.starts_with(named), "{lib_rs}: {error}");
+        let problems = undoctested(&lib_rs, &[], &[]);
+        assert!(
+            problems.len() == 1 && problems[0].contains(named),
+            "{problems:?}"
+        );
+    }
+    let known = wrap(
+        "#[cfg(all(doctest, not(miri)))]",
+        &format!(
+            "#[cfg(all(not(windows), not(docsrs), not(genai_strict_unknown), target_family = \"unix\"))] {include}"
+        ),
+    );
+    assert!(doctested(&known).unwrap().contains("docs/GUIDE.md"));
 }
 
 /// A fence holds Rust when rustdoc or GitHub reads it as Rust.

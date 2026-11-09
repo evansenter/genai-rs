@@ -232,8 +232,8 @@ from here rather than repeated.
   occurred while connecting to the MCP server.`, a URL that is no MCP
   server `501 MCP server returned an error. Please check the server
   configuration.`, and a malformed tool `400 Unknown parameter ...`. The
-  501's message names the server's error, so a real server that fails
-  (one that is down) should get it too; that case was not observed. It is
+  501's message names the server's error, so a real server that answers
+  with an error should get it too; that case was not observed. It is
   the one 501 that can pass, which is why `docs/RELIABILITY.md` and
   `docs/ERROR_HANDLING.md` single it out. `classify_mcp_create_error` in
   `tests/tools_and_config_tests.rs` sorts the three.

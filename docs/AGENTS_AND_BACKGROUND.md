@@ -442,37 +442,57 @@ payload. The API disables a webhook after repeated delivery failures
 
 ```rust,no_run
 use genai_rs::{Client, InteractionResponse, InteractionStatus};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::{Instant, sleep, timeout};
 
 async fn poll_until_done(
     client: &Client,
     id: &str,
     deadline: Duration,
 ) -> Result<InteractionResponse, Box<dyn std::error::Error>> {
-    let start = Instant::now();
+    let deadline = Instant::now() + deadline;
     let mut delay = Duration::from_secs(2);
     loop {
-        let response = client.interactions().get(id).await?;
-        match response.status {
-            InteractionStatus::Completed => return Ok(response),
-            InteractionStatus::Failed
-            | InteractionStatus::Cancelled
-            | InteractionStatus::Incomplete
-            | InteractionStatus::BudgetExceeded => {
-                return Err(format!("ended as {:?}", response.status).into());
+        let mut wait = delay;
+        // Each request gets only the time left, so a stalled connection
+        // can't hold the poll past its deadline.
+        let left = deadline.saturating_duration_since(Instant::now());
+        match timeout(left, client.interactions().get(id)).await {
+            Err(_) => return Err("polling deadline exceeded".into()),
+            Ok(Ok(response)) => match response.status {
+                InteractionStatus::Completed => return Ok(response),
+                InteractionStatus::Failed
+                | InteractionStatus::Cancelled
+                | InteractionStatus::Incomplete
+                | InteractionStatus::BudgetExceeded => {
+                    return Err(format!("ended as {:?}", response.status).into());
+                }
+                // InProgress, RequiresAction, and statuses this crate
+                // doesn't know yet (InteractionStatus::Unknown): keep polling
+                _ => {}
+            },
+            // A transient failure (a dropped connection, a 429, a 503) does
+            // not end the run: poll on, waiting at least as long as the
+            // server asked.
+            Ok(Err(e)) if e.is_retryable() => {
+                wait = e.retry_after().map_or(delay, |asked| asked.max(delay));
             }
-            // InProgress, RequiresAction, and statuses this crate doesn't
-            // know yet (InteractionStatus::Unknown): keep polling
-            _ => {}
+            Ok(Err(e)) => return Err(e.into()),
         }
-        if start.elapsed() > deadline {
+        // Give up now rather than sleep into the deadline. (Comparing
+        // durations, not `Instant::now() + wait`, which panics on a
+        // Retry-After too large to add.)
+        if wait >= deadline.saturating_duration_since(Instant::now()) {
             return Err("polling deadline exceeded".into());
         }
-        tokio::time::sleep(delay).await;
+        sleep(wait).await;
         delay = (delay * 2).min(Duration::from_secs(10));
     }
 }
 ```
+
+The crate's own `wait_until_active` polls a file or document the same way
+([Reliability](RELIABILITY.md#waiting-for-a-file-or-document)).
 
 | Status | Meaning |
 |--------|---------|

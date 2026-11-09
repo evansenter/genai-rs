@@ -250,6 +250,61 @@ expect "unclosed fence" 1 \
     "$work/unclosed_fence.md:5: unclosed code fence; nothing after it was checked" \
     "$work/unclosed_fence.md"
 
+# --- rule 5: a breaking entry has a migration -------------------------------
+
+# A breaking entry needs its own `Migration:`, on its first line or a later
+# one; the next entry's does not count, nor does a paragraph's after it.
+# Older sections are checked only when named, as rule 1 is.
+cat >"$work/migration.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Changed
+
+- **Breaking: `a` is renamed `b`.** Migration: rename it.
+- **Breaking: `c` takes a `&str`.** A `String` needs a borrow.
+- **Breaking: `d` is gone.** Nothing replaces it:
+  it never worked.
+
+  Migration: drop the call.
+- Not breaking. Migration: none.
+
+- **Breaking: `e` is boxed.**
+
+Migration: dereference it.
+
+### Fixed
+
+- **Breaking: `f` is fixed.**
+  ```text
+  Migration: inside a fence
+  ```
+
+## [0.2.0] - 2026-07-01
+
+### Changed
+
+- **Breaking: `g` moved.** Callers must follow.
+EOF
+expect "breaking entries with no migration of their own" 1 \
+    "$work/migration.md:8: breaking entry with no \"Migration:\": - **Breaking: \`c\` takes a \`&str\`.** A \`String\` needs a borrow.
+$work/migration.md:15: breaking entry with no \"Migration:\": - **Breaking: \`e\` is boxed.**
+$work/migration.md:21: breaking entry with no \"Migration:\": - **Breaking: \`f\` is fixed.**" \
+    "$work/migration.md"
+expect "breaking entries in a named older section" 1 \
+    "$work/migration.md:8: breaking entry with no \"Migration:\": - **Breaking: \`c\` takes a \`&str\`.** A \`String\` needs a borrow.
+$work/migration.md:15: breaking entry with no \"Migration:\": - **Breaking: \`e\` is boxed.**
+$work/migration.md:21: breaking entry with no \"Migration:\": - **Breaking: \`f\` is fixed.**
+$work/migration.md:30: breaking entry with no \"Migration:\": - **Breaking: \`g\` moved.** Callers must follow." \
+    "$work/migration.md" 0.2.0
+
+# The last entry in the file is checked too.
+printf '# Changelog\n\n## [Unreleased]\n\n### Changed\n\n- **Breaking: `h`.**\n' >"$work/migration_last.md"
+expect "a breaking entry at the end of the file" 1 \
+    "$work/migration_last.md:7: breaking entry with no \"Migration:\": - **Breaking: \`h\`.**" \
+    "$work/migration_last.md"
+
 # --- usage ------------------------------------------------------------------
 
 expect "no arguments" 2 ""

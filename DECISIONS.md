@@ -1942,6 +1942,22 @@ wording. A sentence that could be read either way is reworded to say
 which it is, as those two now do. Still no check: telling the two apart
 means reading what the sentence claims.
 
+**Amended 2026-11-09 (I-19).** A narrow check exists now, one that reads
+wording rather than claims. The daily api-surface-sweep runs
+`.github/scripts/check_issue_pointers.sh`: it finds the pointer phrasings
+above ("tracked in #N", or by, on or at; "see #N for"; "until #N"), on one
+line or wrapped across two, in the tracked files outside `CHANGELOG.md`,
+`DECISIONS.md`, fixtures and the script harnesses, looks each issue up
+with `gh`, and lists every one that names a closed issue, or no issue, on
+one rolling `documentation` issue that a clean run closes.
+`tests/ci_workflows/sweep.rs` requires the step. It does not judge whether
+a listed sentence is a stale pointer or a provenance tag worded like one;
+either way the sentence is reworded, as above. It misses a pointer worded
+any other way, which a reviewer still catches, and it does not match a
+bare "#N item M", the form this decision also gives a provenance tag. It
+runs daily, not in `make test-scripts` or on a PR: an issue closed
+elsewhere would turn an unrelated PR red.
+
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
 **Context.** D-046 made the flakiness report fail on any test that needs a
@@ -2858,3 +2874,34 @@ includes this file rather than writing its own. Two walkers outside the
 guards stay: `tests/model_literals.rs` (which also tolerates an unreadable
 entry) and `tests/temp_file_tests.rs`'s scan of `examples/` for media
 constants.
+
+**Amended 2026-11-09 (I-20).** Four holes in `check_dated_facts.sh`
+passed a scratch copy, though no instance was in the tree:
+- "A module compiled only under such a `cfg`" held only for a file module
+  (`mod x;`): a doc block on an inline item under a `cfg` the doctest run
+  leaves out (a `#[cfg(windows)]` fn, an inline `#[cfg(all(test, unix))]`
+  mod) passed. The script now evaluates the `cfg` of every inline item, from
+  the doc comments and attributes above it to its end, and a file's inner
+  `#![cfg]`; an include inside a gated inline module no longer counts.
+- It read only `///` and `//!` lines. It now reads every form rustdoc does:
+  `/** */` and `/*! */` blocks, and `#[doc = "..."]` and `#![doc = "..."]`
+  with their escapes and raw strings. A small lexer finds them, so a string
+  literal or a plain comment that looks like one is no longer read as doc
+  text either.
+- A bare expression in a `text` block passed. A line that ends in `?;` or
+  `.await` now reads as Rust; other bare expressions still pass, for the
+  reason the looser heuristic was rejected.
+- Both `cfg` evaluators, the script's and `tests/doc_guards/`', read a name
+  they did not know as false, which `not(..)` turns true, so "counts as
+  left out" held only without a `not`. Each now knows what CI's doctest run
+  sets (`doctest`, `unix`, `debug_assertions`, every feature,
+  `target_os = "linux"`, `target_family = "unix"`) and what it does not
+  (`test`, `windows`, `miri`, `fuzzing`, `docsrs`, `genai_strict_unknown`,
+  any other `target_os` or `target_family`), and fails on any other name or
+  key, such as `target_arch`, naming it. The script evaluates every `cfg` in
+  the library's non-test code, so a new one is taught before it lands; not
+  one inside an item already left out, such as an inline
+  `#[cfg(test)] mod tests`, which the doctest run never compiles.
+
+The known limits are now a bare expression that ends otherwise, and a
+cross-reference to another row's file outside parentheses.

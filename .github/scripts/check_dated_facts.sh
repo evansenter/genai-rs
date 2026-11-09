@@ -6,7 +6,10 @@
 #
 # ROOT (default: the current directory) must be a git work tree; its tracked
 # and untracked, not ignored, `*.md` and `*.rs` files are read, so a new file
-# is checked before it is committed. Four rules:
+# is checked before it is committed. A doc comment is any of rustdoc's
+# forms: `///` and `//!` lines, `/** */` and `/*! */` blocks, and
+# `#[doc = "..."]` and `#![doc = "..."]` attributes (a string literal,
+# escapes and raw strings read as rustdoc reads them). Four rules:
 #
 # 1. A date is a dated live fact, and one lives only in its homes:
 #    docs/ENUM_WIRE_FORMATS.md, docs/INTERACTIONS_API_GAP.md and
@@ -36,11 +39,18 @@
 #    `tests/` included.
 # 3. A Rust block that nothing compiles is `ignore`d, with rule 2's reason.
 #    Rustdoc compiles the Markdown files src/lib.rs includes as docs
-#    (`#[doc = include_str!("../<path>")]` in code, not in a comment, and
-#    under no `cfg` that CI's doctest run, a debug build with every feature
-#    on Linux, leaves out) and the doc comments of the library crates (src/
-#    and genai-rs-macros/src/) outside test code and modules compiled only
-#    under such a `cfg` (`#[cfg(test)] mod x;`). Anywhere else
+#    (`#[doc = include_str!("../<path>")]` in code, not in a comment or a
+#    string, and under no `cfg`, on it or on a module around it, that CI's
+#    doctest run, a debug build with every feature on Linux, leaves out)
+#    and the doc comments of the library crates (src/
+#    and genai-rs-macros/src/) outside test code and items compiled only
+#    under such a `cfg`: a file module (`#[cfg(test)] mod x;`), an inline
+#    module, a function or any other item, from the doc comments and
+#    attributes above it to its end, and a file whose inner `#![cfg]` leaves
+#    it out. Every `cfg` in the library's non-test code must be one the
+#    check can evaluate: a name or key it does not know (`target_arch`,
+#    say) is a finding, not a guess. One inside an item already left out
+#    (an inline `#[cfg(test)] mod tests`, say) is not evaluated. Anywhere else
 #    (tests/, examples/, fuzz/, a Markdown file not included), a block
 #    rustdoc would read as Rust (a fence whose info string names `rust` or
 #    a rustdoc attribute such as `no_run` or `edition2021`, or, in a doc
@@ -55,8 +65,9 @@
 #    (single or multi-line, destructuring, or `let ... else`) or `use`
 #    statement, a field assignment, a `fn`, `struct`, `enum`, `trait` or
 #    `impl` header, an `if let`, `while let` or `match` header with its
-#    arms, or a `#[derive]`, `#[test]` or `#[tokio::main]` attribute. Fence
-#    the block as rust so it compiles. A bare expression is not read.
+#    arms, a `#[derive]`, `#[test]` or `#[tokio::main]` attribute, or a
+#    bare expression that ends in `?;` or `.await`. Fence the block as rust
+#    so it compiles. Other bare expressions are not read.
 #
 # Exit status: 0 when the tree follows the rules, 1 with each finding
 # listed as `path:line: ...`, 2 on bad usage or when ROOT is not a git work
@@ -81,6 +92,7 @@ if ! git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 python3 -I - "$root" <<'EOF'
+import bisect
 import os
 import re
 import subprocess
@@ -135,8 +147,6 @@ FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*([^`]*)")
 # Rustdoc splits a fence's info string on commas, spaces and tabs.
 INFO_SEP = re.compile(r"[,\s]+")
 REASON = re.compile(r"^\s*<!--\s*ignore:\s*\S.*-->\s*$")
-# A whole-line comment; group 1 is `/` or `!` for a doc comment.
-COMMENT = re.compile(r"^\s*//(/(?!/)|!)? ?(.*)$")
 TEST_FILE = re.compile(r"(_tests|^tests|^proptest_\w+|^test_subscriber)\.rs$")
 # One attribute, with one level of nested brackets, and a run of them.
 ATTR = r'#\[(?:[^\[\]"]|"(?:\\.|[^"\\])*"|\[(?:[^\[\]"]|"(?:\\.|[^"\\])*")*\])*\]'
@@ -144,11 +154,32 @@ ATTR_RUN = re.compile(rf"(?:{ATTR}\s*)+")
 ATTR_ONE = re.compile(ATTR)
 # What src/lib.rs includes as docs, and so doctests.
 DOC_INCLUDE = re.compile(r'#\[doc\s*=\s*include_str!\(\s*"\.\./([^"]+\.md)"\s*\)\s*\]')
-CFG_ATTR = re.compile(r"#\[\s*cfg\s*\((.*)\)\s*\]$", re.S)
+CFG_ATTR = re.compile(r"#!?\[\s*cfg\s*\((.*)\)\s*\]$", re.S)
 CFG_TOKEN = re.compile(r'\s*(?:([A-Za-z_]\w*)|("(?:\\.|[^"\\])*")|(\S))')
-# What holds in CI's doctest run (see cfg_holds).
+# What CI's doctest run sets and what it does not (see cfg_holds): a name
+# in neither, or a key not in CFG_VALUES, is one the check cannot evaluate.
 TRUE_CFGS = {"doctest", "unix", "debug_assertions"}
-TRUE_CFG_VALUES = {("target_os", '"linux"'), ("target_family", '"unix"')}
+FALSE_CFGS = {"test", "windows", "miri", "fuzzing", "docsrs", "genai_strict_unknown"}
+# The keys whose values it knows: the one value that holds. Every
+# `feature = "..."` holds.
+CFG_VALUES = {"target_os": '"linux"', "target_family": '"unix"'}
+# An inner attribute at the top of a file, and a run of outer ones at the
+# start of a line.
+INNER_ATTR = re.compile(r"^" + ATTR.replace("#", "#!", 1), re.M)
+INNER_ONE = re.compile(ATTR.replace("#", "#!", 1))
+LINE_ATTR_RUN = re.compile(rf"^[ \t]*((?:{ATTR}\s*)+)", re.M)
+# What the lexer stops at: a comment, a string or char literal (or a
+# lifetime), and a doc attribute's value.
+TOKEN = re.compile(r"""//|/\*|(?<!\w)[bc]?r(#*)"|"|'|#(!?)\[\s*doc\s*=\s*""")
+ESCAPE = re.compile(r"\\(?:u\{([0-9a-fA-F]{1,6})\}|x([0-9a-fA-F]{2})|(.))")
+ESCAPED = {"n": "\n", "t": "\t", "r": "\r", "0": "\0"}
+# An item, whose end is its `;` or its body's `}`; anything else an
+# attribute can gate (a field, a variant, a statement, a match arm) may
+# also end at a `,`.
+ITEM_KEYWORD = re.compile(
+    r"(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe|default|extern(?:\s+\"[^\"]*\")?)\s+)*"
+    r"(?:fn|struct|enum|union|trait|impl|mod|const|static|type|use|extern|macro_rules!)\W"
+)
 PATH_ATTR = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]')
 # A file module declaration after its attributes.
 MOD_DECL = re.compile(rf"((?:{ATTR}\s*)*)(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
@@ -168,6 +199,8 @@ RUST_ITEM = re.compile(
     r"|impl\b.*\{\s*$"
     r"|#\[(?:derive\(|test\]|tokio::main))"
 )
+# Rule 4's bare expression: a line that ends in `?;` or `.await`.
+RUST_TAIL = re.compile(r"(?:\?;|\.await[?;]*)\s*(?://.*)?$")
 # Rule 4's statements that span lines: a `let` whose `;` comes on a later
 # line (a builder chain), a destructuring `let` or a `let ... else`, and a
 # header (`if let`, `while let`, `match`) whose body follows.
@@ -183,59 +216,150 @@ MATCH_ARM = re.compile(r"^\s*[^=\s][^=]*=>")
 findings = []
 
 
-def strip_comments(src):
-    """Rust source with its comments blanked (their newlines kept), so a
-    commented-out attribute is not read. String, raw-string and char
-    literals are kept whole."""
-    out = []
-    i, n = 0, len(src)
-    while i < n:
-        if src.startswith("//", i):
-            end = src.find("\n", i)
-            i = n if end < 0 else end
-            continue
-        if src.startswith("/*", i):
-            depth, j = 1, i + 2
-            while j < n and depth:
-                if src.startswith("/*", j):
-                    depth, j = depth + 1, j + 2
-                elif src.startswith("*/", j):
-                    depth, j = depth - 1, j + 2
+class Lexed:
+    """One Rust file, lexed. `code` is its text with every comment and the
+    inside of every string and char literal blanked (newlines and offsets
+    kept), so a regex over it sees only code. `docs` maps a line index to
+    the doc text it holds: a `///` or `//!` line, a line of a `/** */` or
+    `/*! */` block, or of a `#[doc = "..."]` attribute's string (one line
+    can hold several, from `\n` escapes). `comments` maps the index of a
+    whole-line `//` comment to its text, and `inner` holds the lines of
+    inner doc comments, which document the module around them."""
+
+    def __init__(self, src):
+        self.src = src
+        self.starts = [0] + [m.end() for m in re.finditer("\n", src)]
+        self.docs, self.comments, self.inner = {}, {}, set()
+        out = list(src)
+        n, i = len(src), 0
+
+        def blank(a, b):
+            for k in range(a, b):
+                if out[k] != "\n":
+                    out[k] = " "
+
+        while True:
+            m = TOKEN.search(src, i)
+            if not m:
+                break
+            at, tok = m.start(), m.group(0)
+            if tok == "//":
+                end = src.find("\n", at)
+                end = n if end < 0 else end
+                line = self.line(at)
+                body = src[at + 2 : end]
+                if not src[self.starts[line] : at].strip():
+                    if body.startswith("/") and not body.startswith("//"):
+                        self.doc(line, [body[1:]], False)
+                    elif body.startswith("!"):
+                        self.doc(line, [body[1:]], True)
+                    else:
+                        self.comments[line] = body[1:] if body.startswith(" ") else body
+                blank(at, end)
+                i = end
+            elif tok == "/*":
+                depth, j = 1, at + 2
+                while j < n and depth:
+                    if src.startswith("/*", j):
+                        depth, j = depth + 1, j + 2
+                    elif src.startswith("*/", j):
+                        depth, j = depth - 1, j + 2
+                    else:
+                        j += 1
+                body = src[at + 2 : j - 2 if not depth else n]
+                outer = body.startswith("*") and not body.startswith("**") and body != "*"
+                if outer or body.startswith("!"):
+                    self.block_doc(self.line(at), body[1:], not outer)
+                blank(at, j)
+                i = j
+            elif tok.startswith("#"):
+                literal = self.literal(m.end())
+                if literal and re.match(r"\s*\]", src[literal[2] :]):
+                    first, last, after, raw = literal
+                    self.string_doc(first, src[first:last], raw, bool(m.group(2)))
+                    blank(first, last)
+                    i = after
                 else:
-                    j += 1
-            out.append("\n" * src.count("\n", i, j))
-            i = j
-            continue
-        m = RAW_STRING.match(src, i)
+                    i = m.end()
+            elif tok == "'":
+                char = CHAR_LITERAL.match(src, at)
+                if char:
+                    blank(at + 1, char.end() - 1)
+                    i = char.end()
+                else:
+                    i = at + 1  # a lifetime
+            else:
+                first, last, after, _ = self.literal(at)
+                blank(first, last)
+                i = after
+        self.code = "".join(out)
+
+    def line(self, offset):
+        return bisect.bisect_right(self.starts, offset) - 1
+
+    def literal(self, at):
+        """`(start, end, after, raw)` of the string literal whose quote or
+        raw prefix is at `at`: its contents' span, and where it ends."""
+        src, n = self.src, len(self.src)
+        m = re.compile(r'[bc]?r(#*)"').match(src, at)
         if m:
             close = src.find('"' + m.group(1), m.end())
-            end = n if close < 0 else close + 1 + len(m.group(1))
-            out.append(src[i:end])
-            i = end
-            continue
-        if src[i] == '"':
-            j = i + 1
-            while j < n and src[j] != '"':
-                j += 2 if src[j] == "\\" else 1
-            out.append(src[i : j + 1])
-            i = j + 1
-            continue
-        m = CHAR_LITERAL.match(src, i) if src[i] in "'b" else None
-        if m:
-            out.append(m.group(0))
-            i = m.end()
-            continue
-        out.append(src[i])
-        i += 1
-    return "".join(out)
+            last = n if close < 0 else close
+            return m.end(), last, min(n, last + 1 + len(m.group(1))), True
+        if at >= n or src[at] != '"':
+            return None
+        j = at + 1
+        while j < n and src[j] != '"':
+            j += 2 if src[j] == "\\" else 1
+        return at + 1, min(j, n), min(j + 1, n), False
+
+    def doc(self, line, texts, inner):
+        self.docs.setdefault(line, []).extend(
+            t[1:] if t.startswith(" ") else t for t in texts
+        )
+        if inner:
+            self.inner.add(line)
+
+    def block_doc(self, line, body, inner):
+        """A `/** */` or `/*! */` comment's lines, with the leading `*` its
+        lines all carry, if they do, removed as rustdoc does."""
+        pieces = body.split("\n")
+        rest = [p for p in pieces[1:] if p.strip()]
+        if rest and all(p.lstrip().startswith("*") for p in rest):
+            pieces = pieces[:1] + [re.sub(r"^\s*\*", "", p) for p in pieces[1:]]
+        for k, piece in enumerate(pieces):
+            self.doc(line + k, [piece], inner)
+
+    def string_doc(self, at, text, raw, inner):
+        """A doc attribute's string: each source line of it, unescaped, and
+        split again at each `\n` escape."""
+        line = self.line(at)
+        if not raw:
+            # A `\` at a line's end continues the string without the newline.
+            text = re.sub(r"(?<!\\)((?:\\\\)*)\\\n[ \t]*", "\\1\n", text)
+        for k, piece in enumerate(text.split("\n")):
+            if not raw:
+                piece = ESCAPE.sub(
+                    lambda e: chr(int(e.group(1) or e.group(2), 16))
+                    if e.group(1) or e.group(2)
+                    else ESCAPED.get(e.group(3), e.group(3)),
+                    piece,
+                )
+            self.doc(line + k, piece.split("\n"), inner)
+
+
+class UnknownCfg(Exception):
+    """A cfg predicate the check cannot evaluate."""
 
 
 def cfg_holds(predicate):
     """Whether a `cfg(...)` predicate holds in CI's doctest run, a debug
     build with every feature on Linux: `doctest`, `unix`,
     `debug_assertions`, every `feature = "..."`, `target_os = "linux"` and
-    `target_family = "unix"` do; any other name (`test`, `fuzzing`, `any()`
-    with nothing in it) does not."""
+    `target_family = "unix"` do; `test`, `windows`, `miri`, `fuzzing`,
+    `docsrs`, `genai_strict_unknown`, another `target_os` or
+    `target_family`, and an empty `any()` do not. Raises UnknownCfg on any
+    other name or key, such as `target_arch`, rather than guess."""
     tokens = [m.group(1) or m.group(2) or m.group(3) for m in CFG_TOKEN.finditer(predicate)]
     tokens = [t for t in tokens if t]
 
@@ -254,60 +378,150 @@ def cfg_holds(predicate):
                 return all(values), i
             if name == "any":
                 return any(values), i
+            if len(values) != 1:
+                raise UnknownCfg("it cannot parse it")
             return not values[0], i
         if i + 1 < len(tokens) and tokens[i + 1] == "=":
             value = tokens[i + 2]
-            return (name, value) in TRUE_CFG_VALUES or name == "feature", i + 3
-        return name in TRUE_CFGS, i + 1
+            if name == "feature":
+                return True, i + 3
+            if name in CFG_VALUES and value.startswith('"'):
+                return value == CFG_VALUES[name], i + 3
+            raise UnknownCfg(f"it does not know `{name}`")
+        if name in TRUE_CFGS or name in FALSE_CFGS:
+            return name in TRUE_CFGS, i + 1
+        raise UnknownCfg(f"it does not know `{name}`")
 
     try:
         value, end = parse(0)
     except IndexError:
-        return False
-    return value and end == len(tokens)
+        raise UnknownCfg("it cannot parse it") from None
+    if end != len(tokens):
+        raise UnknownCfg("it cannot parse it")
+    return value
 
 
-def attrs_hold(run):
-    """Whether every `cfg` in an attribute run holds in the doctest run."""
-    for attr in ATTR_ONE.findall(run):
-        m = CFG_ATTR.match(attr)
-        if m and not cfg_holds(m.group(1)):
-            return False
-    return True
+reported = set()
 
 
-def doc_includes(lib_rs):
+def attrs_hold(lexed, start, end, path, attrs=ATTR_ONE):
+    """Whether every `cfg` attribute (`attrs`: outer, or inner) in
+    `lexed.code[start:end]` holds in the doctest run. One the check cannot
+    evaluate is a finding (when `path` is given) and counts as not
+    holding."""
+    holds = True
+    for attr in attrs.finditer(lexed.code, start, end):
+        m = CFG_ATTR.match(lexed.src[attr.start() : attr.end()])
+        if not m:
+            continue
+        try:
+            holds = cfg_holds(m.group(1)) and holds
+        except UnknownCfg as e:
+            holds = False
+            line = lexed.line(attr.start()) + 1
+            if path and (path, line) not in reported:
+                reported.add((path, line))
+                findings.append(
+                    f"{path}:{line}: this check cannot evaluate `cfg({m.group(1).strip()})` "
+                    f"({e}): teach cfg_holds, here and in tests/doc_guards/, whether CI's "
+                    "doctest run (a debug build with every feature on Linux) sets it"
+                )
+    return holds
+
+
+def item_end(code, at):
+    """The offset where what an attribute run gates, starting at `at` in
+    `code`, ends: an item at its `;` or the `}` that closes its body, and
+    anything else (a field, a variant, a statement, a match arm) also at a
+    `,`, or where the block around it closes."""
+    at = re.compile(r"\s*").match(code, at).end()
+    item = ITEM_KEYWORD.match(code, at)
+    depth, body = 0, False
+    for k in range(at, len(code)):
+        c = code[k]
+        if c in "([{":
+            body = body or (c == "{" and depth == 0)
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0 or (depth == 0 and c == "}" and body):
+                return k
+        elif depth == 0 and (c == ";" or (c == "," and not item)):
+            return k
+    return len(code)
+
+
+def gated_lines(path, lexed, report):
+    """The indexes of the lines `lexed` holds that the doctest run never
+    compiles: every item under a `cfg` that run leaves out (an inline
+    module, a function, an impl, a field), from the doc comments and
+    attributes above it to its end, and the whole file when an inner
+    `#![cfg]` at its top leaves it out. `report`: a `cfg` the check
+    cannot evaluate is a finding."""
+    where = path if report else None
+    for m in INNER_ATTR.finditer(lexed.code):
+        if not attrs_hold(lexed, m.start(), m.end(), where, INNER_ONE):
+            return set(range(len(lexed.starts)))
+    code_lines = lexed.code.split("\n")
+    gated = set()
+    for m in LINE_ATTR_RUN.finditer(lexed.code):
+        # Inside an item already left out (an inline `#[cfg(test)] mod
+        # tests`, say): never compiled, so its cfgs are not evaluated.
+        if lexed.line(m.start(1)) in gated:
+            continue
+        if attrs_hold(lexed, m.start(1), m.end(1), where):
+            continue
+        first = lexed.line(m.start(1))
+        last = lexed.line(item_end(lexed.code, m.end(1)))
+        # Up over the doc comments, comments and blank lines above it.
+        while first > 0 and not code_lines[first - 1].strip() and first - 1 not in lexed.inner:
+            first -= 1
+        gated.update(range(first, last + 1))
+    return gated
+
+
+def doc_includes(lib_rs, report_path):
     """The Markdown files `lib_rs` includes as docs in code that the
-    doctest run compiles."""
+    doctest run compiles: not in a comment or a string, and not in or on an
+    item under a `cfg` that run leaves out."""
+    lexed = Lexed(lib_rs)
+    gated = gated_lines(report_path, lexed, True)
     included = set()
-    for run in ATTR_RUN.finditer(strip_comments(lib_rs)):
-        paths = DOC_INCLUDE.findall(run.group(0))
-        if paths and attrs_hold(run.group(0)):
-            included.update(paths)
+    for attr in ATTR_ONE.finditer(lexed.code):
+        m = DOC_INCLUDE.match(lib_rs[attr.start() : attr.end()])
+        if m and lexed.line(attr.start()) not in gated:
+            included.add(m.group(1))
     return included
 
 
-def gated_modules(path, text):
-    """Path prefixes of the modules `path` declares under a `cfg` the
-    doctest run leaves out (`#[cfg(test)] mod x;`): their doc comments are
-    never doctested."""
+def gated_modules(path, lexed, gated, report):
+    """Path prefixes of the file modules `path` declares under a `cfg` the
+    doctest run leaves out (`#[cfg(test)] mod x;`), or inside an item
+    that is (`gated`, its lines): their doc comments are never
+    doctested."""
     here = os.path.dirname(path)
     base = os.path.basename(path)
     own = here if base in ("lib.rs", "main.rs", "mod.rs") else os.path.join(here, base[:-3])
-    gated = []
-    for m in MOD_DECL.finditer(strip_comments(text)):
-        if attrs_hold(m.group(1)):
+    modules = []
+    for m in MOD_DECL.finditer(lexed.code):
+        # One inside a gated item is left out whatever its own cfg, which
+        # is then not evaluated.
+        if lexed.line(m.start(2)) not in gated and attrs_hold(
+            lexed, m.start(1), m.end(1), path if report else None
+        ):
             continue
-        found = PATH_ATTR.search(m.group(1))
+        found = None
+        for attr in ATTR_ONE.finditer(lexed.code, m.start(1), m.end(1)):
+            found = PATH_ATTR.match(lexed.src[attr.start() : attr.end()]) or found
         if found:
             file = os.path.normpath(os.path.join(here, found.group(1)))
         else:
             file = os.path.join(own, m.group(2) + ".rs")
-        gated.append(file)
+        modules.append(file)
         # Its own modules: beside a mod.rs, under its stem otherwise.
-        gated.append(os.path.join(own, m.group(2)) + "/")
-        gated.append(file[: -len(".rs")] + "/")
-    return gated
+        modules.append(os.path.join(own, m.group(2)) + "/")
+        modules.append(file[: -len(".rs")] + "/")
+    return modules
 
 
 def clean(text):
@@ -347,17 +561,19 @@ class Fences:
         self.tokens = []  # the open fence's info string, split
         self.start = 0  # the open fence's line number
         self.body = []  # the open fence's lines so far
+        self.numbers = []  # the line number of each, which can repeat in Rust
 
     def step(self, line, n):
         """Returns `("open", tokens)` on a fence's first line, `("close",
-        tokens, start, body)` on its last, and None otherwise."""
+        tokens, start, body, numbers)` on its last, and None otherwise."""
         m = FENCE.match(line)
         if self.open is not None:
             closes = m and m.group(1)[0] == self.open[0] and len(m.group(1)) >= len(self.open)
             if closes and not line.strip().strip(m.group(1)[0]):
                 self.open = None
-                return ("close", self.tokens, self.start, self.body)
+                return ("close", self.tokens, self.start, self.body, self.numbers)
             self.body.append(line)
+            self.numbers.append(n)
             return None
         if not m:
             return None
@@ -365,13 +581,19 @@ class Fences:
         self.tokens = info_tokens(m.group(2))
         self.start = n
         self.body = []
+        self.numbers = []
         return ("open", self.tokens)
 
 
 def rust_in_text(body):
     """The index in `body` of the first line rule 4 reads as Rust, or None."""
     for k, line in enumerate(body):
-        if RUST_STATEMENT.match(line) or RUST_ITEM.match(line) or LET_HEADER.match(line):
+        if (
+            RUST_STATEMENT.match(line)
+            or RUST_ITEM.match(line)
+            or LET_HEADER.match(line)
+            or RUST_TAIL.search(line)
+        ):
             return k
         if LET_OPEN.match(line) and any(ENDS_STATEMENT.search(rest) for rest in body[k:]):
             return k
@@ -420,13 +642,13 @@ def check_fence(path, n, event, prev, doc_line, compiled):
                     "`ignore` with a `<!-- ignore: reason -->` line above it"
                 )
         return
-    _, tokens, start, body = event
+    _, tokens, start, body, numbers = event
     texty = (tokens[:1] and tokens[0] in TEXT_INFOS) or (not tokens and not compiled and not doc_line)
     if texty:
         k = rust_in_text(body)
         if k is not None:
             findings.append(
-                f"{path}:{start + 1 + k}: Rust in a text block never compiles: fence the block "
+                f"{path}:{numbers[k]}: Rust in a text block never compiles: fence the block "
                 f"(line {start}) as rust, or as `rust,ignore` with a reason"
             )
 
@@ -491,37 +713,46 @@ def test_items(lines):
     return skip
 
 
-def check_rust(path, text, dated, doctested_file):
-    """Rules 2 to 4 in every doc comment; rule 1, when `dated`, in the
-    comments of non-test code. `doctested_file`: rustdoc compiles the doc
-    comments here, outside its test items."""
+def check_rust(path, lexed, dated, uncompiled):
+    """Rules 2 to 4 in every doc comment, whatever its form; rule 1, when
+    `dated`, in the comments of non-test code. `uncompiled`: the indexes
+    of the lines whose doc comments rustdoc does not compile, or None when
+    it compiles none in this file."""
     every_comment = path.startswith("examples/")
-    lines = text.splitlines()
+    lines = lexed.src.splitlines()
     tests = test_items(lines)
     skip = tests if dated else set(range(len(lines)))
     fences = Fences()
     prev = None  # the previous doc line's text; None outside a doc block
     carry = None  # (line number, kind, text) of the last comment line rule 1 read
-    for n, line in enumerate(lines, 1):
-        m = COMMENT.match(line)
-        doc = bool(m and m.group(1))
-        if not doc:
+    for i in range(len(lines)):
+        n = i + 1
+        docs = lexed.docs.get(i)
+        if docs is None:
             prev = None
             fences = Fences()
         else:
-            compiled = doctested_file and n - 1 not in tests
-            check_fence(path, n, fences.step(m.group(2), n), prev, True, compiled)
-            prev = m.group(2)
-        kind = "doc" if doc else "example" if m and every_comment else None
-        if kind is None or n - 1 in skip:
+            compiled = uncompiled is not None and i not in uncompiled
+            for doc in docs:
+                check_fence(path, n, fences.step(doc, n), prev, True, compiled)
+                prev = doc
+        comment = lexed.comments.get(i)
+        if docs is not None:
+            kind, texts = "doc", docs
+        elif comment is not None and every_comment:
+            kind, texts = "example", [comment]
+        else:
+            kind, texts = None, []
+        if kind is None or i in skip:
             carry = None
             continue
-        if carry and carry[1] == kind:
-            for d in wrapped_dates(carry[2], m.group(2)):
-                dated_fact(path, carry[0], d, kind)
-        for d in dates(m.group(2)):
-            dated_fact(path, n, d, kind)
-        carry = (n, kind, m.group(2))
+        for text in texts:
+            if carry and carry[1] == kind:
+                for d in wrapped_dates(carry[2], text):
+                    dated_fact(path, carry[0], d, kind)
+            for d in dates(text):
+                dated_fact(path, n, d, kind)
+            carry = (n, kind, text)
 
 
 def read(path):
@@ -536,31 +767,47 @@ listed = subprocess.run(
     capture_output=True,
 ).stdout.decode()
 paths = sorted({p for p in listed.split("\0") if p and os.path.isfile(os.path.join(root, p))})
+
+
+def is_test_file(path):
+    return bool(
+        "/tests/" in "/" + path
+        or path.startswith("src/coverage_oracle/")
+        or TEST_FILE.search(os.path.basename(path))
+    )
+
+
 doctested = set()
 if os.path.isfile(os.path.join(root, "src", "lib.rs")):
-    doctested = doc_includes(read("src/lib.rs"))
-gated = []
+    doctested = doc_includes(read("src/lib.rs"), "src/lib.rs")
+# The library's non-test files: lexed, and the lines whose doc comments the
+# doctest run never compiles. A cfg the check cannot evaluate fails here.
+lexed, uncompiled, gated = {}, {}, []
 for path in paths:
     if path.endswith(".rs") and path.startswith(DOCTESTED_ROOTS):
-        gated.extend(gated_modules(path, read(path)))
+        lexed[path] = Lexed(read(path))
+        test_file = is_test_file(path)
+        lines = gated_lines(path, lexed[path], True) if not test_file else set()
+        uncompiled[path] = lines | test_items(lexed[path].src.splitlines())
+        gated.extend(gated_modules(path, lexed[path], lines, not test_file))
 checked = 0
 for path in paths:
-    text = read(path)
     if path.endswith(".md"):
-        check_markdown(path, text, doctested)
+        check_markdown(path, read(path), doctested)
     else:
-        test_file = (
-            "/tests/" in "/" + path
-            or path.startswith("src/coverage_oracle/")
-            or TEST_FILE.search(os.path.basename(path))
-        )
+        test_file = is_test_file(path)
         dated = path.startswith(RUST_ROOTS) and not test_file
         doctested_file = (
             path.startswith(DOCTESTED_ROOTS)
             and not test_file
             and not any(path == g or (g.endswith("/") and path.startswith(g)) for g in gated)
         )
-        check_rust(path, text, dated, doctested_file)
+        check_rust(
+            path,
+            lexed.get(path) or Lexed(read(path)),
+            dated,
+            uncompiled[path] if doctested_file else None,
+        )
     checked += 1
 
 for finding in findings:
