@@ -1,14 +1,17 @@
 //! Request side: every key a request value emits exists on its class.
 //!
 //! Each request type is serialized fully populated, as struct literals with
-//! no `..Default::default()`, so a field added to one of these structs fails
-//! to compile here until it is populated and checked. `fills` scans this
-//! directory, and the strategies it samples, for a `default()` fill. (The
-//! agent configs keep their fields private, so each builds its own literal,
-//! `fully_populated()` in `src/request/agent_config.rs`;
-//! `agent_configs_set_every_field` fails on a field there that sends no
-//! key.) Samples from the proptest strategies add the union arms and enum
-//! values the literals do not reach. Each value is walked, recursively and
+//! no `..Default::default()` and no constructor between them and the value,
+//! so a field added to one of these structs fails to compile here until it
+//! is populated and checked. `fills` scans this directory, and the
+//! strategies it samples, for a `default()` fill, and this directory for a
+//! call to a crate type's associated function (`CustomMetadata::string`),
+//! which can leave a new field unset, unless its `TRUSTED` list gives the
+//! reason one sets every field. (The agent configs keep their fields
+//! private, so each builds its own literal, `fully_populated()` in
+//! `src/request/agent_config.rs`; `agent_configs_set_every_field` fails on
+//! a field there that sends no key.) Samples from the proptest strategies
+//! add the union arms and enum values the literals do not reach. Each value is walked, recursively and
 //! path by path, against the google-genai binding class it is sent as
 //! (rank 1, D-004; the spec lags the bindings on requests, so it is checked
 //! on the response side only).
@@ -19,6 +22,8 @@
 mod bodies;
 mod content;
 mod fills;
+
+pub(super) use fills::TRUSTED;
 
 use std::collections::BTreeSet;
 

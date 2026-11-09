@@ -1060,10 +1060,7 @@ fn reasoned_lists_reject_a_blank_reason() {
         std::fs::write(temp.path().join("a.rs"), source).unwrap();
         let outcome = std::panic::catch_unwind(|| reasoned_lists(temp.path()));
         let panic = outcome.expect_err("a blank reason passed the scan");
-        let message = panic
-            .downcast_ref::<String>()
-            .cloned()
-            .unwrap_or_default();
+        let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
         assert!(
             message.contains("a.rs:LIST: blank") && !message.contains("LIST: a\n"),
             "{message}"

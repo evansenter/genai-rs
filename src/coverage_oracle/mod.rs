@@ -350,6 +350,7 @@ fn reasons() -> Vec<(&'static str, &'static str, &'static str)> {
     let lists: &[(&'static str, &[Allowed])] = &[
         ("request ALLOWED", request::ALLOWED),
         ("request NOT_SENT", request::NOT_SENT),
+        ("request TRUSTED", request::TRUSTED),
         #[cfg(not(genai_strict_unknown))]
         ("UNMAPPED", UNMAPPED),
         #[cfg(not(genai_strict_unknown))]

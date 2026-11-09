@@ -19,7 +19,8 @@ use crate::environments::{
     NetworkConfig, RemoteEnvironment, SourceType,
 };
 use crate::file_search_stores::{
-    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentOptions, WhiteSpaceConfig,
+    ChunkingConfig, CreateFileSearchStoreRequest, CustomMetadata, DocumentOptions, StringList,
+    WhiteSpaceConfig,
 };
 use crate::http::file_search_stores::{ImportFileBody, UploadDocumentBody};
 use crate::http::webhooks::WebhookInput;
@@ -190,8 +191,22 @@ fn remote_environment() -> RemoteEnvironment {
         sources: environment_sources(),
         network: Some(network()),
         env: [
-            ("PLAIN".to_string(), EnvVar::value("v")),
-            ("SECRET".to_string(), EnvVar::credential("credentials/c")),
+            (
+                "PLAIN".to_string(),
+                EnvVar {
+                    value: Some("v".into()),
+                    credential: None,
+                    extra: serde_json::Map::new(),
+                },
+            ),
+            (
+                "SECRET".to_string(),
+                EnvVar {
+                    value: None,
+                    credential: Some("credentials/c".into()),
+                    extra: serde_json::Map::new(),
+                },
+            ),
         ]
         .into_iter()
         .collect(),
@@ -406,8 +421,12 @@ pub(super) fn agents() -> Vec<Value> {
                 description: Some("d".into()),
                 tools: Some(vec![
                     tools().remove(0),
-                    Tool::code_execution(),
-                    Tool::url_context(),
+                    Tool::CodeExecution {
+                        extra: serde_json::Map::new(),
+                    },
+                    Tool::UrlContext {
+                        extra: serde_json::Map::new(),
+                    },
                     tools().remove(1),
                     tools().remove(6),
                 ]),
@@ -583,13 +602,34 @@ pub(super) fn file_search_store_requests() -> Vec<Value> {
 }
 
 /// The custom metadata and chunking an upload or import sends, every value
-/// kind included.
+/// kind included, one per entry, as the API takes them.
 fn document_options() -> DocumentOptions {
     DocumentOptions {
         custom_metadata: vec![
-            CustomMetadata::string("team", "search"),
-            CustomMetadata::numeric("year", 2026.0),
-            CustomMetadata::string_list("tags", ["a", "b"]),
+            CustomMetadata {
+                key: "team".into(),
+                string_value: Some("search".into()),
+                numeric_value: None,
+                string_list_value: None,
+                extra: serde_json::Map::new(),
+            },
+            CustomMetadata {
+                key: "year".into(),
+                string_value: None,
+                numeric_value: Some(2026.0),
+                string_list_value: None,
+                extra: serde_json::Map::new(),
+            },
+            CustomMetadata {
+                key: "tags".into(),
+                string_value: None,
+                numeric_value: None,
+                string_list_value: Some(StringList {
+                    values: vec!["a".into(), "b".into()],
+                    extra: serde_json::Map::new(),
+                }),
+                extra: serde_json::Map::new(),
+            },
         ],
         chunking_config: Some(ChunkingConfig {
             white_space_config: Some(WhiteSpaceConfig {

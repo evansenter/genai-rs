@@ -552,7 +552,14 @@ checks on it:
   key), plus proptest samples for the union arms and enum values.
   `request_values_are_full_literals` (`request/fills.rs`) fails on a
   `default()` fill, other than a whole `extra` map, in those literals and
-  in every strategy the oracle samples. An
+  in every strategy the oracle samples. It also fails on a value the
+  oracle builds through a constructor, a call to an associated function
+  of a crate type (`CustomMetadata::string`, `Tool::code_execution()`, the
+  first call of a builder), since one can leave a new field unset out of
+  the oracle's sight; `TRUSTED` there lists the few it allows, each with
+  the reason the value still sets every field (the agent configs'
+  `fully_populated()` and `FunctionParameters::new`, whose fields are
+  private, and `WebhookInput::from`, which destructures every field). An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
