@@ -32,8 +32,8 @@ const SPECS: [&str; 2] = ["openapi-v1beta.json", "openapi-v1.json"];
 
 /// Why `parent` on the agents endpoints is not modeled as the spec has it.
 const PARENT_IGNORED: &str = "The spec's `parent` (`projects/{project}/locations/{location}`, \
-     required) is ignored: an agent created with any value (such a name, `bogus`, empty) \
-     or none is the same agent, and a listing with any value or none lists every agent \
+     required) is ignored: an agent created with any value (such a name, `bogus`, an empty \
+     one) or none is the same agent, and a listing with any value or none lists every agent \
      (live 2026-11-09, docs/INTERACTIONS_API_GAP.md \"Spec-only query parameters\").";
 
 /// The differences between the specs' query parameters and the bindings',

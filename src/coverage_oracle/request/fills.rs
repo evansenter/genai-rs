@@ -29,12 +29,14 @@ use syn::visit::Visit;
 
 use super::super::Allowed;
 
-/// Constructors the oracle may call, each with the reason the value it
-/// builds still sets every field: the type's fields are private, so the
-/// full literal sits beside the type, and a check catches a field it
-/// leaves sending no key; or it destructures every field of a full literal
-/// by name. Any other `Type::name(..)` of a crate type in the oracle, or in
-/// a strategy it samples, fails [`request_values_are_full_literals`].
+/// Constructors the oracle and its strategies may call, each with the
+/// reason the value it builds still sets every field: the type's fields
+/// are private, so the full literal sits beside the type, and a check
+/// catches a field it leaves sending no key; it destructures every field
+/// of a full literal by name; or the oracle's own literal of the same
+/// variant sets every field. Any other `Type::name(..)` of a crate type in
+/// the oracle, or in a strategy it samples, fails
+/// [`request_values_are_full_literals`].
 pub(in crate::coverage_oracle) const TRUSTED: &[Allowed] = &[
     ("AntigravityConfig::fully_populated", AGENT_CONFIG),
     ("CodeMenderConfig::fully_populated", AGENT_CONFIG),
