@@ -476,8 +476,10 @@ async fn poll_until_done(
             }
             Ok(Err(e)) => return Err(e.into()),
         }
-        // Give up now rather than sleep into the deadline.
-        if Instant::now() + wait >= deadline {
+        // Give up now rather than sleep into the deadline. (Comparing
+        // durations, not `Instant::now() + wait`, which panics on a
+        // Retry-After too large to add.)
+        if wait >= deadline.saturating_duration_since(Instant::now()) {
             return Err("polling deadline exceeded".into());
         }
         sleep(wait).await;
