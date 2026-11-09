@@ -1701,6 +1701,11 @@ open, with its streak, until each is fixed. A Windows-only timing flake
 that failed on both Windows legs in one run would also be labelled
 deterministic; its failure count tells a one-off from a break.
 
+**Amended 2026-11-09 (I-14).** A chronic share now also counts a run in
+which the test retried a model-side flake inside itself, which a
+`TRANSIENT_RETRIED` marker shows: D-052's amendment of the same date has
+the rule and its reasons. The 1% rate is unchanged.
+
 ---
 
 ## D-047 — `PollOptions` raises a short interval to 10 ms rather than rejecting zero (2026-11-07)
@@ -2005,13 +2010,33 @@ share (D-046), as a run nextest retried does, and once when nextest
 retried that run too: the flake the report counted before #545 is counted
 again, and a test that needs one in more than 5% of its runs, and in at
 least two, fails the report. Transport retries are listed, not held to a
-target: they are the shared key's load and the server's capacity, which a
-test meets in proportion to the requests it sends, not a flake of the
-feature under test. The 1% weekly rate stays nextest's alone, as D-046
-defined it: an in-test retry is per request, not per test run.
-`tests/ci_workflows/flakiness.rs` checks that every retry branch prints
-the marker, and that the counter reads the same word and takes the same
-codes for transport.
+target. The line between the two is whether the failure says anything
+about the request. A model-side code is an error `is_transient_error`
+(or `is_transient_failure`) names by its message, the server's answer to
+the test's own request: a broken tool call, invalid JSON, a
+processing-error `400`, a Spanner UTF-8 error. A test that keeps
+meeting one has a flake of its own, whichever side of the API produced
+it. A transport code is an HTTP status alone (a 429, a
+503), a timeout or a dropped connection: the shared key's load and the
+server's capacity, which a test meets in proportion to the requests it
+sends. A retry inside the semantic validator (`assert_response_semantic`,
+which retries once) prints its marker under the test that called it and
+is charged to that test: the validation question is the test's own, so a
+check that keeps needing a retry is a flaky check of that test. The 1%
+weekly rate stays nextest's alone, as D-046 defined it: an in-test retry
+is per request, not per test run.
+
+The retry helper's offline tests in `error_handling_tests` print the
+marker on purpose, on every run, and the counter cannot tell their
+markers from a live test's. The integration loop ran each binary with
+`--run-ignored all`, offline tests included, in a step the report counts,
+so five of them would have read as chronic flakes in every run; it now
+runs `--run-ignored only`, the live tests alone, and the offline ones run
+in the Test Suite job as before. The week's rate counts live tests only,
+as its label always said. `tests/ci_workflows/flakiness.rs` checks that
+every retry branch prints the marker, that the counter reads the same
+word and classifies the codes in one place as `retry.rs` names them, and
+that no step the report counts runs the helper's offline tests.
 
 ## D-053 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
 
@@ -2243,14 +2268,18 @@ run, and a red leg there stops it before anything is published.
 found two guard holes, a release gate that let any job be skipped, a
 coverage figure diluted by test code, and macOS process-tree tests that no
 PR ran.
-- Coverage counts library code only. Every `cargo llvm-cov report` passes
-  `--ignore-filename-regex "$COVERAGE_IGNORE"`, which leaves out the
-  test-only sources a test build compiles into the library: the property
+- Coverage counts library files only. Every `cargo llvm-cov report`
+  passes `--ignore-filename-regex "$COVERAGE_IGNORE"`, which leaves out the
+  test-only files a test build compiles into the library: the property
   tests, the coverage oracle, the tracing test recorder, the fuzzing entry
   points, and the unit-test files cargo-llvm-cov's own default already
   left out. Their 6,000-odd lines, nearly all covered, diluted a drop in
   the library's own coverage by about a fifth: the floor of 94 over every
-  line held the library at about 92.5%. The floor is now 93, just under
+  line held the library at about 92.5%. An inline `#[cfg(test)] mod tests
+  { .. }` in a library file still counts: a filename pattern cannot leave
+  it out, and stable Rust has no attribute that can. The figure is
+  therefore library files, their inline test modules included, and the
+  floor below was measured the same way. The floor is now 93, just under
   the library's 93.51% of 21,980 lines measured on macOS on the merged
   Wave H tree (2026-11-09), and the grader's 93.09% for H4's tree on Linux.
   CI runs Linux; should the merged tree's first run there read under 93,
@@ -2260,12 +2289,12 @@ PR ran.
   compiles (a `cfg(test)` or `cfg(any(fuzzing, test))` declaration, and
   what it declares) and no other file.
 - Nothing skips the floor or ignores its failure: the guard rejects an
-  `if:` on its step and `continue-on-error` on the step or the job, the
-  check `release.rs` now shares (`failure_escapes`).
+  `if:` or `continue-on-error` on the step or the job, the check
+  `release.rs` now shares (`failure_escapes`).
 - A skip budget fails its step: the guard requires the over-budget branch
-  to exit 1 or set `rc=1`, and a step that sets `rc` to exit with it or
-  list its binary as failed afterwards. A branch that only printed the
-  error passed every check before.
+  to exit 1 or set `rc=1`, and a step that sets `rc` to exit with it, or
+  to list its binary as failed in a list that exits 1 when not empty. A
+  branch that only printed the error passed every check before.
 - The release gate lets only the jobs a push skips by design be skipped,
   named in `check_release_push_run.sh`'s `SKIPPED_ON_PUSH`: Captured
   Fixtures Refresh, Process Tree (macOS) and Scheduled Run Status. It wants

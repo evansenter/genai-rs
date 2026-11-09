@@ -364,11 +364,13 @@ wheel's protos with `python3`).
   `src/antigravity/process*.rs` or `rust.yml`, and nothing otherwise),
   coverage, build-metrics, main-push-status, scheduled-run-status. The
   coverage job measures the `antigravity` feature too, with its scripted
-  suite, counts library code only (no test-only module), and fails under a
-  line-coverage floor (`docs/TESTING.md`, "Line coverage"). Live
+  suite, counts library files only (no test-only file; an inline
+  `#[cfg(test)] mod tests` in a library file still counts), and fails under
+  a line-coverage floor (`docs/TESTING.md`, "Line coverage"). Live
   jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each
-  integration group runs every binary and lists the failures;
+  integration group runs every binary's live tests (`--run-ignored only`;
+  their offline tests run in Test Suite) and lists the failures;
   `.config/nextest.toml` turns fail-fast off for every run and kills a test
   hung past 10 minutes. Every live nextest step keeps passing tests'
   output and fails on more than 3 skip markers (10 for `release.yml`'s
@@ -378,7 +380,9 @@ wheel's protos with `python3`).
   checks both, along with fail-fast, beta, the Windows PR leg and the
   cross-platform steps, the macOS PR job, the skip-marker budget (whose
   over-budget branch must fail its step), the coverage floor (with no
-  `if:` or `continue-on-error`) and its library-only pattern, and
+  `if:` or `continue-on-error`, on its step or its job) and its
+  library-only pattern, the steps the flakiness report counts (no offline
+  test of the retry helper runs in them), and
   release's push-run gate, which lets only the jobs a push skips by
   design be skipped and wants all six Cross Platform legs.
   `.gitattributes` checks text files out with LF on every OS.

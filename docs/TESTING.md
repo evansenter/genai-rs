@@ -361,7 +361,13 @@ each retry it makes inside the test, which the report counts per test:
 the code is the model-side flake's name (`malformed_tool_call`,
 `invalid_json`, `processing_error`, `please_retry`, `spanner_utf8`) or the
 transport failure's (the HTTP status, `timeout`, `network`,
-`stream_interrupted`). When a known model or
+`stream_interrupted`). A retry inside the semantic validator
+(`assert_response_semantic`) prints the marker under the test that called
+it, and is that test's: a check that needs a retry is a flaky check. The
+retry helper's offline tests in
+`error_handling_tests` print the marker too, on purpose, on every run, so
+the integration groups run only the live tests (`--run-ignored only`) and
+those never reach the count. When a known model or
 server failure has a cause the test controls, remove it: send the tools a
 follow-up turn needs, since they are not carried over, or a request shape
 the server handles, found by live probes and recorded with its numbers in
@@ -385,11 +391,15 @@ any red scheduled workflow, when the week breaches a target (D-046):
 - a chronic flake: a test or example that needed a retry in more than 5%
   of the runs it ran in, and in at least two. A run counts when nextest
   retried the test to a pass, or when the test retried a model-side flake
-  inside itself; a transport retry inside the test (a 429, a 5xx, a
-  timeout) is the shared key's load, not the test's flake, and is listed
-  only (D-052). The report lists each chronic flake with its share. A low
-  rate across the suite can hide one test that needs a retry every few
-  runs. The 1% rate stays nextest's alone.
+  inside itself: an error `retry.rs` names by its message (a broken tool
+  call, invalid JSON, a processing-error `400`, a Spanner UTF-8 error),
+  which is the server's answer to this test's request. A transport retry inside the
+  test (an HTTP status alone, such as a 429 or a 503, a timeout, a dropped
+  connection) says nothing about the request: it is the shared key's load
+  or the server's capacity, and is listed only (D-052). The report lists
+  each chronic flake with its share. A low rate across the suite can hide
+  one test that needs a retry every few runs. The 1% rate stays nextest's
+  alone.
 
 The report lists the week's runs by creation date, up to 1,000 (about 115
 a week now), the most the API lists for a filtered listing: a larger
@@ -530,16 +540,20 @@ catch a wrong wire key; the coverage oracle below can.
 The Code Coverage job in `rust.yml` measures the workspace with the
 `antigravity` feature: the offline suite, then the key-free scripted
 harness suite, merged into one report that goes to the job summary on
-every run. Every report counts library code only: `COVERAGE_IGNORE` leaves
-out the test-only sources a test build compiles into the library (the
+every run. Every report counts library files only: `COVERAGE_IGNORE` leaves
+out the test-only files a test build compiles into the library (the
 unit-test files, the property tests, the coverage oracle, the tracing test
-recorder and the fuzzing entry points). The job then fails when line
+recorder and the fuzzing entry points). An inline `#[cfg(test)] mod tests
+{ .. }` in a library file still counts: a filename pattern cannot leave it
+out, and stable Rust has no attribute that can. Its lines are nearly all
+covered, so they lift the figure a little; the floor was set from the same
+figure. The job then fails when line
 coverage is under its floor (`--fail-under-lines`), set just under the
 value measured when it was last raised (D-058): raise it in `rust.yml` as
 coverage grows, and lower it only with the reason in the commit.
 `tests/ci_workflows/coverage.rs` checks the job keeps all of this: that
 the pattern matches every module only a test build compiles and no
-library file, and that nothing (an `if:`, or `continue-on-error` on the
+library file, and that nothing (an `if:` or `continue-on-error`, on the
 step or the job) can skip the floor or ignore its failure.
 
 ## Coverage oracle
