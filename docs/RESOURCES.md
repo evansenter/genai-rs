@@ -166,6 +166,10 @@ leaves it in place. Its document exists, pending, as soon as the import is
 accepted, so an import that timed out is not retried: the error names the
 operation and the document, and a second import makes a second document.
 
+Python's `agents.list` takes `parent`, and `with_parent` sends it, but the
+API ignores it: a listing lists every agent whatever the value (see the
+[gap tracker](INTERACTIONS_API_GAP.md#spec-only-query-parameters-live-2026-11-09)).
+
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them. genai-rs sends one value per
 filter, and a second `with_*` call replaces the first. Python's `contexts`
