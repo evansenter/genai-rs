@@ -5,7 +5,40 @@
   "POST /{api_version}/interactions",
   "POST /{api_version}/interactions/{id}/cancel"
  ],
- "fetched": "2026-11-07",
+ "fetched": "2026-11-09",
+ "operations": {
+  "DELETE /{api_version}/interactions/{id}": {
+   "query": {}
+  },
+  "GET /{api_version}/interactions/{id}": {
+   "query": {
+    "last_event_id": {
+     "required": false
+    },
+    "stream": {
+     "required": false
+    }
+   }
+  },
+  "POST /{api_version}/interactions": {
+   "body": {
+    "application/json": {
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/CreateAgentInteractionParams"
+      },
+      {
+       "$ref": "#/components/schemas/CreateModelInteractionParams"
+      }
+     ]
+    }
+   },
+   "query": {}
+  },
+  "POST /{api_version}/interactions/{id}/cancel": {
+   "query": {}
+  }
+ },
  "schemas": {
   "AgentOption": {
    "enum": [
