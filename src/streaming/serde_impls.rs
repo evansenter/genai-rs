@@ -1,6 +1,7 @@
 //! The JSON form of [`AutoFunctionStreamChunk`] and [`AutoFunctionStreamEvent`]:
 //! a `chunk_type` tag with its payload under `data`, and an event's `chunk`
-//! beside its optional `event_id`.
+//! beside its optional `event_id`. A `Delta`'s non-empty `extra` is written
+//! beside `data`, as `extra`, as `StreamChunk`'s form writes one.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,10 +16,13 @@ impl Serialize for AutoFunctionStreamChunk {
         use serde::ser::SerializeMap;
 
         match self {
-            Self::Delta(content) => {
+            Self::Delta { delta, extra } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("chunk_type", "delta")?;
-                map.serialize_entry("data", content)?;
+                map.serialize_entry("data", delta)?;
+                if !extra.is_empty() {
+                    map.serialize_entry("extra", extra)?;
+                }
                 map.end()
             }
             Self::ExecutingFunctions {
@@ -56,6 +60,12 @@ impl Serialize for AutoFunctionStreamChunk {
             Self::Unknown { chunk_type, data } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("chunk_type", chunk_type)?;
+                // An unknown SSE event spelled like a known `chunk_type` (one
+                // named `delta`, say) would read back as that known chunk;
+                // the marker keeps it unknown, as on `StreamChunk`.
+                if KNOWN_CHUNK_TYPES.contains(&chunk_type.as_str()) {
+                    map.serialize_entry("unknown", &true)?;
+                }
                 if !data.is_null() {
                     map.serialize_entry("data", data)?;
                 }
@@ -64,6 +74,16 @@ impl Serialize for AutoFunctionStreamChunk {
         }
     }
 }
+
+/// The `chunk_type` values the known [`AutoFunctionStreamChunk`] variants
+/// serialize as.
+const KNOWN_CHUNK_TYPES: [&str; 5] = [
+    "delta",
+    "executing_functions",
+    "function_results",
+    "complete",
+    "max_loops_reached",
+];
 
 impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -106,7 +126,17 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
             }
         };
 
+        // Written by an `Unknown` whose type collides with a known one.
+        let marked_unknown = value.get("unknown") == Some(&serde_json::Value::Bool(true));
+
         match chunk_type {
+            chunk_type if marked_unknown => Ok(Self::Unknown {
+                chunk_type: chunk_type.to_string(),
+                data: value
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            }),
             "delta" => {
                 let data = extract_data_field(&value, "Delta");
                 let delta: StepDelta = serde_json::from_value(data).map_err(|e| {
@@ -114,7 +144,13 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                         "Failed to deserialize AutoFunctionStreamChunk::Delta data: {e}"
                     ))
                 })?;
-                Ok(Self::Delta(delta))
+                // Written only when it has keys; a map without one, such as
+                // 0.13.0's, reads back with an empty one.
+                let extra = match value.get("extra") {
+                    Some(serde_json::Value::Object(extra)) => extra.clone(),
+                    _ => serde_json::Map::new(),
+                };
+                Ok(Self::Delta { delta, extra })
             }
             "executing_functions" => {
                 let data = extract_data_field(&value, "ExecutingFunctions");

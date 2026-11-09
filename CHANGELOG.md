@@ -274,13 +274,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every event the API sends today. A key the crate reads on another event
   type is no longer parsed on one that does not read it, so a value the
   crate could not read there no longer fails the event. The auto-function
-  stream passes on no chunk's `extra`: `AutoFunctionStreamChunk::Delta`
-  still carries the `StepDelta` alone. Migration:
+  stream's `Delta` carries the `step.delta` event's `extra` too (below).
+  Migration:
   `StreamChunk::Completed(response)` becomes
   `StreamChunk::Completed { interaction: response, .. }` (or
   `Completed { interaction, .. }`); a pattern that lists every field of a
   known variant adds `..` (`StreamChunk::Error { message, code, .. }`); a
   struct literal adds `extra: Default::default()`.
+- **Breaking: `AutoFunctionStreamChunk::Delta` is a struct variant,
+  `Delta { delta, extra }`, and the auto-function stream passes on an SSE
+  event this crate does not recognize as `AutoFunctionStreamChunk::Unknown`**
+  (#504). `extra` holds the `step.delta` event's keys the crate does not
+  read, as `StreamChunk::StepDelta`'s `extra` does; the chunk's
+  `{chunk_type, data}` form writes a non-empty one beside `data` and reads
+  it back. An unknown event was dropped with a warning; it now reaches the
+  caller with its type, JSON and `event_id`, and the round goes on to its
+  `interaction.completed`. An `Unknown` chunk named like a known one is
+  written with `"unknown": true`, so it reads back unknown. Migration:
+  `AutoFunctionStreamChunk::Delta(delta)` becomes `Delta { delta, .. }` in
+  a pattern and `Delta { delta, extra: Default::default() }` in an
+  expression; a match's wildcard arm, which the `#[non_exhaustive]` enum
+  already needs, now also sees `Unknown`.
 - **Breaking: `CreateFileSearchStoreRequest::with_extra(key, value)` is
   `add_extra(key, value)`**, the name `InteractionBuilder` gives the same
   operation: an `add_*` setter adds an entry where a `with_*` one replaces

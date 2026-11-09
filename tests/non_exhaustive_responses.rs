@@ -323,24 +323,20 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         "the bare mode string (`\"auto\"`), which has no fields",
     ),
     (
-        "src/streaming.rs:AutoFunctionStreamChunk::Delta",
-        AUTO_FUNCTION_CHUNK,
-    ),
-    (
         "src/streaming.rs:AutoFunctionStreamChunk::ExecutingFunctions",
-        AUTO_FUNCTION_CHUNK,
+        LOOP_CHUNK,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::FunctionResults",
-        AUTO_FUNCTION_CHUNK,
+        LOOP_CHUNK,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::Complete",
-        AUTO_FUNCTION_CHUNK,
+        LOOP_CHUNK,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::MaxLoopsReached",
-        AUTO_FUNCTION_CHUNK,
+        LOOP_CHUNK,
     ),
     (
         "src/content/video_processing.rs:VideoProcessing::Static",
@@ -362,10 +358,12 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
     ),
 ];
 
-/// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
-const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \
-     the crate writes; the payload inside keeps its own `extra`, but the SSE event's \
-     envelope keys (`StreamChunk::extra`) are not passed on (D-034)";
+/// Why the auto-function loop's own chunks keep no `extra`. `Delta`, passed
+/// on from a `step.delta` event, keeps that event's (D-054).
+const LOOP_CHUNK: &str = "made by the auto-function loop, not passed on from one SSE event: \
+     a round's response assembled from its stream, or the loop's own executions, each keeping \
+     its own `extra`. The round's lifecycle events, `interaction.completed` among them, are \
+     the loop's to read, so their envelope keys reach `execute_stream()` only (D-054)";
 
 /// Why an `InputEvent` arm keeps no `extra`.
 const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \

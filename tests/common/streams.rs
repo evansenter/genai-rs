@@ -191,7 +191,7 @@ pub async fn consume_auto_function_stream(
             )
         });
         match event.chunk {
-            AutoFunctionStreamChunk::Delta(delta) => {
+            AutoFunctionStreamChunk::Delta { delta, .. } => {
                 result.delta_count += 1;
                 if let Some(text) = delta.as_text() {
                     result.collected_text.push_str(text);

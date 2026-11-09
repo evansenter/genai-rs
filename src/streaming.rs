@@ -24,7 +24,7 @@
 //! while let Some(result) = stream.next().await {
 //!     let event = result?;
 //!     match &event.chunk {
-//!         AutoFunctionStreamChunk::Delta(delta) => {
+//!         AutoFunctionStreamChunk::Delta { delta, .. } => {
 //!             if let Some(t) = delta.as_text() {
 //!                 print!("{}", t);
 //!             }
@@ -57,7 +57,12 @@ mod serde_impls;
 /// This enum represents the different events that can occur during a streaming
 /// interaction with automatic function execution. The stream yields deltas as
 /// content arrives, signals when functions are being executed, and completes
-/// when the model returns a response without function calls.
+/// when the model returns a response without function calls. A round's SSE
+/// event of a type this crate does not recognize is passed on as
+/// [`Unknown`](Self::Unknown); the round's other lifecycle events
+/// (`interaction.created`, `status_update`, `step.start`, `step.stop`,
+/// `interaction.completed`) are the loop's to read, and reach a caller of
+/// [`execute_stream()`](crate::Client::execute_stream) only.
 ///
 /// # Forward Compatibility
 ///
@@ -74,12 +79,16 @@ mod serde_impls;
 pub enum AutoFunctionStreamChunk {
     /// Incremental step payload from the model (text fragments,
     /// `arguments_delta` function-argument fragments, thought summaries and
-    /// signatures, tool call/result deltas, ...)
-    ///
-    /// The `StepDelta` alone: the `step.delta` event's other keys
-    /// ([`StreamChunk::extra`](crate::StreamChunk::extra)) reach a caller of
-    /// `execute_stream()` only.
-    Delta(StepDelta),
+    /// signatures, tool call/result deltas, ...), from a `step.delta` event.
+    Delta {
+        /// The delta payload: the event's
+        /// [`StreamChunk::StepDelta`](crate::StreamChunk::StepDelta) `delta`.
+        delta: StepDelta,
+        /// The `step.delta` event's keys the crate does not read, as
+        /// [`StreamChunk::extra`](crate::StreamChunk::extra) holds them.
+        /// Empty for every event the API sends today.
+        extra: serde_json::Map<String, serde_json::Value>,
+    },
 
     /// Function calls detected, about to execute.
     ///
@@ -131,14 +140,16 @@ pub enum AutoFunctionStreamChunk {
 
     /// Unknown event type (for forward compatibility).
     ///
-    /// This variant is used when deserializing JSON that contains an unrecognized
-    /// `chunk_type`. This allows the library to gracefully handle new event types
-    /// added by the API in future versions without failing deserialization.
+    /// A round's SSE event of a type this crate does not recognize, passed on
+    /// as [`StreamChunk::Unknown`](crate::StreamChunk::Unknown) carries it:
+    /// `chunk_type` is the event's type and `data` its JSON. Deserializing
+    /// the chunk's JSON form with an unrecognized `chunk_type` gives one too,
+    /// so a log written by a later version still reads.
     ///
-    /// The `chunk_type` field contains the unrecognized type string, and `data`
-    /// contains the full JSON data for inspection or debugging.
+    /// An unknown event does not end the loop: the round goes on to its
+    /// `interaction.completed`.
     Unknown {
-        /// The unrecognized chunk type from the API
+        /// The unrecognized event or chunk type
         chunk_type: String,
         /// The raw JSON data, preserved for debugging and roundtrip serialization
         data: serde_json::Value,
@@ -155,7 +166,7 @@ impl AutoFunctionStreamChunk {
     /// Check if this chunk is a Delta variant.
     #[must_use]
     pub const fn is_delta(&self) -> bool {
-        matches!(self, Self::Delta(_))
+        matches!(self, Self::Delta { .. })
     }
 
     /// Check if this chunk is a Complete variant.
@@ -226,7 +237,7 @@ impl AutoFunctionStreamChunk {
 ///     }
 ///
 ///     match &event.chunk {
-///         AutoFunctionStreamChunk::Delta(delta) => {
+///         AutoFunctionStreamChunk::Delta { delta, .. } => {
 ///             if let Some(text) = delta.as_text() {
 ///                 print!("{}", text);
 ///             }
@@ -546,7 +557,7 @@ impl AutoFunctionResult {
 ///     let event = event?;
 ///
 ///     // Process deltas for UI updates
-///     if let AutoFunctionStreamChunk::Delta(delta) = &event.chunk {
+///     if let AutoFunctionStreamChunk::Delta { delta, .. } = &event.chunk {
 ///         if let Some(text) = delta.as_text() {
 ///             print!("{}", text);
 ///         }
@@ -603,7 +614,7 @@ impl AutoFunctionResultAccumulator {
                 executions: std::mem::take(&mut self.executions),
                 reached_max_loops: true,
             }),
-            AutoFunctionStreamChunk::Delta(_)
+            AutoFunctionStreamChunk::Delta { .. }
             | AutoFunctionStreamChunk::ExecutingFunctions { .. }
             | AutoFunctionStreamChunk::Unknown { .. } => None,
         }

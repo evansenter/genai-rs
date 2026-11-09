@@ -1289,6 +1289,23 @@ its reason in the guard:
 list above: each keeps the SSE event's keys it does not read in an `extra`
 map (D-054), and the guard no longer exempts them.
 
+*Amended 2026-11-09 (I-11).* `AutoFunctionStreamChunk::Delta` left the
+list above too: it is `Delta { delta, extra }`, with the `step.delta`
+event's `extra` (D-054), and the auto-function stream passes on an event of
+a type the crate does not know as `AutoFunctionStreamChunk::Unknown`, where
+it dropped it with a warning. The guard's `AUTO_FUNCTION_CHUNK` exemption
+is gone. The loop's own chunks are exempt under `LOOP_CHUNK`, a narrower
+reason: `ExecutingFunctions`, `Complete` and `MaxLoopsReached` hold a
+round's response, assembled from its stream, and `FunctionResults` the
+loop's executions, each keeping its own `extra`; none is passed on from one
+event. The round's lifecycle events (`interaction.created`,
+`status_update`, `step.start`, `step.stop` and `interaction.completed`) are
+the loop's to read, so their envelope keys reach `execute_stream()` only.
+Rejected: the completed event's `extra` on `Complete`, `ExecutingFunctions`
+and `MaxLoopsReached`, three more breaking changes for a map that is empty
+on every event the API sends, where the delta, the frequent event, now
+carries its own.
+
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
 
@@ -2073,6 +2090,16 @@ guard's `StreamChunk` exemption and D-034's uncovered bullet are gone. The
 auto-function stream passes on no chunk's `extra` (D-034's
 `AutoFunctionStreamChunk` bullet), so an envelope key reaches only a
 caller of `execute_stream()`.
+
+*Amended 2026-11-09 (I-11).* The auto-function stream passes on a delta's
+`extra`: `AutoFunctionStreamChunk::Delta { delta, extra }`, whose
+`{chunk_type, data}` form writes and reads it as `StreamChunk`'s does. An
+unknown event is passed on as `AutoFunctionStreamChunk::Unknown`, which
+writes the `"unknown": true` marker when its type is spelled like a known
+`chunk_type`, as `StreamChunk::Unknown` does. The loop's match lists every
+`StreamChunk` variant, with no wildcard, so a new one fails to compile
+there. The other events' envelope keys still reach only `execute_stream()`
+(D-034).
 
 ---
 
