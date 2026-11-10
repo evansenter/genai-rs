@@ -8,7 +8,7 @@ use super::tools::ToolDispatcher;
 use super::turn::TurnState;
 use super::{
     AgentBuilder, AgentEvent, AgentEventStream, AntigravityError, ChatResponse, PostToolHook,
-    PreToolHook, QuestionHook, triggers,
+    PreToolHook, QuestionHook, TurnFailure, triggers,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -74,6 +74,13 @@ pub struct AntigravityAgent {
     /// [`begin_turn`](Self::begin_turn) halts and drains the harness's
     /// still-running turn before sending its own input.
     pub(super) turn_unfinished: bool,
+    /// The failure of the turn that ended the session
+    /// ([`TurnFailure::ends_session`]), once there is one. Every later
+    /// call fails with [`AntigravityError::ConnectionClosed`] without
+    /// sending: harness 0.1.23 ends its run and closes the connection, but
+    /// can first take the next message and answer it with an empty turn,
+    /// which would read as a success.
+    pub(super) session_ended: Option<TurnFailure>,
     /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
     /// aborted on shutdown and on drop.
     pub(super) trigger_tasks: triggers::TriggerTasks,
@@ -244,8 +251,9 @@ impl AntigravityAgent {
     /// turn timeout, the send gives up after 30 seconds);
     /// [`AntigravityError::ConnectionClosed`] or
     /// [`AntigravityError::WebSocket`] when the connection to the harness
-    /// fails; and [`AntigravityError::Protocol`] when the turn ends without a
-    /// `Finished` event.
+    /// fails, and `ConnectionClosed`, without sending, once an earlier turn
+    /// ended the session; and [`AntigravityError::Protocol`] when the turn
+    /// ends without a `Finished` event.
     ///
     /// [`Media`]: super::Media
     pub async fn chat(
@@ -253,6 +261,7 @@ impl AntigravityAgent {
         prompt: impl Into<Prompt>,
     ) -> Result<ChatResponse, AntigravityError> {
         let input = user_input(prompt)?;
+        self.fail_if_session_ended().await?;
         // Mark busy before sending so a trigger cannot slip in between.
         let guard = self.begin_turn().await;
         // The deadline starts before the send, which it bounds too.
@@ -302,6 +311,7 @@ impl AntigravityAgent {
         prompt: impl Into<Prompt>,
     ) -> Result<AgentEventStream<'_>, AntigravityError> {
         let input = user_input(prompt)?;
+        self.fail_if_session_ended().await?;
         // Mark busy before sending so a trigger cannot slip in between.
         // The guard moves into the stream's turn state: dropping the
         // stream mid-turn marks the agent idle again.
@@ -389,6 +399,7 @@ impl AntigravityAgent {
         &mut self,
         wait: Duration,
     ) -> Result<Option<ChatResponse>, AntigravityError> {
+        self.fail_if_session_ended().await?;
         let first = match tokio::time::timeout(wait, self.session.next_event()).await {
             Err(_) => return Ok(None),
             Ok(Ok(Some(event))) => event,
@@ -544,7 +555,24 @@ impl AntigravityAgent {
         if turn.finished || harness_failed_it {
             self.turn_unfinished = false;
         }
+        if let Err(AntigravityError::Turn { kind, .. }) = &result
+            && kind.ends_session()
+        {
+            self.session_ended = Some(*kind);
+        }
         result
+    }
+
+    /// Fails a call that would start or wait for a turn once a turn has
+    /// ended the session (`session_ended`), naming that turn's failure.
+    async fn fail_if_session_ended(&self) -> Result<(), AntigravityError> {
+        let Some(failure) = self.session_ended else {
+            return Ok(());
+        };
+        Err(AntigravityError::ConnectionClosed {
+            message: format!("an earlier turn ended the session ({failure}); spawn a new agent"),
+            stderr: self.harness.stderr_tail().await,
+        })
     }
 
     /// Marks the agent busy and, when a trigger delivered since the last

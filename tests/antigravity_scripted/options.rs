@@ -313,13 +313,14 @@ async fn test_scripted_retry_config_decides_whether_a_503_ends_the_turn() {
     // The harness's run ended with the turn, as `ends_session()` says.
     assert!(kind.ends_session());
     let next = agent.chat("again").await.unwrap_err();
-    assert!(
-        matches!(
-            next,
-            AntigravityError::WebSocket { .. } | AntigravityError::ConnectionClosed { .. }
-        ),
-        "the call after a 503 that ended the turn must fail on the connection, got {next:?}"
-    );
+    // The agent refuses it without sending: the harness can take a
+    // message before it closes and answer with an empty turn.
+    let AntigravityError::ConnectionClosed { message, .. } = &next else {
+        panic!(
+            "the call after a 503 that ended the turn must fail with ConnectionClosed, got {next:?}"
+        );
+    };
+    assert!(message.contains("ended the session"), "{message}");
     drop(agent);
 
     // Retries: the harness calls again and the turn recovers.

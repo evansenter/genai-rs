@@ -212,7 +212,8 @@ impl Session {
     }
 
     /// Takes the sink, as a send in progress does, until the guard drops.
-    #[cfg(test)]
+    /// Its tests (`agent_tests.rs`) are Unix-only.
+    #[cfg(all(test, unix))]
     pub(crate) async fn hold_sink(
         &self,
     ) -> tokio::sync::OwnedMutexGuard<SplitSink<WsStream, Message>> {

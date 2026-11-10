@@ -897,8 +897,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-turn hook refused the turn; `message` is its reason), `Cancelled`
   (the harness cancelled the turn) or `Hook` (a hook's thread did not run).
   `TurnFailure::ends_session()` is true for `ModelBackend` and
-  `Trajectory`, after which harness 0.1.23 closes the session and the
-  agent's next call fails with `WebSocket` or `ConnectionClosed`. `message`
+  `Trajectory`, after which harness 0.1.23 ends its run, and the agent
+  fails every later call with `ConnectionClosed` without sending. `message`
   is the harness's text alone, and `Display` names the kind. Migration:
   match `AntigravityError::Turn { kind, message }` where you matched
   `Turn(message)`, and decide on `kind` (or `kind.ends_session()` for
@@ -1097,8 +1097,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request"; and `with_seed` was said to make sampling repeatable, which
   the API does not guarantee. `AntigravityError::Turn` now says that a
   fatal model error (an HTTP 400 from the model endpoint) also ends the
-  harness session on 0.1.23, so the next call fails with `WebSocket` (or
-  `ConnectionClosed`) and the agent must be spawned again.
+  harness session on 0.1.23, so the next call fails and the agent must be
+  spawned again.
 - `#[tool]` documents everything it generates: the `<Name>Callable`
   struct, its `new`, and the `<name>_declaration` and
   `<name>_callable_factory` functions. They are public, so a crate that

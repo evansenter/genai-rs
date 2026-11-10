@@ -1424,9 +1424,10 @@ A failed turn is `Turn { kind, message }`, where `kind` is a
 | `Hook` | a hook of yours could not run (its thread did not start or ended without a result) | usable; the next turn halts the harness first |
 
 `kind.ends_session()` answers the last column. On harness 0.1.23 the
-harness's run ends with a `ModelBackend` or `Trajectory` failure: it closes
-its WebSocket, so the agent's next call fails with `WebSocket` (or
-`ConnectionClosed`, when its send got out before the close).
+harness's run ends with a `ModelBackend` or `Trajectory` failure, and the
+agent fails every later call with `ConnectionClosed`, without sending: the
+harness can take one more message before it closes its WebSocket and
+answer it with an empty turn.
 
 ```rust,no_run
 use genai_rs::antigravity::{AntigravityAgent, AntigravityError, TurnFailure};

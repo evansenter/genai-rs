@@ -669,6 +669,7 @@ impl AgentBuilder {
             trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             turn_sync: Arc::new(tokio::sync::Mutex::new(())),
             turn_unfinished: false,
+            session_ended: None,
             trigger_tasks: triggers::TriggerTasks::default(),
         };
 

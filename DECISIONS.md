@@ -2582,9 +2582,18 @@ printed their source's text in `Display` while also returning it from
 - `TurnFailure::ends_session()` is true for `ModelBackend` and
   `Trajectory`. Scripted against harness 0.1.23: 400, 401, 403, a 503
   with no retries, and an MCP server slower than its timeout all end the
-  harness's run ("executor run failed") and close the WebSocket, so the
-  next call fails with `WebSocket` or `ConnectionClosed`; a pre-turn
-  denial keeps the session. The tests assert each. `Cancelled` and
+  harness's run ("executor run failed") and close the WebSocket; a
+  pre-turn denial keeps the session. The tests assert each.
+- After a failure whose kind ends the session, the agent fails every
+  later call with `ConnectionClosed`, naming that failure, without
+  sending. The harness can take one more message before it closes and
+  answer it with an empty idle turn, which read as a success on a slow
+  CI runner (the design doc's harness record). Rejected: draining before
+  the next turn, which cannot tell that empty turn from a real one. The
+  refusal is client-side, so a harness that kept its session after these
+  failures would not fail the scripted tests: a harness bump re-checks it
+  with `LOUD_WIRE=1` on
+  `test_scripted_retry_config_decides_whether_a_503_ends_the_turn`. `Cancelled` and
   `Hook` are not taken to end it: no cancellation other than a denial's
   was seen, and a hook failure is this client's, after which the next
   turn halts the harness as for any turn left unfinished.

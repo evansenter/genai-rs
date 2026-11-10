@@ -530,6 +530,11 @@ Turn failures (0.1.23, 2026-11-09, scripted model; D-062):
   `STATE_WAITING_FOR_SUBAGENTS` update, and the turn then goes idle with
   none; the agent keeps the first error and fails the turn with it
   (`test_scripted_a_503_after_delegating_fails_the_turn`).
+- The harness can take the next message after such a failure, before it
+  closes the WebSocket: on a CI runner the next `chat` returned `Ok` with
+  no text and no model call, an idle update for that message. Locally (30
+  runs) it closed first every time. The agent now refuses the next call
+  itself (D-062).
 
 Subagent names (0.1.23, 2026-11-07, live
 `test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`

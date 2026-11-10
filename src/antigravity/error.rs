@@ -92,11 +92,10 @@ pub enum AntigravityError {
     /// turn: match on it, not on `message`.
     ///
     /// When it cannot ([`TurnFailure::ModelBackend`] and
-    /// [`TurnFailure::Trajectory`], on harness 0.1.23), the harness has
-    /// closed its WebSocket, so the agent's next call fails with
-    /// [`WebSocket`](Self::WebSocket) (or
-    /// [`ConnectionClosed`](Self::ConnectionClosed), when its send got out
-    /// before the close). Spawn a new agent after one.
+    /// [`TurnFailure::Trajectory`], on harness 0.1.23), the harness ends
+    /// its run and closes its WebSocket, and the agent's next call fails
+    /// with [`ConnectionClosed`](Self::ConnectionClosed) without sending.
+    /// Spawn a new agent after one.
     #[error("agent turn failed ({kind}): {message}")]
     Turn {
         /// Why the turn failed.
@@ -188,10 +187,9 @@ pub enum TurnFailure {
 
 impl TurnFailure {
     /// Whether the harness ended the session with the turn, so the agent's
-    /// next call fails on the connection
-    /// ([`WebSocket`](AntigravityError::WebSocket) or
-    /// [`ConnectionClosed`](AntigravityError::ConnectionClosed)) and a new
-    /// agent must be spawned. True for [`ModelBackend`](Self::ModelBackend)
+    /// next call fails with
+    /// [`ConnectionClosed`](AntigravityError::ConnectionClosed), without
+    /// sending, and a new agent must be spawned. True for [`ModelBackend`](Self::ModelBackend)
     /// and [`Trajectory`](Self::Trajectory), whose errors end the harness's
     /// run on harness 0.1.23.
     #[must_use]

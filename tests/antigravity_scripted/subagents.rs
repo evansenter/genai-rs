@@ -260,13 +260,14 @@ async fn test_scripted_a_503_after_delegating_fails_the_turn() {
     assert_eq!(*kind, TurnFailure::ModelBackend { status: 503 });
     assert!(kind.ends_session());
     let next = agent.chat("again").await.unwrap_err();
-    assert!(
-        matches!(
-            next,
-            AntigravityError::WebSocket { .. } | AntigravityError::ConnectionClosed { .. }
-        ),
-        "the call after a 503 that ended the turn must fail on the connection, got {next:?}"
-    );
+    // The agent refuses it without sending: the harness can take a
+    // message before it closes and answer with an empty turn.
+    let AntigravityError::ConnectionClosed { message, .. } = &next else {
+        panic!(
+            "the call after a 503 that ended the turn must fail with ConnectionClosed, got {next:?}"
+        );
+    };
+    assert!(message.contains("ended the session"), "{message}");
 }
 
 #[tokio::test]
