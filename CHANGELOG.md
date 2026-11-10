@@ -853,41 +853,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FunctionDeclaration::builder(name).with_description(..).add_parameter(..).with_required(..).build()`,
   or deserialize one with `serde_json`; bump `genai-rs` and
   `genai-rs-macros` together.
-- **Breaking: `AntigravityError::WebSocket` is a struct variant,
-  `WebSocket { message, source }`** (#504). `source` is the transport's
-  error, a `Box<dyn std::error::Error + Send + Sync>`, and `source()`
-  returns it; the variant used to hold only its text. `message` says what
-  failed: a read or a send. (A connect that fails, with the port and
-  attempt count, reaches `spawn()`'s caller as `InitFailed`, whose message
-  holds this variant's text.) The `Display` text is
-  `websocket error: {message}: {source}`, as before for a failed send. Migration: match
-  `AntigravityError::WebSocket { message, source }` where you matched
-  `WebSocket(text)`, and `downcast_ref` the source for the transport's own
-  error type.
 - **Breaking: `Client::new` and `Client::builder` take `impl Into<String>`**,
   so `Client::new("key")` and `Client::builder("key")` compile (#504). A
   `String` argument is unchanged; a call that converted with `.into()` no
   longer infers the target type, and `Client::builder` is no longer a
   `const fn`. Migration: pass the `&str` or `String` itself, without
   `.into()`.
-- **Breaking: every known `StreamChunk` variant has an `extra` field, and
-  `StreamChunk::Completed` is a struct variant,
-  `Completed { interaction, extra }`** (#538). `extra` is a
-  `serde_json::Map<String, serde_json::Value>` holding the SSE event's keys
-  the variant does not read, as they came, such as a key the API adds
-  beside the payload, which a `StreamChunk` used to drop;
-  `StreamChunk::extra()` reads it, and the chunk's serialized
-  `{chunk_type, data}` form writes and reads it as `extra`. It is empty for
-  every event the API sends today. A key the crate reads on another event
-  type is no longer parsed on one that does not read it, so a value the
-  crate could not read there no longer fails the event. The auto-function
-  stream passes on no chunk's `extra`: `AutoFunctionStreamChunk::Delta`
-  still carries the `StepDelta` alone. Migration:
-  `StreamChunk::Completed(response)` becomes
-  `StreamChunk::Completed { interaction: response, .. }` (or
-  `Completed { interaction, .. }`); a pattern that lists every field of a
-  known variant adds `..` (`StreamChunk::Error { message, code, .. }`); a
-  struct literal adds `extra: Default::default()`.
 - **Breaking: a failed Antigravity turn is
   `AntigravityError::Turn { kind, message }`, and `kind` says why.** `kind`
   is the new `TurnFailure` (`#[non_exhaustive]`): `ModelBackend { status }`
@@ -1194,8 +1165,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to write the `"<non-string: ...>"` descriptor its `Unknown` carries, so
   the one case did not round-trip. This covers every enum built on the
   crate's string-enum pattern, such as `InteractionStatus`, `ServiceTier`
-  and `HarmCategory`. A hand-built `Unknown` still serializes its type
-  string.
+  and `HarmCategory`, and a code execution call step's or delta's
+  `language`, whose nested `arguments` were written from the language's
+  text. A hand-built `Unknown` still serializes its type string.
 - A tool that leaves out a field the bindings make optional reads as that
   tool instead of `Tool::Unknown`: a `function` with no `description` or
   `parameters` (a stored interaction serves one sent with only a `name`

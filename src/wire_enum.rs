@@ -132,22 +132,41 @@ pub(crate) fn unknown_type(value: &serde_json::Value) -> String {
         .map_or_else(|| non_string_descriptor(value), str::to_owned)
 }
 
+/// The JSON a non-string value was read from, when `wire` and
+/// `unknown_data` are its `Unknown`'s type and data: such a value goes back
+/// out as it came, not as its `<non-string: ...>` descriptor. `None` for
+/// anything else, a hand-built `Unknown` included, which is written as
+/// `wire`.
+fn original_non_string<'a>(
+    wire: &str,
+    unknown_data: Option<&'a serde_json::Value>,
+) -> Option<&'a serde_json::Value> {
+    unknown_data.filter(|data| !data.is_string() && wire == non_string_descriptor(data))
+}
+
 /// Writes a string enum's wire value. `wire` is the variant's string (an
-/// `Unknown`'s type), and `unknown_data` an `Unknown`'s preserved JSON. A
-/// non-string value read from the wire goes back out as it came, not as its
-/// `<non-string: ...>` descriptor; anything else, a hand-built `Unknown`
-/// included, is written as `wire`.
+/// `Unknown`'s type), and `unknown_data` an `Unknown`'s preserved JSON (see
+/// [`original_non_string`]).
 pub(crate) fn serialize_wire<S: serde::Serializer>(
     wire: &str,
     unknown_data: Option<&serde_json::Value>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    match unknown_data {
-        Some(data) if !data.is_string() && wire == non_string_descriptor(data) => {
-            serde::Serialize::serialize(data, serializer)
-        }
-        _ => serializer.serialize_str(wire),
+    match original_non_string(wire, unknown_data) {
+        Some(data) => serde::Serialize::serialize(data, serializer),
+        None => serializer.serialize_str(wire),
     }
+}
+
+/// What [`serialize_wire`] writes, as a JSON value, for a writer that
+/// builds JSON by hand (a step's nested `arguments`).
+pub(crate) fn wire_value(
+    wire: &str,
+    unknown_data: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    original_non_string(wire, unknown_data)
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::from(wire))
 }
 
 #[cfg(test)]
