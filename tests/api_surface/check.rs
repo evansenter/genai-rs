@@ -325,3 +325,104 @@ impl Surface {
         }
     }
 }
+
+/// A literal value as a site's suffix: a string as it is, anything else as
+/// its JSON.
+fn literal_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+impl Surface {
+    /// Every enumeration `ty` reaches, with its values: a literal alias by
+    /// its name (`webhooks.WebhookUpdateState`), and a literal a field
+    /// spells out by the field (`legacy.File.state`). The sites
+    /// [`Surface::literal_values`] reports.
+    pub fn reachable_literals(&self, ty: &Ty) -> BTreeMap<String, Vec<Value>> {
+        fn walk(
+            surface: &Surface,
+            ty: &Ty,
+            owner: &str,
+            seen: &mut BTreeSet<String>,
+            out: &mut BTreeMap<String, Vec<Value>>,
+        ) {
+            match ty {
+                Ty::Literal { values, .. } => {
+                    out.insert(owner.to_string(), values.clone());
+                }
+                Ty::List(inner) | Ty::Map(inner) => walk(surface, inner, owner, seen, out),
+                Ty::Union(arms) => arms
+                    .iter()
+                    .for_each(|arm| walk(surface, arm, owner, seen, out)),
+                Ty::Ref(name) => {
+                    if let Some(alias) = surface.aliases.get(name) {
+                        walk(surface, alias, name, seen, out);
+                    } else if seen.insert(name.clone()) {
+                        for (wire, field) in &surface.classes[name].fields {
+                            walk(surface, &field.ty, &format!("{name}.{wire}"), seen, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = BTreeMap::new();
+        walk(self, ty, "<root>", &mut BTreeSet::new(), &mut out);
+        out
+    }
+
+    /// `Enumeration=value` for every enumeration value in `value`, walked
+    /// against `ty` the way [`Surface::sites`] walks it, each named as
+    /// [`Surface::reachable_literals`] names it.
+    pub fn literal_values(&self, ty: &Ty, value: &Value) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        self.literal_values_at(ty, value, "<root>", &mut out);
+        out
+    }
+
+    fn literal_values_at(&self, ty: &Ty, value: &Value, owner: &str, out: &mut BTreeSet<String>) {
+        match ty {
+            Ty::Literal { .. } => {
+                out.insert(format!("{owner}={}", literal_text(value)));
+            }
+            Ty::List(item) => {
+                for v in value.as_array().into_iter().flatten() {
+                    self.literal_values_at(item, v, owner, out);
+                }
+            }
+            Ty::Map(inner) => {
+                for v in value.as_object().into_iter().flat_map(|map| map.values()) {
+                    self.literal_values_at(inner, v, owner, out);
+                }
+            }
+            Ty::Union(arms) => {
+                let arm = arms
+                    .iter()
+                    .find(|a| self.discriminator_matches(a, value))
+                    .or_else(|| {
+                        arms.iter()
+                            .find(|a| self.check_at(a, value, "$", "").is_empty())
+                    });
+                if let Some(arm) = arm {
+                    self.literal_values_at(arm, value, owner, out);
+                }
+            }
+            Ty::Ref(name) => {
+                if let Some(alias) = self.aliases.get(name) {
+                    self.literal_values_at(alias, value, name, out);
+                } else if let (Some(class), Some(object)) =
+                    (self.classes.get(name), value.as_object())
+                {
+                    for (k, v) in object {
+                        if let Some(field) = class.fields.get(k) {
+                            self.literal_values_at(&field.ty, v, &format!("{name}.{k}"), out);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}

@@ -51,8 +51,11 @@
     reason = "a test reports a failure by panicking"
 )]
 
+#[path = "common/source_scan.rs"]
+mod source_scan;
+
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Item, Meta, Token};
@@ -323,24 +326,20 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         "the bare mode string (`\"auto\"`), which has no fields",
     ),
     (
-        "src/streaming.rs:AutoFunctionStreamChunk::Delta",
-        AUTO_FUNCTION_CHUNK,
-    ),
-    (
         "src/streaming.rs:AutoFunctionStreamChunk::ExecutingFunctions",
-        AUTO_FUNCTION_CHUNK,
+        ROUND_VERDICT,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::FunctionResults",
-        AUTO_FUNCTION_CHUNK,
+        LOOP_MADE,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::Complete",
-        AUTO_FUNCTION_CHUNK,
+        ROUND_VERDICT,
     ),
     (
         "src/streaming.rs:AutoFunctionStreamChunk::MaxLoopsReached",
-        AUTO_FUNCTION_CHUNK,
+        LOOP_MADE,
     ),
     (
         "src/content/video_processing.rs:VideoProcessing::Static",
@@ -362,10 +361,18 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
     ),
 ];
 
-/// Why a known `AutoFunctionStreamChunk` keeps no `extra`.
-const AUTO_FUNCTION_CHUNK: &str = "the crate's own `{chunk_type, data}` log form, which only \
-     the crate writes; the payload inside keeps its own `extra`, but the SSE event's \
-     envelope keys (`StreamChunk::extra`) are not passed on (D-034)";
+/// Why an auto-function chunk with no SSE event behind it keeps no `extra`.
+const LOOP_MADE: &str = "made by the auto-function loop, with no SSE event behind it: the \
+     loop's executions, or its verdict once the rounds run out; the results and the response \
+     inside keep their own `extra`";
+
+/// Why the loop's verdict on a round keeps no `extra`. `Delta`, passed on
+/// from a `step.delta` event, keeps that event's (D-054).
+const ROUND_VERDICT: &str = "the loop's verdict on a round's `interaction.completed` event: \
+     the interaction keeps its own `extra`, but the keys beside it in the event reach \
+     `execute_stream()` only. A scope line, not a principle: the map is empty on every event \
+     the API sends today, as `step.delta`'s is, and carrying it would make these two variants \
+     take an `extra` too, two breaking changes the owner has not asked for (D-034)";
 
 /// Why an `InputEvent` arm keeps no `extra`.
 const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \
@@ -393,21 +400,13 @@ const EXPECTED_TEST_MODULES: &[&str] = &[
 
 /// `(repo-relative path, text)` of every `.rs` file in `src/`.
 fn sources() -> Vec<(String, String)> {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest.join("src");
-    // A root that cannot be read must not read as a tree that is clean.
-    assert!(root.is_dir(), "scan root {} does not exist", root.display());
-
-    let mut files = Vec::new();
-    walk(&root, &mut files);
-    let sources: Vec<(String, String)> = files
+    // A root that cannot be read fails in the walk, rather than reading as
+    // a tree that is clean.
+    let root = source_scan::root().join("src");
+    let sources: Vec<(String, String)> = source_scan::rust_files(&root)
         .iter()
         .map(|path| {
-            let rel = path
-                .strip_prefix(&manifest)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
+            let rel = source_scan::repo_relative(path);
             let text = std::fs::read_to_string(path)
                 .unwrap_or_else(|e| panic!("could not read {rel}: {e}"));
             (rel, text)
@@ -460,7 +459,7 @@ fn response_structs_are_non_exhaustive() {
 /// Every deserializable struct keeps unmodeled fields in a flattened map
 /// (D-001): one without it drops a field the API adds on the next round trip
 /// (`WhiteSpaceConfig` did, and so did a stored interaction's speech, image
-/// and safety configs and ten Antigravity harness types, until #504's
+/// and safety configs and ten Antigravity harness types, before #504's
 /// follow-ups).
 #[test]
 fn response_structs_keep_unmodeled_fields() {
@@ -837,7 +836,7 @@ impl<'ast> Visit<'ast> for StructCheck<'_> {
 /// `Unknown` variant for a value it does not model; and every known variant
 /// of such a union keeps the fields it does not model in an `extra` map, as
 /// `Step`'s do since #491. `Tool`, `ResponseFormat`, `TranscriptionMode` and
-/// `ToolChoice` lacked that last one until #504's WP13, and nothing noticed.
+/// `ToolChoice` lacked that last one before #504's WP13, and nothing noticed.
 /// A newtype variant always needs a reason: the guard cannot see whether
 /// keys sit beside its value, as they did beside the old
 /// `ToolChoice::AllowedTools(AllowedTools)`. Each exemption is named, with
@@ -1029,21 +1028,6 @@ impl<'ast> Visit<'ast> for EnumCheck<'_> {
                     .macros_without_evergreen
                     .insert(name.to_string());
             }
-        }
-    }
-}
-
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()))
-        .map(|entry| entry.expect("dir entry").path())
-        .collect();
-    entries.sort();
-    for path in entries {
-        if path.is_dir() {
-            walk(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
         }
     }
 }

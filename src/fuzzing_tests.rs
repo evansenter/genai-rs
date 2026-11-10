@@ -128,6 +128,29 @@ fn regression_non_string_enum_value_round_trips() {
     }
 }
 
+/// `step`, 2026-11-10 (PR #548's fuzz run): a code execution call's
+/// non-string `language` read into `CodeExecutionLanguage::Unknown` and was
+/// written back as its `<non-string: 55555555>` descriptor, because the
+/// step's nested `arguments` were built from the language's `Display`
+/// rather than its `Serialize`. The delta writes the same arguments.
+#[test]
+fn regression_non_string_code_language_round_trips() {
+    // The input exactly as the run saved it.
+    step(br#"{"type": "code_execution_call", "id": "x1", "arguments": {"code": "1)", "language": 55555555}}"#);
+    for value in ["0", "true", "null", "[1]", r#"{"x":1}"#] {
+        step(
+            format!(
+                r#"{{"type":"code_execution_call","id":"x1","arguments":{{"code":"c","language":{value}}}}}"#
+            )
+            .as_bytes(),
+        );
+        step_delta(
+            format!(r#"{{"type":"code_execution_call","arguments":{{"language":{value}}}}}"#)
+                .as_bytes(),
+        );
+    }
+}
+
 /// Every committed seed in `fuzz/seeds/<target>/`, through its target's
 /// entry point. The fuzz workflow runs only on schedule and on pull
 /// requests that touch what the targets build; this runs in the required

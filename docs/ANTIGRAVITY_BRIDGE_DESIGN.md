@@ -142,9 +142,9 @@ releases. Mitigations:
 
 ## Binary acquisition & discovery
 
-The binary ships only inside platform-specific PyPI wheels (macOS arm64,
-Linux x86_64/aarch64, Windows amd64/arm64). Discovery order (mirrors the
-Python SDK, extended):
+The binary ships only inside platform-specific PyPI wheels (0.1.23: macOS
+arm64/x86_64, Linux x86_64/aarch64, Windows amd64/arm64). Discovery order
+(mirrors the Python SDK, extended):
 
 1. Explicit path: `AntigravityAgent::builder().with_harness_path(...)`.
 2. `ANTIGRAVITY_HARNESS_PATH` env var (same var the Python SDK honors).
@@ -348,8 +348,9 @@ transports feed one canonical debugging surface:
   backend and tool errors, the turn deadline over a hung async tool, a
   blocking sync tool and a blocking hook, the key-free harness environment
   under a custom host, the process-tree kill, and every Python SDK option
-  the bridge models (`tests/antigravity_scripted/`: options, subagents,
-  lifecycle hooks, policies, triggers, and the parity-table guard). This replaced
+  the bridge models (`tests/antigravity_scripted/`: options, limits,
+  skills, subagents, hooks, lifecycle, MCP, policies, triggers,
+  cancellation, and the parity-table guard). This replaced
   the planned mockable transport trait: it tests the bridge *and* the
   harness behavior it depends on, which a mock of the socket could not. CI runs it in the
   required `Test Suite (antigravity)` job with the key blanked, forks
@@ -515,6 +516,26 @@ its policies and pre-tool hook, before the question is posed, as on
 Denied by policy for tool 'ask_question'` and `on_questions` never runs;
 with `allow("ask_question")` beside it, the question reaches the hook.
 
+Turn failures (0.1.23, 2026-11-09, scripted model; D-062):
+
+- A 503 with no retries left and an MCP server that fails to load both end
+  the harness's run (it logs `executor run failed`) and close the
+  WebSocket, on the same "Agent execution terminated" system error step.
+  The step's `httpCode` is 503 for the first and 2, gRPC's `UNKNOWN`, for
+  the second, so only a status in 400..600 is read as the model backend's
+  (`TurnFailure::ModelBackend`); the rest is `TurnFailure::Trajectory`
+  (`test_scripted_retry_config_decides_whether_a_503_ends_the_turn`,
+  `test_scripted_mcp_timeout_bounds_listing_tools_and_each_call`).
+- After a delegation, the main trajectory's error can come on a
+  `STATE_WAITING_FOR_SUBAGENTS` update, and the turn then goes idle with
+  none; the agent keeps the first error and fails the turn with it
+  (`test_scripted_a_503_after_delegating_fails_the_turn`).
+- The harness can take the next message after such a failure, before it
+  closes the WebSocket: on a CI runner the next `chat` returned `Ok` with
+  no text and no model call, an idle update for that message. Locally (30
+  runs) it closed first every time. The agent now refuses the next call
+  itself (D-062).
+
 Subagent names (0.1.23, 2026-11-07, live
 `test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`
 action still carries no name, as on 0.1.5 through 0.1.18, so
@@ -543,19 +564,38 @@ the new wheel's keys against the pin's.
 
 "Not modeled" rows give the reason, and
 `every_parity_row_maps_its_keys_and_gives_a_reason_when_not_modeled`
-(`parity.rs`, key-free) fails on a row that maps nothing or is not
-modeled with an empty Notes cell. Each modeled setting is shown changing
+(`parity.rs`, key-free) fails on a row that maps nothing, or whose
+genai-rs cell says "Not modeled" or names no backticked API (whatever its
+wording) with an empty Notes cell. Each modeled setting is shown changing
 the harness's behavior by a test in `tests/antigravity_scripted/`
 (D-010): the model request it sends, the tools it declares, a tool's
-result, the turn's outcome, or what it writes to disk. Three kinds of row
-have no such test of their own, by nature. A constructor or preset that
-only builds a value the harness never sees as such (`Media::from_file`,
-`RetryConfig::benchmark`, `Capabilities::none` and `all`) is unit-tested
-on the value, whose setting is scripted. A response accessor (`text`,
-`thoughts`, `usage`, `conversation_id()`, …) reads what the tests assert
-on rather than changing it. And `Media::with_description` changes
-nothing: harness 0.1.23 does not pass it to the model, which the media
-test asserts so that the day it does is noticed.
+result, the turn's outcome and its stop reason, the time between its
+model retries, or what it writes to disk. The budget caps and scope, the
+retry backoff and the output retries are in `limits.rs`, an inline
+skill's metadata and dependent skills in `skills.rs`, and a subagent's
+behavior in `subagents.rs`. Four kinds of row have no such test of their
+own:
+
+- A constructor or preset that only builds a value the harness never
+  sees as such (`Media::from_file`, `RetryConfig::benchmark`,
+  `Capabilities::none` and `all`) is unit-tested on the value, whose
+  setting is scripted.
+- A response accessor (`text`, `thoughts`, `usage`, `conversation_id()`,
+  …) reads what the tests assert on rather than changing it.
+- A setting harness 0.1.23 ignores has nothing to show, and a scripted
+  test asserts that it changes nothing, so the day the harness honors it
+  is noticed. `Media::with_description` is not passed to the model (the
+  media test). `InlineSkill::add_allowed_tool` and `add_dependent_tool`
+  change neither the skill's listing nor its lookup's answer, nor the
+  tools declared after the lookup (a deferred MCP tool named as
+  dependent stays undeclared), nor how a later call is gated (a call to
+  an allowed tool is still denied under `deny_all()`, and a call to a
+  tool off the list still runs under `allow_all()`), verified
+  2026-11-09 with `test_scripted_skill_allowed_and_dependent_tools_change_nothing_on_this_harness`.
+- `RetryConfig::with_jitter` is random by design. The backoff test sets
+  it to 0, which makes the harness's waits exact, but a nonzero range
+  moves each wait by a random amount that no bounded test tells apart
+  from scheduling noise.
 
 ### Agent and session
 
@@ -649,7 +689,7 @@ test asserts so that the day it does is noticed.
 | `CapabilitiesConfig.tool_output_truncation_config`, `ToolOutputTruncationConfig.max_tokens` | `with_tool_output_truncation` | |
 | `CapabilitiesConfig.mcp_max_output_bytes` | `with_mcp_max_output_bytes` | |
 | `CapabilitiesConfig.compaction_threshold`, `AgentConfig.compaction_config`, `CompactionConfig.token_threshold` | `with_compaction_threshold` | Both spellings written, as Python does. |
-| `AgentConfig.tools` | `add_tool`, `with_tool_service` | |
+| `AgentConfig.tools` | `add_tool`, `add_tool_service` | |
 | `ToolContext.conversation_id`, `StateStore.get_state`, `StateStore.set_state`, `StateStore.update_state`, `StateStore.lock` | Not modeled | Python hands a `ToolContext` to a tool with a parameter of that type: the conversation id and a per-session state store (`StateStore`, also behind `HookContext`). A genai-rs tool's state lives on its `ToolService`, shared by the tools it returns, and `conversation_id()` gives the id once `spawn()` returns. |
 
 ### Subagents
@@ -670,7 +710,7 @@ test asserts so that the day it does is noticed.
 | Python SDK option | genai-rs | Notes |
 |---|---|---|
 | `AgentConfig.skills_paths` | `add_skills_path` | |
-| `AgentConfig.inline_skills`, `InlineSkill.name`, `InlineSkill.description`, `InlineSkill.content`, `InlineSkill.allowed_tools`, `InlineSkill.dependent_tools`, `InlineSkill.dependent_skills`, `InlineSkill.metadata` | `add_inline_skill(InlineSkill::new(..))` | Not combinable with skills paths, as in Python. |
+| `AgentConfig.inline_skills`, `InlineSkill.name`, `InlineSkill.description`, `InlineSkill.content`, `InlineSkill.allowed_tools`, `InlineSkill.dependent_tools`, `InlineSkill.dependent_skills`, `InlineSkill.metadata` | `add_inline_skill(InlineSkill::new(..))` | Not combinable with skills paths, as in Python. `visibility: hidden` metadata keeps a skill out of the prompt's list, and a lookup's answer names its dependent skills. `allowed_tools` and `dependent_tools` change nothing on 0.1.23 (see above). |
 | `AgentConfig.mcp_servers`, `McpStdioServer.command`, `McpStdioServer.args`, `McpStdioServer.type`, `McpStreamableHttpServer.url`, `McpStreamableHttpServer.type` | `add_mcp_server(McpServer::stdio / http)` | |
 | `McpStdioServer.env` | `McpServer::add_env` | |
 | `McpStreamableHttpServer.headers` | `McpServer::add_header` | |
@@ -679,8 +719,8 @@ test asserts so that the day it does is noticed.
 | `BaseMcpServerConfig.timeout_seconds` | `with_timeout_seconds` | On 0.1.23, bounds both loading the server (connecting and listing its tools; a slower server fails the turn that loads it) and each call (a slower one returns an error to the model). |
 | `BaseMcpServerConfig.force_all_tools_eager` | `with_force_all_tools_eager` | Tools declared by name instead of behind `call_mcp_tool`. |
 | `McpStreamableHttpServer.timeout`, `McpStreamableHttpServer.sse_read_timeout`, `McpStreamableHttpServer.terminate_on_close` | Not modeled | The Python SDK does not send them to the harness either (its `_to_mcp_server_proto` drops them), so they change nothing on the local harness. |
-| `AgentConfig.budget_config`, `BudgetConfig.max_model_calls`, `BudgetConfig.max_tool_calls`, `BudgetConfig.max_input_tokens`, `BudgetConfig.max_output_tokens`, `BudgetConfig.max_total_tokens`, `BudgetConfig.scope`, `BudgetScope.LIFETIME`, `BudgetScope.FORWARD_LOOKING` | `with_budget(Budget)` | A reached cap surfaces as `ChatResponse::stop_reason`. |
-| `AgentConfig.retry_config`, `RetryConfig.api_retry`, `RetryConfig.model_output_retry`, `ModelAPIRetryConfig.max_retries`, `ModelAPIRetryConfig.initial_sleep_duration_ms`, `ModelAPIRetryConfig.exponential_multiplier`, `ModelAPIRetryConfig.jitter_range`, `ModelOutputRetryConfig.max_retries` | `with_retry(RetryConfig)` | |
+| `AgentConfig.budget_config`, `BudgetConfig.max_model_calls`, `BudgetConfig.max_tool_calls`, `BudgetConfig.max_input_tokens`, `BudgetConfig.max_output_tokens`, `BudgetConfig.max_total_tokens`, `BudgetConfig.scope`, `BudgetScope.LIFETIME`, `BudgetScope.FORWARD_LOOKING` | `with_budget(Budget)` | A reached cap surfaces as `ChatResponse::stop_reason`, each cap with its own. The scope shows on a resume: `Lifetime` counts the calls made before it, `ForwardLooking` does not. |
+| `AgentConfig.retry_config`, `RetryConfig.api_retry`, `RetryConfig.model_output_retry`, `ModelAPIRetryConfig.max_retries`, `ModelAPIRetryConfig.initial_sleep_duration_ms`, `ModelAPIRetryConfig.exponential_multiplier`, `ModelAPIRetryConfig.jitter_range`, `ModelOutputRetryConfig.max_retries` | `with_retry(RetryConfig)` | With no jitter the waits are exact: the initial backoff, then that times the multiplier at each retry (0.1.23's defaults: 4 s and 2, verified 2026-11-09). A call to an undeclared tool counts as malformed output. |
 | `RetryConfig.benchmark` | `RetryConfig::benchmark` | |
 
 ### Hooks

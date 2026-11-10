@@ -8,10 +8,13 @@ use crate::StepDelta;
 #[test]
 fn test_auto_function_stream_chunk_serialization_roundtrip() {
     // Test Delta variant roundtrip (payload is the StepDelta wire form)
-    let delta = AutoFunctionStreamChunk::Delta(StepDelta::Text {
-        text: "Hello, world!".to_string(),
+    let delta = AutoFunctionStreamChunk::Delta {
+        delta: StepDelta::Text {
+            text: "Hello, world!".to_string(),
+            extra: Default::default(),
+        },
         extra: Default::default(),
-    });
+    };
 
     let json_str = serde_json::to_string(&delta).expect("Serialization should succeed");
     assert!(json_str.contains("chunk_type"), "Should contain tag field");
@@ -27,8 +30,9 @@ fn test_auto_function_stream_chunk_serialization_roundtrip() {
         serde_json::from_str(&json_str).expect("Deserialization should succeed");
 
     match deserialized {
-        AutoFunctionStreamChunk::Delta(delta) => {
+        AutoFunctionStreamChunk::Delta { delta, extra } => {
             assert_eq!(delta.as_text(), Some("Hello, world!"));
+            assert!(extra.is_empty());
         }
         _ => panic!("Expected Delta variant"),
     }
@@ -79,6 +83,79 @@ fn test_auto_function_stream_chunk_serialization_roundtrip() {
     let reserialized = serde_json::to_string(&deserialized).expect("Should serialize");
     assert!(reserialized.contains("future_event_type"));
     assert!(reserialized.contains("value"));
+}
+
+/// A delta's `extra`, the `step.delta` event's unread keys, is written
+/// beside `data` and read back; an empty one is not written, and a map
+/// without one (0.13.0's) reads back with an empty one.
+#[test]
+fn a_delta_chunk_keeps_its_extra() {
+    let mut extra = serde_json::Map::new();
+    extra.insert("future_key".to_string(), json!({"nested": 1}));
+    let chunk = AutoFunctionStreamChunk::Delta {
+        delta: StepDelta::Text {
+            text: "hi".to_string(),
+            extra: Default::default(),
+        },
+        extra: extra.clone(),
+    };
+
+    let value = serde_json::to_value(&chunk).unwrap();
+    assert_eq!(
+        value,
+        json!({
+            "chunk_type": "delta",
+            "data": {"type": "text", "text": "hi"},
+            "extra": {"future_key": {"nested": 1}}
+        })
+    );
+    let AutoFunctionStreamChunk::Delta { extra: read, .. } = serde_json::from_value(value).unwrap()
+    else {
+        panic!("expected a Delta");
+    };
+    assert_eq!(read, extra);
+
+    let old = json!({"chunk_type": "delta", "data": {"type": "text", "text": "hi"}});
+    let AutoFunctionStreamChunk::Delta { extra: read, .. } = serde_json::from_value(old).unwrap()
+    else {
+        panic!("expected a Delta");
+    };
+    assert!(read.is_empty());
+}
+
+/// An unknown chunk spelled like a known one (an SSE event named `delta`,
+/// passed on as `Unknown`) is marked, so it reads back unknown rather than
+/// as the known chunk, which would fail on its data.
+#[test]
+fn an_unknown_chunk_named_like_a_known_one_stays_unknown() {
+    for chunk_type in [
+        "delta",
+        "executing_functions",
+        "function_results",
+        "complete",
+        "max_loops_reached",
+    ] {
+        let chunk = AutoFunctionStreamChunk::Unknown {
+            chunk_type: chunk_type.to_string(),
+            data: json!({"event_type": chunk_type, "payload": 1}),
+        };
+        let value = serde_json::to_value(&chunk).unwrap();
+        assert_eq!(value["unknown"], true, "{value}");
+        let read: AutoFunctionStreamChunk = serde_json::from_value(value).unwrap();
+        assert_eq!(read.unknown_chunk_type(), Some(chunk_type));
+        assert_eq!(read.unknown_data().unwrap()["payload"], 1);
+    }
+    // No marker where nothing collides.
+    let chunk = AutoFunctionStreamChunk::Unknown {
+        chunk_type: "interaction.paused".to_string(),
+        data: json!({}),
+    };
+    assert!(
+        serde_json::to_value(&chunk)
+            .unwrap()
+            .get("unknown")
+            .is_none()
+    );
 }
 
 #[test]
@@ -143,10 +220,13 @@ fn test_max_loops_reached_chunk_roundtrip() {
 #[test]
 fn test_auto_function_stream_event_with_event_id_roundtrip() {
     let event = AutoFunctionStreamEvent::new(
-        AutoFunctionStreamChunk::Delta(StepDelta::Text {
-            text: "Hello from auto-function".to_string(),
+        AutoFunctionStreamChunk::Delta {
+            delta: StepDelta::Text {
+                text: "Hello from auto-function".to_string(),
+                extra: Default::default(),
+            },
             extra: Default::default(),
-        }),
+        },
         Some("evt_auto_abc123".to_string()),
     );
 
@@ -199,10 +279,13 @@ fn test_auto_function_stream_event_without_event_id() {
 fn test_auto_function_stream_event_with_empty_event_id() {
     // Edge case: empty string event_id should still serialize/deserialize
     let event = AutoFunctionStreamEvent::new(
-        AutoFunctionStreamChunk::Delta(StepDelta::Text {
-            text: "Test".to_string(),
+        AutoFunctionStreamChunk::Delta {
+            delta: StepDelta::Text {
+                text: "Test".to_string(),
+                extra: Default::default(),
+            },
             extra: Default::default(),
-        }),
+        },
         Some(String::new()),
     );
 

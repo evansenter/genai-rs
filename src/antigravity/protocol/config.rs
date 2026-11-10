@@ -3,6 +3,7 @@ use super::{
     PolicyRule, RetryConfig, RunCommandToolConfig, SessionContinuationMode, SkillsConfig,
     SubagentSkillsConfig, SubagentsConfig, ToolOutputTruncation, WorkspaceContainment,
 };
+use crate::redact;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -355,7 +356,10 @@ pub struct ModelConfig {
 }
 
 /// `GeminiAPIEndpoint`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+///
+/// `Debug` redacts the API key and the header values, keeping the header
+/// names.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GeminiApiEndpoint {
     /// Override for the Gemini API base URL.
@@ -373,7 +377,9 @@ pub struct GeminiApiEndpoint {
 }
 
 /// `VertexEndpoint`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+///
+/// `Debug` redacts the header values, keeping their names.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct VertexEndpoint {
     /// Override for the Vertex AI base URL.
@@ -391,6 +397,42 @@ pub struct VertexEndpoint {
     /// Model options (thinking level).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<GeminiModelOptions>,
+}
+
+impl std::fmt::Debug for GeminiApiEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            base_url,
+            http_headers,
+            api_key,
+            options,
+        } = self;
+        f.debug_struct("GeminiApiEndpoint")
+            .field("base_url", base_url)
+            .field("http_headers", &redact::values(http_headers))
+            .field("api_key", &redact::optional(api_key.as_ref()))
+            .field("options", options)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for VertexEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            base_url,
+            http_headers,
+            project,
+            location,
+            options,
+        } = self;
+        f.debug_struct("VertexEndpoint")
+            .field("base_url", base_url)
+            .field("http_headers", &redact::values(http_headers))
+            .field("project", project)
+            .field("location", location)
+            .field("options", options)
+            .finish()
+    }
 }
 
 /// `GeminiModelOptions`.
@@ -441,7 +483,9 @@ pub struct McpServerConfig {
 }
 
 /// `McpStdioTransport`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+///
+/// `Debug` redacts the environment variables' values, keeping their names.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct McpStdioTransport {
     /// Executable to spawn.
@@ -456,7 +500,9 @@ pub struct McpStdioTransport {
 }
 
 /// `McpHttpTransport`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+///
+/// `Debug` redacts the header values, keeping their names.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct McpHttpTransport {
     /// Server URL.
@@ -465,6 +511,27 @@ pub struct McpHttpTransport {
     /// Extra HTTP headers.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub headers: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for McpStdioTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { command, args, env } = self;
+        f.debug_struct("McpStdioTransport")
+            .field("command", command)
+            .field("args", args)
+            .field("env", &redact::values(env))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for McpHttpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { url, headers } = self;
+        f.debug_struct("McpHttpTransport")
+            .field("url", url)
+            .field("headers", &redact::values(headers))
+            .finish()
+    }
 }
 
 /// `CustomAgent` — a static subagent configuration.

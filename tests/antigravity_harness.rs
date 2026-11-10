@@ -778,11 +778,11 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         // Not what 0.1.10 through 0.1.23 do, but the turn loop still maps a
         // harness STATE_CANCELLED here; accept it rather than fail if the
         // harness changes its mind, and say so loudly.
-        Err(AntigravityError::Turn(message)) => {
+        Err(AntigravityError::Turn { kind, message }) => {
             println!(
                 "note: this harness reported cancellation as a Turn error \
-                 ({message:?}) — 0.1.23 ended the turn as Finished. Update the \
-                 CancelHandle docs if this is the new behavior."
+                 ({kind}: {message:?}) — 0.1.23 ended the turn as Finished. Update \
+                 the CancelHandle docs if this is the new behavior."
             );
         }
         Err(other) => panic!("unexpected error from a cancelled turn: {other:?}"),
@@ -1402,9 +1402,11 @@ fn python_site_dirs() -> Vec<std::path::PathBuf> {
 /// The site-packages directory of the harness install the *crate* would
 /// resolve, when that is somewhere `python3` would not look on its own.
 ///
-/// Mirrors `discover_harness`'s order — `ANTIGRAVITY_HARNESS_PATH`, then
-/// python3's own site-packages, then `localharness` on `PATH` — minus the
-/// builder-path mode, which these tests do not use.
+/// Mirrors `discover_harness`'s order — `ANTIGRAVITY_HARNESS_PATH` when set
+/// and not empty (used as given: `spawn()` fails rather than search on when
+/// it is not a file), then python3's own site-packages, then
+/// `localharness` on `PATH` — minus the builder-path mode, which these
+/// tests do not use.
 ///
 /// The site-packages step is included even though it never *produces* a
 /// PYTHONPATH, because it is a precedence step: with the env var unset, a
@@ -1425,8 +1427,8 @@ fn resolved_harness_site_packages() -> Option<std::path::PathBuf> {
     };
 
     let harness = match std::env::var_os("ANTIGRAVITY_HARNESS_PATH")
+        .filter(|p| !p.is_empty())
         .map(std::path::PathBuf::from)
-        .filter(|p| p.is_file())
     {
         Some(explicit) => explicit,
         // python3 would find its own copy before anything on PATH, so

@@ -4,7 +4,8 @@ use super::protocol::{
     TrajectoryState,
 };
 use super::{
-    AgentEvent, AntigravityAgent, AntigravityError, ErrorSeverity, ToolDecision, streaming,
+    AgentEvent, AntigravityAgent, AntigravityError, ErrorSeverity, ToolDecision, TurnFailure,
+    streaming,
 };
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -13,6 +14,10 @@ use std::time::Duration;
 /// Model backend HTTP codes that abort the turn (bad request / auth
 /// failures cannot recover by retrying within the turn).
 const FATAL_HTTP_CODES: [u32; 3] = [400, 401, 403];
+
+/// The HTTP error statuses: a system error step's `httpCode` outside them
+/// is not the model backend's (the harness puts gRPC codes there too).
+const HTTP_ERROR_STATUSES: std::ops::Range<u32> = 400..600;
 
 // =============================================================================
 // ChatResponse
@@ -200,13 +205,16 @@ impl AntigravityAgent {
                 .unwrap_or("unknown harness error")
                 .to_string();
             let http_code = step.error.as_ref().and_then(|e| e.http_code);
-            if step.source == Some(StepSource::System)
-                && http_code.is_some_and(|code| FATAL_HTTP_CODES.contains(&code))
-            {
-                return Err(AntigravityError::Turn(format!(
-                    "model backend error (HTTP {}): {message}",
-                    http_code.unwrap_or_default()
-                )));
+            if let Some(status) = backend_status(&step) {
+                if FATAL_HTTP_CODES.contains(&status) {
+                    return Err(AntigravityError::turn(
+                        TurnFailure::ModelBackend { status },
+                        message,
+                    ));
+                }
+                // Any other status the harness may retry; if the turn then
+                // fails, this is why.
+                turn.backend_status = Some(status);
             }
             // An error step is terminal, so the harness re-delivers it on
             // each tick; dedup on the step key (a dedicated set, not
@@ -289,11 +297,37 @@ impl AntigravityAgent {
         if is_main && let Some(reason) = &update.stop_reason {
             turn.stop_reason = Some(reason.clone());
         }
-        let error = non_blank(update.error.as_deref());
+        // Harness 0.1.23 can report the error that ends its run on a
+        // non-terminal update (a 503 while waiting for subagents) and then
+        // go idle without it, so the main trajectory's first error is kept
+        // for the terminal update.
+        if is_main && let Some(error) = non_blank(update.error.as_deref()) {
+            turn.trajectory_error
+                .get_or_insert_with(|| error.to_string());
+        }
+        let error = non_blank(update.error.as_deref()).or(turn.trajectory_error.as_deref());
+        // A turn the pre-turn hook refused ends in one of the failing
+        // states below, carrying the hook's reason.
+        let denied = turn.pre_turn_denied;
+        let failure = |otherwise| {
+            if denied {
+                TurnFailure::Denied
+            } else {
+                otherwise
+            }
+        };
         match update.state {
             Some(TrajectoryState::Idle) if is_main => {
                 if let Some(error) = error {
-                    return Err(AntigravityError::Turn(error.to_string()));
+                    // An error ending the turn after the model backend
+                    // failed a call (a 503 whose retries ran out) is that
+                    // failure.
+                    let kind = turn
+                        .backend_status
+                        .map_or(TurnFailure::Trajectory, |status| {
+                            TurnFailure::ModelBackend { status }
+                        });
+                    return Err(AntigravityError::turn(failure(kind), error));
                 }
                 let response = turn.take_response();
                 turn.finished = true;
@@ -301,8 +335,10 @@ impl AntigravityAgent {
                     .push_back(AgentEvent::Finished(Box::new(response)));
             }
             Some(TrajectoryState::Cancelled) if is_main => {
-                let message = error.unwrap_or("turn cancelled").to_string();
-                return Err(AntigravityError::Turn(message));
+                return Err(AntigravityError::turn(
+                    failure(TurnFailure::Cancelled),
+                    error.unwrap_or("no reason given"),
+                ));
             }
             _ => {
                 // Running / waiting-for-tasks / waiting-for-subagents /
@@ -328,10 +364,23 @@ impl AntigravityAgent {
     }
 }
 
+/// The HTTP status of a model call the backend failed, from a system error
+/// step. The step's `httpCode` holds other codes too, which are not the
+/// backend's.
+fn backend_status(step: &StepUpdate) -> Option<u32> {
+    // On 0.1.23 (scripted, 2026-11-09) a 503 with no retries left comes as
+    // 503, and an MCP server that failed to load as 2, gRPC's UNKNOWN, on
+    // the same "Agent execution terminated" step; either way the harness
+    // then ends its run and closes the WebSocket.
+    let status = step.error.as_ref().and_then(|e| e.http_code)?;
+    (step.source == Some(StepSource::System) && HTTP_ERROR_STATUSES.contains(&status))
+        .then_some(status)
+}
+
 /// Classifies a harness error step's severity for
 /// [`AgentEvent::Error`](streaming::AgentEvent). A fatal model-backend
 /// HTTP code (400/401/403) that reached the event path — i.e. did *not* abort
-/// the turn through the system-source [`AntigravityError::Turn`] path — is
+/// the turn as a [`TurnFailure::ModelBackend`] — is
 /// still serious and surfaces as [`ErrorSeverity::Severe`]; every other
 /// error is transient harness-internal noise the turn recovers from.
 fn classify_error_severity(http_code: Option<u32>) -> ErrorSeverity {
@@ -434,6 +483,17 @@ pub(super) struct TurnState {
     /// its per-turn lifecycle hooks get the answer they would get with no
     /// hook set, instead of running user code.
     pub(super) draining: bool,
+    /// The pre-turn hook refused this turn, so its failing end is a
+    /// [`TurnFailure::Denied`].
+    pub(super) pre_turn_denied: bool,
+    /// The status of the last model call the backend failed this turn
+    /// (from a system error step), so a turn the harness then ends with an
+    /// error is a [`TurnFailure::ModelBackend`].
+    backend_status: Option<u32>,
+    /// The first error a main-trajectory state update carried this turn,
+    /// which fails the turn when it ends even if the terminal update has
+    /// none.
+    trajectory_error: Option<String>,
 }
 
 impl TurnState {
@@ -460,6 +520,9 @@ impl TurnState {
             deadline: timeout.map(|t| tokio::time::Instant::now() + t),
             _turn_guard: turn_guard,
             draining: false,
+            pre_turn_denied: false,
+            backend_status: None,
+            trajectory_error: None,
         }
     }
 

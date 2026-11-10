@@ -1263,7 +1263,7 @@ fn stored_read_request_config_is_modeled() {
 /// crate does not model, at every level, and writes it back (D-001): the
 /// generation config's own `extra` already did, but its speech, image,
 /// video and transcription configs, a `tool_choice` restriction, a safety
-/// setting and the webhook config dropped theirs until #504's follow-ups.
+/// setting and the webhook config dropped theirs before #504's follow-ups.
 #[test]
 fn stored_request_config_keeps_unmodeled_nested_fields() {
     let served = serde_json::json!({

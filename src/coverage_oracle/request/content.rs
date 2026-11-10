@@ -98,13 +98,12 @@ pub(super) fn contents() -> Vec<Content> {
             uri: Some("https://example.com/v.mp4".into()),
             mime_type: Some("video/mp4".into()),
             resolution: Some(Resolution::Low),
-            processing: Some(
-                VideoProcessing::segment()
-                    .with_start_offset("1s")
-                    .with_end_offset("2s")
-                    .with_fps(2.0)
-                    .build(),
-            ),
+            processing: Some(VideoProcessing::StaticSegment {
+                start_offset: Some("1s".into()),
+                end_offset: Some("2s".into()),
+                fps: Some(2.0),
+                extra: Map::new(),
+            }),
             name: Some("clip.mp4".into()),
             extra: Map::new(),
         },
@@ -143,10 +142,16 @@ pub(super) fn contents() -> Vec<Content> {
 /// History steps a caller sends back as input: every variant a response can
 /// carry, since `InteractionInput::Steps` echoes them.
 pub(super) fn steps() -> Vec<Step> {
+    // `contents()` sets every field of a text block; this one is short.
+    let text = |text: &str| Content::Text {
+        text: Some(text.into()),
+        annotations: None,
+        extra: Map::new(),
+    };
     let payloads = [
         FunctionResultPayload::Text("ok".into()),
         FunctionResultPayload::Json(json!({"k": "v"})),
-        FunctionResultPayload::Contents(vec![Content::text("ok")]),
+        FunctionResultPayload::Contents(vec![text("ok")]),
     ];
     let mut all = vec![
         Step::UserInput {
@@ -167,7 +172,7 @@ pub(super) fn steps() -> Vec<Step> {
         },
         Step::Thought {
             signature: Some("c2ln".into()),
-            summary: vec![Content::text("thinking")],
+            summary: vec![text("thinking")],
             extra: Map::new(),
         },
         Step::FunctionCall {
@@ -408,8 +413,8 @@ pub(super) fn tools() -> Vec<Tool> {
             longitude: Some(-122.0),
             extra: Default::default(),
         },
-        Tool::code_execution(),
-        Tool::url_context(),
+        Tool::CodeExecution { extra: Map::new() },
+        Tool::UrlContext { extra: Map::new() },
         Tool::ComputerUse {
             environment: "browser".into(),
             excluded_predefined_functions: vec!["drag_and_drop".into()],

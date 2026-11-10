@@ -1,7 +1,7 @@
 //! Guards the link between live tests, the CI integration matrix and the
 //! API surface.
 //!
-//! `rust.yml`'s `test-integration` job runs `--run-ignored all` per binary
+//! `rust.yml`'s `test-integration` job runs `--run-ignored only` per binary
 //! listed in its matrix groups, and `release.yml` is the only other place
 //! live tests run — after the tag exists. A live test binary left out of the
 //! matrix therefore goes unexercised on every PR, which is how
@@ -40,6 +40,11 @@ mod ci_workflows;
 mod claims;
 mod doc_guards;
 mod live_verbs;
+
+// The shared walker, through `live_verbs`, which includes it for both of
+// its binaries (a second `mod` of the file would be clippy's
+// `duplicate_mod`).
+use live_verbs::source_scan;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -295,16 +300,6 @@ fn a_live_test_in_a_submodule_makes_its_binary_live() {
 /// not modules).
 #[test]
 fn every_test_module_file_belongs_to_a_binary() {
-    fn rust_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                rust_files(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
-            }
-        }
-    }
     let tests = root().join("tests");
     let reached: BTreeSet<PathBuf> = test_sources_in(&tests)
         .into_iter()
@@ -315,7 +310,7 @@ fn every_test_module_file_belongs_to_a_binary() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         if path.is_dir() && name != "ui" && name != "fixtures" {
-            rust_files(&path, &mut all);
+            all.extend(source_scan::rust_files(&path));
         }
     }
     assert!(all.len() > 20, "found too few module files: {all:?}");
@@ -812,22 +807,12 @@ const UNREADABLE: &str = "<a reason the scan cannot read>";
 /// (inside a function or module too), as `(file:LIST, [(entry, reason)])`.
 /// A reason is a string literal or a `&str` constant of the same file; an
 /// entry is its tuple's first element. Trybuild's `ui/` sources and the
-/// fixtures hold no lists and are not read.
+/// fixtures hold no lists and are not read. A reason that is empty or only
+/// white space fails the scan, naming its list and entry: an entry is
+/// listed for a reason, and a blank one hides that none was given.
 fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
     use syn::visit::Visit;
 
-    fn files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
-            let path = entry.expect("dir entry").path();
-            if path.is_dir() {
-                if !path.ends_with("ui") && !path.ends_with("fixtures") {
-                    files(&path, out);
-                }
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
-            }
-        }
-    }
     fn last_is_str(ty: &syn::Type) -> bool {
         let syn::Type::Reference(slice) = ty else {
             return false;
@@ -883,9 +868,18 @@ fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
         }
     }
 
-    let mut paths = Vec::new();
-    files(dir, &mut paths);
-    paths.sort();
+    // Every `.rs` file but those under a `ui/` or `fixtures/` directory.
+    let paths = source_scan::rust_files(dir).into_iter().filter(|path| {
+        !path
+            .strip_prefix(dir)
+            .unwrap_or(path)
+            .parent()
+            .is_some_and(|parent| {
+                parent
+                    .components()
+                    .any(|c| c.as_os_str() == "ui" || c.as_os_str() == "fixtures")
+            })
+    });
     let mut out = Vec::new();
     for path in paths {
         let text = std::fs::read_to_string(&path).expect("read test source");
@@ -904,7 +898,7 @@ fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
             let syn::Expr::Array(array) = &*array.expr else {
                 continue;
             };
-            let entries = array
+            let entries: Vec<(String, String)> = array
                 .elems
                 .iter()
                 .filter_map(|elem| match elem {
@@ -923,6 +917,20 @@ fn reasoned_lists(dir: &std::path::Path) -> Vec<ReasonedList> {
             out.push((format!("{relative}:{name}"), entries));
         }
     }
+    let blank: Vec<String> = out
+        .iter()
+        .flat_map(|(name, entries)| {
+            entries
+                .iter()
+                .filter(|(_, reason)| reason.trim().is_empty())
+                .map(move |(entry, _)| format!("{name}: {entry}"))
+        })
+        .collect();
+    assert!(
+        blank.is_empty(),
+        "reasoned-list entries with a blank reason (say why each is listed):\n  {}",
+        blank.join("\n  ")
+    );
     out
 }
 
@@ -1029,6 +1037,27 @@ fn reasoned_lists_are_found_wherever_they_are_declared() {
         })
         .collect();
     assert_eq!(claims::undated_live_claims(&borrowed).len(), 2);
+}
+
+/// A blank reason fails the scan, as a string literal or through a
+/// constant, and the failure names the list and the entry.
+#[test]
+fn reasoned_lists_reject_a_blank_reason() {
+    for source in [
+        r#"const LIST: &[(&str, &str)] = &[("a", "Given."), ("blank", "  ")];"#,
+        r#"const NONE: &str = "";
+           const LIST: &[(&str, &str)] = &[("a", "Given."), ("blank", NONE)];"#,
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("a.rs"), source).unwrap();
+        let outcome = std::panic::catch_unwind(|| reasoned_lists(temp.path()));
+        let panic = outcome.expect_err("a blank reason passed the scan");
+        let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(
+            message.contains("a.rs:LIST: blank") && !message.contains("LIST: a\n"),
+            "{message}"
+        );
+    }
 }
 
 /// `/{api_version}/agents/{agentsId}` -> `/{}/agents/{}`, the form the

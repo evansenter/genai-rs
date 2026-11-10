@@ -2,7 +2,9 @@
 //! timeouts, how a cut-off stream is classified, the read of a stream's tail
 //! after its terminal event, and `Retry-After` and the retryable statuses in
 //! a poll. See `docs/RELIABILITY.md`; one test checks that its backon recipe
-//! matches `examples/retry_with_backoff.rs`.
+//! matches `examples/retry_with_backoff.rs`, and another that every retry
+//! or poll loop the docs show bounds its attempts, sleeps between them and
+//! honors `Retry-After`.
 //!
 //! The paused-clock tests do real localhost I/O. Tokio advances a paused
 //! clock to the next timer whenever the runtime is idle, even while I/O is
@@ -251,9 +253,10 @@ async fn transport_failure_mid_body_is_interrupted_with_its_source() {
 
 /// The one exception: a body that ends right after an event this crate
 /// doesn't recognize, which may be a new terminal event (Evergreen). The
-/// plain stream ends cleanly. The auto-function loop can't go on without
-/// the round's `Completed`, so that round ends as a cut-off one does,
-/// retryable; it used to be a permanent `MalformedResponse`.
+/// plain stream ends cleanly. The auto-function loop passes the event on,
+/// but can't go on without the round's `Completed`, so that round ends as a
+/// cut-off one does, retryable; it used to be a permanent
+/// `MalformedResponse`.
 #[tokio::test]
 async fn stream_ending_on_an_unknown_event_is_clean_but_interrupts_an_auto_function_round() {
     let body = || {
@@ -280,12 +283,16 @@ async fn stream_ending_on_an_unknown_event_is_clean_but_interrupts_an_auto_funct
         .create_stream_with_auto_functions()
         .collect()
         .await;
-    let [Ok(first), Err(err)] = events.as_slice() else {
-        panic!("expected the delta, then the error: {events:?}");
+    let [Ok(first), Ok(unknown), Err(err)] = events.as_slice() else {
+        panic!("expected the delta, the unknown event, then the error: {events:?}");
     };
     assert!(
-        matches!(first.chunk, AutoFunctionStreamChunk::Delta(_)),
+        matches!(first.chunk, AutoFunctionStreamChunk::Delta { .. }),
         "{first:?}"
+    );
+    assert_eq!(
+        unknown.unknown_chunk_type(),
+        Some("interaction.brand_new_end")
     );
     assert!(
         matches!(err, GenaiError::StreamInterrupted { source: None, .. }),
@@ -885,4 +892,381 @@ fn the_backon_recipe_in_reliability_md_matches_its_example() {
         recipe.contains(&".when(GenaiError::is_retryable)"),
         "{recipe:#?}"
     );
+}
+
+// =============================================================================
+// Every retry or poll loop the docs show
+// =============================================================================
+
+/// One fenced code block in a doc: where it starts, and its lines (a doc
+/// comment's marker stripped).
+struct DocBlock {
+    at: String,
+    lines: Vec<String>,
+}
+
+/// The doc text a line of Rust holds, in any of rustdoc's forms: a `///`
+/// or `//!` line, a line of a `/** */` or `/*! */` block (`in_block`
+/// carries an open one to the next line), or a one-line
+/// `#[doc = "..."]` or `#![doc = "..."]` string, plain or raw, whose `\n`
+/// escapes split it into lines. `None` when the line holds none.
+fn doc_text(line: &str, in_block: &mut bool) -> Option<Vec<String>> {
+    let trimmed = line.trim_start();
+    if *in_block {
+        let (text, closed) = match trimmed.find("*/") {
+            Some(end) => (&trimmed[..end], true),
+            None => (trimmed, false),
+        };
+        *in_block = !closed;
+        let text = text.strip_prefix('*').unwrap_or(text);
+        return Some(vec![text.strip_prefix(' ').unwrap_or(text).to_string()]);
+    }
+    if let Some(rest) = ["///", "//!"]
+        .iter()
+        .find_map(|marker| trimmed.strip_prefix(marker))
+        .filter(|rest| !rest.starts_with('/'))
+    {
+        return Some(vec![rest.strip_prefix(' ').unwrap_or(rest).to_string()]);
+    }
+    if let Some(rest) = ["/**", "/*!"]
+        .iter()
+        .find_map(|marker| trimmed.strip_prefix(marker))
+        .filter(|rest| !rest.starts_with('*') && !rest.starts_with('/'))
+    {
+        let (text, closed) = match rest.find("*/") {
+            Some(end) => (&rest[..end], true),
+            None => (rest, false),
+        };
+        *in_block = !closed;
+        return Some(vec![text.trim().to_string()]);
+    }
+    let value = ["#[doc", "#![doc"]
+        .iter()
+        .find_map(|marker| trimmed.strip_prefix(marker))?
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start();
+    let text = if let Some(raw) = value.strip_prefix('r') {
+        let hashes = raw.len() - raw.trim_start_matches('#').len();
+        let close = format!("\"{}", "#".repeat(hashes));
+        let inner = raw[hashes..].strip_prefix('"')?;
+        inner[..inner.find(&close)?].to_string()
+    } else {
+        let mut text = String::new();
+        let mut chars = value.strip_prefix('"')?.chars();
+        loop {
+            match chars.next()? {
+                '"' => break,
+                '\\' => match chars.next()? {
+                    'n' => text.push('\n'),
+                    't' => text.push('\t'),
+                    other => text.push(other),
+                },
+                c => text.push(c),
+            }
+        }
+        text
+    };
+    Some(text.split('\n').map(str::to_string).collect())
+}
+
+/// The fenced code blocks in `text`: a Markdown file's, or, for a `.rs`
+/// file, its doc comments' ([`doc_text`]).
+fn doc_blocks(path: &str, text: &str) -> Vec<DocBlock> {
+    let rust = path.ends_with(".rs");
+    let mut blocks = Vec::new();
+    let mut open: Option<(String, DocBlock)> = None;
+    let mut in_block = false;
+    for (n, line) in text.lines().enumerate() {
+        let docs = if rust {
+            doc_text(line, &mut in_block)
+        } else {
+            Some(vec![line.to_string()])
+        };
+        let Some(docs) = docs else {
+            // Code ends a doc comment, and any block left open in it.
+            open = None;
+            continue;
+        };
+        for doc in docs {
+            let fence: String = doc
+                .trim_start()
+                .chars()
+                .take_while(|c| *c == '`' || *c == '~')
+                .collect();
+            match &mut open {
+                Some((opened, _))
+                    if fence.len() >= opened.len()
+                        && fence.starts_with(&opened[..1])
+                        && doc.trim() == fence =>
+                {
+                    blocks.push(open.take().unwrap().1);
+                }
+                Some((_, block)) => block.lines.push(doc),
+                None if fence.len() >= 3 => {
+                    let at = format!("{path}:{}", n + 1);
+                    open = Some((
+                        fence,
+                        DocBlock {
+                            at,
+                            lines: Vec::new(),
+                        },
+                    ));
+                }
+                None => {}
+            }
+        }
+    }
+    blocks
+}
+
+/// What a retry or poll loop in `block` lacks, if it calls
+/// `is_retryable()` in a loop: a bound on its attempts, a sleep between
+/// them, and a read of the server's `retry_after()`. The bound is in the
+/// loop itself: an attempt count compared with a maximum and incremented,
+/// or a comparison with the deadline (a deadline declared above the loop,
+/// or named in a string, is none). Comments, string literals and
+/// doctest-hidden lines (`# ...`) don't count. `None` when the block has no
+/// such loop.
+fn retry_loop_problems(block: &DocBlock) -> Option<Vec<&'static str>> {
+    let code: Vec<String> = block
+        .lines
+        .iter()
+        .map(|line| line.split("//").next().unwrap_or_default().trim())
+        .filter(|line| !(line.starts_with("# ") || *line == "#"))
+        .map(|line| {
+            // Each string literal's text blanked, its quotes kept.
+            let mut out = String::new();
+            for (k, piece) in line.split('"').enumerate() {
+                if k > 0 {
+                    out.push('"');
+                }
+                if k % 2 == 0 {
+                    out.push_str(piece);
+                }
+            }
+            out
+        })
+        .collect();
+    let retries = code.iter().position(|line| line.contains("is_retryable"))?;
+    let opens = code[..retries].iter().position(|line| {
+        line.contains("loop {") || line.starts_with("while ") || line.starts_with("for ")
+    })?;
+    let body = &code[opens..];
+    let mut problems = Vec::new();
+    let compares = |line: &str| {
+        [">=", "<=", " > ", " < "]
+            .iter()
+            .any(|op| line.contains(op))
+    };
+    // `for attempt in 0..MAX`, or a count checked and incremented.
+    let ranged = body[0].starts_with("for ") && body[0].contains("..");
+    let counted = ranged
+        || (body
+            .iter()
+            .any(|line| line.contains("attempt") && line.contains(" < "))
+            && body
+                .iter()
+                .any(|line| line.contains("attempt") && line.contains("+= ")));
+    let timed = body
+        .iter()
+        .any(|line| line.contains("deadline") && compares(line));
+    if !(counted || timed) {
+        problems.push("does not bound its attempts by a count or a deadline");
+    }
+    if !code.iter().any(|line| line.contains("sleep(")) {
+        problems.push("does not sleep between attempts");
+    }
+    if !code.iter().any(|line| line.contains("retry_after()")) {
+        problems.push("ignores the server's retry_after()");
+    }
+    Some(problems)
+}
+
+/// Every Markdown file at the top level and under `docs/`, and every `.rs`
+/// file under the library crates' sources: repository-relative path and
+/// text.
+fn doc_sources() -> Vec<(String, String)> {
+    fn walk(root: &std::path::Path, dir: &str, deep: bool, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(root.join(dir)).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let relative = if dir.is_empty() {
+                name
+            } else {
+                format!("{dir}/{name}")
+            };
+            if path.is_dir() {
+                if deep {
+                    walk(root, &relative, deep, out);
+                }
+            } else if relative.ends_with(".md") || (deep && relative.ends_with(".rs")) {
+                out.push((relative, std::fs::read_to_string(&path).unwrap()));
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    walk(root, "", false, &mut found);
+    for dir in ["docs", "src", "genai-rs-macros/src"] {
+        walk(root, dir, true, &mut found);
+    }
+    found.sort();
+    found
+}
+
+/// A retry or poll loop shown in the docs bounds its attempts, sleeps
+/// between them and honors the server's `Retry-After`, as
+/// `docs/RELIABILITY.md`'s recipe does: `InteractionRequest`'s rustdoc loop
+/// once retried at full speed with no bound, `Client::execute`'s ignored
+/// `retry_after`, and the background poll in `AGENTS_AND_BACKGROUND.md`
+/// ended on the first transient error. The poll bounds each status request
+/// by the time left, too.
+#[test]
+fn every_retry_loop_in_the_docs_is_bounded_and_waits() {
+    let mut loops = Vec::new();
+    let mut problems = Vec::new();
+    for (path, text) in doc_sources() {
+        if path == "CHANGELOG.md" {
+            continue;
+        }
+        for block in doc_blocks(&path, &text) {
+            if let Some(lacks) = retry_loop_problems(&block) {
+                for lack in lacks {
+                    problems.push(format!("{}: the loop {lack}", block.at));
+                }
+                loops.push(block);
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+    let at: Vec<&str> = loops.iter().map(|block| block.at.as_str()).collect();
+    for expected in ["src/request/mod.rs:", "docs/AGENTS_AND_BACKGROUND.md:"] {
+        assert!(
+            at.iter().any(|at| at.starts_with(expected)),
+            "no retry loop found in {expected} {at:?}"
+        );
+    }
+    let poll = loops
+        .iter()
+        .find(|block| block.at.starts_with("docs/AGENTS_AND_BACKGROUND.md:"))
+        .unwrap();
+    let has = |text: &str| poll.lines.iter().any(|line| line.trim() == text);
+    assert!(
+        has("let left = deadline.saturating_duration_since(Instant::now());")
+            && poll
+                .lines
+                .iter()
+                .any(|line| line.contains("timeout(left, client.interactions().get(id))")),
+        "the poll bounds each status request by the time left:\n{}",
+        poll.lines.join("\n")
+    );
+}
+
+/// The check flags each defect the old recipes had, and passes a loop
+/// that has none.
+#[test]
+fn the_retry_loop_check_finds_each_defect() {
+    let block = |text: &str| DocBlock {
+        at: "x".into(),
+        lines: text.lines().map(str::to_string).collect(),
+    };
+    let unbounded = block(
+        "let response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() => continue,\n        Err(e) => return Err(e.into()),\n    }\n};",
+    );
+    assert_eq!(
+        retry_loop_problems(&unbounded).unwrap(),
+        [
+            "does not bound its attempts by a count or a deadline",
+            "does not sleep between attempts",
+            "ignores the server's retry_after()"
+        ]
+    );
+    let deaf = block(
+        "let mut attempts = 0;\nlet response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() && attempts < 3 => {\n            attempts += 1;\n            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempts))).await;\n        }\n        Err(e) => return Err(e.into()),\n    }\n};",
+    );
+    assert_eq!(
+        retry_loop_problems(&deaf).unwrap(),
+        ["ignores the server's retry_after()"]
+    );
+    // A sleep or a retry_after only in a comment or a hidden line is none.
+    let hidden = block(
+        "loop {\n    // tokio::time::sleep(e.retry_after()) here\n    # tokio::time::sleep(d).await;\n    if attempt < MAX && e.is_retryable() {}\n    attempt += 1;\n}",
+    );
+    assert_eq!(
+        retry_loop_problems(&hidden).unwrap(),
+        [
+            "does not sleep between attempts",
+            "ignores the server's retry_after()"
+        ]
+    );
+    let sound = block(
+        "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n    attempt += 1;\n}",
+    );
+    assert_eq!(retry_loop_problems(&sound).unwrap(), Vec::<&str>::new());
+    let ranged = block(
+        "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n}",
+    );
+    assert_eq!(retry_loop_problems(&ranged).unwrap(), Vec::<&str>::new());
+    // A count that is checked but never incremented bounds nothing.
+    let stuck = block(
+        "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n}",
+    );
+    assert_eq!(
+        retry_loop_problems(&stuck).unwrap(),
+        ["does not bound its attempts by a count or a deadline"]
+    );
+    // A poll bounded by its deadline compares with it inside the loop; a
+    // deadline only declared above the loop, or named in an error
+    // message, bounds nothing.
+    let poll = |check: &str| {
+        block(&format!(
+            "async fn poll(deadline: Duration) {{\n    let deadline = Instant::now() + deadline;\n    loop {{\n        let left = Duration::from_secs(3600);\n        match timeout(left, get()).await {{\n            Err(_) => return Err(\"polling deadline exceeded\".into()),\n            Ok(Err(e)) if e.is_retryable() => wait = e.retry_after().unwrap_or(delay),\n            _ => {{}}\n        }}\n{check}        sleep(wait).await;\n    }}\n}}"
+        ))
+    };
+    assert_eq!(
+        retry_loop_problems(&poll("")).unwrap(),
+        ["does not bound its attempts by a count or a deadline"]
+    );
+    assert_eq!(
+        retry_loop_problems(&poll(
+            "        if wait >= deadline.saturating_duration_since(Instant::now()) {\n            return Err(e);\n        }\n"
+        ))
+        .unwrap(),
+        Vec::<&str>::new()
+    );
+    // is_retryable() outside a loop is not a retry loop.
+    assert!(
+        retry_loop_problems(&block("fn f(e: &GenaiError) -> bool { e.is_retryable() }")).is_none()
+    );
+}
+
+#[test]
+fn doc_blocks_reads_markdown_and_doc_comments() {
+    let markdown = doc_blocks("a.md", "x\n```rust\nloop {}\n```\n````text\n```\ny\n````\n");
+    assert_eq!(markdown.len(), 2);
+    assert_eq!(markdown[0].at, "a.md:2");
+    assert_eq!(markdown[0].lines, ["loop {}"]);
+    assert_eq!(markdown[1].lines, ["```", "y"]);
+    let rust = doc_blocks(
+        "a.rs",
+        "/// ```\n/// loop {}\n/// ```\nfn f() {}\n//// ```\n    //! ```no_run\n    //! a\n    //! ```\n",
+    );
+    assert_eq!(rust.len(), 2);
+    assert_eq!(rust[0].lines, ["loop {}"]);
+    assert_eq!(rust[1].at, "a.rs:6");
+    assert_eq!(rust[1].lines, ["a"]);
+    // rustdoc's other forms: a `/** */` or `/*! */` block, and a
+    // `#[doc = "..."]` string, plain (its `\n` escapes split it) or raw.
+    let forms = doc_blocks(
+        "a.rs",
+        "/**\n * ```\n * loop {}\n * ```\n */\nfn f() {}\n/*! ```\nb\n``` */\n#[doc = \"```\\nc \\\"d\\\"\\n```\"]\nfn g() {}\n#![doc = r#\"```\"#]\n#![doc = \"e\"]\n#![doc = r\"```\"]\n/***\n```\n*/\n",
+    );
+    assert_eq!(forms.len(), 4);
+    assert_eq!(forms[0].at, "a.rs:2");
+    assert_eq!(forms[0].lines, ["loop {}"]);
+    assert_eq!(forms[1].lines, ["b"]);
+    assert_eq!(forms[2].at, "a.rs:10");
+    assert_eq!(forms[2].lines, ["c \"d\""]);
+    assert_eq!(forms[3].lines, ["e"]);
 }

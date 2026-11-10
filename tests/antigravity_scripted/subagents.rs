@@ -3,7 +3,7 @@
 //! invoke, its skills and its model.
 
 use super::*;
-use genai_rs::antigravity::{RunCommandOptions, Subagent, SubagentSkills};
+use genai_rs::antigravity::{RetryConfig, RunCommandOptions, Subagent, SubagentSkills};
 
 /// The model the `helper` subagent runs on, so its requests are told apart
 /// from the root agent's.
@@ -221,6 +221,106 @@ async fn test_scripted_subagent_depth_and_allowed_subagents_shape_a_subagents_to
                 "{label}: {request}"
             );
         }
+        agent.shutdown().await.expect("shutdown");
+    }
+}
+
+/// A 503 with no retries left, on the root agent's call after it delegated,
+/// ends the harness's run as it does without a subagent. Harness 0.1.23
+/// puts the error on a non-terminal main-trajectory update (waiting for
+/// subagents) and goes idle without one, so the turn must remember it.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_503_after_delegating_fails_the_turn() {
+    let main_calls = Arc::new(AtomicUsize::new(0));
+    let fake = FakeGemini::routed(move |request, _| {
+        if request.target.contains(HELPER_MODEL) {
+            return ModelTurn::text("helper-done");
+        }
+        match main_calls.fetch_add(1, Ordering::SeqCst) {
+            0 => ModelTurn::call(
+                "invoke_subagent",
+                json!({"Subagents": [{
+                    "TypeName": "helper", "Prompt": "say done", "Role": "Helper"
+                }]}),
+            ),
+            _ => ModelTurn::error(503, "scripted-unavailable-5503"),
+        }
+    })
+    .await;
+    let mut agent = delegating_agent(&fake, vec![helper()])
+        .with_retry(RetryConfig::new().with_max_api_retries(0))
+        .spawn()
+        .await
+        .expect("spawn");
+    let result = agent.chat("delegate").await;
+    let Err(AntigravityError::Turn { kind, .. }) = &result else {
+        panic!("a 503 with no retries left must fail the turn: {result:?}");
+    };
+    assert_eq!(*kind, TurnFailure::ModelBackend { status: 503 });
+    assert!(kind.ends_session());
+    let next = agent.chat("again").await.unwrap_err();
+    // The agent refuses it without sending: the harness can take a
+    // message before it closes and answer with an empty turn.
+    let AntigravityError::ConnectionClosed { message, .. } = &next else {
+        panic!(
+            "the call after a 503 that ended the turn must fail with ConnectionClosed, got {next:?}"
+        );
+    };
+    assert!(message.contains("ended the session"), "{message}");
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_subagent_agent_behavior_frames_its_prompt() {
+    use genai_rs::antigravity::AgentBehavior;
+
+    // Each behavior writes its own sections into the subagent's system
+    // prompt (0.1.23, 2026-11-09): autonomous, the default, a
+    // non-interactive section; interactive, an artifacts section instead;
+    // minimal, neither, nor the MCP section the other two carry.
+    let cases = [
+        (
+            None,
+            ["<non_interactive_mode>", "<mcp_servers>"],
+            "<artifacts>",
+        ),
+        (
+            Some(AgentBehavior::Interactive),
+            ["<artifacts>", "<mcp_servers>"],
+            "<non_interactive_mode>",
+        ),
+        (
+            Some(AgentBehavior::Minimal),
+            ["<identity>", "<communication_style>"],
+            "<mcp_servers>",
+        ),
+    ];
+    for (behavior, present, absent) in cases {
+        let fake = delegating_model().await;
+        let mut subagent = helper();
+        if let Some(behavior) = behavior {
+            subagent = subagent.with_agent_behavior(behavior);
+        }
+        let mut agent = delegating_agent(&fake, vec![subagent])
+            .spawn()
+            .await
+            .expect("spawn");
+        agent.chat("delegate").await.expect("turn");
+        let prompt = fake.system_prompt(helper_request(&fake).await);
+        for section in present {
+            assert!(
+                prompt.contains(section),
+                "{behavior:?}: {section}: {prompt}"
+            );
+        }
+        assert!(!prompt.contains(absent), "{behavior:?}: {absent}: {prompt}");
+        if behavior == Some(AgentBehavior::Minimal) {
+            assert!(!prompt.contains("<non_interactive_mode>"), "{prompt}");
+            assert!(!prompt.contains("<artifacts>"), "{prompt}");
+        }
+        // The root agent keeps the default.
+        assert!(fake.system_prompt(0).contains("<non_interactive_mode>"));
         agent.shutdown().await.expect("shutdown");
     }
 }

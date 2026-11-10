@@ -142,7 +142,7 @@ impl AgentBuilder {
                 return Err(AntigravityError::Config(format!(
                     "subagent '{}' references custom tool '{missing}' which is not \
                      registered on the agent; custom tools used by subagents must also \
-                     be added via add_tool(..) or with_tool_service(..)",
+                     be added via add_tool(..) or add_tool_service(..)",
                     subagent.name()
                 )));
             }

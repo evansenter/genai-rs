@@ -35,7 +35,7 @@ use super::{AgentBehavior, BuiltinTool, Capabilities, SubagentSkills, SystemInst
 /// ```
 ///
 /// Custom tools are referenced **by name** and must also be registered on
-/// the parent agent (`add_tool` / `with_tool_service`) — the harness
+/// the parent agent (`add_tool` / `add_tool_service`) — the harness
 /// dispatches a subagent's custom tool calls through the parent's tool
 /// registry. `spawn()` validates this and fails with
 /// [`AntigravityError::Config`](super::AntigravityError::Config) on a

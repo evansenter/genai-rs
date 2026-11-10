@@ -29,7 +29,7 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`, and the committed snapshots are those copies, fetched 2026-11-07. They differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves and compares it with the snapshot, and opens an `api-sweep` issue when one drifts or stops serving; on 2026-11-08 both matched. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable; found 2026-11-01. It does not always agree with the bindings where both speak. Each lists query parameters the other lacks (five, under [Spec-only query parameters](#spec-only-query-parameters-live-2026-11-09)), and the spec wraps three request bodies the bindings send flat: webhook create (`{webhook: ...}`), webhook update and trigger update. The webhook create endpoint rejects the wrapper and takes the flat body (2026-11-09); the two updates' wrappers were not probed. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`. The copies fetched that day differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. The committed snapshots were fetched on 2026-11-09, their schemas and endpoints unchanged from the 2026-11-07 copies, and each also keeps every operation's query parameters (with whether each is required) and request body. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves and compares it with the snapshot, parameters and bodies included, and opens an `api-sweep` issue when one drifts or stops serving; on 2026-11-08 both matched. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
@@ -48,14 +48,19 @@ the bindings is modeled until it is probed. The 2.25.0 sweep found both:
 
 ## Coverage oracle (2026-11-04)
 
-Completeness against ranks 1 and 1b is a CI check, not a sweep finding:
-`src/coverage_oracle/` and `tests/request_wire_oracle.rs` check every
-request key against the binding classes and every response field for an
-empty `extra`, offline, against the committed snapshot (the bindings and
-both specs, v1beta and v1); every binding class and spec schema must be
-reached by those checks or listed with a reason; and
-`tests/ci_coverage.rs` maps every endpoint to the handle verbs that call it
-and requires a live test per handle verb. How it works and how to refresh
+Completeness against rank 1 is a CI check, not a sweep finding, and so is
+most of it against rank 1b: `src/coverage_oracle/` and
+`tests/request_wire_oracle.rs` check, offline against the committed
+snapshot, every request key and every query key against the bindings,
+every response field for an empty `extra` against the bindings and both
+specs (v1beta and v1), and the specs' query parameters against the
+bindings' and what the verbs send (since 2026-11-09); every binding class
+and spec schema must be reached by those checks or listed with a reason;
+and `tests/ci_coverage.rs` maps every endpoint to the handle verbs that
+call it and requires a live test per handle verb. The spec's request
+bodies are the exception: a request is checked against its binding class
+only, since the spec lags the bindings on requests and wraps three of
+them (see rank 1b above). How it works and how to refresh
 the snapshot is in `docs/TESTING.md` ("Coverage oracle"). Its exception
 lists are this file's working list: the `GAPS`, `NOT_SENT` and `UNMAPPED`
 entries are what is not modeled yet. `GAPS` is empty since 2026-11-07,
@@ -227,8 +232,8 @@ from here rather than repeated.
   occurred while connecting to the MCP server.`, a URL that is no MCP
   server `501 MCP server returned an error. Please check the server
   configuration.`, and a malformed tool `400 Unknown parameter ...`. The
-  501's message names the server's error, so a real server that fails
-  (one that is down) should get it too; that case was not observed. It is
+  501's message names the server's error, so a real server that answers
+  with an error should get it too; that case was not observed. It is
   the one 501 that can pass, which is why `docs/RELIABILITY.md` and
   `docs/ERROR_HANDLING.md` single it out. `classify_mcp_create_error` in
   `tests/tools_and_config_tests.rs` sorts the three.
@@ -497,6 +502,44 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
   (needs a `file_citation` `media_id`, never served) and
   `triggers.list(filter_=)` (every expression tried is a `400 Invalid filter
   expression`, syntax undocumented).
+
+## Spec-only query parameters (live, 2026-11-09)
+
+The spec gives three endpoints a query parameter the bindings lack, and the
+bindings give two one the spec lacks. `tests/request_wire_oracle.rs` lists
+each difference in `SPEC_QUERY` with its reason (`spec_query.rs`), along
+with the parameters the spec marks required, each spec copy on its own. Probed on 2026-11-09, with the
+test resources deleted afterwards. These endpoints take an unknown query
+key without complaint (`bogus_param=1` on a webhook or agent create), so
+being accepted shows nothing; what each did is below. None is modeled: an
+option that changes nothing would claim a feature the API does not have
+(D-010, D-060).
+
+- **`webhook_id` on webhook create** (the spec: "If not specified, the
+  server will generate a unique ID"): ignored. A create with
+  `webhook_id=genairstest...`, with `webhookId=...`, or with a value
+  holding spaces each answered 200 with a webhook whose ID the server
+  generated.
+- **The `{webhook: ...}` wrapper** the spec gives webhook create's body:
+  `400 Unknown parameter 'webhook'.` The flat body the bindings send
+  (`uri`, `subscribed_events`, `name`) is the one the endpoint takes.
+- **`parent` on agent create** (the spec: required,
+  `projects/{project}/locations/{location}`): ignored. A create with
+  `projects/foo/locations/bar`, with `bogus`, with an empty value or with
+  none made the same agent, served the same, and a listing with any of
+  those `parent` values or none listed every agent. So `parent` on the
+  listing, which the bindings define and `ListAgents::with_parent` sends,
+  filters nothing either.
+- **`filter` on a trigger's executions**: ignored. With one execution
+  stored, every expression returned it: malformed ones (`(((`,
+  `bogus ==`) and ones it does not match (`status = "failed"`,
+  `trigger_id = "nope"`, `start_time > "2030-01-01T00:00:00Z"`). The
+  triggers listing's own `filter` still parses its expression, and still
+  rejects every one tried (`400 Invalid filter expression: status =
+  "ACTIVE"`), as under [Resource residue](#resource-residue-live-2026-11-05).
+- **The bindings' side:** `include_input` on an interaction read and
+  `update_mask` on a webhook update are sent as the bindings define them;
+  the spec lists neither.
 
 ## Protocol facts (live, 2026-09-24)
 

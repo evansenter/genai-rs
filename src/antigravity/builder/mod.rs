@@ -117,7 +117,7 @@ impl std::fmt::Debug for AgentBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentBuilder")
             .field("harness_path", &self.harness_path)
-            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("api_key", &crate::redact::optional(self.api_key.as_ref()))
             .field("gemini_base_url", &self.gemini_base_url)
             .field("model", &self.model)
             .field("workspaces", &self.workspaces)
@@ -138,8 +138,10 @@ impl std::fmt::Debug for AgentBuilder {
 }
 
 impl AgentBuilder {
-    /// Sets an explicit path to the `localharness` binary, bypassing
-    /// discovery.
+    /// Sets an explicit path to the `localharness` binary, in place of
+    /// discovery: `ANTIGRAVITY_HARNESS_PATH`, site-packages and `PATH` are
+    /// not searched. When the path is not a file, `spawn()` fails with
+    /// [`AntigravityError::HarnessNotFound`] naming it.
     #[must_use]
     pub fn with_harness_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.harness_path = Some(path.into());
@@ -310,9 +312,10 @@ impl AgentBuilder {
         self
     }
 
-    /// Registers a [`ToolService`] providing stateful custom tools.
+    /// Registers a [`ToolService`] providing stateful custom tools. Each
+    /// call adds a service; the tools of every one are declared.
     #[must_use]
-    pub fn with_tool_service(mut self, service: Arc<dyn ToolService>) -> Self {
+    pub fn add_tool_service(mut self, service: Arc<dyn ToolService>) -> Self {
         self.tool_services.push(service);
         self
     }
@@ -413,6 +416,11 @@ impl AgentBuilder {
 
     /// Sets a wall-clock budget per turn. When exceeded, `chat` /
     /// `send_streaming` fail with [`AntigravityError::Timeout`].
+    ///
+    /// The budget starts before the message is sent and bounds the send
+    /// too, so a harness that has stopped reading fails the turn on time
+    /// rather than holding it. A halt of an earlier turn, sent first when
+    /// one is still running, has a five-second budget of its own.
     ///
     /// Defaults to [`DEFAULT_TURN_TIMEOUT`]. Raise it for agents that
     /// legitimately run long (deep subagent trees, many tool calls); lower
@@ -522,7 +530,7 @@ impl AgentBuilder {
     /// [`Self::with_ungated_subagents`].
     ///
     /// Custom tools listed on the subagent (by name) must also be
-    /// registered on this builder (`add_tool` / `with_tool_service`);
+    /// registered on this builder (`add_tool` / `add_tool_service`);
     /// `spawn()` fails with [`AntigravityError::Config`] on a dangling
     /// reference or a duplicate subagent name.
     #[must_use]
@@ -586,7 +594,9 @@ impl AgentBuilder {
     ///   alongside a gate they bypass without
     ///   [`Self::with_ungated_subagents`], or when a model or a Gemini base
     ///   URL is configured without a non-blank API key.
-    /// - [`AntigravityError::HarnessNotFound`] when discovery fails.
+    /// - [`AntigravityError::HarnessNotFound`] when discovery fails, or
+    ///   when the path [`Self::with_harness_path`] or
+    ///   `ANTIGRAVITY_HARNESS_PATH` names is not a file.
     /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
     ///   with the harness's stderr tail when startup fails.
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
@@ -627,10 +637,11 @@ impl AgentBuilder {
             Err(e) => {
                 let stderr = harness.stderr_tail().await;
                 harness.kill().await;
-                return Err(AntigravityError::InitFailed {
-                    message: e.to_string(),
+                return Err(AntigravityError::init_failed_by(
+                    "connecting to the harness failed",
                     stderr,
-                });
+                    e,
+                ));
             }
         };
 
@@ -658,6 +669,7 @@ impl AgentBuilder {
             trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             turn_sync: Arc::new(tokio::sync::Mutex::new(())),
             turn_unfinished: false,
+            session_ended: None,
             trigger_tasks: triggers::TriggerTasks::default(),
         };
 

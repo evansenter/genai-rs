@@ -4,7 +4,9 @@
 //! The handles are the structs marked `#[must_use = "a resource handle does
 //! nothing until you call one of its methods"]` (`docs/BUILDER_API.md`,
 //! "Resource handles and list builders"); their verbs are the public methods
-//! of their `impl` blocks, wherever those live. The marker is checked from
+//! of their `impl` blocks, wherever those live. Both are found by
+//! `tests/common/source_scan.rs`, which `tests/http_mock_resources/paging.rs`'s
+//! receiver scan shares. The marker is checked from
 //! the other side too: every `Client` accessor that returns a borrowed
 //! struct, and every borrowed struct a handle returns that is not a request
 //! builder, must carry it, so a handle written without the marker is
@@ -35,21 +37,21 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
 
 use syn::visit::{self, Visit};
-use syn::{Expr, ImplItem, Item, Pat, ReturnType, Type};
+use syn::{Expr, Item, Pat, ReturnType, Type};
 
 mod bodies;
+#[path = "../common/source_scan.rs"]
+pub mod source_scan;
+
+use source_scan::HANDLE_MARKER;
 
 #[allow(
     unused_imports,
     reason = "`tests/ci_coverage.rs` compiles this module too and calls neither"
 )]
 pub use bodies::{body_verbs, body_verbs_in};
-
-/// The attribute that marks a resource handle.
-pub const HANDLE_MARKER: &str = "a resource handle does nothing until you call one of its methods";
 
 /// The one ignore reason for a live test (CLAUDE.md, "Tests").
 pub const LIVE_REASON: &str = "Requires API key";
@@ -61,27 +63,6 @@ pub const NOT_HANDLES: &[(&str, &str)] = &[(
     "A request builder, not a resource handle: `client.interaction()` builds \
      the request `create()` sends, which every interaction test that calls the API does.",
 )];
-
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-    out.sort();
-}
-
-fn parse(path: &Path) -> syn::File {
-    let text = std::fs::read_to_string(path).expect("read source");
-    syn::parse_file(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
 
 fn last_ident(ty: &Type) -> Option<String> {
     match ty {
@@ -133,12 +114,10 @@ fn borrowed_struct(ty: &Type) -> Option<String> {
 
 /// The source files in `src/`, without the antigravity runtime.
 pub fn src_files() -> Vec<syn::File> {
-    let mut files = Vec::new();
-    rust_files(&root().join("src"), &mut files);
-    files
+    source_scan::rust_files(&source_scan::root().join("src"))
         .iter()
         .filter(|p| !p.components().any(|c| c.as_os_str() == "antigravity"))
-        .map(|p| parse(p))
+        .map(|p| source_scan::parse_file(p))
         .collect()
 }
 
@@ -156,65 +135,33 @@ struct Method {
 }
 
 pub fn handles_in(files: &[syn::File]) -> Handles {
-    fn flatten(items: &[Item], out: &mut Vec<Item>) {
-        for item in items {
-            if let Item::Mod(m) = item
-                && let Some((_, inner)) = &m.content
-            {
-                flatten(inner, out);
-            }
-            out.push(item.clone());
-        }
-    }
-    let mut all = Vec::new();
-    for file in files {
-        flatten(&file.items, &mut all);
-    }
-
+    let all = source_scan::all_items(files);
     // Every struct, and whether it carries the marker.
-    let structs: BTreeMap<String, bool> = all
-        .iter()
-        .filter_map(|item| match item {
-            Item::Struct(s) => Some((
-                s.ident.to_string(),
-                s.attrs
-                    .iter()
-                    .any(|a| attr_string(a, "must_use").as_deref() == Some(HANDLE_MARKER)),
-            )),
-            _ => None,
+    let structs = source_scan::structs(&all);
+    // Every type's public methods with a receiver, from its inherent impls.
+    let methods: BTreeMap<String, Vec<Method>> = source_scan::public_methods(&all)
+        .into_iter()
+        .map(|(owner, fns)| {
+            let methods = fns
+                .into_iter()
+                .filter_map(|f| {
+                    let receiver = f.sig.receiver()?;
+                    let returns = match &f.sig.output {
+                        ReturnType::Type(_, ty) => {
+                            borrowed_struct(ty).filter(|name| structs.contains_key(name))
+                        }
+                        ReturnType::Default => None,
+                    };
+                    Some(Method {
+                        name: f.sig.ident.to_string(),
+                        by_ref: receiver.reference.is_some(),
+                        returns,
+                    })
+                })
+                .collect();
+            (owner, methods)
         })
         .collect();
-    // Every type's public methods, from its inherent impls.
-    let mut methods: BTreeMap<String, Vec<Method>> = BTreeMap::new();
-    for item in &all {
-        let Item::Impl(imp) = item else { continue };
-        if imp.trait_.is_some() {
-            continue;
-        }
-        let Some(owner) = last_ident(&imp.self_ty) else {
-            continue;
-        };
-        for item in &imp.items {
-            let ImplItem::Fn(f) = item else { continue };
-            let Some(receiver) = f.sig.receiver() else {
-                continue;
-            };
-            if !matches!(f.vis, syn::Visibility::Public(_)) {
-                continue;
-            }
-            let returns = match &f.sig.output {
-                ReturnType::Type(_, ty) => {
-                    borrowed_struct(ty).filter(|name| structs.contains_key(name))
-                }
-                ReturnType::Default => None,
-            };
-            methods.entry(owner.clone()).or_default().push(Method {
-                name: f.sig.ident.to_string(),
-                by_ref: receiver.reference.is_some(),
-                returns,
-            });
-        }
-    }
     let names: BTreeSet<String> = structs
         .iter()
         .filter(|(_, marked)| **marked)
@@ -305,8 +252,8 @@ struct TestFn {
 }
 
 fn test_fns() -> Vec<TestFn> {
-    let mut files = Vec::new();
-    rust_files(&root().join("tests"), &mut files);
+    let root = source_scan::root();
+    let files = source_scan::rust_files(&root.join("tests"));
     let mut out = Vec::new();
     fn collect(items: &[Item], out: &mut Vec<TestFn>) {
         for item in items {
@@ -330,10 +277,10 @@ fn test_fns() -> Vec<TestFn> {
     }
     for path in files {
         // The harness suite drives the antigravity runtime, not these handles.
-        if path.ends_with("antigravity_harness.rs") || path.starts_with(root().join("tests/ui")) {
+        if path.ends_with("antigravity_harness.rs") || path.starts_with(root.join("tests/ui")) {
             continue;
         }
-        collect(&parse(&path).items, &mut out);
+        collect(&source_scan::parse_file(&path).items, &mut out);
     }
     out
 }

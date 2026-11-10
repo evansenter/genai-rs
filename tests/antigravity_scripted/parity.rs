@@ -67,7 +67,9 @@ fn table_keys(doc: &str) -> BTreeSet<String> {
 
 /// The rows that break the table's promise, each with what is missing:
 /// every key maps to something in the genai-rs column, and a row that is
-/// not modeled gives its reason in the notes column.
+/// not modeled gives its reason in the notes column. That is a row whose
+/// genai-rs cell says "Not modeled" (even beside a backticked name), or
+/// names no API at all (no backticked name: "N/A", whatever its wording).
 fn row_problems(doc: &str) -> Vec<String> {
     parity_rows(doc)
         .into_iter()
@@ -77,7 +79,9 @@ fn row_problems(doc: &str) -> Vec<String> {
             let notes = cells.get(2).map_or("", String::as_str);
             if mapping.is_empty() {
                 Some(format!("no genai-rs mapping: {row}"))
-            } else if mapping.starts_with("Not modeled") && notes.is_empty() {
+            } else if (mapping.starts_with("Not modeled") || !mapping.contains('`'))
+                && notes.is_empty()
+            {
                 Some(format!("not modeled, with no reason in its notes: {row}"))
             } else {
                 None
@@ -99,7 +103,9 @@ fn wheel_site_packages() -> Option<PathBuf> {
             .map(Path::to_path_buf)
             .filter(|dir| dir.join("google/antigravity/types.py").is_file())
     };
-    if let Some(path) = std::env::var_os("ANTIGRAVITY_HARNESS_PATH") {
+    // As `spawn()` takes it: a non-empty variable is the harness, and an
+    // empty one is unset.
+    if let Some(path) = std::env::var_os("ANTIGRAVITY_HARNESS_PATH").filter(|p| !p.is_empty()) {
         return from_binary(PathBuf::from(path));
     }
     let site = std::process::Command::new("python3")
@@ -146,12 +152,21 @@ fn row_problems_finds_a_row_with_no_mapping_or_no_reason() {
                | `D.bare` | Not modeled | |\n\
                | `E.blank` |  | A note. |\n\
                | `F.short` | Not modeled (preset) |\n\
+               | `H.na` | N/A | |\n\
+               | `I.unsupported` | Unsupported |   |\n\
+               | `J.reasoned` | Unsupported | The reason. |\n\
+               | `K.partial` | Not modeled; use `with_k` | |\n\
                ## Next\n| `G.other` | Not modeled | |\n";
     let problems = row_problems(doc);
-    assert_eq!(problems.len(), 3, "{problems:#?}");
+    assert_eq!(problems.len(), 6, "{problems:#?}");
     assert!(problems[0].contains("`D.bare`") && problems[0].contains("no reason"));
     assert!(problems[1].contains("`E.blank`") && problems[1].contains("no genai-rs mapping"));
     assert!(problems[2].contains("`F.short`") && problems[2].contains("no reason"));
+    // Any wording that names no API needs a reason, not only "Not modeled".
+    assert!(problems[3].contains("`H.na`") && problems[3].contains("no reason"));
+    assert!(problems[4].contains("`I.unsupported`") && problems[4].contains("no reason"));
+    // "Not modeled" needs a reason even when the cell names an API too.
+    assert!(problems[5].contains("`K.partial`") && problems[5].contains("no reason"));
     assert_eq!(
         cells("| `C.piped` | `add(\\|x\\| x)` | |")[1],
         "`add(|x| x)`"

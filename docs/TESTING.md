@@ -178,8 +178,9 @@ answers by request rather than by position, and `system_prompt(n)` and
 `tool_names(n)` show what call *n* carried.
 
 The Python SDK options the bridge models are proved in
-`tests/antigravity_scripted/` (options, subagents, lifecycle hooks,
-policies, triggers). `parity.rs` holds the guard on the parity table in
+`tests/antigravity_scripted/` (options, limits, skills, subagents,
+hooks, lifecycle (the harness dying mid-turn), MCP, policies, triggers,
+cancellation). `parity.rs` holds the guard on the parity table in
 `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`: `.github/scripts/dump_sdk_options.py`
 reads the installed wheel's sources with `ast` (never importing them), and
 the test fails when the wheel exposes an option the table lacks or the
@@ -302,6 +303,11 @@ async fn test_feature_name() {
 `mod.rs` re-exports its submodules, so every helper is `common::<name>`:
 the retry helpers are in `retry.rs`, the stream consumers in `streams.rs`,
 the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
+`source_scan.rs` is not part of `common`: it holds the recursive `.rs`
+walker and the resource-handle discovery the guards share
+(`module_size`, `non_exhaustive_responses`, `ci_coverage` with
+`live_verbs/`, and `http_mock_resources`'s paging scan), and each of them
+includes it by `#[path]`.
 
 | Helper | Purpose |
 |--------|---------|
@@ -355,8 +361,19 @@ into the log, so the antigravity job's offline suite, which shares its
 log, stays out of it.
 
 So a live test makes no retries of its own beyond `retry_request!`'s
-transport and transient errors (D-052): the report counts a retry
-nextest makes, and never sees one inside the test. When a known model or
+transport and transient errors (D-052). The report counts a retry nextest
+makes, and `retry_request!` prints `TRANSIENT_RETRIED <test> <code>` before
+each retry it makes inside the test, which the report counts per test:
+the code is the model-side flake's name (`malformed_tool_call`,
+`invalid_json`, `processing_error`, `please_retry`, `spanner_utf8`) or the
+transport failure's (the HTTP status, `timeout`, `network`,
+`stream_interrupted`). A retry inside the semantic validator
+(`assert_response_semantic`) prints the marker under the test that called
+it, and is that test's: a check that needs a retry is a flaky check. The
+retry helper's offline tests in
+`error_handling_tests` print the marker too, on purpose, on every run, so
+the integration groups run only the live tests (`--run-ignored only`) and
+those never reach the count. When a known model or
 server failure has a cause the test controls, remove it: send the tools a
 follow-up turn needs, since they are not carried over, or a request shape
 the server handles, found by live probes and recorded with its numbers in
@@ -370,16 +387,25 @@ to three interactions for an event id with text on both sides).
 
 The rolling report lists retried tests and examples beside failed ones,
 with the week's rate: tests that passed only on a retry, over live test
-runs. The report fails, and so escalates like any red scheduled workflow,
-when the week breaches a target (D-046):
+runs. It lists the in-test retries too, as a row and a table of the tests
+that made them, with their codes. The report fails, and so escalates like
+any red scheduled workflow, when the week breaches a target (D-046):
 
 - the rate is 1% or more;
 - no live test runs were read, so there is no rate (shown as `n/a`, not
   `0.00%`);
-- a chronic flake: a test or example that passed only on a retry in more
-  than 5% of the runs it ran in, and in at least two. The report lists
-  each with its share. A low rate across the suite can hide one test that
-  needs a retry every few runs.
+- a chronic flake: a test or example that needed a retry in more than 5%
+  of the runs it ran in, and in at least two. A run counts when nextest
+  retried the test to a pass, or when the test retried a model-side flake
+  inside itself: an error `retry.rs` names by its message (a broken tool
+  call, invalid JSON, a processing-error `400`, a Spanner UTF-8 error),
+  which is the server's answer to this test's request. A transport retry inside the
+  test (an HTTP status alone, such as a 429 or a 503, a timeout, a dropped
+  connection) says nothing about the request: it is the shared key's load
+  or the server's capacity, and is listed only (D-052). The report lists
+  each chronic flake with its share. A low rate across the suite can hide
+  one test that needs a retry every few runs. The 1% rate stays nextest's
+  alone.
 
 The report lists the week's runs by creation date, up to 1,000 (about 115
 a week now), the most the API lists for a filtered listing: a larger
@@ -520,11 +546,21 @@ catch a wrong wire key; the coverage oracle below can.
 The Code Coverage job in `rust.yml` measures the workspace with the
 `antigravity` feature: the offline suite, then the key-free scripted
 harness suite, merged into one report that goes to the job summary on
-every run. The job then fails when line coverage is under its floor
-(`--fail-under-lines`), set just under the value measured when it was
-last raised (D-058): raise it in `rust.yml` as coverage grows, and
-lower it only with the reason in the commit. `tests/ci_workflows/coverage.rs`
-checks the job keeps all of this.
+every run. Every report counts library files only: `COVERAGE_IGNORE` leaves
+out the test-only files a test build compiles into the library (the
+unit-test files, the property tests, the coverage oracle, the tracing test
+recorder and the fuzzing entry points). An inline `#[cfg(test)] mod tests
+{ .. }` in a library file still counts: a filename pattern cannot leave it
+out, and stable Rust has no attribute that can. Its lines are nearly all
+covered, so they lift the figure a little; the floor was set from the same
+figure. The job then fails when line
+coverage is under its floor (`--fail-under-lines`), set just under the
+value measured when it was last raised (D-058): raise it in `rust.yml` as
+coverage grows, and lower it only with the reason in the commit.
+`tests/ci_workflows/coverage.rs` checks the job keeps all of this: that
+the pattern matches every module only a test build compiles and no
+library file, and that nothing (an `if:` or `continue-on-error`, on the
+step or the job) can skip the floor or ignore its failure.
 
 ## Coverage oracle
 
@@ -534,7 +570,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, and each endpoint's query parameters (with whether each is required) and request body; the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -552,7 +588,14 @@ checks on it:
   key), plus proptest samples for the union arms and enum values.
   `request_values_are_full_literals` (`request/fills.rs`) fails on a
   `default()` fill, other than a whole `extra` map, in those literals and
-  in every strategy the oracle samples. An
+  in every strategy the oracle samples. It also fails, in both, on a
+  value built through a constructor, a call to an associated function of
+  a crate type (`CustomMetadata::string`, `Tool::code_execution()`, the
+  first call of a builder), since one can leave a new field unset out of
+  the oracle's sight; `TRUSTED` there lists the few it allows, each with
+  the reason the value still sets every field (such as the agent configs'
+  `fully_populated()` and `FunctionParameters::new`, whose fields are
+  private, and `WebhookInput::from`, which destructures every field). An
   `extra` map (`InteractionRequest::extra` included) stays empty: its keys
   are the caller's, not the crate's, and would count as sent in the reverse
   test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). So do the
@@ -565,7 +608,11 @@ checks on it:
   union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s
   `Dict[str, Any]`) cannot hide a wrong key. The reverse test
   (`request_classes_have_no_unsent_fields`) lists every field of a reached
-  request class that nothing sends.
+  request class that nothing sends, and `request_only_enum_values_are_sent`
+  (`request/enum_values.rs`) every value nothing sends of an enumeration
+  only a request reaches (`webhooks.WebhookUpdateState`), unless
+  `NOT_SENT_VALUES` gives the reason; the response side checks the values
+  of one a response reaches.
 - **Request bodies on the wire** (`tests/request_wire_oracle.rs`). Each
   verb with a body runs against the local stub, and the captured body is
   checked the same way, wrapping included. `every_verb_with_a_body_is_called_above`
@@ -586,7 +633,19 @@ checks on it:
   take fails (a misspelling, a key the API dropped), and so does a binding
   query parameter no verb sends (one a release adds) and a request to a
   path no endpoint takes. A template that keeps a full resource name
-  (`{operationName}`) matches only the names `FULL_NAMES` gives it.
+  (`{operationName}`) matches only the names `FULL_NAMES` gives it. The
+  specs' query parameters are diffed against the bindings' and what the
+  verbs send (`request_wire_oracle/spec_query.rs`), each spec copy on its
+  own: a spec parameter the bindings lack that no verb sends, a binding
+  parameter the spec lacks, and one the spec marks required each need a
+  reason in `SPEC_QUERY` for that copy, so a parameter added to or removed
+  from either copy fails. Keys go through `with_query`:
+  `query_keys_are_added_only_through_with_query` fails on what else in
+  `src/http/`'s library code would add one, which a verb could send only
+  when an input the test does not set calls for it: a string literal that
+  holds `?key=` or `&key=` (`format!("{url}&chunked=true")`), a `'?'` or
+  `'&'` character or a string ending in one outside `with_query`, and
+  reqwest's `.query(..)` or `url`'s query setters.
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each

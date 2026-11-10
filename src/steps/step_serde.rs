@@ -27,7 +27,8 @@ pub(super) fn urls_arguments(urls: &[String], extra: &Map<String, Value>) -> Val
 }
 
 /// `{"language": ..., "code": ...}` plus the extras. A `None` modeled value
-/// (only a delta has one) is left out.
+/// (only a delta has one) is left out. The language is written as its
+/// `Serialize` writes it, so a non-string unknown goes back out as it came.
 pub(super) fn code_arguments(
     language: Option<&CodeExecutionLanguage>,
     code: Option<&str>,
@@ -35,7 +36,10 @@ pub(super) fn code_arguments(
 ) -> Value {
     Value::Object(merged_arguments(
         [
-            ("language", language.map(|l| Value::from(l.to_string()))),
+            (
+                "language",
+                language.map(|l| crate::wire_enum::wire_value(&l.to_string(), l.unknown_data())),
+            ),
             ("code", code.map(Value::from)),
         ],
         extra,

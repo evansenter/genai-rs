@@ -260,11 +260,24 @@ async fn test_scripted_mcp_timeout_bounds_listing_tools_and_each_call() {
             .expect("spawn");
         let outcome = agent.chat("hi").await;
         if timeout.is_some() {
-            let Err(AntigravityError::Turn(message)) = &outcome else {
+            let Err(AntigravityError::Turn { kind, message }) = &outcome else {
                 panic!("a server slower than its timeout must fail the turn: {outcome:?}");
             };
+            assert_eq!(*kind, TurnFailure::Trajectory);
+            // The harness's message names the server.
             assert!(message.contains("MCP load failed for probe"), "{message}");
             assert!(fake.requests().is_empty(), "the model was never called");
+            // The harness's run ended with the turn, as `ends_session()` says.
+            assert!(kind.ends_session());
+            let next = agent.chat("hi again").await.unwrap_err();
+            // The agent refuses it without sending: the harness can take a
+            // message before it closes and answer with an empty turn.
+            let AntigravityError::ConnectionClosed { message, .. } = &next else {
+                panic!(
+                    "the call after a failed MCP load must fail with ConnectionClosed, got {next:?}"
+                );
+            };
+            assert!(message.contains("ended the session"), "{message}");
         } else {
             outcome.expect("turn");
             assert_eq!(mcp_tools(&fake, 0, "probe").len(), 4);

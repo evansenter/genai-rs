@@ -147,6 +147,10 @@ pub struct AutoFunctionStreamResult {
     pub final_response: Option<InteractionResponse>,
     /// The stream ended with `MaxLoopsReached`.
     pub reached_max_loops: bool,
+    /// Event types the crate didn't recognize (`AutoFunctionStreamChunk::Unknown`),
+    /// in order, without duplicates: API drift worth a look, as in
+    /// [`StreamResult`].
+    pub unknown_event_types: Vec<String>,
 }
 
 impl AutoFunctionStreamResult {
@@ -175,6 +179,7 @@ pub async fn consume_auto_function_stream(
         function_results_count: 0,
         final_response: None,
         reached_max_loops: false,
+        unknown_event_types: Vec::new(),
     };
 
     fn record(names: &mut Vec<String>, name: &str) {
@@ -191,7 +196,7 @@ pub async fn consume_auto_function_stream(
             )
         });
         match event.chunk {
-            AutoFunctionStreamChunk::Delta(delta) => {
+            AutoFunctionStreamChunk::Delta { delta, .. } => {
                 result.delta_count += 1;
                 if let Some(text) = delta.as_text() {
                     result.collected_text.push_str(text);
@@ -219,6 +224,12 @@ pub async fn consume_auto_function_stream(
             AutoFunctionStreamChunk::MaxLoopsReached(response) => {
                 result.reached_max_loops = true;
                 result.final_response = Some(*response);
+            }
+            // An SSE event the crate does not know, passed on mid-round:
+            // recorded, as `consume_stream` does, not a failure.
+            AutoFunctionStreamChunk::Unknown { chunk_type, .. } => {
+                println!("auto-function stream sent an unrecognized event type: {chunk_type}");
+                record(&mut result.unknown_event_types, &chunk_type);
             }
             other => panic!("unexpected auto-function chunk: {other:?}"),
         }

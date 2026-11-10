@@ -351,23 +351,47 @@ pub(crate) fn input_from_value(value: serde_json::Value) -> Result<InteractionIn
 ///
 /// # Retrying Requests
 ///
-/// Since `InteractionRequest` is `Clone`, you can retry failed requests:
+/// Since `InteractionRequest` is `Clone`, a retry re-sends a clone. Bound
+/// the attempts, and wait between them: exponential backoff with jitter, so
+/// clients that failed together don't retry together, or the server's
+/// [`retry_after`](crate::GenaiError::retry_after) when it sent one, both
+/// capped. `docs/RELIABILITY.md` has the same policy built on the `backon`
+/// crate, and why each error is or is not retryable.
 ///
 /// ```no_run
-/// # use genai_rs::{Client, GenaiError};
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// # let client = Client::new("api_key".to_string());
-/// # let request = client.interaction()
-/// #     .with_model(genai_rs::DEFAULT_MODEL)
-/// #     .with_text("Hello!")
-/// #     .build()?;
+/// use genai_rs::Client;
+/// use std::hash::{BuildHasher, RandomState};
+/// use std::time::Duration;
+///
+/// /// Attempts in all, the first included.
+/// const MAX_ATTEMPTS: u32 = 4;
+/// /// The longest wait between attempts, a server's `Retry-After` included.
+/// const MAX_DELAY: Duration = Duration::from_secs(30);
+///
+/// # async fn example(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+/// let request = client.interaction()
+///     .with_model(genai_rs::DEFAULT_MODEL)
+///     .with_text("Hello!")
+///     .build()?;
+///
+/// let mut attempt = 1;
 /// let response = loop {
 ///     match client.execute(request.clone()).await {
-///         Ok(r) => break r,
-///         Err(e) if e.is_retryable() => continue,
+///         Ok(response) => break response,
+///         Err(e) if e.is_retryable() && attempt < MAX_ATTEMPTS => {
+///             // 500 ms, 1 s, 2 s, plus up to as much again at random
+///             // (`RandomState` is std's randomly seeded hasher).
+///             let step = Duration::from_millis(500 << (attempt - 1));
+///             let random = RandomState::new().hash_one(attempt) as f64 / u64::MAX as f64;
+///             let backoff = step + step.mul_f64(random);
+///             let delay = e.retry_after().unwrap_or(backoff).min(MAX_DELAY);
+///             tokio::time::sleep(delay).await;
+///             attempt += 1;
+///         }
 ///         Err(e) => return Err(e.into()),
 ///     }
 /// };
+/// # let _ = response;
 /// # Ok(())
 /// # }
 /// ```

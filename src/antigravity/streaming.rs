@@ -64,9 +64,13 @@ impl ToolDecision {
 #[non_exhaustive]
 pub enum ErrorSeverity {
     /// A transient, harness-internal error: the harness retries or the
-    /// model reacts and the turn continues. Consumers can safely treat
-    /// these as noise (log at a low level, keep streaming). This is the
-    /// severity of essentially every error event today.
+    /// model reacts, and the turn usually continues. Consumers can treat
+    /// these as noise (log at a low level, keep streaming) and let the
+    /// turn's result say whether it failed: a model call whose retries ran
+    /// out also arrives as one, just before the turn fails with
+    /// [`TurnFailure::ModelBackend`](super::TurnFailure::ModelBackend) and
+    /// the session ends. This is the severity of essentially every error
+    /// event today.
     Transient,
     /// A serious error surfaced mid-turn — e.g. a fatal model-backend
     /// status (HTTP 400/401/403) that nonetheless did not abort the turn.

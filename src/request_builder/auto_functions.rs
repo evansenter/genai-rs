@@ -210,10 +210,13 @@ impl<'a> InteractionBuilder<'a> {
     /// automatic function execution of `create_with_auto_functions()`. It yields
     /// [`AutoFunctionStreamChunk`] events that include:
     ///
-    /// - `Delta`: Incremental content from the model (text, thoughts, etc.)
+    /// - `Delta`: Incremental content from the model (text, thoughts, etc.),
+    ///   with the `step.delta` event's unread keys in its `extra`
     /// - `ExecutingFunctions`: Notification when function calls are about to execute
     /// - `FunctionResults`: Results from executed functions
     /// - `Complete`: Final response when no more function calls are needed
+    /// - `Unknown`: An SSE event of a type this crate does not recognize,
+    ///   with its JSON
     ///
     /// The stream automatically handles multiple function calling rounds, streaming
     /// content from each round and executing functions between rounds.
@@ -235,7 +238,7 @@ impl<'a> InteractionBuilder<'a> {
     /// while let Some(result) = stream.next().await {
     ///     let event = result?;
     ///     match event.chunk {
-    ///         AutoFunctionStreamChunk::Delta(delta) => {
+    ///         AutoFunctionStreamChunk::Delta { delta, .. } => {
     ///             if let Some(t) = delta.as_text() {
     ///                 print!("{}", t);
     ///             }
@@ -360,10 +363,11 @@ impl<'a> InteractionBuilder<'a> {
                     }
                     match event.chunk {
                         // Every delta, including the arguments_delta
-                        // fragments of a streamed function call.
-                        StreamChunk::StepDelta { delta, .. } => {
+                        // fragments of a streamed function call, with the
+                        // event's unread keys.
+                        StreamChunk::StepDelta { delta, extra, .. } => {
                             yield AutoFunctionStreamEvent::new(
-                                AutoFunctionStreamChunk::Delta(delta),
+                                AutoFunctionStreamChunk::Delta { delta, extra },
                                 event.event_id,
                             );
                         }
@@ -379,13 +383,21 @@ impl<'a> InteractionBuilder<'a> {
                         StreamChunk::Error { message, code, .. } => {
                             Err(GenaiError::Stream { message, code })?;
                         }
-                        StreamChunk::Unknown { chunk_type, .. } => {
-                            tracing::warn!(
-                                "Received unknown StreamChunk type '{chunk_type}' during \
-                                 auto-function streaming. This may indicate a new API feature."
+                        // Passed on whole (the HTTP layer has warned); the
+                        // round goes on to its Completed event.
+                        StreamChunk::Unknown { chunk_type, data } => {
+                            yield AutoFunctionStreamEvent::new(
+                                AutoFunctionStreamChunk::Unknown { chunk_type, data },
+                                event.event_id,
                             );
                         }
-                        _ => {}
+                        // The loop's own lifecycle events. A caller who
+                        // wants them, or their `extra`, uses
+                        // `execute_stream()`.
+                        StreamChunk::Created { .. }
+                        | StreamChunk::StatusUpdate { .. }
+                        | StreamChunk::StepStart { .. }
+                        | StreamChunk::StepStop { .. } => {}
                     }
                 }
                 // A cut-off already failed above, so the round's stream

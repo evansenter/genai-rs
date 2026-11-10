@@ -6,9 +6,10 @@
 //! full matrix also runs on the schedule, every text file checks out with LF,
 //! the Windows doctests run even after a failing unit test, the antigravity
 //! feature compiles off Linux, its process-tree tests run on macOS (whose
-//! libproc path no other job reaches), clippy lints the Windows-only code
-//! on the leg a PR runs, and clippy lints every target without default
-//! features, in CI and in `make clippy`.
+//! libproc path no other job reaches) on every macOS leg and on a PR that
+//! changes the process code, clippy lints the Windows-only code on the leg
+//! a PR runs, and clippy lints every target without default features, in
+//! CI and in `make clippy`.
 
 use super::{jobs, read, root, steps};
 
@@ -110,7 +111,7 @@ const PROCESS_TREE_CONDITION_TERMS: [&str; 5] = [
 /// A matrix value written `${{ github.event_name == 'pull_request' &&
 /// fromJSON('[..]') || fromJSON('[..]') }}`, as `(the PR's values, every
 /// other trigger's values)`; `None` for any other shape.
-fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
+pub(super) fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
     let rest = value
         .strip_prefix("${{ github.event_name == 'pull_request' && fromJSON('")?
         .strip_suffix("') }}")?;
@@ -341,6 +342,155 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
         assert_ne!(text, &workflow, "mutation {i} did not apply");
         assert!(
             !cross_platform_problems(text).is_empty(),
+            "mutation {i} went unnoticed"
+        );
+    }
+}
+
+/// The process-tree tests a PR runs on macOS: the library's unit tests
+/// alone, in the default profile.
+const PR_PROCESS_TREE_TESTS: &str =
+    "cargo nextest run --features antigravity --lib -E 'test(/process_tree/)'";
+
+/// The `case` arm the PR job's change check must have: every
+/// `src/antigravity/process*.rs` file, `process_tree.rs` and the tests
+/// beside them included.
+const PROCESS_CODE: &str = "src/antigravity/process*.rs";
+
+/// Problems with the job that runs the process-tree tests on macOS for a
+/// PR, empty when it holds. The Cross Platform macOS legs run on main
+/// pushes and the schedule only, so a PR that broke the libproc lookup
+/// would first fail on main. One job runs on every PR, on macos-latest; a
+/// step with `id: paths` sets `changed` to `true` when the PR touches
+/// [`PROCESS_CODE`] (and when it cannot tell, rather than skip), and the
+/// tests run when it is `true`.
+fn process_tree_pr_problems(workflow: &str) -> Vec<String> {
+    let found: Vec<(String, String)> = jobs(workflow)
+        .into_iter()
+        .filter(|(_, body)| step_running(body, PR_PROCESS_TREE_TESTS).is_some())
+        .collect();
+    let [(id, body)] = found.as_slice() else {
+        return vec![format!(
+            "want exactly one job running `{PR_PROCESS_TREE_TESTS}`; found {:?}",
+            found.iter().map(|(id, _)| id).collect::<Vec<_>>()
+        )];
+    };
+    let mut problems = Vec::new();
+    let field = |key: &str| {
+        body.lines()
+            .find_map(|line| line.strip_prefix("    ")?.strip_prefix(key))
+            .map(str::trim)
+    };
+    if field("runs-on:") != Some("macos-latest") {
+        problems.push(format!(
+            "{id} runs on {:?}, not macos-latest",
+            field("runs-on:")
+        ));
+    }
+    if field("if:") != Some("github.event_name == 'pull_request'") {
+        problems.push(format!(
+            "{id} must run on every pull request (`if: github.event_name == \
+             'pull_request'`): found {:?}",
+            field("if:")
+        ));
+    }
+    let job_steps = steps(body);
+    match job_steps
+        .iter()
+        .find(|step| step.lines().any(|line| line.trim() == "id: paths"))
+    {
+        Some(check) => {
+            let script: Vec<&str> = check.lines().map(str::trim).collect();
+            if !script.iter().any(|line| {
+                line.split('|')
+                    .any(|arm| arm.trim_end_matches(')') == PROCESS_CODE)
+            }) {
+                problems.push(format!(
+                    "{id}'s change check has no `case` arm for `{PROCESS_CODE}`"
+                ));
+            }
+            for (needle, why) in [
+                (
+                    "echo \"changed=$changed\" >> \"$GITHUB_OUTPUT\"",
+                    "records what it found",
+                ),
+                (
+                    "echo \"changed=true\" >> \"$GITHUB_OUTPUT\"",
+                    "tests when it cannot tell",
+                ),
+            ] {
+                if !script.contains(&needle) {
+                    problems.push(format!("{id}'s change check never {why} (`{needle}`)"));
+                }
+            }
+        }
+        None => problems.push(format!(
+            "{id} has no change check (a step with `id: paths`)"
+        )),
+    }
+    if let Some(step) = step_running(body, PR_PROCESS_TREE_TESTS) {
+        match step_condition(&step) {
+            None | Some("steps.paths.outputs.changed == 'true'") => {}
+            Some(other) => problems.push(format!(
+                "{id}: the tests run `if: {other}`, not when the process code changed"
+            )),
+        }
+    }
+    problems
+}
+
+#[test]
+fn a_pull_request_that_changes_the_process_code_runs_the_macos_tests() {
+    let problems = process_tree_pr_problems(&rust_yml());
+    assert!(
+        problems.is_empty(),
+        "rust.yml's PR process-tree job:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+#[test]
+fn the_process_tree_pr_check_catches_what_it_claims_to() {
+    let workflow = rust_yml();
+    assert!(process_tree_pr_problems(&workflow).is_empty());
+    let broken = [
+        // The job gone, or widened to every test.
+        workflow.replace(&format!("        run: {PR_PROCESS_TREE_TESTS}\n"), ""),
+        workflow.replace(
+            &format!("        run: {PR_PROCESS_TREE_TESTS}\n"),
+            "        run: cargo nextest run --features antigravity --lib\n",
+        ),
+        // Off macOS, or off pull requests.
+        workflow.replace(
+            "    name: Process Tree (macOS)\n    if: github.event_name == 'pull_request'\n    runs-on: macos-latest\n",
+            "    name: Process Tree (macOS)\n    if: github.event_name == 'pull_request'\n    runs-on: ubuntu-latest\n",
+        ),
+        workflow.replace(
+            "    name: Process Tree (macOS)\n    if: github.event_name == 'pull_request'\n",
+            "    name: Process Tree (macOS)\n    if: github.event_name == 'push'\n",
+        ),
+        // A filter that misses process_tree.rs, or one that never tests.
+        workflow.replace(
+            "              src/antigravity/process*.rs|",
+            "              src/antigravity/process.rs|",
+        ),
+        workflow.replace(
+            "            echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n",
+            "            echo \"changed=false\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n",
+        ),
+        workflow.replace(
+            &format!(
+                "        if: steps.paths.outputs.changed == 'true'\n        run: {PR_PROCESS_TREE_TESTS}"
+            ),
+            &format!(
+                "        if: steps.paths.outputs.changed == 'false'\n        run: {PR_PROCESS_TREE_TESTS}"
+            ),
+        ),
+    ];
+    for (i, text) in broken.iter().enumerate() {
+        assert_ne!(text, &workflow, "mutation {i} did not apply");
+        assert!(
+            !process_tree_pr_problems(text).is_empty(),
             "mutation {i} went unnoticed"
         );
     }

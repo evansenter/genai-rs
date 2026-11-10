@@ -54,6 +54,9 @@ mod process;
 mod process_tree;
 mod prompt;
 pub mod protocol;
+#[cfg(test)]
+#[path = "redact_tests.rs"]
+mod redact_tests;
 mod session;
 mod streaming;
 mod subagent;
@@ -65,7 +68,7 @@ mod turn_requests;
 pub use agent::{AntigravityAgent, CancelHandle};
 pub use builder::{AgentBuilder, DEFAULT_TURN_TIMEOUT};
 pub use config::{AgentBehavior, BuiltinTool, Capabilities, SUPPORTED_HARNESS_VERSION};
-pub use error::AntigravityError;
+pub use error::{AntigravityError, TurnFailure};
 pub use hooks::{
     AgentQuestion, CompactionEvent, PostToolHook, PreToolDecision, PreToolHook, QuestionAnswer,
     QuestionHook, QuestionReply, StopDecision, StopRequest, ToolFailure, ToolInvocation,

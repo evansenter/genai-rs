@@ -50,12 +50,13 @@ too. The six 5xx that are not retryable each name a condition the same
 request meets on every attempt:
 
 - 501 Not Implemented: the server does not support the method or feature
-  (Google's `UNIMPLEMENTED`). One kind can pass: the API also answers 501
-  when a remote MCP server (an `mcp_server` tool) returns an error, with a
-  message saying "MCP server returned an error"
+  (Google's `UNIMPLEMENTED`). One kind can pass: the API also answers 501,
+  with a message saying "MCP server returned an error", when a remote MCP
+  server (an `mcp_server` tool) answered with an error
   ([live record](INTERACTIONS_API_GAP.md#tools)). A URL that is no MCP
-  server gets that on every attempt, but so does a real one while it is
-  down. To retry it, match the 501 and that message before calling
+  server gets that on every attempt, but a real server's error can pass.
+  A server the API cannot reach gets a 500 instead, which is retryable. To
+  retry the 501, match it and that message before calling
   `is_retryable()`.
 - 505 HTTP Version Not Supported: every attempt uses the same version.
 - 506 Variant Also Negotiates: a server misconfiguration.

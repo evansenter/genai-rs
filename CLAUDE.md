@@ -55,7 +55,11 @@ number does. A pointer claims the issue holds current status or pending
 work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
 item M" while that item is open), so it names an open issue only: when
 the issue closes, state the outcome in place and drop the pointer.
-Nothing checks this, since an issue's state needs the network.
+The daily `api-surface-sweep` lists each "tracked in #N", "see #N for"
+and "until #N" that names a closed issue on a rolling `documentation`
+issue (`check_issue_pointers.sh`). It reads wording only: it does not tell
+a pointer from a provenance tag worded like one, and it misses a pointer
+worded otherwise, a bare "#N item M" included.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the
@@ -233,7 +237,10 @@ reaches the wire must use a real id.
   for tool execution.
 - Logging (`docs/LOGGING_STRATEGY.md`): `warn` for recoverable issues
   including Evergreen unknowns, `debug` for lifecycle; user content and
-  request bodies only at `debug`; API keys always redacted.
+  request bodies only at `debug`; API keys always redacted. A type that
+  holds a secret `LOUD_WIRE` redacts has a hand-written `Debug` printing
+  `[REDACTED]` (`src/redact.rs`) and a row in its sentinel test
+  (D-067).
 - Breaking changes are fine when they simplify the API (D-007); no
   compatibility shims. Pre-1.0.
 
@@ -359,13 +366,18 @@ wheel's protos with `python3`).
   feature off Linux, and runs clippy over it, every target, on Windows
   stable, and its `process_tree` unit tests, the forced kill's libproc
   path that Linux's test-antigravity cannot reach, on each macOS leg;
-  trybuild's `ui_tests` are skipped on beta), coverage,
-  build-metrics, main-push-status, scheduled-run-status. The coverage job
-  measures the `antigravity` feature too, with its scripted suite, and
-  fails under a line-coverage floor (`docs/TESTING.md`, "Line coverage"). Live
+  trybuild's `ui_tests` are skipped on beta), process-tree-macos (PRs
+  only, on macos-latest: those `process_tree` tests, when the PR changes
+  `src/antigravity/process*.rs` or `rust.yml`, and nothing otherwise),
+  coverage, build-metrics, main-push-status, scheduled-run-status. The
+  coverage job measures the `antigravity` feature too, with its scripted
+  suite, counts library files only (no test-only file; an inline
+  `#[cfg(test)] mod tests` in a library file still counts), and fails under
+  a line-coverage floor (`docs/TESTING.md`, "Line coverage"). Live
   jobs run for pushes, same-repo PRs, the weekly schedule (Wednesday) and
   `workflow_dispatch`, and fail on an empty `GEMINI_API_KEY`. Each
-  integration group runs every binary and lists the failures;
+  integration group runs every binary's live tests (`--run-ignored only`;
+  their offline tests run in Test Suite) and lists the failures;
   `.config/nextest.toml` turns fail-fast off for every run and kills a test
   hung past 10 minutes. Every live nextest step keeps passing tests'
   output and fails on more than 3 skip markers (10 for `release.yml`'s
@@ -373,8 +385,14 @@ wheel's protos with `python3`).
   issue (`scheduled-run-status`), as every scheduled workflow's does, and a
   red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
   checks both, along with fail-fast, beta, the Windows PR leg and the
-  cross-platform steps, the skip-marker budget, the coverage floor and
-  release's push-run gate.
+  cross-platform steps, the macOS PR job, the skip-marker budget (whose
+  over-budget branch must fail its step), the coverage floor (with no
+  `if:` or `continue-on-error`, on its step or its job) and its
+  library-only pattern, the steps the flakiness report counts (no offline
+  test of the retry helper runs in them), and
+  release's push-run gate, which lets only the jobs a push skips by
+  design be skipped and wants all six Cross Platform legs, and
+  `api-surface-sweep`'s spec-watch and issue-pointer steps.
   `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the
@@ -382,10 +400,12 @@ wheel's protos with `python3`).
   passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
   `ci-flakiness-report.yml` (daily; counts failures, the tests nextest
-  retried to a pass and the week's skip markers, and fails, escalating, on
-  a week's flake rate of 1% or more, no live runs read, a test retried in
-  over 5% of its runs, or a run listing that fails or reaches the API's
-  1,000-run ceiling),
+  retried to a pass, the retries `retry_request!` made inside a test
+  (`TRANSIENT_RETRIED`) and the week's skip markers, and fails, escalating,
+  on a week's flake rate of 1% or more, no live runs read, a test that
+  needed a retry, nextest's or a model-side one inside it, in over 5% of
+  its runs, or a run listing that fails or reaches the API's 1,000-run
+  ceiling),
   `release.yml`, `release-drafter.yml`, `claude.yml`,
   `claude-code-review.yml`, `antigravity-release-watch.yml` (daily; an
   `antigravity-release` issue when PyPI's `google-antigravity` differs from

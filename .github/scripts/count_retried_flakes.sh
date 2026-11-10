@@ -35,6 +35,24 @@
 # last before it: nextest prints a test's output after that line
 # (`--success-output=final`, and a failure's output).
 #
+# In-test retries are counted in the same runs, per test: a live test's
+# `retry_request!` retries transport errors and the model-side flakes
+# D-052 allows (tests/common/retry.rs) inside the test, where nextest never
+# sees them, and prints `TRANSIENT_RETRIED <test> <code>` before each one.
+# A marker goes on the test whose status line came last before it, as a
+# skip marker does (the marker's own name is used only when no status line
+# came first). Its code is the model-side flake's name (`malformed_tool_call`,
+# `invalid_json`, `processing_error`, `please_retry`, `spanner_utf8`) or
+# the transport failure's (an HTTP status, `timeout`, `network`,
+# `stream_interrupted`); `transport()` below tells the two apart, once. A
+# run with a model-side retry is a flaky run of the test that the report
+# counts toward its chronic share, as a retry nextest made would be
+# (D-052); transport retries are listed only. The retry helper's offline
+# tests print the marker too, on purpose, on every run: rust.yml's counted
+# steps leave them out (the integration loop runs `--run-ignored only`),
+# which tests/ci_workflows/flakiness.rs checks, since this cannot tell
+# their markers from a live test's.
+#
 # Example smoke runs are counted too, in any step (their loops in
 # rust.yml retry by hand, with no NEXTEST_RETRIES): each example opens a
 # `::group::cargo run --example <name>` group, one run of it, and prints
@@ -49,14 +67,26 @@
 #                  "runs": 30}, ...],
 #    "skip_markers": S,
 #    "skips": [{"binary": "tools_and_config_tests", "name": "test_y",
-#               "markers": 2, "runs": 40}, ...]}
+#               "markers": 2, "runs": 40}, ...],
+#    "transient_retries": T, "transient_flake_retries": M,
+#    "transient": [{"binary": "function_calling_tests", "name": "test_z",
+#                   "retries": 3, "flake_retries": 1,
+#                   "codes": {"429": 2, "malformed_tool_call": 1},
+#                   "retried_runs": 2, "flake_runs": 1, "chronic_runs": 1,
+#                   "runs": 40}, ...]}
 # `tests_run` sums the counted runs' `Summary` lines; `flaky` is the
 # number of (run, test) pairs that passed on a retry. `binary` is the test
 # binary without the crate prefix (`lib` for the library's unit tests).
 # A flaky test's `runs` is the number of counted runs it ran in, which the
 # report needs for a test's own flake share. Only flaky tests, retried
 # examples and tests that printed a skip marker are listed; a marker
-# printed before any status line in its run has an empty `name`.
+# printed before any status line in its run has an empty `name`. For an
+# in-test retry: `retries` counts its markers (`flake_retries` the
+# model-side ones), `retried_runs` the runs with any, `flake_runs` the runs
+# with a model-side one, and `chronic_runs` those of them nextest did not
+# also retry the test in, which the report adds to its nextest retries for
+# its chronic share. `T` and `M` total the markers. An in-test retry's
+# marker printed before any status line has an empty `binary`.
 
 set -euo pipefail
 
@@ -70,6 +100,12 @@ command -v jq >/dev/null 2>&1 || {
 # mawk). ESC is passed in rather than written as `\x1b`, which mawk does
 # not understand in a regex.
 "${AWK:-awk}" -v esc=$'\033' '
+  # A transport failure, which the retry counts but the chronic rule does
+  # not: an HTTP status, or a failure before one arrived.
+  function transport(code) {
+    return code ~ /^[0-9]+$/ || code == "timeout" || code == "network" \
+      || code == "stream_interrupted"
+  }
   FNR == 1 { header_seen = 0; in_header = 0; retried_step = 0; pending = ""; last_test = "" }
   {
     line = $0
@@ -137,6 +173,17 @@ command -v jq >/dev/null 2>&1 || {
       next
     }
 
+    # An in-test retry, `TRANSIENT_RETRIED <test> <code>`, on the test whose
+    # status line came last (its own name when none did).
+    if (w[1] == "TRANSIENT_RETRIED" && words >= 3) {
+      owner = last_test
+      if (owner == "") owner = "" SUBSEP w[2]
+      transient[owner SUBSEP w[3]]++
+      transient_run[run SUBSEP owner] = 1
+      if (!transport(w[3])) transient_flake[run SUBSEP owner] = 1
+      next
+    }
+
     if (words < 4) next
 
     if (w[1] == "Summary") {
@@ -189,7 +236,31 @@ command -v jq >/dev/null 2>&1 || {
       printf "marker\t%s\t%s\t%d\n", k[1], k[2], markers[key]
       flaky_test[key] = 1
     }
-    # The runs each flaky or skipping test ran in, for its own share.
+    # The last field says whether the code is transport: this function
+    # alone tells the two kinds apart, and jq below reads its answer.
+    for (key in transient) {
+      split(key, k, SUBSEP)
+      printf "transient\t%s\t%s\t%s\t%d\t%d\n", k[1], k[2], k[3], transient[key], transport(k[3])
+    }
+    # Per test: the runs with an in-test retry, those with a model-side
+    # one, and those of them nextest did not retry the test in as well.
+    for (key in transient_run) {
+      split(key, k, SUBSEP)
+      owner = k[2] SUBSEP k[3]
+      retried_runs[owner]++
+      flaky_test[owner] = 1
+      if (key in transient_flake) {
+        flake_runs[owner]++
+        if (!(key in failed)) chronic_runs[owner]++
+      }
+    }
+    for (owner in retried_runs) {
+      split(owner, k, SUBSEP)
+      printf "transient_runs\t%s\t%s\t%d\t%d\t%d\n", k[1], k[2], retried_runs[owner], \
+        flake_runs[owner] + 0, chronic_runs[owner] + 0
+    }
+    # The runs each flaky, skipping or retrying test ran in, for its own
+    # share.
     for (key in ran) {
       split(key, k, SUBSEP)
       if ((k[2] SUBSEP k[3]) in flaky_test) runs_of[k[2] SUBSEP k[3]]++
@@ -235,6 +306,29 @@ command -v jq >/dev/null 2>&1 || {
             runs: ([$example_runs[.[1]] // 0, (.[2] | tonumber)] | max)
           })
         | sort_by(-.flaky, .name)
+      ),
+      transient_retries: ([$rows[] | select(.[0] == "transient") | .[4] | tonumber] | add // 0),
+      transient_flake_retries: ([$rows[] | select(.[0] == "transient" and .[5] == "0")
+        | .[4] | tonumber] | add // 0),
+      transient: (
+        (reduce ($rows[] | select(.[0] == "transient_runs")) as $r
+          ({}; .[$r[1] + "\t" + $r[2]] = ($r[3:6] | map(tonumber)))) as $per_run
+        | [$rows[] | select(.[0] == "transient")]
+        | group_by([.[1], .[2]])
+        | map(
+            (.[0][1] + "\t" + .[0][2]) as $key
+            | {
+                binary: .[0][1],
+                name: .[0][2],
+                retries: (map(.[4] | tonumber) | add),
+                flake_retries: (map(select(.[5] == "0") | .[4] | tonumber) | add // 0),
+                codes: (sort_by(.[3]) | map({(.[3]): (.[4] | tonumber)}) | add),
+                retried_runs: ($per_run[$key][0] // 0),
+                flake_runs: ($per_run[$key][1] // 0),
+                chronic_runs: ($per_run[$key][2] // 0),
+                runs: ($runs[$key] // 0)
+              })
+        | sort_by(-.retries, .name)
       ),
       skip_markers: ([$rows[] | select(.[0] == "marker") | .[3] | tonumber] | add // 0),
       skips: (

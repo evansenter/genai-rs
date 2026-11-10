@@ -37,9 +37,11 @@ above its fence, in a guide or in rustdoc; prefer `no_run` with hidden
 (`tests/doc_guards/` fails until it does). `make test-scripts` fails on an
 `ignore` fence without its reason; on a Rust block that nothing doctests
 and is not `ignore`d with a reason (one in a Markdown file `doc_tests`
-leaves out, `CHANGELOG.md`'s history aside, or in a doc comment under
-`tests/`, `examples/` or test code); on a fence tagged `rs` or `Rust`,
-which rustdoc never compiles; on Rust fenced as `text`; and on a dated
+leaves out, `CHANGELOG.md`'s history aside, or in a doc comment, of any
+form, under `tests/`, `examples/`, test code or a `cfg` the doctest run
+leaves out); on a `cfg` in the library's non-test code that it cannot
+evaluate; on a fence tagged `rs` or `Rust`, which rustdoc never compiles;
+on Rust fenced as `text`; and on a dated
 live fact outside its home (D-032), through
 `.github/scripts/check_dated_facts.sh`.
 
@@ -148,12 +150,14 @@ Update `CHANGELOG.md` for user-facing changes: features, breaking changes, bug
 fixes, deprecations. Internal refactors and CI changes don't need entries.
 
 Breaking changes are permitted and preferred over compatibility shims (D-007);
-say plainly what breaks and what the migration is.
+say plainly what breaks, and what to do about it in a `Migration:` in the
+same entry (`- **Breaking: ...**`).
 
 When `[Unreleased]` conflicts, "keep both" preserves every line but not the
 heading each was written under — check the merged result, not the diff. CI's
 `shell-scripts` job lints the structure (duplicate `###` headings in
 `[Unreleased]` or the current version, a duplicated `## [...]` section,
 conflict markers, a missing blank line before a heading, an unclosed code
-fence) via `.github/scripts/check_changelog.sh`; it cannot tell whether an
+fence, and a breaking entry in either section with no `Migration:`) via
+`.github/scripts/check_changelog.sh`; it cannot tell whether an
 entry sits under the *right* heading.

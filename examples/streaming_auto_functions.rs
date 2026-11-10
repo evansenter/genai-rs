@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut executed = 0;
     while let Some(event) = stream.next().await {
         match event?.chunk {
-            AutoFunctionStreamChunk::Delta(delta) => {
+            AutoFunctionStreamChunk::Delta { delta, .. } => {
                 if let Some(text) = delta.as_text() {
                     print!("{text}");
                 } else if let Some(fragment) = delta.as_arguments_delta() {

@@ -8,7 +8,9 @@ use std::time::Duration;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::client::ClientRequestBuilder;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::http::Uri;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -35,8 +37,18 @@ const CONNECT_BASE_DELAY: Duration = Duration::from_millis(100);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long to wait for the WebSocket close handshake during shutdown (the
-/// harness does not reply with a close frame).
+/// harness does not reply with a close frame), the wait for the sink
+/// included.
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// How long one message to the harness may take to go out, the wait for
+/// the sink included. A harness that reads takes even a large frame (a
+/// prompt carrying inline media) over loopback in well under a second, so
+/// a send still pending after this means the harness has stopped reading.
+/// A caller with a budget of its own (a turn deadline, the halt-and-drain
+/// budget, the initialization and session-end budgets) sends with
+/// [`Session::send_before`] instead, bounded by that budget alone.
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Session-scoped wire-inspection context.
 ///
@@ -176,22 +188,41 @@ impl Session {
         }
     }
 
-    /// Sends one [`InputEvent`] as proto-JSON text.
+    /// Sends one [`InputEvent`] as proto-JSON text, bounded by
+    /// [`SEND_TIMEOUT`].
     pub(crate) async fn send(&self, event: &InputEvent) -> Result<(), AntigravityError> {
         send_json(&self.sink, &self.wire, encode(event)?).await
     }
 
-    /// Sends any other message as proto-JSON text (the
-    /// `InitializeConversationEvent`, which is not an `InputEvent`).
-    pub(crate) async fn send_raw(
+    /// Sends `message` as proto-JSON text (an [`InputEvent`], or the
+    /// `InitializeConversationEvent`, which is not one), bounded by
+    /// `deadline` alone rather than by [`SEND_TIMEOUT`]: for a caller with
+    /// a budget of its own, whose error then names that budget. `Err` when
+    /// the deadline passes first, as `tokio::time::timeout_at` reports it.
+    pub(crate) async fn send_before(
         &self,
         message: &impl serde::Serialize,
-    ) -> Result<(), AntigravityError> {
-        send_json(&self.sink, &self.wire, encode(message)?).await
+        deadline: tokio::time::Instant,
+    ) -> Result<Result<(), AntigravityError>, tokio::time::error::Elapsed> {
+        let value = match encode(message) {
+            Ok(value) => value,
+            Err(e) => return Ok(Err(e)),
+        };
+        tokio::time::timeout_at(deadline, write_json(&self.sink, &self.wire, value)).await
+    }
+
+    /// Takes the sink, as a send in progress does, until the guard drops.
+    /// Its tests (`agent_tests.rs`) are Unix-only.
+    #[cfg(all(test, unix))]
+    pub(crate) async fn hold_sink(
+        &self,
+    ) -> tokio::sync::OwnedMutexGuard<SplitSink<WsStream, Message>> {
+        Arc::clone(&self.sink).lock_owned().await
     }
 
     /// Reads the next [`OutputEvent`]. Returns `Ok(None)` when the harness
-    /// closes the connection.
+    /// closes the connection: with a close frame, or without one, as a
+    /// harness that crashed or was killed does (see [`ended_by_peer`]).
     ///
     /// Non-text frames are skipped (tungstenite answers pings internally);
     /// an unparsable text frame is an [`AntigravityError::Protocol`] error
@@ -202,10 +233,16 @@ impl Session {
             let Some(message) = self.stream.next().await else {
                 return Ok(None);
             };
-            let message = message.map_err(|e| AntigravityError::WebSocket {
-                message: "read failed".to_string(),
-                source: Box::new(e),
-            })?;
+            let message = match message {
+                Ok(message) => message,
+                Err(e) if ended_by_peer(&e) => return Ok(None),
+                Err(e) => {
+                    return Err(AntigravityError::WebSocket {
+                        message: "read failed".to_string(),
+                        source: Box::new(e),
+                    });
+                }
+            };
             match message {
                 Message::Text(text) => {
                     self.wire.emit(|| WireEvent::WsReceive {
@@ -228,11 +265,33 @@ impl Session {
         }
     }
 
-    /// Initiates the close handshake, bounded by [`CLOSE_TIMEOUT`].
+    /// Initiates the close handshake, bounded by [`CLOSE_TIMEOUT`]: the
+    /// wait for the sink counts, so a send stuck on a harness that stopped
+    /// reading cannot hold the close for its own, longer bound.
     pub(crate) async fn close(&self) {
-        let mut sink = self.sink.lock().await;
-        let _ = tokio::time::timeout(CLOSE_TIMEOUT, sink.send(Message::Close(None))).await;
-        let _ = tokio::time::timeout(CLOSE_TIMEOUT, sink.flush()).await;
+        let close = async {
+            let mut sink = self.sink.lock().await;
+            if sink.send(Message::Close(None)).await.is_ok() {
+                let _ = sink.flush().await;
+            }
+        };
+        let _ = tokio::time::timeout(CLOSE_TIMEOUT, close).await;
+    }
+}
+
+/// Whether a read error means the harness went away rather than that the
+/// transport failed: the connection ended without a close frame (a harness
+/// that crashed or was killed), or the peer reset or aborted it.
+fn ended_by_peer(error: &tungstenite::Error) -> bool {
+    match error {
+        tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => true,
+        tungstenite::Error::Io(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::UnexpectedEof
+        ),
+        _ => false,
     }
 }
 
@@ -243,7 +302,28 @@ fn encode(message: &impl serde::Serialize) -> Result<serde_json::Value, Antigrav
     })
 }
 
+/// Sends `value` as one text frame, bounded by [`SEND_TIMEOUT`] (the wait
+/// for the sink included).
 async fn send_json(
+    sink: &tokio::sync::Mutex<SplitSink<WsStream, Message>>,
+    wire: &WireContext,
+    value: serde_json::Value,
+) -> Result<(), AntigravityError> {
+    tokio::time::timeout(SEND_TIMEOUT, write_json(sink, wire, value))
+        .await
+        .unwrap_or_else(|_| {
+            Err(AntigravityError::Timeout {
+                operation: "sending a message to the harness (it stopped reading)".to_string(),
+                timeout: SEND_TIMEOUT,
+            })
+        })
+}
+
+/// Writes `value` as one text frame, the wait for the sink included. It
+/// has no bound of its own: every caller puts one around it. A write that
+/// its bound abandons leaves the rest of its frame queued in the sink,
+/// ahead of the next message.
+async fn write_json(
     sink: &tokio::sync::Mutex<SplitSink<WsStream, Message>>,
     wire: &WireContext,
     value: serde_json::Value,
@@ -351,7 +431,7 @@ mod tests {
         );
         let chained = std::error::Error::source(&error).expect("source() is the transport error");
         assert_eq!(chained.to_string(), source.to_string());
-        assert!(error.to_string().ends_with(&source.to_string()), "{error}");
+        assert!(!error.to_string().contains(&source.to_string()), "{error}");
     }
 
     #[tokio::test(start_paused = true)]
@@ -429,6 +509,122 @@ mod tests {
         let chained = std::error::Error::source(&error).expect("source() is the parse error");
         assert_eq!(chained.to_string(), cause.to_string());
         drop(harness.await);
+    }
+
+    /// Connects to a peer that completes the WebSocket upgrade and then
+    /// never reads, as a wedged harness does. The peer holds the connection
+    /// until the returned sender is used or dropped.
+    async fn connect_to_a_peer_that_never_reads() -> (Session, tokio::sync::oneshot::Sender<()>) {
+        let listener = tokio::net::TcpListener::bind("localhost:0")
+            .await
+            .expect("bind a local port");
+        let port = i32::from(listener.local_addr().expect("local address").port());
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("accept");
+            let ws = tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("upgrade");
+            let _ = released.await;
+            drop(ws);
+        });
+        let session = Session::connect(port, "token", WireContext::new(Vec::new()))
+            .await
+            .expect("connect");
+        (session, release)
+    }
+
+    /// A message larger than loopback's socket buffers on Linux and macOS,
+    /// so a send of it to a peer that does not read cannot complete.
+    fn oversized_message() -> serde_json::Value {
+        json!({"userInput": {"text": "x".repeat(32 << 20)}})
+    }
+
+    #[tokio::test]
+    async fn test_a_send_the_harness_never_reads_times_out() {
+        let (session, _release) = connect_to_a_peer_that_never_reads().await;
+        // Paused once connected: the stuck write then waits on the clock
+        // alone.
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        let send = send_json(&session.sink, &session.wire, oversized_message());
+        let error = tokio::time::timeout(SEND_TIMEOUT * 4, send)
+            .await
+            .expect("the send gives up rather than hanging")
+            .expect_err("the peer never reads");
+        let AntigravityError::Timeout { operation, timeout } = &error else {
+            panic!("expected a timeout: {error:?}");
+        };
+        assert_eq!(*timeout, SEND_TIMEOUT);
+        assert!(operation.contains("stopped reading"), "{operation}");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= SEND_TIMEOUT && elapsed < SEND_TIMEOUT + Duration::from_secs(1),
+            "{elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_send_before_a_deadline_waits_for_that_deadline_alone() {
+        // A turn whose timeout is longer than SEND_TIMEOUT (the default
+        // turn timeout is) gives up at its own deadline, not at 30 s.
+        let (session, _release) = connect_to_a_peer_that_never_reads().await;
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        let deadline = started + SEND_TIMEOUT * 3;
+        let sent = tokio::time::timeout(
+            SEND_TIMEOUT * 6,
+            session.send_before(&oversized_message(), deadline),
+        )
+        .await
+        .expect("the send gives up rather than hanging");
+        assert!(sent.is_err(), "the deadline passes first: {sent:?}");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= SEND_TIMEOUT * 3 && elapsed < SEND_TIMEOUT * 3 + Duration::from_secs(1),
+            "{elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_close_gives_up_on_a_sink_another_send_holds() {
+        let (session, _release) = connect_to_a_peer_that_never_reads().await;
+        tokio::time::pause();
+        // A send stuck on the harness holds the sink for its own bound.
+        let held = session.sink.lock().await;
+        let started = tokio::time::Instant::now();
+        tokio::time::timeout(SEND_TIMEOUT, session.close())
+            .await
+            .expect("close waits for the sink only within its own bound");
+        let elapsed = started.elapsed();
+        assert!(elapsed < CLOSE_TIMEOUT * 2, "{elapsed:?}");
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn test_a_harness_that_drops_the_connection_reads_as_closed() {
+        // A harness that crashes or is killed ends the TCP connection with
+        // no close frame.
+        let listener = tokio::net::TcpListener::bind("localhost:0")
+            .await
+            .expect("bind a local port");
+        let port = i32::from(listener.local_addr().expect("local address").port());
+        let harness = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("accept");
+            let ws = tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("upgrade");
+            drop(ws);
+        });
+        let mut session = Session::connect(port, "token", WireContext::new(Vec::new()))
+            .await
+            .expect("connect");
+        harness.await.expect("the peer drops the connection");
+        let next = session.next_event().await;
+        assert!(
+            matches!(next, Ok(None)),
+            "a dropped connection reads as closed: {next:?}"
+        );
     }
 
     #[test]

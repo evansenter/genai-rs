@@ -1,7 +1,9 @@
 //! The flakiness report (`ci-flakiness-report.yml`), tied to what it reads
 //! (#504): the jobs whose logs it fetches by name, the retry lines the
-//! example loops print, the order in which it publishes and then fails, and
-//! the offline tests that would otherwise flake on a loaded runner.
+//! example loops and the live tests' own retries print, the steps it counts
+//! them in, which leave out the retry helper's offline tests, the order in
+//! which it publishes and then fails, and the offline tests that would
+//! otherwise flake on a loaded runner.
 
 use super::{command_lines, is_live_nextest_step, jobs, read, root, steps};
 use regex::Regex;
@@ -56,7 +58,7 @@ fn matrix_values(job: &str) -> BTreeMap<String, Vec<String>> {
 
 /// The names a job shows in a run: its `name:`, with each
 /// `${{ matrix.key }}` expanded over the key's values, or its id.
-fn display_names(id: &str, job: &str) -> Vec<String> {
+pub(super) fn display_names(id: &str, job: &str) -> Vec<String> {
     let Some(name) = job
         .lines()
         .find_map(|line| line.strip_prefix("    name: "))
@@ -189,6 +191,270 @@ fn example_loops_report_their_retries() {
         "example loops must print what the flakiness report counts:\n  {}",
         problems.join("\n  ")
     );
+}
+
+/// Problems with the in-test retry marker, empty when it holds:
+/// `retry_on_transient` (`tests/common/retry.rs`) prints it before every
+/// retry, which is each `sleep(` in its body, and `count_retried_flakes.sh`
+/// reads the same word and treats the same codes as transport.
+fn retry_marker_problems(retry: &str, script: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let Some(marker) = retry
+        .lines()
+        .find_map(|line| line.strip_prefix("pub const TRANSIENT_RETRY_MARKER: &str = \""))
+        .and_then(|rest| rest.strip_suffix("\";"))
+    else {
+        return vec!["retry.rs has no `pub const TRANSIENT_RETRY_MARKER: &str = \"...\";`".into()];
+    };
+    let body = retry
+        .split("pub async fn retry_on_transient")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .unwrap_or_default();
+    let before_each_sleep: Vec<&str> = body.split("sleep(").collect();
+    if before_each_sleep.len() < 3 {
+        problems.push(format!(
+            "retry_on_transient sleeps before {} retries, not the two kinds (a failed \
+             interaction and an error): is the scan broken?",
+            before_each_sleep.len().saturating_sub(1)
+        ));
+    }
+    for (i, before) in before_each_sleep
+        .iter()
+        .take(before_each_sleep.len().saturating_sub(1))
+        .enumerate()
+    {
+        if !before.contains("println!(\"{}\", transient_retry_marker(") {
+            problems.push(format!(
+                "retry_on_transient's retry {} sleeps without printing the marker first",
+                i + 1
+            ));
+        }
+    }
+    if !retry.contains("format!(\"{TRANSIENT_RETRY_MARKER} {test} {code}\")") {
+        problems.push("the marker line is not `<marker> <test> <code>`".into());
+    }
+    if !script.contains(&format!("w[1] == \"{marker}\"")) {
+        problems.push(format!(
+            "count_retried_flakes.sh does not read `{marker}` lines"
+        ));
+    }
+    // The codes retry_code gives a failure before any HTTP status, which
+    // the script must count as transport, as it does a status, in awk's
+    // `transport()` alone: a second list (jq's totals once had two) could
+    // drift from it unseen.
+    let transport_lines: Vec<&str> = script
+        .lines()
+        .skip_while(|line| !line.contains("function transport(code)"))
+        .take(4)
+        .collect();
+    let transport = transport_lines.concat();
+    let elsewhere: Vec<&str> = script
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#') && !transport_lines.contains(line))
+        .collect();
+    let codes = retry
+        .split("fn retry_code(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .unwrap_or_default();
+    for code in codes
+        .split("=> \"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .filter(|code| *code != "other")
+    {
+        if !transport.contains(&format!("code == \"{code}\"")) {
+            problems.push(format!(
+                "retry_code's transport code `{code}` is not transport in count_retried_flakes.sh"
+            ));
+        }
+        if let Some(line) = elsewhere.iter().find(|line| line.contains(code)) {
+            problems.push(format!(
+                "count_retried_flakes.sh names the transport code `{code}` outside \
+                 transport(), which alone should classify codes: `{}`",
+                line.trim()
+            ));
+        }
+    }
+    problems
+}
+
+/// A live test's `retry_request!` retries transport errors and the
+/// model-side flakes D-052 allows inside the test, where nextest never sees
+/// them, so the report could not count them: H4's `malformed_tool_call`
+/// retry moved a flake nextest used to retry out of its sight. Each retry
+/// now prints `TRANSIENT_RETRIED <test> <code>`, which
+/// `count_retried_flakes.sh` counts per test.
+#[test]
+fn in_test_retries_print_the_marker_the_report_counts() {
+    let retry = read(&root().join("tests/common/retry.rs"));
+    let script = read(&root().join(".github/scripts/count_retried_flakes.sh"));
+    let problems = retry_marker_problems(&retry, &script);
+    assert!(
+        problems.is_empty(),
+        "in-test retries must print what the flakiness report counts:\n  {}",
+        problems.join("\n  ")
+    );
+    let broken = [
+        // The error retry's marker gone, or the failed interaction's.
+        (
+            retry.replacen(
+                "println!(\"{}\", transient_retry_marker(&retry_code(&err)));",
+                "",
+                1,
+            ),
+            script.clone(),
+        ),
+        (
+            retry.replacen(
+                "println!(\"{}\", transient_retry_marker(\"malformed_tool_call\"));",
+                "",
+                1,
+            ),
+            script.clone(),
+        ),
+        // The script reading another word, or counting a timeout as a flake.
+        (
+            retry.clone(),
+            script.replace("w[1] == \"TRANSIENT_RETRIED\"", "w[1] == \"RETRIED\""),
+        ),
+        (retry.clone(), script.replace("code == \"timeout\" || ", "")),
+        // jq classifying the codes again, by its own list.
+        (
+            retry.clone(),
+            script.replace(
+                "select(.[5] == \"0\")",
+                "select(.[3] | test(\"^([0-9]+|timeout|network|stream_interrupted)$\") | not)",
+            ),
+        ),
+    ];
+    for (i, (retry_text, script_text)) in broken.iter().enumerate() {
+        assert!(
+            retry_text != &retry || script_text != &script,
+            "mutation {i} did not apply"
+        );
+        assert!(
+            !retry_marker_problems(retry_text, script_text).is_empty(),
+            "mutation {i} went unnoticed"
+        );
+    }
+}
+
+/// The source of test binary `binary`: `tests/<binary>.rs` and, when it
+/// has one, every file under `tests/<binary>/`.
+fn binary_source(binary: &str) -> String {
+    let tests = root().join("tests");
+    let mut text = read(&tests.join(format!("{binary}.rs")));
+    let mut dirs = vec![tests.join(binary)];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for path in entries.map(|entry| entry.expect("a test directory entry").path()) {
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                text.push_str(&read(&path));
+            }
+        }
+    }
+    text
+}
+
+/// Problems with the steps of `rust` that the flakiness report counts (the
+/// live nextest steps, which retry), and how many there are. The retry
+/// helper's offline tests (`error_handling_tests`) print
+/// `TRANSIENT_RETRIED` on every run, on purpose, and the counter cannot
+/// tell their markers from a live test's. So each counted `nextest run`
+/// runs the live tests alone (`--run-ignored only`), or binaries
+/// (`binary(x)`) whose source, read by `source`, never calls the helper.
+fn counted_step_problems(rust: &str, source: impl Fn(&str) -> String) -> (usize, Vec<String>) {
+    let binary = Regex::new(r"binary\(([A-Za-z0-9_]+)\)").expect("a regex");
+    let mut counted = 0;
+    let mut problems = Vec::new();
+    for (id, body) in jobs(rust) {
+        for step in steps(&body).iter().filter(|step| {
+            is_live_nextest_step(step)
+                && command_lines(step).any(|line| line.starts_with("NEXTEST_RETRIES:"))
+        }) {
+            counted += 1;
+            let title = step.lines().next().unwrap_or("").trim().to_string();
+            for line in command_lines(step).filter(|line| line.contains("nextest run")) {
+                if line.contains("--run-ignored only") {
+                    continue;
+                }
+                let filtered: Vec<&str> = binary
+                    .captures_iter(line)
+                    .filter_map(|found| found.get(1).map(|name| name.as_str()))
+                    .collect();
+                if filtered.is_empty() {
+                    problems.push(format!(
+                        "job {id}, step `{title}`: `{line}` runs offline tests too, and the \
+                         retry helper's own tests print TRANSIENT_RETRIED on every run; \
+                         run `--run-ignored only`"
+                    ));
+                }
+                for name in filtered {
+                    let text = source(name);
+                    if text.contains("retry_on_transient(") || text.contains("retry_request!") {
+                        problems.push(format!(
+                            "job {id}, step `{title}`: `{line}` runs {name}'s offline tests \
+                             too, and it calls the retry helper; run `--run-ignored only`"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    (counted, problems)
+}
+
+/// A live test's in-test retry is counted from its marker, but the retry
+/// helper's offline tests print it too, on purpose, on every run: run in
+/// the integration loop, which once ran each binary's offline tests as
+/// well (`--run-ignored all`), five of them read as chronic flakes in
+/// every run, and the report failed every day.
+#[test]
+fn counted_steps_leave_the_offline_retry_tests_out() {
+    let rust = read(&root().join(".github/workflows/rust.yml"));
+    let (counted, problems) = counted_step_problems(&rust, binary_source);
+    assert!(counted >= 2, "found only {counted} counted steps");
+    assert!(
+        problems.is_empty(),
+        "a step the flakiness report counts runs the retry helper's offline tests:\n  {}",
+        problems.join("\n  ")
+    );
+    let integration = "cargo nextest run --test $test --run-ignored only";
+    let harness = "-E 'binary(antigravity_harness)'";
+    assert!(rust.contains(integration) && rust.contains(harness));
+    let broken = [
+        // The integration loop running every test again.
+        (
+            rust.replace(
+                integration,
+                "cargo nextest run --test $test --run-ignored all",
+            ),
+            false,
+        ),
+        // The harness step unfiltered.
+        (rust.replace(harness, ""), false),
+        // The harness binary calling the helper.
+        (rust.clone(), true),
+    ];
+    for (i, (text, calls)) in broken.iter().enumerate() {
+        let source = |name: &str| {
+            if *calls && name == "antigravity_harness" {
+                "retry_on_transient(3, || async { .. })".to_string()
+            } else {
+                binary_source(name)
+            }
+        };
+        assert!(
+            !counted_step_problems(text, source).1.is_empty(),
+            "mutation {i} went unnoticed"
+        );
+    }
 }
 
 /// A breached target (a flake rate of 1% or more, no live runs read, a

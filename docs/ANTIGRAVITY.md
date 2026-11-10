@@ -119,11 +119,16 @@ Windows wheel ships, as the Python SDK does. Step 3 asks `python` there
 because python.org's Windows installer provides no `python3`; `python` is
 started only when `python3`'s site-packages lack the harness.
 
-A miss returns `AntigravityError::HarnessNotFound` listing every location
-searched. The search runs on tokio's blocking pool, not on your runtime's
-threads, and each interpreter gets 10 seconds to list its site-packages
-before the search moves on (on Windows from `python3` to `python`, then to
-`PATH`). The read of the installed wheel's version beside the binary gets
+A path given in step 1 or 2 is the harness, as the Python SDK takes the
+variable's: when it is not a file, `spawn()` fails with
+`AntigravityError::HarnessNotFound` naming it, and nothing else is searched,
+so a mistyped path cannot start a different harness. An empty
+`ANTIGRAVITY_HARNESS_PATH` counts as unset. Any other miss returns
+`HarnessNotFound` listing every location searched. The search runs on
+tokio's blocking pool, not on your runtime's threads, and each interpreter
+gets 10 seconds to list its site-packages before the search moves on (on
+Windows from `python3` to `python`, then to `PATH`). The read of the
+installed wheel's version beside the binary gets
 the same 10 seconds, on a thread of its own, so a read abandoned at the
 limit does not hold up your runtime's shutdown. File checks and the start
 of the binary itself are not bounded.
@@ -181,8 +186,9 @@ On Windows the forced paths end the harness process only: there are no
 process groups to signal, so the `run_command` commands it started keep
 running after a dropped agent, a failed `spawn()` or an escalated
 shutdown. Only the graceful exit stops them there, so call `shutdown()`
-and let it finish. Stdio MCP servers are not affected: they exit at the
-end of their stdin, which closes when the harness dies, on any platform.
+and let it finish. Stdio MCP servers are not affected on Linux and macOS:
+they exit at the end of their stdin, which closes when the harness dies.
+That is unverified on Windows (#536).
 
 ### Images, documents and slash commands
 
@@ -645,7 +651,7 @@ by the turn deadline like the rest:
 |--------|-------|------------|
 | `on_session_start` | once, before `spawn()` returns | — |
 | `on_session_end` | during `shutdown()` (not on drop) | — |
-| `on_pre_turn` | before each turn, with the user's text | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn`; the agent stays usable |
+| `on_pre_turn` | before each turn, with the user's text | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn` of kind `TurnFailure::Denied`, the reason as its message; the agent stays usable |
 | `on_post_turn` | after each turn, with its response text | — |
 | `on_tool_error` | when a tool call fails | `Some(text)` replaces the error the model sees |
 | `on_compaction` | when the harness compacts the history | — |
@@ -699,7 +705,7 @@ fn get_weather(city: String) -> String {
 # let my_service: std::sync::Arc<dyn genai_rs::ToolService> = unimplemented!();
 let builder = AntigravityAgent::builder()
     .add_tool(GetWeatherCallable.declaration())     // #[tool] machinery
-    .with_tool_service(my_service)                  // stateful ToolService
+    .add_tool_service(my_service)                   // stateful ToolService
     // ...
     ;
 # let _ = builder;
@@ -737,8 +743,9 @@ the path (harness default 4096 bytes).
 
 The harness connects to a server and lists its tools on the first turn,
 not in `spawn()`. On harness 0.1.23, `McpServer::with_timeout_seconds(n)`
-bounds both that load, where a server slower than it fails the turn
-(`AntigravityError::Turn`, `MCP load failed for <server>`), and each tool
+bounds both that load, where a server slower than it fails the turn and
+ends the session (`AntigravityError::Turn` of kind
+`TurnFailure::Trajectory`, whose message names the server), and each tool
 call, where a slower call comes back to the model as an error.
 
 ## Subagents
@@ -811,7 +818,7 @@ Rules (matching the reference SDK):
   # let _ = builder;
   ```
 - **Custom tools are referenced by name** and must also be registered on the
-  parent agent (`add_tool` / `with_tool_service`) — subagent custom-tool
+  parent agent (`add_tool` / `add_tool_service`) — subagent custom-tool
   calls dispatch through the parent's registry. `spawn()` validates the
   references (and name uniqueness) and fails with `AntigravityError::Config`
   on a dangling one.
@@ -865,9 +872,10 @@ while let Some(event) = stream.next().await {
         }
         AgentEvent::ToolCallDispatched { name, .. } => eprintln!("[custom tool] {name}"),
         AgentEvent::Finished(response) => { println!(); break; }
-        // Transient errors are harness-internal noise (the turn continues);
-        // only `Severe` ones matter. Turn-ending failures arrive as
-        // `AntigravityError::Turn` from the call, not as this event.
+        // Transient errors are harness-internal noise (the turn usually
+        // continues); only `Severe` ones matter. Turn-ending failures
+        // arrive as `AntigravityError::Turn` from the stream, whatever
+        // events came before.
         AgentEvent::Error { message, severity } => match severity {
             ErrorSeverity::Severe => eprintln!("[error] {message}"),
             _ => {} // ignore transient noise
@@ -900,10 +908,13 @@ while let Some(event) = stream.next().await {
   delta.
 - **`Error { message, severity }`** — `severity` is an `ErrorSeverity`.
   Transient errors are harness-internal noise (retried internally; the turn
-  continues) — essentially every error event today. `Severe` marks a
-  serious mid-turn error (e.g. a fatal model-backend status that did not abort
-  the turn); genuinely turn-*ending* failures surface as
-  `AntigravityError::Turn` from `chat`/`send_streaming`, never as this event.
+  usually continues) — essentially every error event today. Not always: a
+  model call whose retries ran out arrives as a `Transient` event just
+  before the turn fails with `TurnFailure::ModelBackend` and the session
+  ends. `Severe` marks a serious mid-turn error (e.g. a fatal model-backend
+  status that did not abort the turn). Whether the turn failed is decided
+  by its result: turn-*ending* failures surface as `AntigravityError::Turn`
+  from `chat`/`send_streaming`, never as this event alone.
 
 The stream borrows the agent mutably for the turn. To cancel from another
 task, take a handle first:
@@ -923,8 +934,9 @@ pinned 0.1.23 answers a halt by taking the trajectory to `STATE_FULLY_IDLE`
 with whatever partial output it had produced, rather than failing with
 `AntigravityError::Turn`. Treat `cancel()` as "stop early and keep what you
 have", and record the cancellation on your side if you need to distinguish
-a halted turn from a completed one. (`AntigravityError::Turn` is still the
-outcome when the harness cancels a turn of its own accord.) On the pinned
+a halted turn from a completed one. (`AntigravityError::Turn` of kind
+`TurnFailure::Cancelled` is still the outcome when the harness cancels a
+turn of its own accord.) On the pinned
 harness the key-free `test_scripted_cancel_halts_a_turn_waiting_on_the_model`,
 which the required CI check runs, fails if a halted turn does anything but
 resolve normally.
@@ -940,8 +952,10 @@ the next `chat`/`send_streaming` halts it and discards its events before
 sending your input (half a second when nothing is left running, five
 seconds at most), so each later turn gets its own reply. A turn that failed
 on this side before the harness ended it is halted the same way; one the
-harness failed itself (a pre-turn denial) is not. A fatal model error ends
-the whole session instead (see [Errors](#errors)). Until that next call the
+harness failed itself (a pre-turn denial) is not. A failure whose
+`ends_session()` is true (a model backend error, or the harness ending the
+turn with an error of its own) ends the whole session instead (see
+[Errors](#errors)). Until that next call the
 harness may keep working on the abandoned turn, so use `cancel()` to stop
 a turn at once and keep its partial output.
 `next_trigger_turn` does not halt anything first: called after an abandoned
@@ -959,7 +973,18 @@ The deadline is absolute, stamped when the turn starts, and it covers the
 whole turn rather than the gaps between harness events: that includes this
 crate's own work inside the turn, so a custom tool or hook that hangs ends
 the turn on time, with the `Timeout`'s `operation` naming it
-(`agent turn (custom tool 'x' was still running at the deadline)`).
+(`agent turn (custom tool 'x' was still running at the deadline)`). It is
+stamped before your message is sent, so it bounds the send too: a harness
+that has stopped reading fails the turn on time (`agent turn (the harness
+did not take the message)`) instead of holding it, however large the
+prompt, at the turn timeout you set, however long. Every other message to
+the harness has a bound of its own: the halt before a turn counts against
+the five-second drain budget, the initialization in `spawn()` and the
+session-end request in `shutdown()` against their 30-second budgets, the
+close in `shutdown()` gives up after half a second, and any other send (a
+`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
+message of a turn with no timeout) gives up after 30 seconds, as a
+`Timeout` where the call returns an error.
 
 Each custom tool call runs on a tokio task of its own, and a call the
 deadline abandons is aborted: an async tool stops at its next `.await`. A
@@ -1092,8 +1117,10 @@ let builder = AntigravityAgent::builder()
   started or was resumed (`ForwardLooking`). A turn that reaches one ends
   early with its `stop_reason`.
 - **Retries**: `RetryConfig::new().with_max_api_retries(0)` fails a turn on
-  the first 503; `RetryConfig::benchmark()` is the Python SDK's preset for
-  long evaluation runs.
+  the first 503, as `TurnFailure::ModelBackend { status: 503 }`, which ends
+  the session too: spawn a new agent after it (see [Errors](#errors)).
+  `RetryConfig::benchmark()` is the Python SDK's preset for long evaluation
+  runs.
 - **Compaction** costs a model call that writes the summary
   (`on_compaction` sees it). The threshold must leave room for the
   harness's own prompt and tools (about 2,700 tokens on 0.1.23 with the
@@ -1369,26 +1396,59 @@ the harness explains itself (e.g. `no text model configuration provided`).
 
 `AntigravityError` is structural (`#[non_exhaustive]`, thiserror): match on
 variants, never on message text. Key variants: `HarnessNotFound{searched}`,
-`HandshakeFailed`/`InitFailed`/`ConnectionClosed` (with `stderr`),
-`HarnessExited` (a failed exit on `shutdown()`, with `stderr`),
-`Config` (spawn-time validation, including the safety gate), `Turn`
-(cancellation, pre-turn denial, fatal model-backend errors), `Timeout`,
-`ToolDispatch`, `WebSocket` (with the transport error as its source),
-`Protocol` (a harness message this client could not parse, with the parse
-error as its source, a turn that ended without its final event, or a
-message this client could not encode) and `Io` (a file `Media::from_file`
-could not read, named in its message, or harness discovery cut short by
-the runtime shutting down; the I/O error is its source). No variant
-converts from another error type with `?`: map your own I/O and JSON
-errors yourself.
+`HandshakeFailed`/`InitFailed`/`ConnectionClosed` (with `stderr`; an
+`InitFailed` from a connect that never succeeded has the `WebSocket` error
+as its source), `HarnessExited` (a failed exit on `shutdown()`, with
+`stderr`), `Config` (spawn-time validation, including the safety gate),
+`Turn { kind, message }` (below), `Timeout`, `ToolDispatch`, `WebSocket`
+(with the transport error as its source), `Protocol` (a harness message
+this client could not parse, with the parse error as its source, a turn
+that ended without its final event, or a message this client could not
+encode) and `Io` (a file `Media::from_file` could not read, named in its
+message, or harness discovery cut short by the runtime shutting down; the
+I/O error is its source). An error's `Display` never repeats its source's
+text, so a reporter that walks `source()` prints each cause once; one that
+prints only the top error shows the step that failed, not the cause. No
+variant converts from another error type with `?`: map your own I/O and
+JSON errors yourself.
 
-A fatal model-backend error (an HTTP 400 from the model endpoint) fails the
-turn with `Turn` and, on harness 0.1.23, ends the session as well: the
-harness closes its WebSocket, so the agent's next call fails with
-`WebSocket` (or `ConnectionClosed`, when its send got out before the
-close). Respawn the agent after one. (A model error the harness
-retries, or one that did not stop the turn, arrives as an
-`AgentEvent::Error` instead; see
+A failed turn is `Turn { kind, message }`, where `kind` is a
+`TurnFailure` (`#[non_exhaustive]`):
+
+| `TurnFailure` | When | The agent after it |
+|---|---|---|
+| `ModelBackend { status }` | the model backend failed a call: with a status the harness does not retry (400, 401 or 403), or with one whose retries ran out (a 503, say) | gone: respawn |
+| `Trajectory` | the harness ended the turn with an error of its own, such as an MCP server that failed to load | gone: respawn |
+| `Denied` | the pre-turn hook refused the turn (`message` is its reason) | usable |
+| `Cancelled` | the harness cancelled the turn of its own accord | usable |
+| `Hook` | a hook of yours could not run (its thread did not start or ended without a result) | usable; the next turn halts the harness first |
+
+`kind.ends_session()` answers the last column. On harness 0.1.23 the
+harness's run ends with a `ModelBackend` or `Trajectory` failure, and the
+agent fails every later call with `ConnectionClosed`, without sending: the
+harness can take one more message before it closes its WebSocket and
+answer it with an empty turn.
+
+```rust,no_run
+use genai_rs::antigravity::{AntigravityAgent, AntigravityError, TurnFailure};
+
+# async fn run(mut agent: AntigravityAgent) -> Result<(), AntigravityError> {
+match agent.chat("Summarize src/lib.rs").await {
+    Ok(response) => println!("{}", response.text()),
+    Err(AntigravityError::Turn { kind, message }) if kind.ends_session() => {
+        eprintln!("the session is over ({kind}): {message}; spawn a new agent");
+    }
+    Err(AntigravityError::Turn { kind: TurnFailure::Denied, message }) => {
+        eprintln!("refused: {message}");
+    }
+    Err(e) => return Err(e),
+}
+# Ok(())
+# }
+```
+
+(A model error the harness retries, or one that did not stop the turn,
+arrives as an `AgentEvent::Error` instead; see
 [error severity](#event-decisions-trajectory-identity-and-error-severity).)
 
 ## Current limitations (follow-ups)

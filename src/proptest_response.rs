@@ -322,7 +322,14 @@ pub(super) fn arb_function_execution_result() -> impl Strategy<Value = FunctionE
 
 pub(super) fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunctionStreamChunk> {
     prop_oneof![
-        arb_step_delta().prop_map(AutoFunctionStreamChunk::Delta),
+        (
+            arb_step_delta(),
+            prop::collection::btree_map("[a-z_]{1,8}", arb_json_value(), 0..3)
+        )
+            .prop_map(|(delta, extra)| AutoFunctionStreamChunk::Delta {
+                delta,
+                extra: extra.into_iter().collect(),
+            }),
         (
             arb_interaction_response(),
             prop::collection::vec(arb_owned_function_call_info(), 0..5)
@@ -338,9 +345,24 @@ pub(super) fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunc
         arb_interaction_response().prop_map(|r| AutoFunctionStreamChunk::Complete(Box::new(r))),
         arb_interaction_response()
             .prop_map(|r| AutoFunctionStreamChunk::MaxLoopsReached(Box::new(r))),
-        (arb_unknown_type(), arb_json_value()).prop_map(|(chunk_type, data)| {
-            AutoFunctionStreamChunk::Unknown { chunk_type, data }
-        }),
+        // A passed-on SSE event can be named like a known chunk.
+        (
+            prop_oneof![
+                arb_unknown_type(),
+                prop::sample::select(vec![
+                    "delta",
+                    "executing_functions",
+                    "function_results",
+                    "complete",
+                    "max_loops_reached",
+                ])
+                .prop_map(String::from),
+            ],
+            arb_json_value()
+        )
+            .prop_map(|(chunk_type, data)| {
+                AutoFunctionStreamChunk::Unknown { chunk_type, data }
+            }),
     ]
 }
 
