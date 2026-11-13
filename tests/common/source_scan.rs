@@ -156,3 +156,140 @@ fn type_name(ty: &syn::Type) -> Option<String> {
         _ => None,
     }
 }
+
+/// A file module, as [`module_files`] finds it: its path, and the
+/// predicate of every `#[cfg(..)]` on the way to it, as written (on its
+/// own declaration, on an inline module around it, and on the declarations
+/// of the files that declare it).
+pub struct ModuleFile {
+    pub path: PathBuf,
+    pub cfgs: Vec<String>,
+}
+
+/// `root` (a crate root, or a test binary's top-level file) and every file
+/// module it declares, recursively, breadth first, as rustc resolves them:
+/// a `#[path]` attribute's file relative to the declaring file's directory,
+/// else `name.rs` or `name/mod.rs` in the declaring file's own directory
+/// when that file is a crate root, a `mod.rs` or loaded by `#[path]`, and
+/// in its `<stem>/` subdirectory otherwise; inside an inline module `m`,
+/// each in that directory's `m/`. Each path once, as rustc forms it, a
+/// `#[path]`'s `..` kept: the name rustc gives the file, and llvm-cov with
+/// it ([`lexically_normal`] resolves it). A declared module whose file does
+/// not exist fails, rather than leaving the file out.
+pub fn module_files(root: &Path) -> Vec<ModuleFile> {
+    struct Found {
+        file: ModuleFile,
+        owns_dir: bool,
+    }
+    fn declared(
+        items: &[syn::Item],
+        dir: &Path,
+        path_dir: &Path,
+        cfgs: &[String],
+        out: &mut Vec<Found>,
+    ) {
+        for item in items {
+            let syn::Item::Mod(module) = item else {
+                continue;
+            };
+            let mut cfgs = cfgs.to_vec();
+            let mut path = None;
+            for attr in &module.attrs {
+                if attr.path().is_ident("cfg") {
+                    cfgs.push(
+                        attr.meta
+                            .require_list()
+                            .map(|list| list.tokens.to_string())
+                            .unwrap_or_default(),
+                    );
+                } else if attr.path().is_ident("path")
+                    && let syn::Meta::NameValue(value) = &attr.meta
+                    && let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(text),
+                        ..
+                    }) = &value.value
+                {
+                    path = Some(text.value());
+                }
+            }
+            let name = module.ident.to_string();
+            match &module.content {
+                Some((_, inner)) => {
+                    let inner_dir = dir.join(&name);
+                    declared(inner, &inner_dir, &inner_dir, &cfgs, out);
+                }
+                None => {
+                    let flat = dir.join(format!("{name}.rs"));
+                    let (path, owns_dir) = match path {
+                        Some(path) => (path_dir.join(path), true),
+                        None if flat.exists() => (flat, false),
+                        None => (dir.join(&name).join("mod.rs"), true),
+                    };
+                    out.push(Found {
+                        file: ModuleFile { path, cfgs },
+                        owns_dir,
+                    });
+                }
+            }
+        }
+    }
+    let mut files = vec![Found {
+        file: ModuleFile {
+            path: root.to_path_buf(),
+            cfgs: Vec::new(),
+        },
+        owns_dir: true,
+    }];
+    let mut next = 0;
+    while next < files.len() {
+        let file = files[next].file.path.clone();
+        let cfgs = files[next].file.cfgs.clone();
+        let owns_dir = files[next].owns_dir;
+        next += 1;
+        let dir = file.parent().expect("a file has a directory");
+        let own_dir = if owns_dir {
+            dir.to_path_buf()
+        } else {
+            dir.join(file.file_stem().expect("a file has a stem"))
+        };
+        let mut found = Vec::new();
+        declared(&parse_file(&file).items, &own_dir, dir, &cfgs, &mut found);
+        for module in found {
+            assert!(
+                module.file.path.exists(),
+                "{} declares a module in {}, which does not exist",
+                file.display(),
+                module.file.path.display()
+            );
+            if !files
+                .iter()
+                .any(|known| known.file.path == module.file.path)
+            {
+                files.push(module);
+            }
+        }
+    }
+    files.into_iter().map(|found| found.file).collect()
+}
+
+/// `path` with each `.` dropped and each `..` taking off the component
+/// before it, without touching the file system: the file a `#[path]` with a
+/// `..` in it names, spelt as a walk of the directory spells it.
+pub fn lexically_normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+                if matches!(
+                    out.components().next_back(),
+                    Some(std::path::Component::Normal(_))
+                ) =>
+            {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}

@@ -6,6 +6,7 @@
 //! otherwise flake on a loaded runner.
 
 use super::{command_lines, is_live_nextest_step, jobs, read, root, steps};
+use crate::source_scan;
 use regex::Regex;
 use std::collections::BTreeMap;
 
@@ -342,21 +343,17 @@ fn in_test_retries_print_the_marker_the_report_counts() {
 }
 
 /// The source of test binary `binary`: `tests/<binary>.rs` and, when it
-/// has one, every file under `tests/<binary>/`.
+/// has one, every file under `tests/<binary>/`, walked by the shared
+/// walker. Not its module tree: nearly every binary compiles
+/// `tests/common/`, the retry helper's home, so each would read as calling
+/// it.
 fn binary_source(binary: &str) -> String {
     let tests = root().join("tests");
     let mut text = read(&tests.join(format!("{binary}.rs")));
-    let mut dirs = vec![tests.join(binary)];
-    while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for path in entries.map(|entry| entry.expect("a test directory entry").path()) {
-            if path.is_dir() {
-                dirs.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                text.push_str(&read(&path));
-            }
+    let dir = tests.join(binary);
+    if dir.is_dir() {
+        for path in source_scan::rust_files(&dir) {
+            text.push_str(&read(&path));
         }
     }
     text
@@ -506,14 +503,7 @@ fn stub_timeouts_run_on_the_paused_clock() {
         tests.join("http_mock_tests.rs"),
         tests.join("reliability_tests.rs"),
     ];
-    let dir = tests.join("http_mock_resources");
-    let mut resources: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
-        .map(|entry| entry.expect("dir entry").path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
-        .collect();
-    resources.sort();
-    files.extend(resources);
+    files.extend(source_scan::rust_files(&tests.join("http_mock_resources")));
 
     let mut timed = 0;
     let mut problems = Vec::new();

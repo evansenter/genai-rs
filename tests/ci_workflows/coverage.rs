@@ -3,12 +3,13 @@
 //! alone, and fails under a floor that nothing skips or ignores (#504,
 //! D-058).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
 use super::{command_lines, failure_escapes, jobs, read, root, steps};
+use crate::source_scan;
 
 /// The Code Coverage job of `workflow`, and its steps.
 fn coverage_job(workflow: &str) -> (String, Vec<String>) {
@@ -113,120 +114,19 @@ fn test_build_only(predicate: &str) -> bool {
 }
 
 /// Every file module of the crate rooted at `lib`, as `(path relative to
-/// the repository, whether only a test build compiles it)`. A module is
-/// test-only when its declaration, or an inline module around it, is under
-/// a `cfg` that holds in a test build alone, or when a test-only module
-/// declares it. Paths resolve as rustc resolves them: a `#[path]`
-/// attribute's file beside the declaring file, else `name.rs` or
-/// `name/mod.rs` in the declaring file's own directory (a crate root, a
-/// `mod.rs` or a `#[path]` file) or its `<stem>/` subdirectory; inside an
-/// inline module `m`, both in that directory's `m/`.
+/// the repository, whether only a test build compiles it)`, from the shared
+/// module walk (`source_scan::module_files`). A module is test-only when a
+/// `cfg` on the way to it, on its declaration, an inline module around it
+/// or a module that declares it, holds in a test build alone.
 fn crate_files(lib: &Path) -> Vec<(String, bool)> {
-    struct Found {
-        file: PathBuf,
-        test_only: bool,
-        owns_dir: bool,
-    }
-    fn declared(
-        items: &[syn::Item],
-        dir: &Path,
-        path_dir: &Path,
-        test_only: bool,
-        out: &mut Vec<Found>,
-    ) {
-        for item in items {
-            let syn::Item::Mod(module) = item else {
-                continue;
-            };
-            let mut gated = test_only;
-            let mut path = None;
-            for attr in &module.attrs {
-                if attr.path().is_ident("cfg") {
-                    let predicate = attr
-                        .meta
-                        .require_list()
-                        .map(|list| list.tokens.to_string())
-                        .unwrap_or_default();
-                    gated |= test_build_only(&predicate);
-                } else if attr.path().is_ident("path")
-                    && let syn::Meta::NameValue(value) = &attr.meta
-                    && let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(text),
-                        ..
-                    }) = &value.value
-                {
-                    path = Some(text.value());
-                }
-            }
-            let name = module.ident.to_string();
-            match &module.content {
-                // An inline module's file modules resolve in its directory.
-                Some((_, inner)) => {
-                    let inner_dir = dir.join(&name);
-                    declared(inner, &inner_dir, &inner_dir, gated, out);
-                }
-                None => {
-                    let (file, owns_dir) = match path {
-                        Some(path) => (path_dir.join(path), true),
-                        None if dir.join(format!("{name}.rs")).exists() => {
-                            (dir.join(format!("{name}.rs")), false)
-                        }
-                        None => (dir.join(&name).join("mod.rs"), true),
-                    };
-                    out.push(Found {
-                        file,
-                        test_only: gated,
-                        owns_dir,
-                    });
-                }
-            }
-        }
-    }
-
-    let mut files = vec![Found {
-        file: lib.to_path_buf(),
-        test_only: false,
-        owns_dir: true,
-    }];
-    let mut next = 0;
-    while next < files.len() {
-        let (file, test_only) = (files[next].file.clone(), files[next].test_only);
-        let owns_dir = files[next].owns_dir;
-        next += 1;
-        let parsed = syn::parse_file(&read(&file))
-            .unwrap_or_else(|e| panic!("cannot parse {}: {e}", file.display()));
-        let dir = file.parent().expect("a file has a directory");
-        let own_dir = if owns_dir {
-            dir.to_path_buf()
-        } else {
-            dir.join(file.file_stem().expect("a file has a stem"))
-        };
-        let mut found = Vec::new();
-        declared(&parsed.items, &own_dir, dir, test_only, &mut found);
-        for module in found {
-            assert!(
-                module.file.exists(),
-                "{} declares a module in {}, which does not exist",
-                file.display(),
-                module.file.display()
-            );
-            if !files.iter().any(|known| known.file == module.file) {
-                files.push(module);
-            }
-        }
-    }
-    files
+    source_scan::module_files(lib)
         .into_iter()
-        .map(|found| {
-            let relative = found
-                .file
-                .strip_prefix(root())
-                .unwrap_or(&found.file)
-                .components()
-                .map(|part| part.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join("/");
-            (relative, found.test_only)
+        .map(|module| {
+            let test_only = module
+                .cfgs
+                .iter()
+                .any(|predicate| test_build_only(predicate));
+            (source_scan::repo_relative(&module.path), test_only)
         })
         .collect()
 }
