@@ -84,7 +84,7 @@ clean exit means it worked. A cheap subset is smoke-run in CI
 
 | Example | Shows |
 |---------|-------|
-| `deep_research` | `DEFAULT_DEEP_RESEARCH_AGENT` in the background, polling with backoff, `interactions().cancel()` when the wait budget runs out |
+| `deep_research` | `DEFAULT_DEEP_RESEARCH_AGENT` in the background, polled with capped backoff that rides out transient errors and honors `Retry-After`, `interactions().cancel()` when the wait budget runs out |
 | `webhooks_and_background` | Webhook CRUD / ping / secret rotation, per-request `webhook_config`, environments CRUD, `triggers().list()`. Without a key it prints the request shapes instead. |
 
 ## Applications

@@ -193,7 +193,7 @@ from here rather than repeated.
   3.0.0's list) and a real legacy `.doc` (an OLE2 Word file) were read back
   on 2026-11-07. `.xls` and `.ppt` passed the MIME check only with
   plain-text bytes (2026-11-05), so parsing a real one is unverified
-  (#530).
+  (tracked in #530).
   Since 2026-11-04 `text/plain` and `text/markdown` are a 400 (#514), as
   is every other type tried (`text/html`, `application/json`,
   `application/xml`, `application/rtf`): `Unsupported mime_type '...' in
@@ -679,7 +679,7 @@ two Files entries below listed in its `ALLOWED`.
 | `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files; a non-empty output read the same through the stored `GET` and arrived whole in one stream delta. Generated files come in the next `model_output` step. The list form is accepted back in history, but its content does not reach the model. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
 | `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text, .. }`, built with `TranscriptionMode::smart(..)` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
 | `gemini-3.5-transcribe` in the `Model` literal | `DEFAULT_TRANSCRIPTION_MODEL` | The model on which `transcription_config` takes effect, and on which `word_info` annotations were first seen. See Models above |
-| `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); the coverage oracle holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back; real `.xls` and `.ppt` files are unverified (#530). See Requests above |
+| `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); the coverage oracle holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back; real `.xls` and `.ppt` files are unverified (tracked in #530). See Requests above |
 
 ### Deliberately not modeled
 

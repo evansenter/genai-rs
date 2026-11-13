@@ -5,6 +5,11 @@
 //! a webhook, see `webhooks_and_background`). If the wait exceeds your budget,
 //! `interactions().cancel(id)` stops the agent so it stops consuming tokens.
 //!
+//! The poll is the one in `docs/AGENTS_AND_BACKGROUND.md` ("Polling"): a
+//! transient failure (a dropped connection, a 429, a 503) does not end it,
+//! each status request gets only the time left, and the wait is the backoff
+//! or the server's `Retry-After`, whichever is longer.
+//!
 //! Research takes minutes. Set `DEEP_RESEARCH_MAX_WAIT_SECS` (default 900)
 //! to change the budget; a small value exercises the cancel path.
 //!
@@ -21,8 +26,11 @@ use genai_rs::{
 };
 use std::env;
 use std::error::Error;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::{Instant, sleep, timeout};
 
+/// The longest wait between status requests, unless the server asks for
+/// more.
 const MAX_POLL_DELAY: Duration = Duration::from_secs(15);
 
 #[tokio::main]
@@ -53,7 +61,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         started.status
     );
 
-    match poll(&client, started, max_wait).await? {
+    match poll(&client, &id, max_wait).await? {
         Some(report) => {
             let summaries = report.thought_summaries().len();
             println!(
@@ -73,31 +81,55 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Polls with exponential backoff. `Ok(None)` means the budget ran out.
+/// Polls `id` with exponential backoff until it ends. `Ok(None)` means the
+/// budget ran out first.
 async fn poll(
     client: &Client,
-    mut response: InteractionResponse,
+    id: &str,
     max_wait: Duration,
 ) -> Result<Option<InteractionResponse>, Box<dyn Error>> {
-    let id = response.id.clone().ok_or("interaction has no ID")?;
     let start = Instant::now();
+    let deadline = start
+        .checked_add(max_wait)
+        .ok_or("DEEP_RESEARCH_MAX_WAIT_SECS is too large")?;
     let mut delay = Duration::from_secs(2);
     loop {
-        match response.status {
-            InteractionStatus::Completed => return Ok(Some(response)),
-            InteractionStatus::Failed | InteractionStatus::Cancelled => {
-                return Err(format!("research ended with status {:?}", response.status).into());
+        let mut wait = delay;
+        // Each request gets only the time left, so a stalled connection
+        // can't hold the poll past its budget.
+        let left = deadline.saturating_duration_since(Instant::now());
+        match timeout(left, client.interactions().get(id)).await {
+            Err(_) => return Ok(None),
+            Ok(Ok(response)) => {
+                println!("  {:>4}s  {:?}", start.elapsed().as_secs(), response.status);
+                match response.status {
+                    InteractionStatus::Completed => return Ok(Some(response)),
+                    InteractionStatus::Failed
+                    | InteractionStatus::Cancelled
+                    | InteractionStatus::Incomplete
+                    | InteractionStatus::BudgetExceeded => {
+                        return Err(format!("research ended as {:?}", response.status).into());
+                    }
+                    // InProgress, and any status this crate doesn't know
+                    // yet: keep polling, bounded by the budget below.
+                    _ => {}
+                }
             }
-            // InProgress, and any status this crate doesn't know yet: keep
-            // polling, bounded by the budget below.
-            _ => {}
+            // A transient failure does not end the run: poll on, waiting at
+            // least as long as the server asked.
+            Ok(Err(e)) if e.is_retryable() => {
+                println!("  {:>4}s  {e}; polling on", start.elapsed().as_secs());
+                wait = e.retry_after().map_or(delay, |asked| asked.max(delay));
+            }
+            Ok(Err(e)) => return Err(e.into()),
         }
-        if start.elapsed() + delay > max_wait {
+        // Give up now rather than sleep into the deadline. (Comparing
+        // durations, not `Instant::now() + wait`, which panics on a
+        // Retry-After too large to add.)
+        if wait >= deadline.saturating_duration_since(Instant::now()) {
             return Ok(None);
         }
-        tokio::time::sleep(delay).await;
+        sleep(wait).await;
         delay = (delay * 2).min(MAX_POLL_DELAY);
-        response = client.interactions().get(&id).await?;
-        println!("  {:>4}s  {:?}", start.elapsed().as_secs(), response.status);
     }
 }
