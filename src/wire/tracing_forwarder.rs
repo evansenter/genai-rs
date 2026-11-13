@@ -23,8 +23,9 @@ impl TracingForwarder {
     }
 }
 
-/// Renders a JSON body for tracing output with the same redaction and
-/// truncation guarantees as [`LoudWirePrinter`](super::LoudWirePrinter) (secret fields replaced,
+/// Renders a JSON body or a harness message for tracing output with the
+/// same redaction and truncation guarantees as
+/// [`LoudWirePrinter`](super::LoudWirePrinter) (secret fields replaced,
 /// long base64 fields truncated).
 fn redacted_body_string(body: &serde_json::Value) -> String {
     let mut value = body.clone();
@@ -158,7 +159,7 @@ impl WireInspector for TracingForwarder {
                     Level::DEBUG,
                     kind = "ws_send",
                     id,
-                    payload = %payload,
+                    payload = %redacted_body_string(payload),
                     "wire ws send"
                 );
             }
@@ -168,7 +169,7 @@ impl WireInspector for TracingForwarder {
                     Level::DEBUG,
                     kind = "ws_receive",
                     id,
-                    payload = %payload,
+                    payload = %redacted_body_string(payload),
                     "wire ws receive"
                 );
             }

@@ -60,7 +60,8 @@ let interaction_id = response.id.expect("stored interaction has an id");
 
 Runs take minutes, and the duration varies widely with the question. Get the
 result through [webhooks](#webhooks) or [polling](#polling), not a long
-request timeout. `examples/deep_research.rs` is runnable.
+request timeout. `examples/deep_research.rs` runs the [polling](#polling)
+loop below, and cancels the run when its budget runs out.
 
 ## Custom agents (`/v1beta/agents`)
 
@@ -319,7 +320,7 @@ let params = CreateTriggerRequest::new("0 9 * * 1-5", "America/Los_Angeles", int
 let trigger = client.triggers().create(&params).await?;
 
 let id = trigger.id.clone().expect("created trigger has an id");
-let execution = client.triggers().run(&id).await?; // fire now
+let execution = client.triggers().run(&id).await?; // fire now, wait for the run
 let recent = client.triggers().list_executions(&id).with_page_size(10).send().await?;
 let all: Vec<TriggerExecution> = client.triggers().list_executions(&id).items().try_collect().await?;
 client.triggers().update(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused)).await?;
@@ -334,10 +335,13 @@ a base agent like `DEFAULT_ANTIGRAVITY_AGENT` itself) and must not set
 `store`; the API rejects both a model-only request and `store`.
 `TriggerUpdate` omits unset fields from the PATCH body, and the server applies
 exactly those fields; only `display_name` and `status` are updatable. `run`
-fires asynchronously and the API returns `{}`, so the `TriggerExecution` it
-returns is empty: find the firing with `list_executions`, whose entries carry
-the status and the fired interaction's ID. `list_executions` on a trigger ID
-that does not exist returns an empty list, not a 404. The dated record of
+returns once the run has ended: the API holds the request until then, up to
+the trigger's `execution_timeout_seconds` (at most 600), and answers with the
+`TriggerExecution`, whose `status` says how the run ended and, for a
+completed run, whose `interaction_id` names what it stored. A client timeout
+shorter than the run ends the call, not the run; `list_executions` lists
+every firing, one still in progress included. `list_executions` on a trigger
+ID that does not exist returns an empty list, not a 404. The dated record of
 these rules is under [Triggers](INTERACTIONS_API_GAP.md#triggers) in the
 gap tracker.
 
@@ -491,7 +495,9 @@ async fn poll_until_done(
 }
 ```
 
-The crate's own `wait_until_active` polls a file or document the same way
+`examples/deep_research.rs` runs this loop, returning `None` rather than
+an error at the deadline so it can cancel the run. The crate's own
+`wait_until_active` polls a file or document the same way
 ([Reliability](RELIABILITY.md#waiting-for-a-file-or-document)).
 
 | Status | Meaning |

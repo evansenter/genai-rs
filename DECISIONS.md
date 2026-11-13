@@ -36,7 +36,7 @@ costs three helper methods (`is_unknown`, `unknown_<context>_type`,
 `unknown_data`) and a round-trip test. In exchange, an API addition is a
 `warn!` rather than an outage.
 
-Unknown *fields* on a known variant were dropped until #491 (2026-11-04):
+Unknown *fields* on a known variant were dropped before #491 (2026-11-04):
 the hand-written `Step`, `StepDelta`, `Content` and `Annotation`
 deserializers read only what they modeled. Each known variant now keeps the
 rest in an `extra` map, so "round-trips intact" covers fields as well as
@@ -772,6 +772,13 @@ before 2026-11-05 point at the old layout. `tracing` events from moved code
 log under the new module path (`genai_rs::antigravity::policies`), which an
 `antigravity` prefix filter still selects.
 
+**Amended 2026-11-13 (Wave J merge).** `builder/mod.rs` went over D-014's
+800 lines when three Wave J packages each grew it. The workspace setters
+(`with_workspace`, `add_workspace`, `with_workspace_announcement`,
+`with_workspace_containment`) and the two readers `validate.rs` and
+`wire.rs` call (`announce_workspaces`, `contains_workspaces`) moved, as
+they were, to `builder/workspaces.rs`. The public paths are unchanged.
+
 ---
 
 ## D-022 — Antigravity policies are evaluated client-side; the auto policy runs in the harness (2026-11-05)
@@ -1268,8 +1275,11 @@ its reason in the guard:
   `EnvironmentSpec::Id`. `EnvironmentSpec::Remote` reads the whole object
   into `RemoteEnvironment`, which keeps its `extra`; nothing wraps it.
   `NetworkConfig::AllowlistDisabled`
-  is read only when `allowlist` is the object's one key; with another key
-  beside it the object is kept whole as `NetworkConfig::Unknown`.
+  is read only when `allowlist` is the object's one key. With another key
+  beside it, `{"allowlist": "disabled"}` is kept whole as
+  `NetworkConfig::Unknown`, and the echo `{"allowlist": [{"mode":
+  "disabled"}]}` reads as `NetworkConfig::Allowlist`, its domain-less entry
+  (`mode` in the entry's `extra`) written back as read (amended below).
 - The untagged unions with no `Unknown` variant, whose arms keep what they
   do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
   `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
@@ -1289,7 +1299,7 @@ its reason in the guard:
 list above: each keeps the SSE event's keys it does not read in an `extra`
 map (D-054), and the guard no longer exempts them.
 
-*Amended 2026-11-09 (I-11).* `AutoFunctionStreamChunk::Delta` left the
+*Amended 2026-11-09 (#504, I-11).* `AutoFunctionStreamChunk::Delta` left the
 list above too: it is `Delta { delta, extra }`, with the `step.delta`
 event's `extra` (D-054), and the auto-function stream passes on an event of
 a type the crate does not know as `AutoFunctionStreamChunk::Unknown`, where
@@ -1304,11 +1314,20 @@ on, nor are the round's `interaction.created`, `status_update`,
 `step.start` and `step.stop` events, which the loop reads without yielding.
 Those reach `execute_stream()` only. That line is scope, not principle:
 the completed event's map is empty on every event the API sends today, as
-`step.delta`'s is, and `Delta` carries its own because I-11 named it.
+`step.delta`'s is, and `Delta` carries its own because #504's I-11 named it.
 Carrying the completed event's would make `ExecutingFunctions` and
 `Complete(response)`, the pattern every auto-function caller writes for the
 stream's last chunk, take an `extra` too: two more breaking changes,
 left for the owner to ask for.
+
+*Amended 2026-11-10 (#504, round-trip audit).* The list above said a key beside the disabled
+echo kept the object whole as `NetworkConfig::Unknown`. The code reads the
+echo's list form as `NetworkConfig::Allowlist` then, and wrote its
+domain-less `{"mode": "disabled"}` entry back with a `"domain": ""` it never
+had. `AllowlistEntry` no longer writes an empty `domain` (the API requires
+one on send either way), so the entry goes back as it came; the list above
+now says what the code does. Only the string form, `{"allowlist":
+"disabled"}`, is kept whole beside another key.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -1722,7 +1741,7 @@ open, with its streak, until each is fixed. A Windows-only timing flake
 that failed on both Windows legs in one run would also be labelled
 deterministic; its failure count tells a one-off from a break.
 
-**Amended 2026-11-09 (I-14).** A chronic share now also counts a run in
+**Amended 2026-11-09 (#504, I-14).** A chronic share now also counts a run in
 which the test retried a model-side flake inside itself, which a
 `TRANSIENT_RETRIED` marker shows: D-052's amendment of the same date has
 the rule and its reasons. The 1% rate is unchanged.
@@ -1852,13 +1871,19 @@ its major version part of genai-rs's; a caller who needs it downcasts.
 `WebSocket { message, source }`. A `tokio-tungstenite` upgrade changes
 what a downcast finds, not genai-rs's API.
 
-*Amended 2026-11-09 (I-6).* `Display` no longer carries the cause's
+*Amended 2026-11-09 (#504, I-6).* `Display` no longer carries the cause's
 text: an error whose `source()` returns the cause leaves it to the chain,
 so a reporter that walks `source()` (anyhow, eyre, a `while let` loop)
 prints it once, not twice. A caller that prints only the top error now
 sees what was being done, not why; walk the chain for that. The connect
 failure `spawn()` reports as `InitFailed` keeps this error as its source
 (D-062).
+
+**Amended 2026-11-10 (#554).** The precedent the decision cited follows
+it: `GenaiError::ClientBuild`'s `Display` is `Failed to build HTTP
+client` alone, and a `StreamInterrupted` cut off by the transport says
+`the connection failed mid-body` and leaves the `reqwest::Error`'s text to
+`source()`. Neither variant's shape changes.
 
 ---
 
@@ -1895,6 +1920,19 @@ version-checked as any other: the check reads the wheel metadata beside
 the binary, not the interpreter. The `py` launcher is not tried; it needs
 its own arguments (`py -3`), and `ANTIGRAVITY_HARNESS_PATH` covers an
 install found neither way.
+
+*Amended 2026-11-10 (#557).* The `py` launcher is tried too, after
+`python`, which replaces the sentence above: python.org installs it even
+when `python` is not on `PATH`, so a wheel installed through it was found
+by neither name. An interpreter is now a program and the arguments it
+takes before `-c`, so `python_interpreters(true)` is `python3`, `python`,
+`py -3`: the launcher reads its version flag before the script, and `-3`
+picks its latest Python 3. It is started last, only when the two before it
+gave no site-packages holding the harness, with the same discovery
+timeout, and a harness it finds is version-checked from the wheel
+metadata as any other. Off Windows the list stays `python3` alone. A test
+on every OS checks the order and the arguments, and stand-in interpreters
+on Unix check that the arguments go before the script.
 
 ---
 
@@ -1942,7 +1980,7 @@ wording. A sentence that could be read either way is reworded to say
 which it is, as those two now do. Still no check: telling the two apart
 means reading what the sentence claims.
 
-**Amended 2026-11-09 (I-19).** A narrow check exists now, one that reads
+**Amended 2026-11-09 (#504, I-19).** A narrow check exists now, one that reads
 wording rather than claims. The daily api-surface-sweep runs
 `.github/scripts/check_issue_pointers.sh`: it finds the pointer phrasings
 above ("tracked in #N", or by, on or at; "see #N for"; "until #N"), on one
@@ -1957,6 +1995,24 @@ any other way, which a reviewer still catches, and it does not match a
 bare "#N item M", the form this decision also gives a provenance tag. It
 runs daily, not in `make test-scripts` or on a PR: an issue closed
 elsewhere would turn an unrelated PR red.
+
+**Amended 2026-11-10 (#504, J-8).** A pointer must use one of the
+phrasings the check reads: "tracked in #N" (or by, on or at, and "tracked
+in #N item M" for an item), "see #N for" or "until #N". The check then
+sees every pointer that follows the rule. It saw one of the seven live
+pointers. Five ("unverified (#530)" twice, "That is unverified on Windows
+(#536)", "A background consumer (#535) would" and "a server bug, #473,
+not reproduced") said the issue holds pending work but were worded as
+provenance tags, so nothing would have flagged them when their issues
+closed; each now reads "tracked in #N". The seventh, D-039's pointer to
+#539, sat in a file the check skipped. `DECISIONS.md` is read now: a
+decision's pointer goes stale like any other, and a stale one is fixed by
+an amendment. Its one provenance tag worded like a pointer, D-001's on
+#491 (fields "dropped until" it), now says "before". `CHANGELOG.md` is
+still not read: a released section is not edited, so it holds no
+pointer. A bare `(#N)` or "#N item M" stays a provenance tag, as above.
+`--print` lists every pointer it finds with its issue's state, open ones
+included, so a local run shows what the check sees.
 
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
@@ -2035,7 +2091,7 @@ the last attempt as it came. As in the `400` form, a failure that names
 the case that met it most, is fixed at its cause (it resends the tool);
 the retry is for the broken call a model makes now and then anywhere.
 
-**Amended 2026-11-09 (I-14).** The retry stays, and the flakiness report
+**Amended 2026-11-09 (#504, I-14).** The retry stays, and the flakiness report
 now sees it. Before #545, nextest retried a broken tool call and the
 report counted it; in the week before the fix, the `400` form was retried
 inside the test in 16 jobs, where the report could not see it, so the
@@ -2172,7 +2228,7 @@ auto-function stream passes on no chunk's `extra` (D-034's
 `AutoFunctionStreamChunk` bullet), so an envelope key reaches only a
 caller of `execute_stream()`.
 
-*Amended 2026-11-09 (I-11).* The auto-function stream passes on a delta's
+*Amended 2026-11-09 (#504, I-11).* The auto-function stream passes on a delta's
 `extra`: `AutoFunctionStreamChunk::Delta { delta, extra }`, whose
 `{chunk_type, data}` form writes and reads it as `StreamChunk`'s does. An
 unknown event is passed on as `AutoFunctionStreamChunk::Unknown`, which
@@ -2251,9 +2307,17 @@ of 800 lines, changes on three lines and grows by none: the two
 carries the parse error's text in `message`, so a printed error still
 says what failed.
 
-*Amended 2026-11-09 (I-6).* `Protocol`'s and `Io`'s `Display` no longer
+*Amended 2026-11-09 (#504, I-6).* `Protocol`'s and `Io`'s `Display` no longer
 carry the source's text, as D-049's amendment gives for `WebSocket`:
 `message` says what was being done, and `source()` says why.
+
+*Amended 2026-11-10 (#504, J-10).* `HandshakeFailed` formatted its `io::Error`
+into `message`. It gets `InitFailed`'s
+`source: Option<Box<dyn Error + Send + Sync>>` (D-062): the I/O error of a
+binary that would not start or of the handshake exchange, or the error
+decoding the reply. A handshake with no reply in time has none. Breaking,
+with a CHANGELOG migration: a pattern listing `{ message, stderr }` adds
+`..`.
 
 ---
 
@@ -2323,7 +2387,7 @@ required is the owner's call. The job takes a few minutes longer for the
 antigravity build and the scripted suite. A release can wait on its push
 run, and a red leg there stops it before anything is published.
 
-**Amended 2026-11-09 (I-13, I-15, I-16).** The #504 grade of 2026-11-08
+**Amended 2026-11-09 (#504, I-13, I-15, I-16).** The #504 grade of 2026-11-08
 found two guard holes, a release gate that let any job be skipped, a
 coverage figure diluted by test code, and macOS process-tree tests that no
 PR ran.
@@ -2371,6 +2435,72 @@ PR ran.
   fuzz, rather than a `paths:` filter, which would stop every `rust.yml`
   job; `rust.yml` is in the filter so that a change to the job runs it.
   It is not a required check, and on a push it is skipped by design.
+
+**Amended 2026-11-10 (#504, J-4, J-14).** The #504 grade of 2026-11-09 found
+that "nothing skips the floor or ignores its failure" did not hold: the
+guard read the YAML keys alone, and seven edits passed all 60 ci_coverage
+tests: `--fail-under-lines 93 || true` (M3), `|| true` on the release gate
+(R1) and on the required scripted harness step (M9), `set -e` without
+`pipefail` in the live integration and harness steps (M4b, M4c), where
+`nextest | tee` has tee's status, `continue-on-error: true` on a live
+integration step (M8), and a skip budget of 300 (M5). Each now fails one.
+- `failure_escapes` also rejects a job-level `needs:` (a job is skipped
+  with one it needs), a `defaults:` on the job or the workflow (a shell
+  template such as `true {0}` runs no script at all), a step `shell:`
+  other than `bash`, `BASH_ENV`, `SHELLOPTS` or `BASHOPTS` anywhere in the
+  workflow, and the shell-level masks it knows in the step's script
+  (`tests/ci_workflows/shell.rs`). A one-line script is one command, with
+  no shell operator; a longer one starts with `set -euo pipefail`. The
+  only `||` handlers allowed are `rc=$?` when the script ends with
+  `exit "$rc"` (or lists a failure from it), a failure-list entry when it
+  ends by exiting 1 on a non-empty list, and `exit`; `|| true`, `|| :`,
+  `|| echo` and `|| [ .. ]` are among those rejected. Every `exit` has a
+  literal status from 1 to 255, but `exit "$rc"` as the last line and a
+  bare `exit` after `||`, so `exit 0`, `exit "0"`, `exit 00` and
+  `exit $((0))` fail. `rc`, `failed` and `skips` are set only in the
+  forms the steps use, `rc` is not read after `rc=0` with no capture
+  since, and the failure list is not emptied once filled. Also rejected:
+  a `true` or `:` command (`; true`), `set +e`, `set +o pipefail` or a
+  `shopt` of either, a `trap`, a background `&`, a `!`, a `&&` list, a
+  command as an `if` or loop condition, a condition that reads no
+  variable, a command substitution anywhere but the value of a plain
+  assignment, an `exec`, `eval`, `source` or `bash -c`, a function, and
+  arithmetic (`let`, `(( ))`). The one `|| true` allowed is
+  `$(grep -c .. || true)`, a count whose exit status 1 means zero.
+- The floor step runs `cargo llvm-cov report --workspace
+  --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
+  nothing else, and the coverage runs before it are held to the same
+  escapes, so a failing test fails the job rather than leaving a figure.
+- Every live nextest step (rust.yml's integration groups and harness step,
+  release.yml's two) is held to them too. The only `if:` allowed, on the
+  step or its job, is the fork and owner gate, and the only `needs:` is
+  `needs: check`. The four steps now start with `set -euo pipefail`, which
+  every step that pipes nextest, in any workflow, must.
+- Each skip budget is pinned with its reason (`SKIP_BUDGETS` in
+  `tests/ci_workflows/mod.rs`): 3 for each integration binary and both
+  harness steps, 10 for `release.yml`'s whole-workspace run. A budget
+  raised, one not written as a bare number (`-gt "300"`), a live step
+  without a pin, or a pin without a step fails, as does a count of the
+  markers made twice or read from a log other than the one the step's
+  nextest run tees.
+- The scripted harness step in `test-antigravity`, part of the required
+  Test Suite (antigravity) check, runs with the key blanked and has no
+  escape.
+- `process-tree-macos` also runs its tests when a PR changes `Cargo.toml`,
+  `Cargo.lock` or a `rust-toolchain*` file: a dependency (`libc`,
+  `tokio`) or toolchain change can break the libproc path as surely as
+  the code can, and it was first seen on main's push run.
+
+The guard reads the workflow as text, against the forms it names. It
+catches the ways a step is known, or likely, to be weakened, not every
+way a script can compute its status: a condition that reads a variable
+but never holds, a loop over an empty list, a status variable set by a
+command it does not read, or an environment variable that changes how
+bash runs, set by a name built at run time, could still pass a failure.
+A review of the first version found spellings it let through, among
+them `|| exit "0"`, `|| [ -s log ]`, an `rc=0` before `exit "$rc"`, a
+workflow-level `defaults:`, `shopt -u -o pipefail`, `bash -c` and a budget
+written `-gt "300"`; each is now a case in the mutation tests.
 
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
@@ -2496,10 +2626,50 @@ flags it: the watch sees the spec change, not behavior, so a later probe
 has to. The spec also wraps webhook update's and trigger update's bodies;
 those wrappers were not probed.
 
+**Amended 2026-11-13 (#504, J-1).** The first bullet claimed more than the
+snapshot kept. It held each query parameter's name and required flag and
+each request body's schema, not "parameters": a served v1beta with a
+required header added to webhook create, the voices `gender` parameter
+retyped from an array of strings to a string enum, and webhook get's
+response pointed at `Agent` reduced to the committed bytes (#504's
+2026-11-09 grade), so the watch would have stayed green.
+`snapshot_openapi.py` now keeps, for each operation, its path, query and
+header parameters (and a cookie one, should the spec give one), each with
+its required flag, its schema and any other non-prose key (`style`,
+`explode`); its request body, with whether it is required and its schema
+by content type; and its responses by status, each with its schema by
+content type and its headers. Both snapshots were refreshed with it, so
+the watch now flags a served spec in which a parameter is added, removed,
+made required or optional, or retyped, wherever it goes, a request body
+changes or is made optional, or a response changes.
+`test_snapshot_openapi.sh` pins each of the three mutations above, and a
+path parameter retyped, made optional or given an enum behind its
+reference, and a body made optional. It still drops the prose, each
+operation's other keys (`operationId`, `tags`, `deprecated`, the
+`x-speakeasy-*` extensions), and a component no operation names. The
+query test also holds the spec's header parameters to what the verbs send
+(`spec_header_findings` in `tests/request_wire_oracle/spec_query.rs`): a
+header a request to its endpoint goes without, or one sent with a value
+the spec's `const` or `enum` does not allow (followed through a `$ref`,
+`allOf`, `oneOf` or `anyOf`), is a finding until `SPEC_HEADERS` gives the
+reason for that copy. The four the spec gives today, all on the
+environment-file upload's start request, are sent as it fixes them, so
+the list is empty. What is still only watched, not diffed against the
+crate: a parameter's schema (the bindings record query names only, and a
+path parameter is matched by its position), a request body's required
+flag, a response's schema reference against the type the verb returns
+(the response oracle maps crate types to spec schemas, not to
+operations), and a request body against the binding class the crate sends
+(D-040); that diff is tracked in #558. The two update wrappers (#550)
+were probed on 2026-11-13: both are a `400 Unknown parameter`, with or
+without `id` and `update_mask`, and the flat bodies the crate sends apply
+(`docs/INTERACTIONS_API_GAP.md`, "Spec-only query parameters"), so the
+crate is unchanged (D-005).
+
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
 **Context.** #504's 2026-11-08 grade found three holes in the request side
-of the coverage oracle (I-2 to I-4). A value the oracle built through a
+of the coverage oracle (#504, I-2 to I-4). A value the oracle built through a
 constructor escaped the full-literal scan: a field added to
 `CustomMetadata` and left to `Default` by `CustomMetadata::string` passed
 every test. Values added to an enumeration only a request reaches
@@ -2624,6 +2794,48 @@ caller that printed only the top error of a `WebSocket`, `Protocol`,
 session-ending claim is the 0.1.23 harness's; a harness bump that keeps
 a session after one of these shows up as a failing scripted test.
 
+**Amended 2026-11-10 (PR #548 review, #556).** The backend failure a turn
+remembers is the main trajectory's, and only until a later model step or
+error step of that trajectory follows it (a later system step that is
+neither does not count: after a delegation, 0.1.23 can follow a 503 with
+no retries left with a done system step, its message to the model that
+the subagent went idle, before going idle). Harness
+0.1.23 reports a 503 it is about to retry with the same system error step
+as one with no retries left, the retry following as the next step, a
+model step, so "any other status is remembered" made a turn that
+recovered from a retried 503 and then failed on its own (an unusable
+model output with no output retries left) a
+`ModelBackend { status: 503 }`; a subagent's failed call, whose error is
+not the turn's, did the same. For the same reason the `AgentEvent::Error`
+of a 5xx step stays `Transient`: the step arrives before the harness has
+retried or given up, and only its text tells the two apart. Rejected:
+reading that text ("Encountered retryable error from model provider").
+A step without a step index neither records a failure nor clears one,
+since its place in the trajectory is unknown (PR #560 review; 0.1.23
+always sends one). The unit tests feed each sequence;
+`test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`
+runs the harness's.
+
+*Amended 2026-11-10 (#504, J-10).* The wait for the session-start hook is part
+of `spawn()`'s start-up as the initialization is. With `on_session_start`
+set, a read that failed, or a message whose handling failed (the hook's
+answer included), reached the caller as the bare `WebSocket`, `Protocol`
+or `Turn` error with no stderr, and a hook that overran the budget as
+`Timeout`, against `WebSocket`'s rustdoc, which promised `InitFailed` for
+a read or send that fails during `spawn()`. Each is now `InitFailed` with
+the stderr tail, the error that caused it as its source, and an overrun
+with none, as the initialization's own timeouts have none. So every
+failure of `spawn()` after the handshake is `InitFailed`. Rejected:
+keeping `Timeout` for an overrun, on the ground that the caller's hook
+rather than the harness is slow there. `spawn()` would then have one more
+variant for a start-up that failed, and the overrun would lose the stderr
+beside it. Unit tests on a stand-in peer cover each failure of
+`agent/session_lifecycle.rs`. The "every later call" refused after a
+session-ending failure, above, is each call that starts or waits for a
+turn (`chat`, `send_streaming`, `next_trigger_turn`), as
+`ConnectionClosed`'s rustdoc now names them; `cancel()` and `shutdown()`
+do not check.
+
 ---
 
 ## D-063 — A harness path the caller names is used as given (2026-11-09)
@@ -2688,6 +2900,35 @@ written alongside D-067's) into `src/redact.rs`, so the crate has one
 `REDACTED` and one map helper; the Antigravity sentinel test stays in
 `src/antigravity/redact_tests.rs`, declared from `antigravity/mod.rs`
 (D-011).
+
+**Amended 2026-11-10 (#504, J-3).** The fold is finished. The crate's
+placeholder is `redact::REDACTED` alone: the wire's walk spells its
+redactions with it (its own `REDACTED_PLACEHOLDER` is gone), and so does
+every `Debug` impl. The session's `redact_for_inspection`, which walked
+an outgoing harness message with a key list of its own (`apiKey`, and
+the values of an `env`, `headers` or `httpHeaders` map), is now the
+wire's walk: `apiKey` joined its `REDACT_FIELDS`, `httpHeaders` its
+`REDACT_VALUES_BENEATH`, and a string directly under an `env` (an MCP
+stdio server's variables) is redacted beside an `env` entry's `value`.
+The keys of a JSON Schema's `properties` map are property names, not
+fields, so the walk reads only their values (PR #560 review): a function
+parameter named `env` or `api_key` printed its own `type` and
+`description` as `[REDACTED]`. A value sent under such a name, a call's
+arguments, is still redacted.
+So the copy of a sent message the session hands its inspectors goes
+through the same list as an Interactions API body, and `LOUD_WIRE`, the
+`TracingForwarder` and `WireEvent`'s `Debug` redact the harness's own keys
+in a message it sends back as in one sent to it (#555 item 2). `LOUD_WIRE`
+and `WireEvent`'s `Debug` already ran a received message through the walk,
+which missed `apiKey`, `httpHeaders` and an `env`'s strings, and the
+forwarder logged it raw. The session still redacts what it sends before
+any inspector sees it, so the harness's API key reaches no inspector, as
+the Gemini key in an HTTP header reaches none. `src/redact.rs` holds the
+helpers: `optional`, `values` for a header or environment map, `json`,
+`raw_json` and `map` through the walk, `keys` and `json_strings`.
+`AgentBuilder`'s `Debug` destructures it too. `tests/redaction_guards.rs`
+fails on a placeholder spelled anywhere else in the library's non-test
+code, a doc comment aside.
 
 ---
 
@@ -2778,6 +3019,34 @@ send bound, a send bounded by a later deadline alone, the close bound and
 a dropped connection, and the scripted `lifecycle.rs` kills the harness
 mid-turn and while `next_trigger_turn` waits.
 
+**Amended 2026-11-10 (#504, J-12, #552).** Two of the bounds above moved to the
+turn deadline.
+- A reply to the harness mid-turn (a hook's answer, a tool result, a
+  question reply, a tool confirmation, a policy decision) goes through
+  `send_before` with the turn's deadline, as the turn's own message does,
+  and fails with the turn's `Timeout`, naming the reply the harness did
+  not take. So a turn whose timeout is longer than 30 s no longer fails at
+  30 s when the harness stops reading mid-turn; a turn with no timeout
+  keeps `SEND_TIMEOUT`. No reason to keep the 30 s cap inside a longer
+  deadline came up: the reply is part of the turn the caller budgeted.
+- The turn's state, and so its deadline, is created before `chat()` and
+  `send_streaming()` take `turn_sync`, which a trigger's delivery holds
+  across its send (up to `SEND_TIMEOUT`). The wait for that lock is
+  bounded by the deadline (`agent turn (the harness did not take a
+  trigger's message)`), and so is the halt-and-drain of an earlier turn,
+  whose five-second budget the deadline cuts short when it comes first;
+  a message whose deadline has passed by then is not sent. So `chat()`
+  can no longer wait about 35 s before its deadline starts.
+  `next_trigger_turn` creates its state, as it documents, at the turn's
+  first event, before it takes the lock. A `with_turn_timeout` too large
+  to add to the clock (`Duration::MAX`) sets no deadline, as
+  `tokio::time::sleep` treats one, where it panicked at the first turn.
+
+Paused-clock tests in `agent_tests.rs` hold a reply's send for 45 s
+inside a two-minute turn and past a one-minute one, hold `turn_sync` past
+a 10 s turn for `chat()` and `send_streaming()`, hold the halt before a
+3 s turn past its deadline, and run a turn with `Duration::MAX`.
+
 ## D-067 — `Debug` redacts the secrets `LOUD_WIRE` redacts, outside unmodeled JSON (2026-11-09)
 
 **Context.** The crate's rule is that a type holding a secret prints it
@@ -2850,6 +3119,48 @@ and the harness options `AgentBuilder`'s `Debug` prints) are the other
 half of I-9 in #504. A new type that holds one of these secrets needs its own
 `Debug` and a row in the sentinel test; nothing finds it by itself.
 
+**Amended 2026-11-10 (#504, J-3, #555 items 1, 2 and 4).** Three limits above
+have moved:
+- Every impl named here, and `Client`'s, `HttpContext`'s,
+  `CredentialConfig`'s, `CredentialUpdate`'s, `Webhook`'s,
+  `RotateSigningSecretResponse`'s and `SigningSecret`'s, which predate
+  the decision and printed a `"[REDACTED]"` literal or read their fields
+  without destructuring, goes through `src/redact.rs` and destructures its
+  type without `..`. `Client` prints its key through `HttpContext`'s
+  `Debug`, and `SigningSecret` its `extra` as keys alone (`redact::keys`).
+- `Tool`'s `Debug` prints each arm's `extra` and an `Unknown` tool's
+  `data` through the wire's walk (`redact::map`, `redact::json`), as
+  `EnvironmentSpec`'s does an `Unknown` environment's (D-071: an
+  environment whose `type` is not a string, which read as remote before,
+  `env` and all), and so does every other impl here that prints an
+  `extra`: `AllowlistEntry`'s,
+  `EnvVar`'s, `RemoteEnvironment`'s (beside the `env` it could not read),
+  `Webhook`'s and `RotateSigningSecretResponse`'s. So a secret there under
+  a name the wire redacts prints redacted. Every other `extra` map and
+  `Unknown` payload still prints as it is, for the reason above: its type
+  derives `Debug`, or, for `InteractionBuilder`, whose `Debug` is
+  hand-written only to skip its tool service, prints it as the derived
+  `Debug` of the `InteractionRequest` it builds does.
+- `tests/redaction_guards.rs` reads the wire's `REDACT_FIELDS`,
+  `REDACT_VALUES_BENEATH` and `ENV_FIELD` from `src/wire/mod.rs` and fails
+  when a type in the library's non-test code derives `Debug` over a field
+  so named (in snake case, or by `#[serde(rename)]`), unless its
+  `NOT_SECRET` list gives the reason the value is not a secret; none
+  needs one today. So a new type holding one of these secrets under a
+  name on those lists is found. The guard does not read the wire's
+  `CONTEXT_REDACT_FIELD` (`value`), which the wire redacts only beside
+  `"type": "environment_variable"` or beneath an `env`, since a field so
+  named anywhere else is no secret: a type holding an environment
+  variable's value as a `value` is found only through a derived `Debug`
+  over the `env` that holds it. Such a type, one holding a secret under
+  another name, and a name added to an impl but not to the wire's lists
+  still need their row in the sentinel test. The guard also fails on a
+  placeholder spelled outside `src/redact.rs`, a doc comment aside.
+
+The wire's walk now holds the Antigravity harness's camelCase keys too
+(D-064's amendment), so `WireEvent`'s `Debug` redacts a harness message
+in either direction.
+
 ## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
 **Context.** #504's final grade found the recursive `.rs` walker written
@@ -2889,7 +3200,7 @@ guards stay: `tests/model_literals.rs` (which also tolerates an unreadable
 entry) and `tests/temp_file_tests.rs`'s scan of `examples/` for media
 constants.
 
-**Amended 2026-11-09 (I-20).** Four holes in `check_dated_facts.sh`
+**Amended 2026-11-09 (#504, I-20).** Four holes in `check_dated_facts.sh`
 passed a scratch copy, though no instance was in the tree:
 - "A module compiled only under such a `cfg`" held only for a file module
   (`mod x;`): a doc block on an inline item under a `cfg` the doctest run
@@ -2919,3 +3230,240 @@ passed a scratch copy, though no instance was in the tree:
 
 The known limits are now a bare expression that ends otherwise, and a
 cross-reference to another row's file outside parentheses.
+
+**Amended 2026-11-10 (#553).** Two of the walkers the Consequences above
+left outside are gone, and a third that Wave I wrote: `tests/model_literals.rs`
+and `tests/temp_file_tests.rs`'s scan of `examples/` walk with
+`rust_files`, so an entry `model_literals` cannot read now fails it rather
+than being skipped, and the coverage oracle's
+`request_values_are_full_literals` (`src/coverage_oracle/request/fills.rs`)
+drops its own `rust_files` and includes this file by `#[path]`, as
+`src/coverage_oracle/mod.rs` includes `tests/api_surface/`. The file also
+holds what reads the library's own source: `is_test_gated` (a test
+attribute, or a `cfg` that cannot hold unless `test` is set, so
+`any(target_os = "linux", test)` is library code), `item_attrs`,
+`test_modules` (the modules a test-gated `mod` declares, and every module
+a test-only file declares in turn, such as `proptest_tests.rs`'s
+`proptest_*.rs`) and `library_sources` (every other `src/` file, parsed,
+with its test-only items removed). `tests/non_exhaustive_responses.rs`
+dropped its own copies of the first three for these; the files it reads
+as library code are now the ones `Cargo.toml`'s `include` ships, the
+`proptest_*.rs` files no longer among them. The oracle's type scan,
+`tests/redaction_guards.rs` (D-067) and `tests/setter_convention.rs` read
+`library_sources`. The last fails on a public `with_*` that pushes,
+inserts, extends or appends onto a collection it reaches through `self`,
+directly or through a name the body binds to a part of it (`if let
+Stdio { env, .. } = &mut self.transport { env.insert(..) }`), or an
+`add_*` that assigns a field of `self` whole, either way; reverting either
+of #504's I-10 renames fails it, and so does renaming any of the
+`add_*` setters that append through such a binding.
+
+**Amended 2026-11-13 (#553, Wave J merge).** The rest of #553 landed
+beside it. `tests/ci_workflows/coverage.rs`'s module walk moved here as
+`module_files` (each file module of a crate, with the `cfg` predicates on
+the way to it, a `#[path]`'s `..` kept as rustc spells it, and
+`lexically_normal` to resolve one), and `tests/ci_coverage.rs`'s
+text-based walk uses it too. `tests/ci_workflows/flakiness.rs` walks with
+`rust_files`, and `tests/reliability_tests/` reads the docs with
+`files_with_extensions`, which `rust_files` now calls. A `cfg` is read
+one way, `cfg_needs`: `is_test_gated` asks it of `test`, and the coverage
+guard of `test` and `fuzzing`, where it had its own reading of the
+predicate's text. Two module resolvers stay. `module_files` walks a crate
+on disk from its root; `test_modules` reads files already parsed, which
+`tests/non_exhaustive_responses.rs`'s own checks feed with made-up trees,
+so a disk walk cannot replace it. Both read the same `cfg`s the same way.
+
+## D-069 — The retry-loop guard follows what reaches the sleep (2026-11-10)
+
+**Context.** #504's J-6 asked `tests/reliability_tests.rs`'s recipe guard
+to require a capped delay, to reject `Instant + Duration` on a value
+derived from `retry_after()` and to require jitter in count-bounded
+loops, across the docs, rustdoc and `examples/`. The same item names the
+poll's wait as `max(retry_after, delay)`, with no cap on the server's
+ask. A first guard matched words (`.min(` anywhere on a line, `rand`
+anywhere in the loop, `+` beside a named variable), and reviews found a
+passing mutation for each.
+
+**Decision.** The guard reads a loop that calls `is_retryable()`,
+`sleep(` or an awaited `.get(` (a `for` over items only through
+`is_retryable()`), follows each sleep's argument back through the
+assignments it is built from, and requires:
+- **A ceiling.** Growth (`*`, `<<`, `.pow(`, `_mul(`, or a value built
+  from itself with `+` or an `add(`) reaches the sleep only through a
+  `.min(` over it. A `retry_after()` needs a `.min(` on its own method
+  chain, unless the loop compares the variable that holds it with the time
+  left: a line that names the variable and a deadline, an `elapsed()` or a
+  value built from one, with a comparison. That is the doc's poll, which
+  gives up when the wait would outlast the budget, so a huge Retry-After
+  ends the poll rather than the sleep.
+- **No overflow.** No `+`, `-` or `*` applies to an uncapped Retry-After:
+  a `retry_after()` call with its receiver and chain, a variable assigned
+  one, or a closure parameter along its chain.
+- **Jitter where a count bounds the loop.** A name that reads as random
+  (`rand`, `RandomState`, `fastrand`, an `rng`) or as jitter reaches each
+  sleep. A deadline poll of one interaction is not required to jitter: no
+  crowd of clients failed with it.
+- **No early exit.** A poll checks `is_retryable()`, and no retry or poll
+  loop awaits a request with `?`; a deadline poll bounds each request with
+  `timeout(`.
+
+Rejected: a `.min(` on the Retry-After in a deadline poll too. J-6 names
+the uncapped `max`, and a cap below the server's ask polls sooner than
+the server said to; the comparison bounds the sleep by the budget
+instead. Rejected for now: reading the loops with `syn`. The lexical
+reading catches every mutation the reviews found, each kept as a test.
+
+**Consequences.** The guard reads code, not a type system. A value that
+passes through a function, a struct field or a shadowed name is not
+followed, and a `.min(` inside a closure on the chain
+(`.map(|a| a.min(MAX))`) reads as no cap; such a recipe is rewritten with
+the `.min(` on the chain. A comparison with the time left that bounds
+nothing still counts.
+
+With these checks `tests/reliability_tests.rs` went over D-014's 2,000-line
+bar, so the recipe checks, the backon one and this guard, moved unchanged
+to `tests/reliability_tests/retry_recipes.rs`, a module of the same test
+binary (D-011).
+
+## D-070 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
+
+**Context.** The 2026-11-10 round-trip audit found values lost on the
+*first* read: a non-string environment `type` read as `"remote"`, a
+domain-less allowlist entry given `"domain": ""`, a non-object harness
+`usageUpdate` dropped, a non-bool `sessionEndResponse` read as `false`.
+The fuzz round trip compared the first read with the second and the second
+with the third, so a loss on the first read, after which every write is
+stable, passed it; and no target reached the resources, the interaction
+response or the harness events. The property tests generated no non-string
+unknown where a `wire_enum!` value sits, and compared steps and content
+only through their writes, so the J-11 class (a non-string unknown written
+as its `<non-string: ...>` type) passed them too.
+
+**Decision.** Three new fuzz targets read what the wire sends:
+`interaction_response`, `resource` (`Agent`, `Trigger`, `Webhook`,
+`Environment`, `EnvironmentSpec` and every list page, each tried on the
+same input) and, behind the `antigravity` feature, `harness_output_event`.
+Each runs the round trip the others do, with the value-level
+normalizations extended to what they hold (an unknown tool's tag, a
+request's `Content` input read back as a `user_input` step, the content of a
+code execution result). A type that promises to write back the JSON it
+read is also checked against its input (`src/fuzzing_wire.rs`): both
+sides in a canonical form (a `null`, `[]` or `{}` member is absent, a whole
+float is its integer, the `f32` fields hold what an `f32` can), the input
+through the type's documented normalizations first. So an empty value lost
+on the first read (a harness `usageUpdate` of `[]`) is not seen by the
+comparison; unit tests hold those.
+
+- **Promise it, and are checked:** `EnvironmentSpec` (normalizing a
+  missing or null `type` to `"remote"`, the `env` the API echoes as a list
+  to the map a request sends, the disabled allowlist echo to its request
+  form, and an empty allowlist `domain`, missing or read as `""`, to
+  none), `Agent`, which `Agents::create` re-sends (its environment as
+  above, an unknown tool's tag merged in, a retrieval tool's backend
+  configs as their types write them, since D-034 keeps no `extra` on
+  those), and the harness's `OutputEvent` (both usage spellings as one
+  `usageUpdate`). Its proto3 JSON is read as its types read it, and only
+  there: an int64 string is its number at the fields read through
+  `flex_num` (a test holds the key list to the protocol's source), and a
+  `toolResponse`'s `id`, a proto3 scalar the type writes as `""` when it
+  was missing, is absent at its default (the target's first run,
+  2026-11-13, found it). Everywhere else a `false`, `0`, `""` or numeric
+  string is kept as it came: a oneof member such as `sessionEndResponse`
+  has presence, and an unknown or `extra` value is JSON kept whole.
+  Reading every member as proto3 does, as the first cut did, hid both
+  harness findings for a falsy input.
+- **Normalize more than the check can follow, and are checked on the value
+  alone:** `Step`, `StepDelta` and `Content`, and so `InteractionResponse`
+  and `Trigger`, which hold them (a missing or non-string `type` becomes
+  `"<missing type>"`; D-071 lists the input's normalization); and the
+  resources and their list pages, which read their int64s, timestamps and
+  list elements leniently, dropping what does not read
+  (`src/serde_util.rs`).
+
+The property tests now draw a string enum's unknown as a string or a
+non-string (`unknown_or`, `<non-string: ...>` with the JSON as data), and
+the properties of every type that holds one (step, delta, content,
+annotation, tool, tool choice, turn content, interaction input and
+response) also compare the value read back with the value written, through
+the same `Normalize` (`assert_first_write_keeps`; generation config's
+compares its values directly): drawing them alone did not catch the class. Reverting #548's fix to the
+code execution language fails them, and so does a tool writing its search
+types through `Display`. An interaction input whose content list holds an
+unknown block reads back as steps, the one arm change the check allows.
+`ToolChoice`'s bare mode stays a string: a non-string one reads back as
+`ToolChoice::Unknown`, typed by its shape, which `Normalize` follows.
+
+**Consequences.** `InteractionResponse` derives `PartialEq`. The fuzz crate
+has an `antigravity` feature, which only its harness target requires
+(`required-features`); the workflow's matrix passes it through
+`include:`, `tests/ci_coverage.rs` checks that it does, and a change under
+`src/antigravity/protocol/` now fuzzes. A type that adds a normalization
+documents it and adds it to its normalizer in `src/fuzzing_wire.rs`, or the
+target fails on it.
+
+## D-071 — Two normalizations stay, documented: a single input object, and an `f32` beyond its range (2026-11-10)
+
+**Context.** The audit found two more first-read changes. `InteractionInput`
+reads a single content or step object as a one-element list, so it is
+written back as a one-element array, against its rustdoc's promise to
+re-serialize in the shape the server sent. And an `f32` field
+(`GenerationConfig::temperature` and `top_p`, the retrieval tool's
+hybrid-search `alpha`) read from a number beyond `f32`'s range held an
+infinity, wrote `null` and read back as absent; in range, a value reads
+rounded to an `f32`.
+
+**Decision.** Keep both, and say so. The single object keeps its value;
+only the array around it is new, and both shapes are arms of the spec's
+union. Keeping the shape needs a new public variant (`SingleContent`), which
+every exhaustive match on `InteractionInput` in the crate and the oracle's
+input aliases would have to follow, for a shape the server has not been
+seen to send. `InteractionInput`'s rustdoc, `Trigger::interaction`'s and
+`docs/ENUM_WIRE_FORMATS.md` say it, and a test pins it. For the floats,
+widening to `f64` is breaking for every builder that takes an `f32`
+(`with_temperature`, `with_top_p`, `with_hybrid_search_alpha`), for a range
+the server rejects anyway. A number beyond `f32`'s range is dropped on read
+with a `warn!` instead, as the int64 helpers drop a value that does not fit
+(`serde_util::deserialize_f32_in_range`), so the value is stable from the
+first read; the rounding is documented on `GenerationConfig`.
+
+Also for `EnvironmentSpec`: a null `type` reads as a missing one does
+(`"remote"`), as a null reads for every `Option`; any other non-string one
+is an unknown type, `<non-string: ...>`, kept whole. Its `Debug` prints
+that JSON through the wire's redaction (`redact::json`), as `Tool`'s does
+an unknown tool's, so an `env` value in such an object still prints as
+`[REDACTED]`, as it did when the object read as remote (amended at the
+Wave J merge, D-067); the API has not been seen to send a non-string
+`type`.
+
+And for `AllowlistEntry`: an empty `domain` is not written, so an entry
+read with `"domain": ""` is written back without it, as one read without a
+domain is written back as it came. Keeping the difference needs the field
+to become an `Option`, breaking for every caller, for an empty domain the
+API rejects on send either way.
+
+**Consequences.** A caller reading a response's single-object input sees a
+one-element list, and one re-sending it sends the array. A config with an
+`f32` beyond its range reads it as unset.
+
+## D-072 — `speech_config` keeps the keys beside `speakers` in a new field (2026-11-10)
+
+**Context.** `speech_config` reads three forms into one list, and the
+`{"speakers": [...]}` form a stored interaction serves dropped any key
+beside the list. `Option<Vec<SpeechConfig>>` has nowhere to keep one, and
+`GenerationConfig::extra` is the level above it.
+
+**Decision.** A new public field, `GenerationConfig::speech_config_extra`,
+keeps them. While it holds a key, `speech_config` is written in the
+`{"speakers": [...], ...}` form with them, which the API accepts; while it
+is empty, as the list, as before. Rejected: changing `speech_config` to a
+new type holding both (breaking for every builder and caller that sets the
+list), and keeping the whole wrapper in `extra` under `speech_config`
+(written after the modeled field, a duplicate key that a strict reader
+refuses). `GenerationConfig`'s `Serialize` and `Deserialize` are
+hand-written, in the new `src/request/generation_config/wire.rs` with the
+speech-config reader that moved there, since one field's form now depends
+on another.
+
+**Consequences.** Breaking for an exhaustive `GenerationConfig` struct
+literal (D-007). The request oracle leaves the field empty: its keys are the
+API's, not the crate's.

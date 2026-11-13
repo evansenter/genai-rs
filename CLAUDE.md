@@ -52,14 +52,18 @@ by what it claims rather than its wording (D-051). A provenance tag names
 where a rule or behavior was decided or found (`(#491)`, or "#493 item 3"
 on what that item added), and stays when the issue closes, as a decision
 number does. A pointer claims the issue holds current status or pending
-work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
-item M" while that item is open), so it names an open issue only: when
-the issue closes, state the outcome in place and drop the pointer.
-The daily `api-surface-sweep` lists each "tracked in #N", "see #N for"
-and "until #N" that names a closed issue on a rolling `documentation`
-issue (`check_issue_pointers.sh`). It reads wording only: it does not tell
-a pointer from a provenance tag worded like one, and it misses a pointer
-worded otherwise, a bare "#N item M" included.
+work, so it names an open issue only: when the issue closes, state the
+outcome in place and drop the pointer. A pointer uses one of the
+phrasings `check_issue_pointers.sh` reads: "tracked in #N" (or by, on,
+at; "tracked in #N item M" for an item), "see #N for" or "until #N", never
+a bare `(#N)` or "#N item M", which read as provenance. The check reads
+every tracked file, `DECISIONS.md` included, but `CHANGELOG.md` (which
+holds no pointer: a released section is not edited), fixtures and the
+script harnesses. The daily `api-surface-sweep` lists each pointer that
+names a closed issue on a rolling `documentation` issue, and
+`check_issue_pointers.sh --print` lists every pointer with its issue's
+state. It reads wording only: it does not tell a pointer from a provenance
+tag worded like one.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the
@@ -208,7 +212,8 @@ reaches the wire must use a real id.
 ### API conventions
 
 - `with_*` configures a setting (calling twice replaces); `add_*` appends to a
-  collection. See `docs/BUILDER_API.md`.
+  collection (`tests/setter_convention.rs` checks it). See
+  `docs/BUILDER_API.md`.
 - Resources are reached through handles: `client.<resources>().<verb>(..)`
   (`client.webhooks().get(id)`). Handle methods take `self`; required
   arguments are positional and optional inputs live on a value. Lists return
@@ -240,7 +245,8 @@ reaches the wire must use a real id.
   request bodies only at `debug`; API keys always redacted. A type that
   holds a secret `LOUD_WIRE` redacts has a hand-written `Debug` printing
   `[REDACTED]` (`src/redact.rs`) and a row in its sentinel test
-  (D-067).
+  (D-067); `tests/redaction_guards.rs` fails on a derived `Debug` over such
+  a field.
 - Breaking changes are fine when they simplify the API (D-007); no
   compatibility shims. Pre-1.0.
 
@@ -368,7 +374,8 @@ wheel's protos with `python3`).
   path that Linux's test-antigravity cannot reach, on each macOS leg;
   trybuild's `ui_tests` are skipped on beta), process-tree-macos (PRs
   only, on macos-latest: those `process_tree` tests, when the PR changes
-  `src/antigravity/process*.rs` or `rust.yml`, and nothing otherwise),
+  `src/antigravity/process*.rs`, `Cargo.toml`, `Cargo.lock`, a
+  `rust-toolchain*` file or `rust.yml`, and nothing otherwise),
   coverage, build-metrics, main-push-status, scheduled-run-status. The
   coverage job measures the `antigravity` feature too, with its scripted
   suite, counts library files only (no test-only file; an inline
@@ -386,13 +393,19 @@ wheel's protos with `python3`).
   red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
   checks both, along with fail-fast, beta, the Windows PR leg and the
   cross-platform steps, the macOS PR job, the skip-marker budget (whose
-  over-budget branch must fail its step), the coverage floor (with no
-  `if:` or `continue-on-error`, on its step or its job) and its
-  library-only pattern, the steps the flakiness report counts (no offline
-  test of the retry helper runs in them), and
-  release's push-run gate, which lets only the jobs a push skips by
-  design be skipped and wants all six Cross Platform legs, and
-  `api-surface-sweep`'s spec-watch and issue-pointer steps.
+  over-budget branch must fail its step, each budget pinned with its
+  reason), the coverage floor (one command, nothing else in its step) and
+  its library-only pattern, the steps the flakiness report counts (no
+  offline test of the retry helper runs in them), that no `if:` or `needs:`
+  (but the live steps' owner gate and `needs: check`), `continue-on-error`,
+  `defaults:`, other shell or shell-level mask it knows (`|| true`,
+  `; true`, `set +e`, an `exit` whose status may be 0; `set -euo pipefail`
+  first in a longer script, and wherever nextest is piped) lets the floor, a
+  coverage run, the release gate, a live nextest step or the scripted
+  harness step pass a failure (D-058 lists what it reads), and release's
+  push-run gate, which lets only the jobs a push skips by design be skipped
+  and wants all six Cross Platform legs, and `api-surface-sweep`'s
+  spec-watch and issue-pointer steps.
   `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the

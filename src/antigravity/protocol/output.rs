@@ -24,8 +24,10 @@ pub struct OutputEvent {
     pub usage_metadata: Option<UsageMetadata>,
     /// The rest of a `usageUpdate` beside its total (which is
     /// [`usage_metadata`](Self::usage_metadata)): the usage of each
-    /// trajectory. `Some` exactly when the event carried a `usageUpdate`,
-    /// and then the event serializes back as one.
+    /// trajectory. `Some` exactly when the event carried a `usageUpdate`
+    /// object, and then the event serializes back as one. A `usageUpdate`
+    /// of another JSON type carries no usage: it is kept in
+    /// [`extra`](Self::extra), as it came.
     pub usage_update: Option<UsageUpdate>,
     /// The event payload (`None` if the oneof was empty).
     pub payload: Option<OutputPayload>,
@@ -51,7 +53,8 @@ pub enum OutputPayload {
     InitializeConversationResponse(InitializeConversationResponse),
     /// The harness is invoking a client-side lifecycle hook.
     CallHookRequest(Box<CallHookRequest>),
-    /// Session-end hooks completed.
+    /// Session-end hooks completed. A `sessionEndResponse` that is not a
+    /// bool is kept as [`Unknown`](Self::Unknown), as it came.
     SessionEndResponse(bool),
     /// The harness asks this client to judge a tool call against a dynamic
     /// policy rule or the auto policy.
@@ -87,6 +90,17 @@ impl OutputPayload {
         match self {
             Self::Unknown { data, .. } => Some(data),
             _ => None,
+        }
+    }
+
+    /// Whether this is the harness's reply to the session end: a
+    /// `sessionEndResponse`, the proto's bool or a value of another type
+    /// kept as `Unknown`.
+    pub(crate) fn is_session_end_response(&self) -> bool {
+        match self {
+            Self::SessionEndResponse(_) => true,
+            Self::Unknown { event_type, .. } => event_type == "sessionEndResponse",
+            _ => false,
         }
     }
 }
@@ -207,6 +221,11 @@ impl<'de> Deserialize<'de> for OutputEvent {
         // branch exists to prevent, in the one shape a nested match
         // wouldn't cover. The flat spelling's usage wins then, as it
         // always has, and the update's own total is dropped.
+        // A `usageUpdate` that is not an object (and so not the proto's
+        // message) carries no usage, but is kept in `extra` and written back
+        // as it came (D-001). It goes back into the map only after the
+        // payload is chosen, so the leftover-key arm cannot claim it.
+        let mut malformed_update = None;
         let (update_total, usage_update) = match map.remove("usageUpdate") {
             None | Some(Value::Null) => (None, None),
             Some(Value::Object(mut update)) => {
@@ -221,7 +240,10 @@ impl<'de> Deserialize<'de> for OutputEvent {
                 (total, Some(rest))
             }
             Some(other) => {
-                tracing::warn!("Unexpected JSON type for usageUpdate, dropping usage: {other}");
+                tracing::warn!(
+                    "Unexpected JSON type for usageUpdate, keeping it in extra without usage: {other}"
+                );
+                malformed_update = Some(other);
                 (None, None)
             }
         };
@@ -251,9 +273,16 @@ impl<'de> Deserialize<'de> for OutputEvent {
                     "callHookRequest" => OutputPayload::CallHookRequest(Box::new(
                         serde_json::from_value(value).map_err(D::Error::custom)?,
                     )),
-                    "sessionEndResponse" => {
-                        OutputPayload::SessionEndResponse(value.as_bool().unwrap_or_default())
-                    }
+                    "sessionEndResponse" => match value {
+                        Value::Bool(ended) => OutputPayload::SessionEndResponse(ended),
+                        // Not the proto's bool: kept as it came (D-001).
+                        // `is_session_end_response` still reads it as the
+                        // end of the session.
+                        data => OutputPayload::Unknown {
+                            event_type: (*key).to_string(),
+                            data,
+                        },
+                    },
                     "policyDecisionRequest" => OutputPayload::PolicyDecisionRequest(
                         serde_json::from_value(value).map_err(D::Error::custom)?,
                     ),
@@ -278,6 +307,9 @@ impl<'de> Deserialize<'de> for OutputEvent {
                 event_type
             );
             payload = Some(OutputPayload::Unknown { event_type, data });
+        }
+        if let Some(update) = malformed_update {
+            map.insert("usageUpdate".to_string(), update);
         }
 
         Ok(Self {

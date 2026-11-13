@@ -2,6 +2,7 @@
 
 use crate::GenaiError;
 use crate::http::context::HttpContext;
+use crate::redact;
 use crate::wire::WireInspector;
 use reqwest::Client as ReqwestClient;
 use std::sync::Arc;
@@ -49,15 +50,20 @@ const _: () = {
     assert::<Client>();
 };
 
-// Custom Debug implementation that redacts the API key for security.
-// This prevents accidental exposure of credentials in logs, error messages, or debug output.
+// The API key prints redacted through `HttpContext`'s `Debug` (D-067).
+// Destructured without `..`, so a field added later fails to compile here
+// until it is printed or redacted.
 impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            http,
+            connect_timeout,
+            tcp_keepalive,
+        } = self;
         f.debug_struct("Client")
-            .field("api_key", &"[REDACTED]")
-            .field("connect_timeout", &self.connect_timeout)
-            .field("tcp_keepalive", &self.tcp_keepalive)
-            .field("http_client", &self.http.http_client)
+            .field("http", http)
+            .field("connect_timeout", connect_timeout)
+            .field("tcp_keepalive", tcp_keepalive)
             .finish()
     }
 }
@@ -174,17 +180,27 @@ pub struct ClientBuilder {
     wire_inspectors: Vec<Arc<dyn WireInspector>>,
 }
 
-// Custom Debug implementation that redacts the API key for security.
+// Prints the API key redacted (D-067), and the inspectors by count.
+// Destructured without `..`, like `Client`'s.
 impl std::fmt::Debug for ClientBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            api_key: _,
+            base_url,
+            api_version,
+            timeout,
+            connect_timeout,
+            read_timeout,
+            wire_inspectors,
+        } = self;
         f.debug_struct("ClientBuilder")
-            .field("api_key", &"[REDACTED]")
-            .field("base_url", &self.base_url)
-            .field("api_version", &self.api_version)
-            .field("timeout", &self.timeout)
-            .field("connect_timeout", &self.connect_timeout)
-            .field("read_timeout", &self.read_timeout)
-            .field("wire_inspectors", &self.wire_inspectors.len())
+            .field("api_key", &redact::REDACTED)
+            .field("base_url", base_url)
+            .field("api_version", api_version)
+            .field("timeout", timeout)
+            .field("connect_timeout", connect_timeout)
+            .field("read_timeout", read_timeout)
+            .field("wire_inspectors", &wire_inspectors.len())
             .finish()
     }
 }

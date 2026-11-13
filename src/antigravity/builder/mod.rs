@@ -26,6 +26,7 @@ mod hooks;
 mod options;
 mod validate;
 mod wire;
+mod workspaces;
 
 use options::HarnessOptions;
 
@@ -113,26 +114,57 @@ pub struct AgentBuilder {
     options: HarnessOptions,
 }
 
+// Prints the API key redacted (D-067); destructured without `..`, so a new
+// field fails to compile here until it is printed, redacted or left out.
 impl std::fmt::Debug for AgentBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            harness_path,
+            api_key,
+            gemini_base_url,
+            model,
+            system_instructions: _,
+            workspaces,
+            tools,
+            tool_services: _,
+            mcp_servers,
+            policies,
+            pre_tool: _,
+            questions: _,
+            post_tool: _,
+            lifecycle,
+            save_dir: _,
+            conversation_id: _,
+            capabilities,
+            response_schema: _,
+            app_data_dir: _,
+            skills_paths: _,
+            turn_timeout: _,
+            inspectors: _,
+            triggers,
+            custom_triggers,
+            subagents,
+            workspace_announcement: _,
+            agent_behavior: _,
+            workspace_containment: _,
+            ungated_subagents,
+            options,
+        } = self;
         f.debug_struct("AgentBuilder")
-            .field("harness_path", &self.harness_path)
-            .field("api_key", &crate::redact::optional(self.api_key.as_ref()))
-            .field("gemini_base_url", &self.gemini_base_url)
-            .field("model", &self.model)
-            .field("workspaces", &self.workspaces)
-            .field("tools", &self.tools.len())
-            .field("mcp_servers", &self.mcp_servers.len())
-            .field("policies", &self.policies.len())
-            .field("capabilities", &self.capabilities)
-            .field(
-                "triggers",
-                &(self.triggers.len() + self.custom_triggers.len()),
-            )
-            .field("subagents", &self.subagents.len())
-            .field("ungated_subagents", &self.ungated_subagents)
-            .field("lifecycle", &self.lifecycle)
-            .field("options", &self.options)
+            .field("harness_path", harness_path)
+            .field("api_key", &crate::redact::optional(api_key.as_ref()))
+            .field("gemini_base_url", gemini_base_url)
+            .field("model", model)
+            .field("workspaces", workspaces)
+            .field("tools", &tools.len())
+            .field("mcp_servers", &mcp_servers.len())
+            .field("policies", &policies.len())
+            .field("capabilities", capabilities)
+            .field("triggers", &(triggers.len() + custom_triggers.len()))
+            .field("subagents", &subagents.len())
+            .field("ungated_subagents", ungated_subagents)
+            .field("lifecycle", lifecycle)
+            .field("options", options)
             .finish_non_exhaustive()
     }
 }
@@ -210,96 +242,6 @@ impl AgentBuilder {
     #[must_use]
     pub fn with_system_instructions(mut self, instructions: impl Into<SystemInstructions>) -> Self {
         self.system_instructions = Some(instructions.into());
-        self
-    }
-
-    /// Sets the workspace directory, replacing any previously configured
-    /// workspaces. Use [`Self::add_workspace`] to accumulate several.
-    #[must_use]
-    pub fn with_workspace(mut self, directory: impl Into<String>) -> Self {
-        self.workspaces = vec![directory.into()];
-        self
-    }
-
-    /// Adds a workspace directory the agent may operate in.
-    #[must_use]
-    pub fn add_workspace(mut self, directory: impl Into<String>) -> Self {
-        self.workspaces.push(directory.into());
-        self
-    }
-
-    /// Controls whether the agent's configured workspace root(s) are
-    /// announced to the model when its prompt is
-    /// [custom](SystemInstructions::custom). **On by default.**
-    ///
-    /// The harness's own prompt lists the workspaces ("Active Workspaces",
-    /// verified on 0.1.23 for agents and subagents), so instructions added
-    /// to it need no note. Custom instructions replace that prompt, and
-    /// agents that don't know the paths guess (`/workdir`, `/workspace`, …)
-    /// and wander. With custom instructions and at least one workspace,
-    /// `spawn()` adds a short, clearly delimited note listing the
-    /// configured root(s) as a final part (composed at send time — your
-    /// instructions are never mutated), and the same note to each subagent
-    /// with custom instructions.
-    ///
-    /// Turn it off to manage workspace grounding yourself:
-    ///
-    /// ```rust,no_run
-    /// # use genai_rs::antigravity::AntigravityAgent;
-    /// let builder = AntigravityAgent::builder()
-    ///     .add_workspace("/repo")
-    ///     .with_workspace_announcement(false)
-    ///     // ...
-    ///     ;
-    /// # let _ = builder;
-    /// ```
-    #[must_use]
-    pub fn with_workspace_announcement(mut self, announce: bool) -> Self {
-        self.workspace_announcement = Some(announce);
-        self
-    }
-
-    /// Controls whether the harness confines its file tools to the
-    /// configured workspaces. **On by default** whenever a workspace is
-    /// configured. Without a workspace there is nothing to confine to: the
-    /// agent's file tools can read anything the process can, and an
-    /// explicit `true` makes `spawn()` fail with
-    /// [`AntigravityError::Config`].
-    ///
-    /// It covers the file tools (`view_file`, `list_directory`, …), not
-    /// `run_command`: a shell command can read any path the process can, so
-    /// keep `run_command` off, or gate it with a hook or policy, if the
-    /// workspace boundary matters.
-    ///
-    /// The harness enforces containment only when the client sends a
-    /// policy config, and before this setting existed this crate never
-    /// did: an agent could read files anywhere the process could, and the
-    /// content reached the model (verified on harness 0.1.18 and 0.1.23).
-    /// With containment on, a read outside the workspaces fails with
-    /// `Access to path "…" is denied`. The harness still allows two roots
-    /// besides the workspaces: the system temp directory and its own
-    /// `~/.gemini/antigravity/brain` (verified on 0.1.23). The Python SDK
-    /// contains by default too.
-    ///
-    /// It confines the agent's own calls, not a subagent's (harness
-    /// 0.1.23), so with subagents enabled `spawn()` also needs
-    /// [`Self::with_ungated_subagents`].
-    ///
-    /// Turn it off only if the agent must reach paths outside its
-    /// workspaces, and gate those tools with a pre-tool hook or policy:
-    ///
-    /// ```rust,no_run
-    /// # use genai_rs::antigravity::AntigravityAgent;
-    /// let builder = AntigravityAgent::builder()
-    ///     .add_workspace("/repo")
-    ///     .with_workspace_containment(false)
-    ///     // ...
-    ///     ;
-    /// # let _ = builder;
-    /// ```
-    #[must_use]
-    pub fn with_workspace_containment(mut self, contain: bool) -> Self {
-        self.workspace_containment = Some(contain);
         self
     }
 
@@ -417,10 +359,17 @@ impl AgentBuilder {
     /// Sets a wall-clock budget per turn. When exceeded, `chat` /
     /// `send_streaming` fail with [`AntigravityError::Timeout`].
     ///
-    /// The budget starts before the message is sent and bounds the send
-    /// too, so a harness that has stopped reading fails the turn on time
-    /// rather than holding it. A halt of an earlier turn, sent first when
-    /// one is still running, has a five-second budget of its own.
+    /// The budget starts when `chat` or `send_streaming` is called, and
+    /// bounds the wait for a trigger's message still going out to the
+    /// harness, the halt of an earlier turn still running (five seconds at
+    /// most), and every message to the harness in the turn, its own and the
+    /// replies to the harness's requests. So a harness that has stopped
+    /// reading fails the turn on time rather than holding it. When the
+    /// budget runs out mid-turn, the call halts the harness's turn and
+    /// drains its events before it returns the timeout, which takes up to
+    /// five seconds more. A `Duration` too large to add to the clock
+    /// (`Duration::MAX`) sets no deadline, as
+    /// [`without_turn_timeout`](Self::without_turn_timeout) does.
     ///
     /// Defaults to [`DEFAULT_TURN_TIMEOUT`]. Raise it for agents that
     /// legitimately run long (deep subagent trees, many tool calls); lower
@@ -584,24 +533,40 @@ impl AgentBuilder {
     }
 
     /// Launches the harness, performs the handshake, connects the
-    /// WebSocket, and initializes the conversation.
+    /// WebSocket, initializes the conversation, and runs the session-start
+    /// hook ([`Self::on_session_start`]) when one is set.
     ///
     /// # Errors
     ///
-    /// - [`AntigravityError::Config`] when write-capable built-ins or MCP
-    ///   servers are enabled without any policy or pre-tool hook (safety
-    ///   parity with the reference SDK), when subagents are enabled
-    ///   alongside a gate they bypass without
-    ///   [`Self::with_ungated_subagents`], or when a model or a Gemini base
-    ///   URL is configured without a non-blank API key.
+    /// - [`AntigravityError::Config`] when the configuration cannot work or
+    ///   would be unsafe, before anything starts: write-capable built-ins
+    ///   or MCP servers enabled without any policy or pre-tool hook (safety
+    ///   parity with the reference SDK), subagents enabled alongside a gate
+    ///   they bypass without [`Self::with_ungated_subagents`], a model or a
+    ///   Gemini base URL configured without a non-blank API key, and the
+    ///   other checks the setters name.
     /// - [`AntigravityError::HarnessNotFound`] when discovery fails, or
     ///   when the path [`Self::with_harness_path`] or
     ///   `ANTIGRAVITY_HARNESS_PATH` names is not a file.
-    /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
-    ///   with the harness's stderr tail when startup fails.
+    /// - [`AntigravityError::Io`] when discovery is cut short by the
+    ///   runtime shutting down.
+    /// - [`AntigravityError::HandshakeFailed`], with the harness's stderr
+    ///   tail, when the binary cannot be started or the stdio handshake
+    ///   fails (no reply within 10 s, or one that does not decode).
+    /// - [`AntigravityError::InitFailed`], with the harness's stderr tail,
+    ///   for any failure after the handshake: the WebSocket connect (5
+    ///   attempts), the initialization exchange, or the session-start hook
+    ///   (30 s each), a harness that closes the connection or sends what
+    ///   this client cannot read included. The error that caused it, when
+    ///   one did, is its [`source()`](std::error::Error::source): an
+    ///   [`AntigravityError::WebSocket`] or [`AntigravityError::Protocol`]
+    ///   error, the session-start hook's failed answer, or the
+    ///   [`AntigravityError::Turn`] error of a harness message that fails a
+    ///   turn (a cancelled trajectory, say) before the hook is called.
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
         let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
         self.validate(&dispatcher)?;
+        self.warn_trigger_turns_skip_pre_turn();
         let policy_engine = PolicyEngine::new(self.policies.clone());
 
         let binary = process::discover_harness(self.harness_path.as_deref()).await?;
@@ -725,23 +690,26 @@ impl AgentBuilder {
         }
     }
 
+    /// Warns when a pre-turn hook and a trigger are both set: harness
+    /// 0.1.23 never consults the hook on a trigger's turn. Not a refusal, as
+    /// a caller may want the hook for its own turns only.
+    fn warn_trigger_turns_skip_pre_turn(&self) {
+        if self.lifecycle.pre_turn.is_some()
+            && !(self.triggers.is_empty() && self.custom_triggers.is_empty())
+        {
+            tracing::warn!(
+                "on_pre_turn is set beside a trigger, and harness 0.1.23 does not consult the \
+                 pre-turn hook on a turn a trigger starts: a trigger's turn runs without it. \
+                 Decide in the trigger whether to send."
+            );
+        }
+    }
+
     /// The configured API key, unless it is blank. The harness treats an
     /// empty key as unset and falls back to its environment's
     /// `GEMINI_API_KEY`, so a blank key must count as none here too.
     fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref().filter(|key| !key.trim().is_empty())
-    }
-
-    /// Whether workspace announcement is enabled (default on).
-    fn announce_workspaces(&self) -> bool {
-        self.workspace_announcement.unwrap_or(true)
-    }
-
-    /// Whether the harness confines file tools to the workspaces: on by
-    /// default, and only with a workspace to confine to (`spawn()` rejects
-    /// an explicit opt-in without one).
-    fn contains_workspaces(&self) -> bool {
-        self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty()
     }
 
     /// Whether the agent's own commands run in the OS sandbox: asked for,

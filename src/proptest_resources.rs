@@ -7,11 +7,8 @@ pub(super) fn arb_trigger_status() -> impl Strategy<Value = TriggerStatus> {
         Just(TriggerStatus::Active),
         Just(TriggerStatus::Paused),
         Just(TriggerStatus::Error),
-        unknown_or(TriggerStatus::Active, |status_type| {
-            TriggerStatus::Unknown {
-                data: serde_json::Value::String(status_type.clone()),
-                status_type,
-            }
+        unknown_or(TriggerStatus::Active, |status_type, data| {
+            TriggerStatus::Unknown { data, status_type }
         }),
     ]
 }
@@ -23,11 +20,8 @@ pub(super) fn arb_trigger_execution_status() -> impl Strategy<Value = TriggerExe
         Just(TriggerExecutionStatus::Failed),
         Just(TriggerExecutionStatus::Skipped),
         Just(TriggerExecutionStatus::TimedOut),
-        unknown_or(TriggerExecutionStatus::InProgress, |status_type| {
-            TriggerExecutionStatus::Unknown {
-                data: serde_json::Value::String(status_type.clone()),
-                status_type,
-            }
+        unknown_or(TriggerExecutionStatus::InProgress, |status_type, data| {
+            TriggerExecutionStatus::Unknown { data, status_type }
         }),
     ]
 }
@@ -36,11 +30,8 @@ pub(super) fn arb_environment_status() -> impl Strategy<Value = EnvironmentStatu
     prop_oneof![
         Just(EnvironmentStatus::Active),
         Just(EnvironmentStatus::Expired),
-        unknown_or(EnvironmentStatus::Active, |status_type| {
-            EnvironmentStatus::Unknown {
-                data: serde_json::Value::String(status_type.clone()),
-                status_type,
-            }
+        unknown_or(EnvironmentStatus::Active, |status_type, data| {
+            EnvironmentStatus::Unknown { data, status_type }
         }),
     ]
 }
@@ -54,11 +45,8 @@ pub(super) fn arb_webhook_event() -> impl Strategy<Value = WebhookEvent> {
         Just(WebhookEvent::InteractionCompleted),
         Just(WebhookEvent::InteractionFailed),
         Just(WebhookEvent::VideoGenerated),
-        unknown_or(WebhookEvent::BatchSucceeded, |event_type| {
-            WebhookEvent::Unknown {
-                data: serde_json::Value::String(event_type.clone()),
-                event_type,
-            }
+        unknown_or(WebhookEvent::BatchSucceeded, |event_type, data| {
+            WebhookEvent::Unknown { data, event_type }
         }),
     ]
 }
@@ -68,9 +56,8 @@ pub(super) fn arb_webhook_state() -> impl Strategy<Value = WebhookState> {
         Just(WebhookState::Enabled),
         Just(WebhookState::Disabled),
         Just(WebhookState::DisabledDueToFailedDeliveries),
-        unknown_or(WebhookState::Enabled, |state_type| WebhookState::Unknown {
-            data: serde_json::Value::String(state_type.clone()),
-            state_type,
+        unknown_or(WebhookState::Enabled, |state_type, data| {
+            WebhookState::Unknown { data, state_type }
         }),
     ]
 }
@@ -81,8 +68,8 @@ pub(super) fn arb_revocation_behavior() -> impl Strategy<Value = RevocationBehav
         Just(RevocationBehavior::RevokePreviousSecretsImmediately),
         unknown_or(
             RevocationBehavior::RevokePreviousSecretsAfterH24,
-            |behavior_type| RevocationBehavior::Unknown {
-                data: serde_json::Value::String(behavior_type.clone()),
+            |behavior_type, data| RevocationBehavior::Unknown {
+                data,
                 behavior_type,
             }
         ),
@@ -107,8 +94,8 @@ pub(super) fn arb_source_type() -> impl Strategy<Value = SourceType> {
         Just(SourceType::Inline),
         Just(SourceType::Repository),
         Just(SourceType::SkillRegistry),
-        unknown_or(SourceType::Gcs, |source_type| SourceType::Unknown {
-            data: serde_json::Value::String(source_type.clone()),
+        unknown_or(SourceType::Gcs, |source_type, data| SourceType::Unknown {
+            data,
             source_type,
         }),
     ]

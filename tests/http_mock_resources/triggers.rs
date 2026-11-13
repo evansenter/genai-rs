@@ -241,6 +241,90 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
     assert_eq!(execution.error.as_deref(), Some("deadline exceeded"));
 }
 
+/// `run` answers with the ended run's execution, as captured live
+/// (2026-11-13): a completed run names its interaction and environment, and
+/// one its execution timeout cut off says so in `error`, with neither.
+#[tokio::test]
+async fn trigger_run_returns_the_ended_runs_execution() {
+    // Not the harness's import, which strict mode leaves out.
+    use genai_rs::TriggerExecutionStatus;
+
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "id": "1dbea6dd-f0f3-4ada-9a7b-b5fd92f3fac8",
+                "start_time": "2026-11-13T00:02:48.193535Z",
+                "end_time": "2026-11-13T00:03:01.047764Z",
+                "status": "completed",
+                "interaction_id": "v1_ChdybFAyYXZlTkRLdl92ZElQbEpQUmlRNBIXcmxQMmF2ZU5ES3ZfdmRJUGxKUFJpUTQ",
+                "environment_id": "c71d9ecbbfd200336ff8a61f411cae6b",
+                "trigger_id": "030588c7-31ce-4cf7-93a4-0657b567d786"
+            }),
+        ),
+        Reply::json(
+            200,
+            json!({
+                "id": "ac768074-100f-420f-9523-45437a0ad5e5",
+                "start_time": "2026-11-13T00:06:28.171608Z",
+                "end_time": "2026-11-13T00:07:28.810284Z",
+                "status": "timed_out",
+                "error": "Deadline expired before operation could complete.",
+                "trigger_id": "62cf2482-62d0-40fd-9a32-ea7375ccd467"
+            }),
+        ),
+    ])
+    .await;
+    let client = stub.client();
+
+    let completed = client
+        .triggers()
+        .run("030588c7-31ce-4cf7-93a4-0657b567d786")
+        .await
+        .unwrap();
+    assert_eq!(completed.status, Some(TriggerExecutionStatus::Completed));
+    assert_eq!(
+        completed.id.as_deref(),
+        Some("1dbea6dd-f0f3-4ada-9a7b-b5fd92f3fac8")
+    );
+    assert_eq!(
+        completed.trigger_id.as_deref(),
+        Some("030588c7-31ce-4cf7-93a4-0657b567d786")
+    );
+    assert!(completed.interaction_id.is_some());
+    assert_eq!(
+        completed.environment_id.as_deref(),
+        Some("c71d9ecbbfd200336ff8a61f411cae6b")
+    );
+    let (start, end) = (completed.start_time.unwrap(), completed.end_time.unwrap());
+    assert_eq!((end - start).num_milliseconds(), 12_854);
+    assert!(completed.scheduled_time.is_none() && completed.error.is_none());
+    assert!(completed.extra.is_empty(), "{:?}", completed.extra);
+
+    let timed_out = client
+        .triggers()
+        .run("62cf2482-62d0-40fd-9a32-ea7375ccd467")
+        .await
+        .unwrap();
+    assert_eq!(timed_out.status, Some(TriggerExecutionStatus::TimedOut));
+    assert_eq!(
+        timed_out.error.as_deref(),
+        Some("Deadline expired before operation could complete.")
+    );
+    assert!(timed_out.interaction_id.is_none() && timed_out.environment_id.is_none());
+    assert!(timed_out.end_time.is_some());
+    assert!(timed_out.extra.is_empty(), "{:?}", timed_out.extra);
+
+    let targets: Vec<_> = stub.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(
+        targets,
+        [
+            "/v1beta/triggers/030588c7-31ce-4cf7-93a4-0657b567d786/executions",
+            "/v1beta/triggers/62cf2482-62d0-40fd-9a32-ea7375ccd467/executions",
+        ]
+    );
+}
+
 #[tokio::test]
 async fn trigger_list_items_follow_every_page_with_the_page_size() {
     let stub = Stub::replying(vec![

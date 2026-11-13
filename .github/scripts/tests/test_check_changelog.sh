@@ -305,6 +305,77 @@ expect "a breaking entry at the end of the file" 1 \
     "$work/migration_last.md:7: breaking entry with no \"Migration:\": - **Breaking: \`h\`.**" \
     "$work/migration_last.md"
 
+# --- rule 6: no entry twice in a section ------------------------------------
+
+# A keep-both merge that puts an entry's old text back beside its rewrite:
+# the same first line under another heading, and the same bold title with
+# a different body, wrapped, with its `Breaking:` marker dropped. A pair
+# that matches both ways is reported once. Sub-items, bare markers and a
+# fence are not entries; [0.2.0] repeats [Unreleased] only across
+# sections, and is checked only when named.
+cat >"$work/dup_entries.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Changed
+
+- **Breaking: `Delta` carries `extra`.** Migration: read it.
+- `wait()` polls at most every 10 ms.
+  - a sub-item
+- **Breaking:** one change. Migration: one.
+- **Breaking: `a`
+  is a struct.** Migration: match its fields.
+- **Same twice.** Body.
+
+### Fixed
+
+- `wait()` polls at most every 10 ms.
+  - a sub-item
+- **Breaking:** another change. Migration: another.
+- **`Delta` carries
+  `extra`.** It still carries the `StepDelta` alone.
+- **`a` is a struct.** The old text.
+- **Same twice.** Body.
+
+```text
+- **Same twice.** Body.
+```
+
+## [0.2.0] - 2026-07-01
+
+### Changed
+
+- `wait()` polls at most every 10 ms.
+- **`a` is a struct.** Released.
+- **`a` is a struct.** Released twice.
+EOF
+unreleased_dups="$work/dup_entries.md:17: duplicate entry in ## [Unreleased] (first at line 8): - \`wait()\` polls at most every 10 ms.
+$work/dup_entries.md:20: two entries titled \"\`Delta\` carries \`extra\`.\" in ## [Unreleased] (first at line 7)
+$work/dup_entries.md:22: two entries titled \"\`a\` is a struct.\" in ## [Unreleased] (first at line 11)
+$work/dup_entries.md:23: duplicate entry in ## [Unreleased] (first at line 13): - **Same twice.** Body."
+expect "duplicate entries in [Unreleased]" 1 "$unreleased_dups" "$work/dup_entries.md"
+expect "duplicate entries in a named older section" 1 \
+    "$unreleased_dups
+$work/dup_entries.md:35: two entries titled \"\`a\` is a struct.\" in ## [0.2.0] (first at line 34)" \
+    "$work/dup_entries.md" 0.2.0
+
+# A title left open by the end of its entry is abandoned, not carried into
+# the next one, and bold text after an entry's start is no title.
+cat >"$work/open_title.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- **An unclosed title
+
+- **An unclosed title** closed here.
+- text **An unclosed title** later.
+EOF
+expect "an unclosed bold title" 0 "" "$work/open_title.md"
+
 # --- usage ------------------------------------------------------------------
 
 expect "no arguments" 2 ""

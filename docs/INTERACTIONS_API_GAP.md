@@ -29,7 +29,7 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable; found 2026-11-01. It does not always agree with the bindings where both speak. Each lists query parameters the other lacks (five, under [Spec-only query parameters](#spec-only-query-parameters-live-2026-11-09)), and the spec wraps three request bodies the bindings send flat: webhook create (`{webhook: ...}`), webhook update and trigger update. The webhook create endpoint rejects the wrapper and takes the flat body (2026-11-09); the two updates' wrappers were not probed. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`. The copies fetched that day differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. The committed snapshots were fetched on 2026-11-09, their schemas and endpoints unchanged from the 2026-11-07 copies, and each also keeps every operation's query parameters (with whether each is required) and request body. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves and compares it with the snapshot, parameters and bodies included, and opens an `api-sweep` issue when one drifts or stops serving; on 2026-11-08 both matched. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable; found 2026-11-01. It does not always agree with the bindings where both speak. Each lists query parameters the other lacks (five, under [Spec-only query parameters](#spec-only-query-parameters-live-2026-11-09)), and the spec wraps three request bodies the bindings send flat: webhook create (`{webhook: ...}`), webhook update (`{webhook, update_mask, id}`) and trigger update (`{trigger, update_mask, id}`). Each endpoint rejects its wrapper and takes the flat body: webhook create on 2026-11-09, the two updates on 2026-11-13. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`. The copies fetched that day differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. The committed snapshots were fetched on 2026-11-13, their schemas, endpoints, query parameter names and request bodies unchanged from the 2026-11-09 copies. Besides the schemas and endpoints, each keeps every operation's path, query and header parameters (each with whether it is required, its schema and its other non-prose keys), its request body (with whether it is required), and its responses by status (each with its schema by content type and its headers), without the prose or each operation's other keys (`operationId`, `tags`, `deprecated`). The served v1beta gives four header parameters, all on the environment-file upload's start request, which the crate sends. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves the same way and compares it with the snapshot, so a path, query or header parameter added, removed, made required or optional, or retyped, a request body that changes or is made optional, or a response that changes is a drift: it opens an `api-sweep` issue when one drifts or stops serving. Of these, the coverage oracle diffs only query parameter names and required flags (against the bindings) and header parameters (against what the verbs send) offline; a parameter's schema, a request body and a response's schema reference are watched, not checked against the crate (D-060). That diff is tracked in #558. On 2026-11-13 both URLs served what the snapshots hold. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
@@ -53,9 +53,11 @@ most of it against rank 1b: `src/coverage_oracle/` and
 `tests/request_wire_oracle.rs` check, offline against the committed
 snapshot, every request key and every query key against the bindings,
 every response field for an empty `extra` against the bindings and both
-specs (v1beta and v1), and the specs' query parameters against the
-bindings' and what the verbs send (since 2026-11-09); every binding class
-and spec schema must be reached by those checks or listed with a reason;
+specs (v1beta and v1), the specs' query parameters against the
+bindings' and what the verbs send (since 2026-11-09), and the specs'
+header parameters against what the verbs send (since 2026-11-13); every
+binding class and spec schema must be reached by those checks or listed
+with a reason;
 and `tests/ci_coverage.rs` maps every endpoint to the handle verbs that
 call it and requires a live test per handle verb. The spec's request
 bodies are the exception: a request is checked against its binding class
@@ -191,7 +193,7 @@ from here rather than repeated.
   3.0.0's list) and a real legacy `.doc` (an OLE2 Word file) were read back
   on 2026-11-07. `.xls` and `.ppt` passed the MIME check only with
   plain-text bytes (2026-11-05), so parsing a real one is unverified
-  (#530).
+  (tracked in #530).
   Since 2026-11-04 `text/plain` and `text/markdown` are a 400 (#514), as
   is every other type tried (`text/html`, `application/json`,
   `application/xml`, `application/rtf`): `Unsupported mime_type '...' in
@@ -369,8 +371,25 @@ from here rather than repeated.
 - **Update** applies exactly the fields in the PATCH body, and only
   `display_name` and `status` are updatable: `schedule` is `400 Unknown
   parameter 'schedule'` (2026-11-01).
-- **Run** fires asynchronously and answers `{}` (2026-11-01), so the firing
-  is found through `list_executions`.
+- **Run** answers with the run's `TriggerExecution` once the run has
+  ended: the request is held until then. On 2026-11-01 it answered `{}` at
+  once, and the firing was found through `list_executions`; on 2026-11-09
+  it answered with the completed execution about 10 s later. Re-probed on
+  2026-11-13, every run answered 200 with its execution, the same record
+  `list_executions` then listed: three runs of a "Say OK." trigger after
+  13.6 s, 9.2 s and 8.8 s, each `completed` with its `id`, `trigger_id`,
+  `start_time`, `end_time`, `interaction_id` and `environment_id`; a run
+  that slept 150 s in the sandbox after 162.8 s, `completed`; and the same
+  run on a trigger whose `execution_timeout_seconds` is 60 after 61.4 s,
+  `timed_out`, with `error: "Deadline expired before operation could
+  complete."` and no `interaction_id` or `environment_id`. A client that
+  stops waiting (a 3 s timeout) leaves the run going: it was listed
+  `in_progress`, then `completed`. So a call lasts as long as the run, up
+  to the trigger's execution timeout. That timeout is at most 600 s
+  (`'execution_timeout_seconds' cannot exceed 600 seconds.` on create).
+  The timed-out run left behind the environment it had created, which
+  neither the execution nor the trigger names, and its sandbox kept
+  running the command past the deadline.
 - **What it stores** (2026-11-01): a text input comes back as one
   `user_input` step, and the echo adds `store: true` and `object:
   "interaction"`. Without an `environment_id` on create, the first firing
@@ -381,7 +400,8 @@ from here rather than repeated.
   sending `status: "error"` is `400 Invalid status transition from active
   to error`. The executions list's envelope key is `trigger_executions`; an
   execution's `trigger_id` is bare, and a manual run's execution has no
-  `scheduled_time` or `environment_id`. Paging and empty lists are under
+  `scheduled_time`. It had no `environment_id` either; on 2026-11-13 a
+  completed one carried it. Paging and empty lists are under
   TriggerStatus in `docs/ENUM_WIRE_FORMATS.md`.
 
 ### Files
@@ -508,7 +528,10 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
 The spec gives three endpoints a query parameter the bindings lack, and the
 bindings give two one the spec lacks. `tests/request_wire_oracle.rs` lists
 each difference in `SPEC_QUERY` with its reason (`spec_query.rs`), along
-with the parameters the spec marks required, each spec copy on its own. Probed on 2026-11-09, with the
+with the parameters the spec marks required, each spec copy on its own;
+`SPEC_HEADERS` does the same for a spec header parameter the verbs do not
+send as given, and is empty: the four the spec gives, on the
+environment-file upload, are sent. Probed on 2026-11-09, with the
 test resources deleted afterwards. These endpoints take an unknown query
 key without complaint (`bogus_param=1` on a webhook or agent create), so
 being accepted shows nothing; what each did is below. None is modeled: an
@@ -523,6 +546,17 @@ option that changes nothing would claim a feature the API does not have
 - **The `{webhook: ...}` wrapper** the spec gives webhook create's body:
   `400 Unknown parameter 'webhook'.` The flat body the bindings send
   (`uri`, `subscribed_events`, `name`) is the one the endpoint takes.
+- **The update wrappers** (probed 2026-11-13): the spec gives webhook
+  update's body as `UpdateWebhookRequest {webhook, update_mask, id}` and
+  trigger update's as `UpdateTriggerRequest {trigger, update_mask, id}`.
+  Each endpoint rejects its wrapper: `{webhook: {name}, update_mask:
+  "name"}` and `{webhook: {state}}` are `400 Unknown parameter 'webhook'.`,
+  `{trigger: {display_name}, update_mask: "display_name"}` and `{trigger:
+  {status}}` are `400 Unknown parameter 'trigger'.`, and with `id` added
+  each is `400 Unknown parameter 'id'.` Nothing changed: a read afterwards
+  showed the old name and state. The flat bodies the bindings define and
+  the crate sends (`{name}`, `{state}`, `{display_name}`, `{status}`)
+  each answered 200 with the field applied.
 - **`parent` on agent create** (the spec: required,
   `projects/{project}/locations/{location}`): ignored. A create with
   `projects/foo/locations/bar`, with `bogus`, with an empty value or with
@@ -645,7 +679,7 @@ two Files entries below listed in its `ALLOWED`.
 | `CodeExecutionResultStep.result` as `Union[List[Content], str]` | `CodeExecutionOutput` (`Text`, `Contents`) on `Step::CodeExecutionResult`; `CodeExecutionResultInfo::result`, `successful_code_output()` | The API sent the string on every run, plain and with a plot or files; a non-empty output read the same through the stored `GET` and arrived whole in one stream delta. Generated files come in the next `model_output` step. The list form is accepted back in history, but its content does not reach the model. The delta's `result` stays a string in the bindings and on the wire. See Tools above and Code execution in `docs/ENUM_WIRE_FORMATS.md` |
 | `SmartTranscriptionMode.source_text` | `TranscriptionMode::Smart { source_text, .. }`, built with `TranscriptionMode::smart(..)` | Accepted and stored as sent; on `gemini-3.5-transcribe` it steers the transcript's wording, on `DEFAULT_MODEL` it has no effect. See Models above |
 | `gemini-3.5-transcribe` in the `Model` literal | `DEFAULT_TRANSCRIPTION_MODEL` | The model on which `transcription_config` takes effect, and on which `word_info` annotations were first seen. See Models above |
-| `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); the coverage oracle holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back; real `.xls` and `.ppt` files are unverified (#530). See Requests above |
+| `DocumentContentMimeType` / `DocumentDeltaMimeType`: twelve types (pdf, csv, the legacy Word, Excel and PowerPoint types, the three OpenDocument types, and four OOXML types) | `document_from_file()` and `detect_mime_type()` (`.dotx` added); the coverage oracle holds the crate's document types to the bindings' list | All twelve accepted inline; a real `.dotx` (the new `wordprocessingml.template`) and a real legacy `.doc` read back; real `.xls` and `.ppt` files are unverified (tracked in #530). See Requests above |
 
 ### Deliberately not modeled
 

@@ -28,6 +28,7 @@
 use crate::client::Client;
 use crate::errors::GenaiError;
 use crate::paging;
+use crate::redact;
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -100,13 +101,20 @@ pub struct SigningSecret {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+// Prints `extra`'s keys alone (see the field doc). Destructured without
+// `..`, so a field added later fails to compile here until it is printed
+// or redacted (D-067).
 impl std::fmt::Debug for SigningSecret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            truncated_secret,
+            expire_time,
+            extra,
+        } = self;
         f.debug_struct("SigningSecret")
-            .field("truncated_secret", &self.truncated_secret)
-            .field("expire_time", &self.expire_time)
-            // Keys only: see the field doc.
-            .field("extra", &self.extra.keys().collect::<Vec<_>>())
+            .field("truncated_secret", truncated_secret)
+            .field("expire_time", expire_time)
+            .field("extra", &redact::keys(extra))
             .finish()
     }
 }
@@ -194,27 +202,39 @@ pub struct Webhook {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-// Custom Debug that redacts the one-time signing secret (mirrors the
-// api_key redaction on `Client` / `HttpContext`).
+// Prints the one-time signing secret redacted (D-067). Destructured without
+// `..`, so a field added later fails to compile here until it is printed or
+// redacted.
 impl std::fmt::Debug for Webhook {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            uri,
+            subscribed_events,
+            name,
+            id,
+            state,
+            signing_secrets,
+            new_signing_secret,
+            create_time,
+            update_time,
+            extra,
+        } = self;
         f.debug_struct("Webhook")
-            .field("uri", &self.uri)
-            .field("subscribed_events", &self.subscribed_events)
-            .field("name", &self.name)
-            .field("id", &self.id)
-            .field("state", &self.state)
-            .field("signing_secrets", &self.signing_secrets)
+            .field("uri", uri)
+            .field("subscribed_events", subscribed_events)
+            .field("name", name)
+            .field("id", id)
+            .field("state", state)
+            .field("signing_secrets", signing_secrets)
             .field(
                 "new_signing_secret",
-                &self.new_signing_secret.as_ref().map(|_| "[REDACTED]"),
+                &redact::optional(new_signing_secret.as_ref()),
             )
-            .field("create_time", &self.create_time)
-            .field("update_time", &self.update_time)
-            // Listed so unmodeled keys stay visible. They print verbatim:
-            // nothing can redact a secret-bearing field the crate does not
-            // model yet.
-            .field("extra", &self.extra)
+            .field("create_time", create_time)
+            .field("update_time", update_time)
+            // Unmodeled keys stay visible; a secret among them under a name
+            // the wire redacts prints redacted, through the wire's walk.
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }
@@ -243,7 +263,10 @@ impl Webhook {
 ///
 /// Only the set fields are sent, and the server applies exactly those.
 /// [`with_update_mask`](Self::with_update_mask) adds an `update_mask` query
-/// parameter naming the fields to apply.
+/// parameter naming the fields to apply. The body is flat, as the bindings
+/// define it: the OpenAPI spec's wrapped form (`{webhook, update_mask, id}`)
+/// is a `400 Unknown parameter` (under "Spec-only query parameters" in
+/// `docs/INTERACTIONS_API_GAP.md`).
 ///
 /// # Example
 ///
@@ -382,16 +405,16 @@ pub struct RotateSigningSecretResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-// Custom Debug that redacts the rotated signing secret (mirrors the
-// api_key redaction on `Client` / `HttpContext`).
+// Prints the rotated signing secret redacted (D-067), destructured without
+// `..` like `Webhook`'s.
 impl std::fmt::Debug for RotateSigningSecretResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { secret, extra } = self;
         f.debug_struct("RotateSigningSecretResponse")
-            .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
-            // Listed so unmodeled keys stay visible. They print verbatim, as
-            // on `Webhook`: nothing can redact a field the crate does not
-            // model yet.
-            .field("extra", &self.extra)
+            .field("secret", &redact::optional(secret.as_ref()))
+            // As on `Webhook`: unmodeled keys stay visible, and a secret
+            // among them under a name the wire redacts prints redacted.
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }

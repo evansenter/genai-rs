@@ -1,14 +1,16 @@
 //! The Code Coverage job reports somewhere every run, measures the
 //! `antigravity` feature with its scripted suite, counts library files
-//! alone, and fails under a floor that nothing skips or ignores (#504,
-//! D-058).
+//! alone, and fails under a floor that no `if:`, `continue-on-error`,
+//! `needs:`, `defaults:` or shell-level mask the guards know skips or
+//! ignores (#504, D-058).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{command_lines, failure_escapes, jobs, read, root, steps};
+use super::{command_lines, failure_escapes, jobs, read, root, run_script, steps};
+use crate::source_scan;
 
 /// The Code Coverage job of `workflow`, and its steps.
 fn coverage_job(workflow: &str) -> (String, Vec<String>) {
@@ -86,147 +88,30 @@ fn code_coverage_reports_a_summary_and_fails_a_failed_upload() {
     }
 }
 
-/// Whether a `#[cfg(..)]` predicate holds in a test build alone: `test`,
-/// `all(test, ..)`, or `any(..)` of `test` and `fuzzing` (the fuzzing entry
-/// points are compiled for cargo-fuzz too, which a coverage run is not).
+/// Whether a `#[cfg(..)]` predicate (`module_files` keeps each as its
+/// tokens) holds only in a test or fuzzing build: `test`, `all(test, ..)`,
+/// `any(fuzzing, test)` (the fuzzing entry points are compiled for
+/// cargo-fuzz too, which a coverage run is not), through the guards' one
+/// `cfg` reading (`source_scan::cfg_needs`). One it cannot parse can hold.
 fn test_build_only(predicate: &str) -> bool {
-    let compact: String = predicate.split_whitespace().collect();
-    let items = |inner: &str| -> Vec<String> { inner.split(',').map(str::to_owned).collect() };
-    if compact == "test" {
-        return true;
-    }
-    if let Some(inner) = compact
-        .strip_prefix("all(")
-        .and_then(|r| r.strip_suffix(')'))
-    {
-        return items(inner).iter().any(|item| item == "test");
-    }
-    if let Some(inner) = compact
-        .strip_prefix("any(")
-        .and_then(|r| r.strip_suffix(')'))
-    {
-        let items = items(inner);
-        return items.iter().any(|item| item == "test")
-            && items.iter().all(|item| item == "test" || item == "fuzzing");
-    }
-    false
+    syn::parse_str::<syn::Meta>(predicate)
+        .is_ok_and(|meta| source_scan::cfg_needs(&meta, &["test", "fuzzing"]))
 }
 
 /// Every file module of the crate rooted at `lib`, as `(path relative to
-/// the repository, whether only a test build compiles it)`. A module is
-/// test-only when its declaration, or an inline module around it, is under
-/// a `cfg` that holds in a test build alone, or when a test-only module
-/// declares it. Paths resolve as rustc resolves them: a `#[path]`
-/// attribute's file beside the declaring file, else `name.rs` or
-/// `name/mod.rs` in the declaring file's own directory (a crate root, a
-/// `mod.rs` or a `#[path]` file) or its `<stem>/` subdirectory; inside an
-/// inline module `m`, both in that directory's `m/`.
+/// the repository, whether only a test build compiles it)`, from the shared
+/// module walk (`source_scan::module_files`). A module is test-only when a
+/// `cfg` on the way to it, on its declaration, an inline module around it
+/// or a module that declares it, holds in a test build alone.
 fn crate_files(lib: &Path) -> Vec<(String, bool)> {
-    struct Found {
-        file: PathBuf,
-        test_only: bool,
-        owns_dir: bool,
-    }
-    fn declared(
-        items: &[syn::Item],
-        dir: &Path,
-        path_dir: &Path,
-        test_only: bool,
-        out: &mut Vec<Found>,
-    ) {
-        for item in items {
-            let syn::Item::Mod(module) = item else {
-                continue;
-            };
-            let mut gated = test_only;
-            let mut path = None;
-            for attr in &module.attrs {
-                if attr.path().is_ident("cfg") {
-                    let predicate = attr
-                        .meta
-                        .require_list()
-                        .map(|list| list.tokens.to_string())
-                        .unwrap_or_default();
-                    gated |= test_build_only(&predicate);
-                } else if attr.path().is_ident("path")
-                    && let syn::Meta::NameValue(value) = &attr.meta
-                    && let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(text),
-                        ..
-                    }) = &value.value
-                {
-                    path = Some(text.value());
-                }
-            }
-            let name = module.ident.to_string();
-            match &module.content {
-                // An inline module's file modules resolve in its directory.
-                Some((_, inner)) => {
-                    let inner_dir = dir.join(&name);
-                    declared(inner, &inner_dir, &inner_dir, gated, out);
-                }
-                None => {
-                    let (file, owns_dir) = match path {
-                        Some(path) => (path_dir.join(path), true),
-                        None if dir.join(format!("{name}.rs")).exists() => {
-                            (dir.join(format!("{name}.rs")), false)
-                        }
-                        None => (dir.join(&name).join("mod.rs"), true),
-                    };
-                    out.push(Found {
-                        file,
-                        test_only: gated,
-                        owns_dir,
-                    });
-                }
-            }
-        }
-    }
-
-    let mut files = vec![Found {
-        file: lib.to_path_buf(),
-        test_only: false,
-        owns_dir: true,
-    }];
-    let mut next = 0;
-    while next < files.len() {
-        let (file, test_only) = (files[next].file.clone(), files[next].test_only);
-        let owns_dir = files[next].owns_dir;
-        next += 1;
-        let parsed = syn::parse_file(&read(&file))
-            .unwrap_or_else(|e| panic!("cannot parse {}: {e}", file.display()));
-        let dir = file.parent().expect("a file has a directory");
-        let own_dir = if owns_dir {
-            dir.to_path_buf()
-        } else {
-            dir.join(file.file_stem().expect("a file has a stem"))
-        };
-        let mut found = Vec::new();
-        declared(&parsed.items, &own_dir, dir, test_only, &mut found);
-        for module in found {
-            assert!(
-                module.file.exists(),
-                "{} declares a module in {}, which does not exist",
-                file.display(),
-                module.file.display()
-            );
-            if !files.iter().any(|known| known.file == module.file) {
-                files.push(module);
-            }
-        }
-    }
-    files
+    source_scan::module_files(lib)
         .into_iter()
-        .map(|found| {
-            let relative = found
-                .file
-                .strip_prefix(root())
-                .unwrap_or(&found.file)
-                .components()
-                .map(|part| part.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join("/");
-            (relative, found.test_only)
+        .map(|module| {
+            let test_only = module
+                .cfgs
+                .iter()
+                .any(|predicate| test_build_only(predicate));
+            (source_scan::repo_relative(&module.path), test_only)
         })
         .collect()
 }
@@ -252,10 +137,12 @@ fn library_files() -> &'static [(String, bool)] {
 /// leaves out the test-only files by one `COVERAGE_IGNORE` pattern, which
 /// matches every module file only a test build compiles and no other (an
 /// inline `#[cfg(test)] mod tests { .. }` in a library file is beyond a
-/// filename pattern, and still counted); and a step after the summary fails
-/// under a floor near the measured value, with no `if:` and no
-/// `continue-on-error`, on the step or its job, to skip it or ignore its
-/// failure.
+/// filename pattern, and still counted); and a step after the summary runs
+/// one command that fails under a floor near the measured value, with
+/// nothing the guards know to skip it or pass its failure
+/// ([`failure_escapes`]: an `if:`, `continue-on-error` or `needs:`, on the
+/// step or its job, a `defaults:`, or a shell-level mask such as
+/// `|| true` or `exit "0"`), as the runs before it have.
 fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
     let (job, all) = coverage_job(workflow);
     let mut problems = Vec::new();
@@ -282,6 +169,17 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
         if !run.contains("--no-report") {
             problems.push(format!(
                 "the runs feed one report, so each is --no-report: {run}"
+            ));
+        }
+    }
+    for step in all
+        .iter()
+        .filter(|step| command_lines(step).any(|line| line.contains("cargo llvm-cov nextest")))
+    {
+        for escape in failure_escapes(workflow, &job, step) {
+            problems.push(format!(
+                "a coverage run's step has {escape}: a failing test must fail the job, not \
+                 leave a figure from a partial run"
             ));
         }
     }
@@ -394,17 +292,21 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
             "the floor is checked after the summary, so a drop is shown before it fails".into(),
         );
     }
-    for escape in failure_escapes(&job, &all[floor_at]) {
+    for escape in failure_escapes(workflow, &job, &all[floor_at]) {
         problems.push(format!(
             "the floor step has {escape}: a drop must fail the job on every run"
         ));
     }
-    let floor_line = command_lines(&all[floor_at])
-        .find(|line| line.contains("--fail-under-lines"))
-        .unwrap_or_default();
-    if !floor_line.contains("--workspace") {
+    // One command, which reads the packages the runs measured, so its
+    // status is the floor's verdict and nothing else's.
+    let expected = format!(
+        "cargo llvm-cov report --workspace --ignore-filename-regex \"$COVERAGE_IGNORE\" \
+         --fail-under-lines {floor}"
+    );
+    let script = run_script(&all[floor_at]);
+    if script != [expected.as_str()] {
         problems.push(format!(
-            "the floor reads the packages the runs measured: {floor_line}"
+            "the floor step runs `{expected}` and nothing else: found {script:?}"
         ));
     }
     problems
@@ -462,6 +364,53 @@ fn the_coverage_check_catches_what_it_claims_to() {
         workflow.replace("|fuzzing)'", "|fuzzing|antigravity/)'"),
         // No pattern at all.
         workflow.replace("      COVERAGE_IGNORE: '", "      COVERAGE_SKIP: '"),
+        // M3: the floor's failure masked in the shell, in each spelling.
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93 || true\n",
+        ),
+        workflow.replace("--fail-under-lines 93\n", "--fail-under-lines 93; true\n"),
+        workflow.replace("--fail-under-lines 93\n", "--fail-under-lines 93 || :\n"),
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93 || echo \"below the floor\"\n",
+        ),
+        workflow.replace(
+            &format!("{floor}93\n"),
+            &format!(
+                "        run: |\n          set +e\n          {}93\n",
+                floor.trim_start().trim_start_matches("run: ")
+            ),
+        ),
+        // ... or skipped with a job it needs, or run under another shell.
+        workflow.replace(
+            "    name: Code Coverage\n",
+            "    name: Code Coverage\n    needs: captured-fixtures\n",
+        ),
+        workflow.replace(floor, &format!("        shell: bash {{0}}\n{floor}")),
+        // ... or a flag beside it that reads another figure.
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93 --ignore-filename-regex '.*'\n",
+        ),
+        // A failing test in a coverage run passed over.
+        workflow.replace(
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report\n",
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report || true\n",
+        ),
+        workflow.replace(
+            "        run: |\n          set -euo pipefail\n          cargo llvm-cov clean --workspace\n",
+            "        run: |\n          set -eo pipefail\n          cargo llvm-cov clean --workspace\n",
+        ),
+        workflow.replace(
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report\n",
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report || exit \"0\"\n",
+        ),
+        // A shell for the whole workflow that never runs a script.
+        workflow.replace(
+            "\njobs:\n",
+            "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
         // The antigravity feature, or the scripted suite, gone.
         workflow.replace(
             "cargo llvm-cov nextest --workspace --features antigravity --no-report\n",
@@ -501,6 +450,7 @@ fn the_module_walk_tells_test_only_files_from_library_code() {
         "src/test_subscriber.rs",
         "src/fuzzing.rs",
         "src/fuzzing_tests.rs",
+        "src/fuzzing_wire.rs",
         "src/request/tests.rs",
         "src/antigravity/process_tree_tests.rs",
     ] {
@@ -522,6 +472,12 @@ fn the_module_walk_tells_test_only_files_from_library_code() {
         ("any(target_os = \"linux\", test)", false),
         ("unix", false),
         ("not(test)", false),
+        ("not(not(test))", true),
+        (
+            "all(unix, not(any(target_os = \"linux\", target_os = \"macos\")))",
+            false,
+        ),
+        ("any (fuzzing , test)", true),
     ] {
         assert_eq!(test_build_only(predicate), only, "{predicate}");
     }

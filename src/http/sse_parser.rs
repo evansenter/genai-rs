@@ -179,10 +179,11 @@ fn not_utf8(error: str::Utf8Error) -> GenaiError {
     GenaiError::MalformedResponse(format!("an SSE line is not valid UTF-8: {error}"))
 }
 
-/// A transport error while reading the body: the stream was cut off.
+/// A transport error while reading the body: the stream was cut off. The
+/// error is the source, and the message does not repeat its text (#554).
 fn cut_off_by_transport(error: reqwest::Error) -> GenaiError {
     GenaiError::StreamInterrupted {
-        message: format!("the connection failed mid-body: {error}"),
+        message: "the connection failed mid-body".to_string(),
         source: Some(error),
     }
 }
@@ -481,7 +482,12 @@ mod tests {
             "{err:?}"
         );
         assert!(err.is_retryable());
-        assert!(std::error::Error::source(err).is_some(), "keeps the cause");
+        let source = std::error::Error::source(err).expect("keeps the cause");
+        // The chain prints the cause once: `Display` leaves it to `source()`.
+        assert!(
+            !err.to_string().contains(&source.to_string()),
+            "{err} repeats its source"
+        );
     }
 
     #[tokio::test]

@@ -19,15 +19,25 @@ pub struct HttpContext {
     request_counter: Arc<AtomicU64>,
 }
 
-// Custom Debug that redacts the API key and elides inspectors.
+// Prints the API key redacted (D-067), the inspectors by count, and not the
+// request counter. Destructured without `..`, so a field added later fails
+// to compile here until it is printed or redacted.
 impl std::fmt::Debug for HttpContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            http_client,
+            api_key: _,
+            inspectors,
+            base_url,
+            api_version,
+            request_counter: _,
+        } = self;
         f.debug_struct("HttpContext")
-            .field("http_client", &self.http_client)
-            .field("api_key", &"[REDACTED]")
-            .field("base_url", &self.base_url)
-            .field("api_version", &self.api_version)
-            .field("inspectors", &self.inspectors.len())
+            .field("http_client", http_client)
+            .field("api_key", &crate::redact::REDACTED)
+            .field("base_url", base_url)
+            .field("api_version", api_version)
+            .field("inspectors", &inspectors.len())
             .finish_non_exhaustive()
     }
 }

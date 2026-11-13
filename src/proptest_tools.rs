@@ -10,11 +10,8 @@ pub(super) fn arb_function_calling_mode() -> impl Strategy<Value = FunctionCalli
         Just(FunctionCallingMode::None),
         Just(FunctionCallingMode::Validated),
         // Unknown variant with preserved data
-        unknown_or(FunctionCallingMode::Auto, |mode_type| {
-            FunctionCallingMode::Unknown {
-                mode_type: mode_type.clone(),
-                data: serde_json::Value::String(mode_type),
-            }
+        unknown_or(FunctionCallingMode::Auto, |mode_type, data| {
+            FunctionCallingMode::Unknown { mode_type, data }
         }),
     ]
 }
@@ -26,9 +23,8 @@ pub(super) fn arb_search_type() -> impl Strategy<Value = SearchType> {
         Just(SearchType::ImageSearch),
         Just(SearchType::EnterpriseWebSearch),
         // Unknown variant with preserved data
-        unknown_or(SearchType::WebSearch, |search_type| SearchType::Unknown {
-            search_type: search_type.clone(),
-            data: serde_json::Value::String(search_type),
+        unknown_or(SearchType::WebSearch, |search_type, data| {
+            SearchType::Unknown { search_type, data }
         }),
     ]
 }
@@ -51,7 +47,13 @@ pub(super) fn arb_allowed_tools() -> impl Strategy<Value = AllowedTools> {
 
 pub(crate) fn arb_tool_choice() -> impl Strategy<Value = ToolChoice> {
     prop_oneof![
-        arb_function_calling_mode().prop_map(ToolChoice::Mode),
+        // The bare arm is the union's string: a mode read from a non-string
+        // value reads as `ToolChoice::Unknown` instead, typed by its shape.
+        arb_function_calling_mode()
+            .prop_filter("a bare mode is a string", |mode| {
+                mode.unknown_data().is_none_or(serde_json::Value::is_string)
+            })
+            .prop_map(ToolChoice::Mode),
         arb_allowed_tools().prop_map(|allowed_tools| ToolChoice::AllowedTools {
             allowed_tools,
             extra: serde_json::Map::new(),
@@ -211,9 +213,9 @@ pub(super) fn arb_retrieval_type() -> impl Strategy<Value = RetrievalType> {
         Just(RetrievalType::RagStore),
         Just(RetrievalType::ExaAiSearch),
         Just(RetrievalType::ParallelAiSearch),
-        unknown_or(RetrievalType::VertexAiSearch, |retrieval_type| {
+        unknown_or(RetrievalType::VertexAiSearch, |retrieval_type, data| {
             RetrievalType::Unknown {
-                data: serde_json::Value::String(retrieval_type.clone()),
+                data,
                 retrieval_type,
             }
         }),
@@ -344,13 +346,13 @@ proptest! {
         prop_assert_eq!(allowed, restored);
     }
 
-    /// Test that ToolChoice roundtrips stably through JSON.
-    ///
-    /// Uses JSON comparison since the Unknown variant regenerates its
-    /// choice_type descriptor on deserialization.
+    /// Test that ToolChoice roundtrips through JSON: stably, and to the value
+    /// it was written from, once an Unknown's choice_type is the descriptor
+    /// its data reads back with.
     #[test]
     fn tool_choice_roundtrip(choice in arb_tool_choice()) {
         assert_value_roundtrip(&choice)?;
+        assert_first_write_keeps(&choice)?;
     }
 
     /// Test that RetrievalType roundtrips correctly through JSON.
@@ -361,10 +363,12 @@ proptest! {
         prop_assert_eq!(retrieval_type, restored);
     }
 
-    /// Test that Tool roundtrips stably through JSON.
+    /// Test that Tool roundtrips through JSON: stably, and to the value it
+    /// was written from (its non-string unknowns included).
     #[test]
     fn tool_roundtrip(tool in arb_tool()) {
         assert_value_roundtrip(&tool)?;
+        assert_first_write_keeps(&tool)?;
     }
 }
 

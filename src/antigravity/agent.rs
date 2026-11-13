@@ -76,10 +76,11 @@ pub struct AntigravityAgent {
     pub(super) turn_unfinished: bool,
     /// The failure of the turn that ended the session
     /// ([`TurnFailure::ends_session`]), once there is one. Every later
-    /// call fails with [`AntigravityError::ConnectionClosed`] without
-    /// sending: harness 0.1.23 ends its run and closes the connection, but
-    /// can first take the next message and answer it with an empty turn,
-    /// which would read as a success.
+    /// `chat`, `send_streaming` and `next_trigger_turn` fails with
+    /// [`AntigravityError::ConnectionClosed`] without sending (`cancel()`
+    /// and `shutdown()` do not check): harness 0.1.23 ends its run and
+    /// closes the connection, but can first take the next message and
+    /// answer it with an empty turn, which would read as a success.
     pub(super) session_ended: Option<TurnFailure>,
     /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
     /// aborted on shutdown and on drop.
@@ -214,7 +215,9 @@ impl AntigravityAgent {
     ///
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
-    /// before this message is sent (see [`triggers`]).
+    /// before this message is sent (see [`triggers`]). The turn deadline
+    /// starts with the call, so that halt, and the wait for a trigger's
+    /// message still going out to the harness, count against it.
     ///
     /// # Cancellation
     ///
@@ -245,10 +248,10 @@ impl AntigravityAgent {
     /// why (a model backend error, an error of the harness's own, a
     /// cancellation by the harness, a pre-turn denial, or a hook that could
     /// not run);
-    /// [`AntigravityError::Timeout`] past the turn timeout, sending the
-    /// message included (a harness that stopped reading fails here too, its
-    /// `operation` saying the harness did not take the message; with no
-    /// turn timeout, the send gives up after 30 seconds);
+    /// [`AntigravityError::Timeout`] past the turn timeout, what comes
+    /// before the turn and the sends included (a harness that stopped
+    /// reading fails here too, its `operation` naming the message it did
+    /// not take; with no turn timeout, each send gives up after 30 seconds);
     /// [`AntigravityError::ConnectionClosed`] or
     /// [`AntigravityError::WebSocket`] when the connection to the harness
     /// fails, and `ConnectionClosed`, without sending, once an earlier turn
@@ -262,10 +265,10 @@ impl AntigravityAgent {
     ) -> Result<ChatResponse, AntigravityError> {
         let input = user_input(prompt)?;
         self.fail_if_session_ended().await?;
+        // The deadline starts first, so it bounds everything below.
+        let mut turn = TurnState::new(self.turn_timeout, None);
         // Mark busy before sending so a trigger cannot slip in between.
-        let guard = self.begin_turn().await;
-        // The deadline starts before the send, which it bounds too.
-        let mut turn = TurnState::new(self.turn_timeout, Some(guard));
+        self.begin_turn(&mut turn).await?;
         self.send_turn_input(&input, &turn).await?;
         loop {
             match self.next_turn_event(&mut turn).await? {
@@ -286,7 +289,8 @@ impl AntigravityAgent {
     ///
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
-    /// before this message is sent (see [`triggers`]).
+    /// before this message is sent (see [`triggers`]), within the turn
+    /// deadline, which starts with the call as for `chat`.
     ///
     /// # Cancellation
     ///
@@ -301,10 +305,12 @@ impl AntigravityAgent {
     /// # Errors
     ///
     /// [`AntigravityError::Config`] for an empty [`Prompt`],
-    /// [`AntigravityError::WebSocket`] when the message cannot be sent, and
-    /// [`AntigravityError::Timeout`] when the harness does not take it
-    /// within the turn timeout, or within 30 seconds when the turn has none
-    /// (it stopped reading). The turn's own failures, as listed for
+    /// [`AntigravityError::ConnectionClosed`], without sending, once an
+    /// earlier turn ended the session, [`AntigravityError::WebSocket`] when
+    /// the message cannot be sent, and [`AntigravityError::Timeout`] when
+    /// the turn timeout passes before the harness takes it, or the harness
+    /// does not take it within 30 seconds and the turn has no timeout (it
+    /// stopped reading). The turn's own failures, as listed for
     /// [`chat`](Self::chat), arrive as the stream's items.
     pub async fn send_streaming(
         &mut self,
@@ -312,12 +318,12 @@ impl AntigravityAgent {
     ) -> Result<AgentEventStream<'_>, AntigravityError> {
         let input = user_input(prompt)?;
         self.fail_if_session_ended().await?;
+        // The deadline starts first, so it bounds everything below.
+        let mut turn = TurnState::new(self.turn_timeout, None);
         // Mark busy before sending so a trigger cannot slip in between.
-        // The guard moves into the stream's turn state: dropping the
-        // stream mid-turn marks the agent idle again.
-        let guard = self.begin_turn().await;
-        // The deadline starts before the send, which it bounds too.
-        let mut turn = TurnState::new(self.turn_timeout, Some(guard));
+        // The guard is the stream's turn state's: dropping the stream
+        // mid-turn marks the agent idle again.
+        self.begin_turn(&mut turn).await?;
         self.send_turn_input(&input, &turn).await?;
         let stream = async_stream::try_stream! {
             while let Some(event) = self.next_turn_event(&mut turn).await? {
@@ -382,7 +388,8 @@ impl AntigravityAgent {
     /// # Errors
     ///
     /// [`AntigravityError::ConnectionClosed`] when the harness closes the
-    /// connection while this waits, and a failed turn's errors, as for
+    /// connection while this waits, and at once, without waiting, once an
+    /// earlier turn ended the session; and a failed turn's errors, as for
     /// [`chat`](Self::chat).
     ///
     /// ```rust,no_run
@@ -415,13 +422,13 @@ impl AntigravityAgent {
         };
         // Busy from here: later deliveries wait for this turn. The flag is
         // left set, so the next chat still checks for a turn a racing
-        // delivery may have started.
-        let guard = {
-            let _sync = self.turn_sync.lock().await;
-            TurnGuard::begin(&self.idle)
-        };
+        // delivery may have started. The turn's deadline starts with its
+        // first event, before the wait for a delivery in flight.
+        let mut turn = TurnState::new(self.turn_timeout, None);
         self.turn_unfinished = true;
-        let mut turn = TurnState::new(self.turn_timeout, Some(guard));
+        let sync = self.lock_turn_sync(&turn).await?;
+        turn.hold(TurnGuard::begin(&self.idle));
+        drop(sync);
         self.process_turn_event(first, &mut turn).await?;
         loop {
             match self.next_turn_event(&mut turn).await? {
@@ -458,28 +465,24 @@ impl AntigravityAgent {
     // Turn loop
     // -------------------------------------------------------------------
 
-    /// Sends a turn's input, bounded by the turn deadline alone when there
-    /// is one, and otherwise by the session's 30 s bound on a send. A
-    /// harness that has stopped reading then fails the turn with a timeout
-    /// instead of holding it. The turn stays unfinished, so the next one
-    /// halts and drains whatever the harness makes of the message.
+    /// Sends a turn's input, as [`send_in_turn`](Self::send_in_turn) sends
+    /// a reply. A harness that has stopped reading then fails the turn with
+    /// a timeout instead of holding it. The turn stays unfinished, so the
+    /// next one halts and drains whatever the harness makes of the message.
+    /// Nothing is sent once the deadline has passed (halting an earlier
+    /// turn can take it all): the turn could only time out.
     async fn send_turn_input(
         &self,
         input: &InputEvent,
         turn: &TurnState,
     ) -> Result<(), AntigravityError> {
-        let Some(deadline) = turn.deadline else {
-            return self.session.send(input).await;
-        };
-        self.session
-            .send_before(input, deadline)
-            .await
-            .unwrap_or_else(|_| {
-                Err(AntigravityError::Timeout {
-                    operation: "agent turn (the harness did not take the message)".to_string(),
-                    timeout: turn.timeout.unwrap_or_default(),
-                })
-            })
+        if turn
+            .deadline
+            .is_some_and(|deadline| deadline <= tokio::time::Instant::now())
+        {
+            return Err(turn.timed_out("the deadline passed before the message was sent"));
+        }
+        self.send_in_turn(input, turn, "the message").await
     }
 
     /// Returns the next agent event for the running turn, or `None` once
@@ -510,7 +513,9 @@ impl AntigravityAgent {
                         // turn and desync every turn after it. A drain that
                         // ran out of budget leaves the turn unfinished, so
                         // the next turn halts and drains again.
-                        let drained = self.halt_and_drain("recovering from a turn timeout").await;
+                        let drained = self
+                            .halt_and_drain("recovering from a turn timeout", None)
+                            .await;
                         self.turn_unfinished = !drained;
                         let stderr = self.harness.stderr_tail().await;
                         return Err(AntigravityError::Timeout {
@@ -578,8 +583,12 @@ impl AntigravityAgent {
     /// Marks the agent busy and, when a trigger delivered since the last
     /// client-driven turn or the last turn never ended (it was abandoned
     /// mid-flight, or failed on this side), halts and drains the harness's
-    /// turn. Returns the guard that flips the agent back to idle on drop,
-    /// with the new turn marked unfinished until its end is seen.
+    /// turn. `turn` takes the guard that flips the agent back to idle on
+    /// drop, and the new turn is marked unfinished until its end is seen.
+    ///
+    /// The turn's deadline bounds the wait for `turn_sync` (a trigger's
+    /// delivery holds it across a send) and the drain. Past it, the call
+    /// fails with the turn's `Timeout` before marking the agent busy.
     ///
     /// Invariant (shared with [`triggers::spawn_trigger_task`]): flipping
     /// the idle flag and consuming `trigger_fired` happen under
@@ -589,28 +598,44 @@ impl AntigravityAgent {
     /// already passed its idle check could set the flag and send *after*
     /// the `swap` below returned `false`, delivering its message into the
     /// turn we are about to start with nobody ever draining it.
-    async fn begin_turn(&mut self) -> TurnGuard {
-        let (guard, trigger_fired) = {
-            let _sync = self.turn_sync.lock().await;
-            let guard = TurnGuard::begin(&self.idle);
+    async fn begin_turn(&mut self, turn: &mut TurnState) -> Result<(), AntigravityError> {
+        let trigger_fired = {
+            let sync = self.lock_turn_sync(turn).await?;
+            turn.hold(TurnGuard::begin(&self.idle));
             let fired = self
                 .trigger_fired
                 .swap(false, std::sync::atomic::Ordering::SeqCst);
-            (guard, fired)
+            drop(sync);
+            fired
         };
         // Drain outside the critical section: the agent is already marked
         // busy, so trigger tasks defer and nothing new can fire meanwhile.
         // The unfinished flag stays set across the drain, so a turn
         // abandoned while draining is drained again by the next one.
         if self.turn_unfinished {
-            self.halt_and_drain("discarding an abandoned or failed turn")
+            self.halt_and_drain("discarding an abandoned or failed turn", turn.deadline)
                 .await;
         } else if trigger_fired {
-            self.halt_and_drain("discarding a trigger-initiated turn")
+            self.halt_and_drain("discarding a trigger-initiated turn", turn.deadline)
                 .await;
         }
         self.turn_unfinished = true;
-        guard
+        Ok(())
+    }
+
+    /// Takes `turn_sync` within the turn's deadline, when it has one. A
+    /// trigger's delivery holds the lock across its send, which a harness
+    /// that stopped reading holds for up to 30 s.
+    async fn lock_turn_sync(
+        &self,
+        turn: &TurnState,
+    ) -> Result<tokio::sync::MutexGuard<'_, ()>, AntigravityError> {
+        let Some(deadline) = turn.deadline else {
+            return Ok(self.turn_sync.lock().await);
+        };
+        tokio::time::timeout_at(deadline, self.turn_sync.lock())
+            .await
+            .map_err(|_| turn.timed_out("the harness did not take a trigger's message"))
     }
 
     /// Best-effort recovery when the harness may be driving (or have
@@ -626,19 +651,30 @@ impl AntigravityAgent {
     /// (including the halt's own cancellation) are logged and swallowed;
     /// only transport health matters here.
     ///
+    /// `limit`, the deadline of the turn about to start, cuts the budget
+    /// short when it comes first.
+    ///
     /// Returns whether the stream went silent: `false` when the budget ran
     /// out or the transport failed first.
-    async fn halt_and_drain(&mut self, why: &str) -> bool {
+    async fn halt_and_drain(&mut self, why: &str, limit: Option<tokio::time::Instant>) -> bool {
         // tests/antigravity_scripted/cancel.rs counts halts by this line.
         tracing::debug!("Halting and draining the harness turn ({why}).");
         // The budget covers sending the halt: a harness that stopped
         // reading must not hold the next turn for the send's own bound.
-        let deadline = tokio::time::Instant::now() + HALT_DRAIN_BUDGET;
+        let budget = tokio::time::Instant::now() + HALT_DRAIN_BUDGET;
+        let deadline = limit.map_or(budget, |limit| limit.min(budget));
         let halt = InputEvent::HaltRequest(true);
         match self.session.send_before(&halt, deadline).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 tracing::warn!("Failed to send halt request while {why}: {e}");
+                return false;
+            }
+            Err(_) if deadline < budget => {
+                tracing::warn!(
+                    "The harness did not take the halt request before the turn's deadline \
+                     while {why}."
+                );
                 return false;
             }
             Err(_) => {

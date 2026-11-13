@@ -169,6 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GenerationConfig::extra` keeps the generation-config fields the crate
   does not model, from a stored read or a deserialized config, and sends
   them flat beside the modeled ones.
+- `InteractionResponse` implements `PartialEq`.
 - `InteractionBuilder::continue_decode(&response)` continues a decode that
   stopped early without resending the input: it sets the response's model,
   its id as the previous interaction and its `continuation_token`, replacing
@@ -569,7 +570,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MalformedResponse` for a cut-off stream. Match
   `StreamInterrupted { source: Some(e), .. } if e.is_timeout()` where you
   matched `Http(e) if e.is_timeout()` for a stream stalled by
-  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`. A
+  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`; its
+  `message` and `Display` say what ended the body and leave the transport
+  error's text to `source()` (#554), so walk the chain for it. A
   retry loop built on `is_retryable()` now also retries a clean early close.
   Discard the partial output first, because a foreground retry is a new
   generation.
@@ -708,9 +711,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so read it there (`item.extra.get("title")`). For file search, read the
   `file_citation` annotations on the answer (`all_annotations()`);
   `has_file_search_results()` still says whether a search ran.
-- **Breaking: `GenerationConfig` has a new public field, `extra`.**
-  Migration: a struct literal needs `extra: Default::default()`, or
-  `..Default::default()`.
+- **Breaking: `GenerationConfig` has two new public fields, `extra` and
+  `speech_config_extra`.** `speech_config_extra` keeps the keys a
+  `{"speakers": [...]}` form of `speech_config` carries beside the list,
+  which a stored interaction read back used to lose; while it holds one,
+  `speech_config` is written in that form with them, and otherwise as the
+  list (D-072). Migration: a struct literal needs
+  `extra: Default::default()` and `speech_config_extra: Default::default()`,
+  or `..Default::default()`.
 - **Breaking: `generation_config`, `response_format`,
   `response_modalities`, `safety_settings`, `agent_config` and
   `environment` no longer land in `InteractionResponse::extra`.**
@@ -785,9 +793,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already made that fails unexpectedly. Migration: match the new variants
   where you told these cases apart by `Internal`'s message.
 - **Breaking: `GenaiError::ClientBuild` holds the `reqwest::Error` instead
-  of its message**, and returns it from `source()` (#490). Migration:
-  `ClientBuild(e)` binds a `reqwest::Error`; `e.to_string()` gives the old
-  string.
+  of its message**, and returns it from `source()` (#490). Its `Display` is
+  `Failed to build HTTP client` alone, leaving the reqwest error's text to
+  the chain, so a reporter that walks `source()` prints it once (#554).
+  Migration: `ClientBuild(e)` binds a `reqwest::Error`; `e.to_string()`
+  gives the old string.
 - **Breaking: four types are renamed to the pattern the others follow,
   and `VideoProcessingBuilder`'s setters take the `with_` prefix** (#490,
   D-028). A list page is `<Resource>ListResponse` and a create body is
@@ -863,28 +873,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AntigravityError::Turn { kind, message }`, and `kind` says why.** `kind`
   is the new `TurnFailure` (`#[non_exhaustive]`): `ModelBackend { status }`
   (the model backend failed a call: a 400, 401 or 403, or a 503 whose
-  retries ran out), `Trajectory` (the harness ended the turn with an error
-  of its own, such as an MCP server that failed to load), `Denied` (the
-  pre-turn hook refused the turn; `message` is its reason), `Cancelled`
-  (the harness cancelled the turn) or `Hook` (a hook's thread did not run).
+  retries ran out on a call of the agent's own rather than a subagent's),
+  `Trajectory` (the harness ended the turn with an error of its own, such
+  as an MCP server that failed to load), `Denied` (the pre-turn hook
+  refused the turn; `message` is its reason), `Cancelled` (the harness
+  cancelled the turn) or `Hook` (a hook's thread did not run).
   `TurnFailure::ends_session()` is true for `ModelBackend` and
   `Trajectory`, after which harness 0.1.23 ends its run, and the agent
-  fails every later call with `ConnectionClosed` without sending. `message`
-  is the harness's text alone, and `Display` names the kind. Migration:
-  match `AntigravityError::Turn { kind, message }` where you matched
+  fails every later `chat`, `send_streaming` and `next_trigger_turn` with
+  `ConnectionClosed` without sending. `message` is the harness's text
+  alone, and `Display` names the kind. Migration: match
+  `AntigravityError::Turn { kind, message }` where you matched
   `Turn(message)`, and decide on `kind` (or `kind.ends_session()` for
   whether to spawn a new agent) where you searched the message for "HTTP
   400" or a reason.
-- **Breaking: `AntigravityError::InitFailed` has a `source` field, and no
-  Antigravity error repeats its source's text in `Display`.** A WebSocket
-  connect that fails during `spawn()`, and a failed read of the harness's
-  initialization reply, are `InitFailed` errors whose `source()` is the
-  `WebSocket` error (it held only the text). `WebSocket`, `Protocol`, `Io`
-  and `InitFailed` print what was being done; `source()` gives the cause,
-  so a reporter that walks the chain prints each cause once. Migration:
-  match `InitFailed { message, stderr, .. }`, and walk `source()` (or use
-  a reporter that does) where you printed only the top error and want the
-  cause.
+- **Breaking: `AntigravityError::InitFailed` and `HandshakeFailed` have a
+  `source` field, no Antigravity error repeats its source's text in
+  `Display`, and every failure of `spawn()` after the handshake is
+  `InitFailed`.** A WebSocket connect that fails during `spawn()`, and a
+  failed read of the harness's initialization reply, are `InitFailed`
+  errors whose `source()` is the `WebSocket` error (it held only the
+  text). With `on_session_start` set, a failed read, a failed answer or a
+  harness message that failed a turn while `spawn()` waits for the
+  session-start hook was the bare `WebSocket`, `Protocol` or `Turn` error,
+  with no stderr, and a hook that overran its 30 s was `Timeout`; each is
+  now `InitFailed`, with the stderr tail and the cause, when there is one,
+  as its source. A `HandshakeFailed` from a binary that would not start,
+  a failed handshake exchange or a reply that does not decode has that I/O
+  or decode error as its source, where its message held the text.
+  `WebSocket`, `Protocol`, `Io`, `HandshakeFailed` and `InitFailed` print
+  what was being done; `source()` gives the cause, so a reporter that
+  walks the chain prints each cause once. Migration: match
+  `InitFailed { message, stderr, .. }` and
+  `HandshakeFailed { message, stderr, .. }`; match `InitFailed` where you
+  matched `WebSocket`, `Protocol`, `Turn` or `Timeout` from a `spawn()`
+  with `on_session_start`; and walk `source()` (or use a reporter that
+  does) where you printed only the top error and want the cause.
 - **Breaking: `AgentBuilder::with_tool_service` is `add_tool_service`.**
   It appends, so each call registers another service; the `with_` prefix
   says a second call replaces. Migration: rename the call.
@@ -1002,9 +1026,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pageToken`, the camelCase pair the Files API and google-genai's bindings
   use (#541); they sent `page_size` and `page_token`, which the API also
   accepts, so paging behaves as before.
+- `Triggers::run` returns the run's `TriggerExecution`, filled in, once the
+  run has ended (#549). The API used to answer `{}` at once, and the docs
+  said the execution was empty and had to be found with `list_executions`;
+  it now holds the request until the run ends, up to the trigger's
+  `execution_timeout_seconds` (at most 600), and answers with the
+  execution, whose `status` says how the run ended (verified live
+  2026-11-13). The signature is unchanged. A client timeout shorter than
+  the run ends the call with an error while the run goes on, and
+  `list_executions` still lists it.
 
 ### Fixed
 
+- **Breaking: no message to the Antigravity harness can wait forever. A
+  failed initialization send fails `spawn()` with `InitFailed`, not
+  `WebSocket`, and a send in a turn with no timeout gives up with
+  `Timeout`.** `chat()` and `send_streaming()` start the turn deadline
+  when called, so it bounds the wait for a trigger's message still going
+  out, the halt of an earlier turn, the message and every reply to the
+  harness mid-turn (hook answers, tool results, answers to its questions):
+  a harness that has stopped reading fails the turn with
+  `AntigravityError::Timeout` at `with_turn_timeout` (the default 300 s
+  included) instead of holding the call past it, however large the prompt
+  (inline media included). The halt sent before a turn also counts against
+  the five-second halt-and-drain budget, the initialization and the
+  session-end request against their 30 s budgets (a stuck or failed
+  initialization message fails `spawn()` with `InitFailed` and the stderr
+  tail, where a failed one was a `WebSocket` error), the close in
+  `shutdown()` waits for a send in progress only within its half-second
+  bound, and any other send (`cancel()`, a trigger's delivery, a message in
+  a turn with no timeout) gives up after 30 s with `Timeout` (#504,
+  D-066). Migration: match `InitFailed { .. }` where you matched a
+  `WebSocket` error from `spawn()`; the `WebSocket` error is its
+  `source()`. After `without_turn_timeout()`, and from `cancel()`, handle
+  `Timeout` from a send the harness has not read within 30 s, where the
+  call used to wait.
+- **Breaking: an Antigravity harness that dies mid-turn, or while
+  `next_trigger_turn` waits, fails the call with
+  `AntigravityError::ConnectionClosed`, not `WebSocket`.** The error
+  carries the tail of the harness's stderr, as that variant says. A
+  connection that ended without a close frame, as a crashed or killed
+  harness's does, read as a `WebSocket` error with no stderr. Migration:
+  match `ConnectionClosed { message, stderr }` where you matched a
+  `WebSocket` error for a harness that crashed or was killed; `stderr` says
+  why it died.
+- **Breaking: an Antigravity turn whose model call failed after the agent
+  delegated to a subagent fails with `AntigravityError::Turn`, not `Ok`.**
+  One without a subagent always did. On such a turn (a 503 with no retries
+  left), harness 0.1.23 reports the error before the turn's final state, so
+  `chat` returned `Ok` with the error only in `errors()`, and the next call
+  failed on the closed connection. Migration: handle
+  `Err(AntigravityError::Turn { kind, .. })` where you looked for a failed
+  delegated turn in an `Ok` response's `errors()`; `kind.ends_session()`
+  says whether to spawn a new agent.
+
+- Values the API or the harness sent that a round trip lost or rewrote
+  (D-001): an `EnvironmentSpec` whose `type` is not a string (on an
+  interaction, an agent's `base_environment` or a trigger) read as a remote
+  environment and was written back as `"type": "remote"`; it is now
+  `EnvironmentSpec::Unknown`, typed `<non-string: ...>`, and written back
+  as it came (its `Debug` prints that JSON through the wire's redaction,
+  so an `env` value prints as `[REDACTED]`, as a remote one's does). A
+  domain-less allowlist
+  entry, the disabled echo's `{"mode": "disabled"}` beside another entry
+  or key, was written back with a `"domain": ""` it never had; an empty
+  `domain` is no longer written, so one read as `""` is written back
+  without it. `ThinkingSummaries::to_agent_config_value`, and so a
+  `DeepResearchConfig` built from a value read from the wire, wrote a
+  non-string unknown as its `<non-string: ...>` type rather than the JSON
+  it came as, and a voice listing filtered by a listed voice's non-string
+  `type` or `pitch` sent that type as its query value. Antigravity's
+  `OutputEvent` dropped a `usageUpdate` that is not an object (it is kept
+  in `extra`) and read a `sessionEndResponse` that is not a bool as
+  `false` (it is kept as `OutputPayload::Unknown`, and still ends the
+  session). An `f32` field (`temperature`, `top_p`, the retrieval tool's
+  `alpha`) read from a number beyond `f32`'s range held an infinity,
+  written as `null`; it is dropped on read with a `warn!` (D-071).
+  `InteractionInput`'s docs said a response's input is written back in the
+  shape it came in; a single input object is written back as a
+  one-element array, and they now say so.
 - `Debug` no longer prints the secrets a value holds. `ExaAiSearchConfig`
   and `ParallelAiSearchConfig` printed their `api_key` (and one nested in
   `custom_config`), `McpServerConfig` and `Tool::McpServer` their header
@@ -1015,17 +1115,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every request and response body whole. Each prints `[REDACTED]` in the
   secret's place, as `LOUD_WIRE` does, and keeps the header and variable
   names, so `dbg!`, `tracing::debug!(?request)` or an inspector logging
-  `{event:?}` no longer undoes the wire's redaction. A `WireEvent`'s fields
-  and serialized form still hold the bodies raw.
+  `{event:?}` no longer undoes the wire's redaction. The `extra` map of a
+  `Tool`, `AllowlistEntry`, `EnvVar`, `RemoteEnvironment`, `Webhook` or
+  `RotateSigningSecretResponse` and an unknown tool's payload print such a
+  secret (an `api_key`, a `headers` map) redacted too, as do a harness
+  message's `apiKey`, `httpHeaders` and `env` values in a
+  `WireEvent::WsReceive` (#555). A `WireEvent`'s fields and serialized form
+  still hold the bodies raw, except a `WsSend` payload, which the session
+  redacts before any inspector sees it.
+- `LOUD_WIRE` and `wire::TracingForwarder` redact a message the
+  Antigravity harness sends back as they do one sent to it: its `apiKey`,
+  and the values under `httpHeaders` and an `env` map (#555). `LOUD_WIRE`
+  redacted a received message's `api_key`, `token` or `headers` but missed
+  the harness's own keys, and the forwarder logged it raw. The wire's walk
+  now holds those keys, so a sent message reaches every inspector through
+  the same list as an Interactions API body, which also redacts a `token`,
+  `secret` or `api_key` key the harness's own list did not; and a string
+  directly under any `env` (an MCP server's variable, or an environment
+  `env` the crate could not read) prints as `[REDACTED]`. A JSON Schema's
+  property names are not read as fields, so a function parameter named
+  `env` or `api_key` keeps its schema in the output.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed
   harness was not found without `ANTIGRAVITY_HARNESS_PATH`.
-- On Windows, Antigravity harness discovery asks `python` for its
-  site-packages after `python3`. python.org's installer provides no
-  `python3` (often only the Microsoft Store's stub is there), so a wheel
-  installed with its `pip` was not found without `ANTIGRAVITY_HARNESS_PATH`.
-  `python` is started only when `python3`'s site-packages lack the harness.
+- On Windows, Antigravity harness discovery asks `python`, then the `py`
+  launcher (`py -3`), for its site-packages after `python3`. python.org's
+  installer provides no `python3` (often only the Microsoft Store's stub
+  is there), and its launcher can be on `PATH` when `python` is not, so a
+  wheel installed with its `pip` was not found without
+  `ANTIGRAVITY_HARNESS_PATH`. Each is started only when the interpreters
+  before it lack the harness.
 - Antigravity's `spawn()` no longer waits forever on a harness that
   accepts the WebSocket connection but never answers the upgrade: each of
   the 5 connect attempts gives up after 5 s and counts as failed, so
@@ -1057,10 +1177,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recipe, now on `InteractionRequest` alone, bounds its attempts and waits
   with jitter or for the server's `Retry-After`, capped, as
   `docs/RELIABILITY.md` does. The background poll in
-  `docs/AGENTS_AND_BACKGROUND.md` ended on the first transient error and
-  checked its deadline only between requests; it now polls through a
-  retryable error, honoring `Retry-After`, and bounds each request by the
-  time left. Copy the change into a loop built from either.
+  `docs/AGENTS_AND_BACKGROUND.md`, and `examples/deep_research.rs`, which
+  runs it, ended on the first transient error and checked the deadline
+  only between requests; both now poll through a retryable error, honoring
+  `Retry-After`, and bound each request by the time left. Copy the change
+  into a loop built from any of them.
 - Docs that said more than holds: `with_labels` said labels are echoed on
   the response, but only a stored interaction read back with
   `interactions().get` carries them; the retry predicate in
@@ -1258,31 +1379,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AgentBuilder`'s, which printed the values given to `add_model_header`
   and `add_harness_env`. `dbg!` or `tracing::debug!(?value)` undid the
   wire inspector's redaction.
-- An Antigravity turn whose model call failed after the agent delegated to
-  a subagent (a 503 with no retries left) fails with
-  `AntigravityError::Turn`, as one without a subagent does. Harness 0.1.23
-  reports that error before the turn's final state, so `chat` returned
-  `Ok` with the error only in `errors()`, and the next call failed on the
-  closed connection.
-- Antigravity: no message to the harness can wait forever. `chat()` and
-  `send_streaming()` start the turn deadline before sending the message, so
-  a harness that has stopped reading fails the turn with
-  `AntigravityError::Timeout` at `with_turn_timeout` (the default 300 s
-  included) instead of holding the call past it, however large the prompt
-  (inline media included). The halt sent before a turn counts against the
-  five-second halt-and-drain budget, the initialization and the session-end
-  request against their 30 s budgets (a stuck or failed initialization
-  message fails `spawn()` with `InitFailed` and the stderr tail, where a
-  failed one was a `WebSocket` error), the close in `shutdown()` waits for a
-  send in progress only within its half-second bound, and any other send
-  (`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
-  message of a turn with no timeout) gives up after 30 s with `Timeout`
-  (#504, D-066).
-- Antigravity: a harness that dies mid-turn, or while `next_trigger_turn`
-  waits, fails the call with `AntigravityError::ConnectionClosed` and the
-  tail of the harness's stderr, as that variant says. A connection that
-  ended without a close frame, as a crashed or killed harness's does, read
-  as a `WebSocket` error with no stderr.
+- Antigravity: `with_turn_timeout(Duration::MAX)` panicked at the first
+  turn. A timeout too large to add to the clock now sets no deadline, as
+  `without_turn_timeout()` does.
+- `AgentBuilder::on_pre_turn` said it is consulted before each turn.
+  Harness 0.1.23 does not consult it on a turn a trigger starts, so a
+  pre-turn gate does not see trigger turns. Its rustdoc and the guide say
+  so, `spawn()` logs a warning when the hook and a trigger are both set,
+  and a scripted test notices the day the harness starts consulting it.
 - `InlineSkill::add_dependent_tool` said the tool is loaded when the skill
   is looked up. Harness 0.1.23 loads nothing, and does nothing with
   `add_allowed_tool` either: a call to a tool outside the list still runs,

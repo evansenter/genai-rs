@@ -20,7 +20,8 @@ fn test_thinking_summaries_serialization() {
 
 #[test]
 fn test_thinking_summaries_agent_config_format() {
-    // AgentConfig uses THINKING_SUMMARIES_* format via to_agent_config_value()
+    // AgentConfig takes the lowercase spelling too (the THINKING_SUMMARIES_*
+    // one is refused on send; it still deserializes).
     assert_eq!(
         ThinkingSummaries::Auto.to_agent_config_value(),
         serde_json::Value::String("auto".to_string())
@@ -165,4 +166,52 @@ fn test_code_mender_config_wire_shape() {
     );
     let bare: AgentConfig = CodeMenderConfig::new().into();
     assert_eq!(bare.as_value(), &serde_json::json!({"type": "code-mender"}));
+}
+
+/// A non-string `thinking_summaries` read from the wire (a stored
+/// interaction's `generation_config`) goes out through `DeepResearchConfig`
+/// as the JSON it came as, not as its `<non-string: ...>` type: what
+/// [`ThinkingSummaries::to_agent_config_value`] writes is what `Serialize`
+/// writes.
+#[cfg(not(genai_strict_unknown))]
+#[test]
+fn non_string_thinking_summaries_round_trips_through_agent_config() {
+    for raw in [
+        serde_json::json!(55555555),
+        serde_json::json!(true),
+        serde_json::json!([1]),
+        serde_json::json!({"x": 1}),
+        serde_json::json!("zz_new"),
+    ] {
+        let config: crate::GenerationConfig =
+            serde_json::from_value(serde_json::json!({"thinking_summaries": raw})).unwrap();
+        let ts = config.thinking_summaries.unwrap();
+        assert!(ts.is_unknown(), "{raw}");
+        assert_eq!(
+            ts.to_agent_config_value(),
+            serde_json::to_value(&ts).unwrap()
+        );
+
+        let sent = serde_json::to_value(AgentConfig::from(
+            DeepResearchConfig::new().with_thinking_summaries(ts.clone()),
+        ))
+        .unwrap();
+        assert_eq!(
+            sent,
+            serde_json::json!({"type": "deep-research", "thinking_summaries": raw})
+        );
+        let reread: ThinkingSummaries =
+            serde_json::from_value(sent["thinking_summaries"].clone()).unwrap();
+        assert_eq!(reread, ts);
+    }
+    // A hand-built unknown is written as its type string, as `Serialize` does.
+    let built = ThinkingSummaries::Unknown {
+        summaries_type: "zz".into(),
+        data: serde_json::json!(5),
+    };
+    assert_eq!(built.to_agent_config_value(), serde_json::json!("zz"));
+    assert_eq!(
+        serde_json::to_value(&built).unwrap(),
+        serde_json::json!("zz")
+    );
 }

@@ -452,12 +452,23 @@ impl VoiceFilters {
             }
         }
         if let Some(t) = &self.voice_type {
-            out.push(("type", t.to_string()));
+            out.push(("type", query_value(t.as_wire(), t.unknown_data())));
         }
         if let Some(p) = &self.pitch {
-            out.push(("pitch", p.to_string()));
+            out.push(("pitch", query_value(p.as_wire(), p.unknown_data())));
         }
         out
+    }
+}
+
+/// A string enum's query value: what its `Serialize` writes, as text. For an
+/// unknown read from a non-string (a listed voice's `"type": 5`) that is the
+/// JSON's own text (`5`), never the crate's `<non-string: 5>` type; a query
+/// carries no JSON type.
+fn query_value(wire: &str, unknown_data: Option<&serde_json::Value>) -> String {
+    match crate::wire_enum::wire_value(wire, unknown_data) {
+        serde_json::Value::String(text) => text,
+        other => other.to_string(),
     }
 }
 
@@ -842,6 +853,44 @@ mod tests {
                 ("context", "Content & Media".to_string()),
                 ("type", "prebuilt".to_string()),
                 ("pitch", "low".to_string()),
+            ]
+        );
+    }
+
+    /// Filtering by the `type` and `pitch` of a listed voice whose values
+    /// came as non-strings sends their JSON text, not the crate's
+    /// `<non-string: ...>` type; a string unknown goes as it came.
+    #[cfg(not(genai_strict_unknown))]
+    #[test]
+    fn voice_list_filters_from_non_string_values_send_their_json_text() {
+        let wire = json!({"id": "v", "type": 5, "pitch": {"hz": 100}});
+        let voice: Voice = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&voice).unwrap(), wire);
+        let client = Client::new("k".to_string());
+        let list = client
+            .voices()
+            .list()
+            .with_voice_type(voice.voice_type.clone().unwrap())
+            .with_pitch(voice.pitch.clone().unwrap());
+        assert_eq!(
+            list.filters.query_pairs(),
+            vec![
+                ("type", "5".to_string()),
+                ("pitch", r#"{"hz":100}"#.to_string()),
+            ]
+        );
+        let voice: Voice =
+            serde_json::from_value(json!({"id": "v", "type": "zz_new", "pitch": "zz_hz"})).unwrap();
+        let list = client
+            .voices()
+            .list()
+            .with_voice_type(voice.voice_type.unwrap())
+            .with_pitch(voice.pitch.unwrap());
+        assert_eq!(
+            list.filters.query_pairs(),
+            vec![
+                ("type", "zz_new".to_string()),
+                ("pitch", "zz_hz".to_string())
             ]
         );
     }

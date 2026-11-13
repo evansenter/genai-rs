@@ -310,6 +310,28 @@ where
     }
 }
 
+/// Deserializes an optional `f32`. A JSON number beyond `f32`'s range
+/// would read as an infinity, which serializes as `null` and reads back as
+/// `None`, so it is dropped here with a `warn!` instead, as the int64 helpers
+/// drop a value that does not fit. A number in range reads rounded to the
+/// nearest `f32`.
+pub(crate) fn deserialize_f32_in_range<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(wide) = Option::<f64>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    // `as` rounds to the nearest `f32`, and saturates to an infinity.
+    let narrow = wide as f32;
+    if narrow.is_finite() {
+        Ok(Some(narrow))
+    } else {
+        tracing::warn!("JSON number beyond f32's range for an f32 field, dropping: {wide}");
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};

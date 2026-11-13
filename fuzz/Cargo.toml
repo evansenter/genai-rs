@@ -15,6 +15,12 @@ genai-rs = { path = "..", default-features = false }
 # crate's types rather than on serde_json's best-effort default.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 
+# The harness target reads the Antigravity protocol, behind the library's
+# feature of the same name: `cargo fuzz run --features antigravity
+# harness_output_event`. The other targets build without it.
+[features]
+antigravity = ["genai-rs/antigravity"]
+
 # Its own workspace: the root workspace excludes this crate, which needs
 # nightly and libFuzzer.
 [workspace]
@@ -54,3 +60,25 @@ path = "fuzz_targets/content.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "interaction_response"
+path = "fuzz_targets/interaction_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resource"
+path = "fuzz_targets/resource.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "harness_output_event"
+path = "fuzz_targets/harness_output_event.rs"
+test = false
+doc = false
+bench = false
+required-features = ["antigravity"]

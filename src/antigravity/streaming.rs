@@ -69,8 +69,10 @@ pub enum ErrorSeverity {
     /// turn's result say whether it failed: a model call whose retries ran
     /// out also arrives as one, just before the turn fails with
     /// [`TurnFailure::ModelBackend`](super::TurnFailure::ModelBackend) and
-    /// the session ends. This is the severity of essentially every error
-    /// event today.
+    /// the session ends. Harness 0.1.23 reports a call it is about to retry
+    /// with the same error step, status included, so the event cannot tell
+    /// the two apart. This is the severity of essentially every error event
+    /// today.
     Transient,
     /// A serious error surfaced mid-turn — e.g. a fatal model-backend
     /// status (HTTP 400/401/403) that nonetheless did not abort the turn.

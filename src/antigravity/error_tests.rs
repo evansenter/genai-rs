@@ -25,6 +25,11 @@ fn errors_with_a_source() -> Vec<AntigravityError> {
             String::new(),
             cause(),
         ),
+        AntigravityError::handshake_failed(
+            "stdio handshake I/O failed".to_string(),
+            String::new(),
+            Some(cause().into()),
+        ),
     ]
 }
 

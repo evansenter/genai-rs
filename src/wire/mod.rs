@@ -58,6 +58,7 @@ mod tracing_forwarder;
 pub use printer::{LoudWirePrinter, WireFilter};
 pub use tracing_forwarder::TracingForwarder;
 
+use crate::redact::REDACTED;
 use serde::Serialize;
 use std::borrow::Cow;
 
@@ -76,9 +77,11 @@ pub const TRACING_TARGET: &str = "genai_rs::wire";
 /// external tooling); the variant is recorded in a `"kind"` tag field.
 ///
 /// The fields and the serialized form hold the bodies as sent and received,
-/// secrets included. `Debug` prints the secrets `LOUD_WIRE` redacts as
-/// `[REDACTED]`, so an inspector that logs `{event:?}` does not undo the
-/// built-in inspectors' redaction; it truncates nothing.
+/// secrets included, except a [`WsSend`](Self::WsSend) payload, whose
+/// secrets the session redacts before any inspector sees it. `Debug` prints
+/// the secrets `LOUD_WIRE` redacts as `[REDACTED]`, so an inspector that
+/// logs `{event:?}` does not undo the built-in inspectors' redaction; it
+/// truncates nothing.
 #[non_exhaustive]
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -163,7 +166,10 @@ pub enum WireEvent {
     WsSend {
         /// Correlation id shared by all events of this harness session.
         id: u64,
-        /// The JSON payload as sent.
+        /// The JSON payload as sent, with the secrets `LOUD_WIRE` redacts
+        /// already shown as `[REDACTED]` (the harness receives the
+        /// original), so the harness's API key and its header and
+        /// environment values reach no inspector.
         payload: serde_json::Value,
     },
     /// A proto-JSON message received from the harness over its WebSocket.
@@ -330,9 +336,10 @@ const TRUNCATE_FIELDS: &[&str] = &["data", "signature"];
 /// Fields whose values are secrets and must be fully redacted (never
 /// printed, even partially), wherever they appear: third-party retrieval
 /// credentials (`api_key` in the Exa/Parallel search configs), webhook
-/// signing secrets (`new_signing_secret` on create, `secret` on rotate), and
+/// signing secrets (`new_signing_secret` on create, `secret` on rotate),
 /// credential material (`token`, `client_secret`, `refresh_token` in
-/// Credentials request bodies).
+/// Credentials request bodies), and the Gemini key in an Antigravity
+/// harness's model endpoint (`apiKey`, camelCase on the harness wire).
 const REDACT_FIELDS: &[&str] = &[
     "api_key",
     "new_signing_secret",
@@ -340,6 +347,7 @@ const REDACT_FIELDS: &[&str] = &[
     "token",
     "client_secret",
     "refresh_token",
+    "apiKey",
 ];
 
 /// A field redacted only in context, because the name is too common to
@@ -349,12 +357,23 @@ const CONTEXT_REDACT_FIELD: &str = "value";
 
 /// Fields holding a header map whose *values* are secret while the names
 /// are worth seeing: an MCP server's `headers` (`{"Authorization": "Bearer
-/// ..."}`) and an environment allowlist entry's `transform` list of header
-/// maps. Every string beneath them is redacted; the keys stay.
-const REDACT_VALUES_BENEATH: &[&str] = &["headers", "transform"];
+/// ..."}`), an environment allowlist entry's `transform` list of header
+/// maps, and an Antigravity model endpoint's `httpHeaders`. Every string
+/// beneath them is redacted; the keys stay.
+const REDACT_VALUES_BENEATH: &[&str] = &["headers", "transform", "httpHeaders"];
 
-/// Replacement value for redacted fields.
-const REDACTED_PLACEHOLDER: &str = "[REDACTED]";
+/// A map of environment variables, whose names are worth seeing and whose
+/// values are secret: a `RemoteEnvironment`'s `env`, where each variable is
+/// an object and its [`CONTEXT_REDACT_FIELD`] is the value, and an
+/// Antigravity MCP stdio server's `env`, where each value is a string.
+const ENV_FIELD: &str = "env";
+
+/// A JSON Schema's map of property names to their schemas (a function
+/// declaration's `parameters`, a response format): its keys name
+/// properties, not fields, so a property called `env` or `api_key` holds a
+/// schema, never a secret. Its values are walked as schemas; its keys are
+/// not read as field names.
+const SCHEMA_PROPERTIES: &str = "properties";
 
 /// Maximum length before truncation (keep roughly the first 100 bytes,
 /// never splitting a UTF-8 character).
@@ -386,24 +405,34 @@ pub(crate) fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
 ///
 /// Walks the JSON tree, truncates `"data"` and `"signature"` fields that
 /// contain strings longer than 100 bytes, and replaces secret fields (see
-/// [`REDACT_FIELDS`] and [`CONTEXT_REDACT_FIELD`]) with `"[REDACTED]"`
-/// regardless of length. Text content and other fields are preserved in full.
+/// [`REDACT_FIELDS`], [`REDACT_VALUES_BENEATH`], [`ENV_FIELD`] and
+/// [`CONTEXT_REDACT_FIELD`]; not the property names of a schema's
+/// [`SCHEMA_PROPERTIES`]) with [`REDACTED`] regardless of length. Text
+/// content and other fields are preserved in full.
 fn truncate_long_fields(value: &mut serde_json::Value) {
     redact_walk(value, false, true);
 }
 
 /// Redacts the secret fields in a JSON value as [`truncate_long_fields`]
 /// does, truncating nothing: what `Debug` prints in place of a body
-/// (`crate::redact::json`), so `Debug` and the wire share one list.
+/// (`crate::redact::json`), and what an Antigravity session sends its
+/// inspectors in place of an outgoing message, so `Debug`, the harness and
+/// the wire share one list.
 pub(crate) fn redact_secrets(value: &mut serde_json::Value) {
     redact_walk(value, false, false);
+}
+
+/// [`redact_secrets`] for a JSON object held as a map (an `extra`), whose
+/// own keys are read as an object's are.
+pub(crate) fn redact_map_secrets(map: &mut serde_json::Map<String, serde_json::Value>) {
+    redact_entries(map, false, false);
 }
 
 /// Replaces every string in `value` with the placeholder, keeping object
 /// keys and structure.
 pub(crate) fn redact_strings(value: &mut serde_json::Value) {
     match value {
-        serde_json::Value::String(s) => *s = REDACTED_PLACEHOLDER.to_string(),
+        serde_json::Value::String(s) => *s = REDACTED.to_string(),
         serde_json::Value::Object(map) => map.values_mut().for_each(redact_strings),
         serde_json::Value::Array(arr) => arr.iter_mut().for_each(redact_strings),
         _ => {}
@@ -411,48 +440,79 @@ pub(crate) fn redact_strings(value: &mut serde_json::Value) {
 }
 
 /// The walk behind [`truncate_long_fields`] and [`redact_secrets`]; `in_env`
-/// is true anywhere beneath an `env` key, and `truncate` shortens the long
-/// base64 fields too.
+/// is true anywhere beneath an [`ENV_FIELD`] key, and `truncate` shortens
+/// the long base64 fields too.
 fn redact_walk(value: &mut serde_json::Value, in_env: bool, truncate: bool) {
     match value {
-        serde_json::Value::Object(map) => {
-            let redact_value = in_env
-                || map.get("type").and_then(serde_json::Value::as_str)
-                    == Some("environment_variable");
-            for (key, val) in map.iter_mut() {
-                let key = key.as_str();
-                if REDACT_VALUES_BENEATH.contains(&key) {
-                    redact_strings(val);
-                } else if REDACT_FIELDS.contains(&key)
-                    || (redact_value && key == CONTEXT_REDACT_FIELD)
-                {
-                    if !val.is_null() {
-                        *val = serde_json::Value::String(REDACTED_PLACEHOLDER.to_string());
-                    }
-                } else if TRUNCATE_FIELDS.contains(&key) {
-                    match val {
-                        serde_json::Value::String(s) => {
-                            if truncate && s.len() > TRUNCATE_THRESHOLD {
-                                *s = truncate_utf8(s, TRUNCATE_THRESHOLD).into_owned();
-                            }
-                        }
-                        // A `data`/`signature` key can hold structured
-                        // payloads (e.g. Evergreen `Unknown` variants
-                        // preserve raw JSON under `data`); recurse so
-                        // secrets nested inside are still redacted.
-                        _ => redact_walk(val, in_env, truncate),
-                    }
-                } else {
-                    redact_walk(val, in_env || key == "env", truncate);
-                }
-            }
-        }
+        serde_json::Value::Object(map) => redact_entries(map, in_env, truncate),
         serde_json::Value::Array(arr) => {
             for item in arr.iter_mut() {
                 redact_walk(item, in_env, truncate);
             }
         }
         _ => {}
+    }
+}
+
+/// One object's entries, for [`redact_walk`].
+fn redact_entries(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    in_env: bool,
+    truncate: bool,
+) {
+    let redact_value = in_env
+        || map.get("type").and_then(serde_json::Value::as_str) == Some("environment_variable");
+    for (key, val) in map.iter_mut() {
+        let key = key.as_str();
+        if REDACT_VALUES_BENEATH.contains(&key) {
+            redact_strings(val);
+        } else if REDACT_FIELDS.contains(&key) || (redact_value && key == CONTEXT_REDACT_FIELD) {
+            if !val.is_null() {
+                *val = serde_json::Value::String(REDACTED.to_string());
+            }
+        } else if key == ENV_FIELD {
+            redact_env(val, truncate);
+        } else if key == SCHEMA_PROPERTIES
+            && let serde_json::Value::Object(properties) = val
+        {
+            for schema in properties.values_mut() {
+                redact_walk(schema, in_env, truncate);
+            }
+        } else if TRUNCATE_FIELDS.contains(&key) {
+            match val {
+                serde_json::Value::String(s) => {
+                    if truncate && s.len() > TRUNCATE_THRESHOLD {
+                        *s = truncate_utf8(s, TRUNCATE_THRESHOLD).into_owned();
+                    }
+                }
+                // A `data`/`signature` key can hold structured
+                // payloads (e.g. Evergreen `Unknown` variants
+                // preserve raw JSON under `data`); recurse so
+                // secrets nested inside are still redacted.
+                _ => redact_walk(val, in_env, truncate),
+            }
+        } else {
+            redact_walk(val, in_env, truncate);
+        }
+    }
+}
+
+/// An [`ENV_FIELD`]'s value: a string in it, as the whole `env` or as an
+/// entry of its map or list, is a variable's value; beneath an entry that
+/// is an object, the [`CONTEXT_REDACT_FIELD`] is, and a credential's ID
+/// beside it is not.
+fn redact_env(value: &mut serde_json::Value, truncate: bool) {
+    let entries: Box<dyn Iterator<Item = &mut serde_json::Value>> = match value {
+        serde_json::Value::Object(map) => Box::new(map.values_mut()),
+        serde_json::Value::Array(arr) => Box::new(arr.iter_mut()),
+        other => Box::new(std::iter::once(other)),
+    };
+    for entry in entries {
+        if entry.is_string() {
+            *entry = serde_json::Value::String(REDACTED.to_string());
+        } else {
+            redact_walk(entry, true, truncate);
+        }
     }
 }
 

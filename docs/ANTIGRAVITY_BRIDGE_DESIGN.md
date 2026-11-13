@@ -151,11 +151,16 @@ arm64/x86_64, Linux x86_64/aarch64, Windows amd64/arm64). Discovery order
 3. Scan installed `google-antigravity` pip package for
    `google/antigravity/bin/localharness[.exe]` (site-packages of `python3`
    on PATH, then on Windows of `python`, which python.org's installer
-   provides instead, plus their user-site directories).
+   provides instead, and of its `py` launcher's Python 3 (`py -3`), plus
+   their user-site directories).
 4. `localharness` on `PATH`.
 
-If not found, the error message tells the user to
-`pip install google-antigravity` or set `ANTIGRAVITY_HARNESS_PATH`.
+A path named in step 1 or 2 stops the search (D-063): when it is not a
+file, discovery fails naming it, and the error tells the user to fix that
+path (or, for the variable, to unset it to search). Otherwise, when
+nothing is found, the error lists every location searched and tells the
+user to `pip install google-antigravity` or set
+`ANTIGRAVITY_HARNESS_PATH`.
 We do **not** vendor the 30 MB binary in the crate. A `harness fetch` helper
 (downloading the matching wheel from PyPI and extracting the binary to a
 cache dir) is a possible follow-up, not v1.
@@ -213,11 +218,15 @@ protocol into directories (D-021). The layout as of 0.1.23 parity:
 src/antigravity/
   mod.rs           Re-exports the public API
   agent.rs         AntigravityAgent: chat, streaming turns, trigger turns,
-                   session start/end, shutdown
+                   shutdown
+  agent/session_lifecycle.rs
+                   The initialization exchange, the session-start hook
+                   during spawn, the session-end hooks during shutdown
+                   (D-065)
   builder/         AgentBuilder: mod.rs (setters, spawn), hooks.rs (hook
                    setters), options.rs (model, subagent and harness option
-                   setters), validate.rs (spawn-time checks), wire.rs (the
-                   HarnessConfig it sends)
+                   setters), workspaces.rs (workspace setters), validate.rs
+                   (spawn-time checks), wire.rs (the HarnessConfig it sends)
   config.rs        Capabilities, BuiltinTool, ModelTarget, workspaces
   instructions.rs  SystemInstructions: appended, edited or custom prompt
   prompt.rs        Prompt, Media, SlashCommand: what a turn sends
@@ -535,6 +544,38 @@ Turn failures (0.1.23, 2026-11-09, scripted model; D-062):
   no text and no model call, an idle update for that message. Locally (30
   runs) it closed first every time. The agent now refuses the next call
   itself (D-062).
+
+Trigger turns and retried model calls (0.1.23, 2026-11-13, scripted model):
+
+- A turn a trigger starts never reaches the pre-turn callback: with
+  `on_pre_turn` refusing every turn, `next_trigger_turn` still returned the
+  trigger turn's answer, and the stop and post-turn callbacks fired for it
+  (a probe for the 2026-11-09 grade counted the same). A `chat` after it
+  was refused. `spawn()` warns when the two are set together
+  (`test_scripted_a_trigger_turn_skips_the_pre_turn_hook`).
+- A 503 the harness retries arrives as a system error step on the main
+  trajectory with `httpCode` 503, as one with no retries left does; only
+  the message differs ("Encountered retryable error from model provider:"
+  before "Agent execution terminated due to error."). The retry follows as
+  the next step of the same trajectory. So a 5xx error step does not mean
+  the session is ending, and its `AgentEvent::Error` stays `Transient`
+  (#556): severity is decided when the step arrives, before the harness
+  has retried or given up, and telling the two apart would mean reading
+  the harness's text. The status a backend failure gives the turn is
+  dropped once a later model step or error step of the main trajectory
+  follows it, and a subagent's is never taken: after a retried 503, a
+  model call to an undeclared tool with no output retries left (a system
+  error step with `httpCode` 0) ended the turn as
+  `TurnFailure::Trajectory`, where the turn had reported
+  `ModelBackend { status: 503 }`
+  (`test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`).
+  Any later step would not do: after a delegation, a 503 with no retries
+  left on the main trajectory was followed in 8 of 40 runs by a
+  `STATE_DONE` system step at the next index, the harness's message to the
+  model that the subagent had gone idle, before the idle. Dropping the
+  status on it failed `test_scripted_a_503_after_delegating_fails_the_turn`
+  as `Trajectory` in 2 of 16 runs, each one with that step; dropping it
+  only on a model or error step passed 24 of 24, 6 of them with that step.
 
 Subagent names (0.1.23, 2026-11-07, live
 `test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`

@@ -2,7 +2,7 @@
 //! configs nested in it (transcription, speech, image, video). See the
 //! [parent module](super).
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use super::agent_config::ThinkingSummaries;
 use crate::tools::ToolChoice;
@@ -30,47 +30,49 @@ wire_enum! {
     unknown(level_type, unknown_level_type)
 }
 
-/// Generation configuration for model behavior
-#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+/// Generation configuration for model behavior.
+///
+/// # Wire form
+///
+/// Every field but [`extra`](Self::extra) and
+/// [`speech_config_extra`](Self::speech_config_extra) is its snake_case key,
+/// left out when `None`; `extra`'s entries follow, flat. The `f32` fields
+/// hold what an `f32` can: a value reads rounded to the nearest `f32`, and
+/// one beyond its range is dropped with a `warn!`, as an int64 that does not
+/// fit is elsewhere. [`speech_config`](Self::speech_config) describes its
+/// own forms.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenerationConfig {
     /// Sampling temperature. Deprecated in the google-genai 2.34.0 bindings,
     /// but still accepted.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     /// Output cap. With decoding continuation it counts across
     /// continuations; see
     /// [`InteractionBuilder::with_continuation_token`](crate::InteractionBuilder::with_continuation_token).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<i32>,
     /// Nucleus sampling. Deprecated in the google-genai 2.34.0 bindings, but
     /// still accepted.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
     /// Thinking level for chain-of-thought reasoning
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
     /// Seed for repeatable sampling.
     ///
     /// Identical seeded requests have returned identical text, but the API
     /// documents no guarantee, so don't rely on it for exact-text
     /// assertions (see `docs/CONFIGURATION.md`, "Seeds").
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
     /// Stop sequences that halt generation.
     ///
     /// When the model generates any of these sequences, generation stops immediately.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
     /// Controls whether thinking summaries are included in output.
     ///
     /// Use with `thinking_level` to control reasoning output.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_summaries: Option<ThinkingSummaries>,
     /// Controls function calling behavior.
     ///
     /// Either a plain mode string (`auto|any|none|validated`) or an
     /// `allowed_tools` restriction object. See [`ToolChoice`].
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     /// Speech configuration for text-to-speech audio output.
     ///
@@ -81,32 +83,34 @@ pub struct GenerationConfig {
     ///
     /// Three forms are accepted on deserialize, all normalizing to the list:
     /// the list itself, a bare single object (legacy), and a
-    /// `{"speakers": [...]}` wrapper (the spec's `SpeakerConfig`). Only the
-    /// list is ever sent. A stored interaction read back serves the
-    /// `{"speakers": [...]}` form whichever was sent, and it serializes back
-    /// as the list, which every TTS model accepts.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_speech_configs"
-    )]
+    /// `{"speakers": [...]}` wrapper (the spec's `SpeakerConfig`), whose
+    /// other keys go to [`speech_config_extra`](Self::speech_config_extra).
+    /// It is sent as the list, which every TTS model accepts, unless that
+    /// map holds a key. A stored interaction read back serves the
+    /// `{"speakers": [...]}` form whichever was sent.
     pub speech_config: Option<Vec<SpeechConfig>>,
+    /// The keys beside `speakers` when [`speech_config`](Self::speech_config)
+    /// was read in its `{"speakers": [...]}` form, which this crate does not
+    /// model, kept so that they are written back (D-001).
+    ///
+    /// While it holds a key, `speech_config` is written in that form, as
+    /// `{"speakers": [...], ...}` with these keys beside the list (the API
+    /// accepts it); while it is empty, as the list. It is not written while
+    /// `speech_config` is `None`, and a `speakers` key in it is not written.
+    pub speech_config_extra: serde_json::Map<String, serde_json::Value>,
     /// Image generation configuration.
     ///
     /// Controls aspect ratio and size for image generation output.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub image_config: Option<ImageConfig>,
     /// Video generation configuration.
     ///
     /// Controls the video generation task mode when using the `video`
     /// response modality.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub video_config: Option<VideoConfig>,
     /// Audio transcription configuration.
     ///
     /// Controls language hints, diarization, custom vocabulary and
     /// timestamp granularity when transcribing audio input.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription_config: Option<TranscriptionConfig>,
     /// Fields this crate does not model, sent flat beside the modeled ones
     /// and kept from a deserialized config, such as the
@@ -117,7 +121,6 @@ pub struct GenerationConfig {
     /// is `400 Unknown parameter`. An entry named after a modeled field is
     /// written after it, and the API keeps the last of a repeated key, so it
     /// overrides that field.
-    #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -458,55 +461,6 @@ impl TranscriptionConfig {
     }
 }
 
-/// Deserializes `speech_config` from any of its three observed wire forms,
-/// normalizing all of them to the list the crate models.
-///
-/// | Wire | Source |
-/// |------|--------|
-/// | `[{voice, language, speaker}, ...]` | the spec list form; the one the crate sends |
-/// | `{"speakers": [...]}` | `SpeakerConfig`, added to the union in `google-genai` 2.18.x |
-/// | `{voice, language, speaker}` | legacy single-object form |
-///
-/// The Gemini API rejects the single-object form on **send** and once
-/// rejected `{"speakers": [...]}` too (both forms' history is under
-/// speech_config wire forms in `docs/ENUM_WIRE_FORMATS.md`), so this
-/// leniency is deserialize-only and the crate keeps emitting the list,
-/// which every TTS model accepts. It still matters: a stored interaction
-/// read back serves the `{"speakers": [...]}` form, and a
-/// `GenerationConfig` also arrives nested inside a `Trigger`'s stored
-/// interaction, which may have been created by another SDK using the object
-/// form.
-///
-/// Variant order is load-bearing. `SpeechConfig`'s fields are all optional
-/// and its `extra` map takes every key it does not model, so
-/// `{"speakers": [...]}` matches the `Single` arm perfectly well — yielding
-/// a config whose modeled fields are all `None`, with **the speakers left
-/// unparsed in `extra`**. `Speakers` must therefore be tried
-/// first, and its field must stay required so a genuine single object still
-/// falls through to `Single`.
-fn deserialize_speech_configs<'de, D>(
-    deserializer: D,
-) -> Result<Option<Vec<SpeechConfig>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum SpeechConfigWire {
-        List(Vec<SpeechConfig>),
-        // Must precede `Single` — see the doc comment above.
-        Speakers { speakers: Vec<SpeechConfig> },
-        Single(SpeechConfig),
-    }
-
-    Ok(
-        Option::<SpeechConfigWire>::deserialize(deserializer)?.map(|value| match value {
-            SpeechConfigWire::List(list) | SpeechConfigWire::Speakers { speakers: list } => list,
-            SpeechConfigWire::Single(single) => vec![single],
-        }),
-    )
-}
-
 /// Speech configuration for text-to-speech audio output.
 ///
 /// Configure voice, language, and speaker settings when using the `audio` response modality.
@@ -753,6 +707,9 @@ impl VideoConfig {
         self
     }
 }
+
+// `GenerationConfig`'s `Serialize` and `Deserialize`.
+mod wire;
 
 #[cfg(test)]
 #[path = "generation_config_tests.rs"]

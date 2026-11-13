@@ -111,6 +111,11 @@ impl AgentBuilder {
     }
 
     /// Runs `hook` once the session starts, before `spawn()` returns.
+    ///
+    /// The wait for the hook, and its run, count against `spawn()`'s 30 s
+    /// session-start budget: a hook that overruns it fails
+    /// [`spawn()`](Self::spawn) with
+    /// [`AntigravityError::InitFailed`](crate::antigravity::AntigravityError::InitFailed).
     #[must_use]
     pub fn on_session_start(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
         self.lifecycle.session_start = Some(Arc::new(hook));
@@ -131,6 +136,12 @@ impl AgentBuilder {
     /// [`AntigravityError::Turn`](crate::antigravity::AntigravityError::Turn)
     /// of kind [`TurnFailure::Denied`](crate::antigravity::TurnFailure::Denied),
     /// the reason as its message, and the agent stays usable.
+    ///
+    /// Not consulted on trigger turns (harness 0.1.23): a turn a
+    /// [trigger](Self::add_trigger) starts runs without asking it, though
+    /// its stop and post-turn hooks run. A gate meant for those turns
+    /// belongs in the trigger, which decides whether to send; `spawn()`
+    /// logs a warning when this hook and a trigger are both set.
     #[must_use]
     pub fn on_pre_turn(
         mut self,

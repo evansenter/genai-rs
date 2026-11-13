@@ -2,8 +2,10 @@ name: Fuzz
 
 # A short, bounded run of every cargo-fuzz target in fuzz/ (see
 # fuzz/README.md): the SSE parser, the stream pipeline over
-# InteractionStreamEvent, and Step, StepDelta and Content deserialization.
-# Each target checks for panics and a round trip where the input is valid.
+# InteractionStreamEvent, Step, StepDelta and Content deserialization, the
+# types read from the wire beside them (InteractionResponse, the resources
+# and their list pages), and the Antigravity harness's OutputEvent. Each
+# target checks for panics and a round trip where the input is valid.
 # Weekly, on demand, and on pull requests that touch code the targets build.
 # The Fuzz Gate job reports on every pull request, fuzzed or not, so it is
 # the one check branch protection can require.
@@ -35,9 +37,9 @@ env:
 jobs:
   # Whether the run fuzzes: always on schedule and on demand; on a pull
   # request, only when it touches what the targets compile. That is the
-  # crate (without the antigravity feature, which fuzz/Cargo.toml does not
-  # enable), its macros crate, and the fuzz crate with its own lockfile (the
-  # root Cargo.lock is not used).
+  # crate (of the antigravity feature, only the harness protocol the
+  # harness_output_event target reads), its macros crate, and the fuzz crate
+  # with its own lockfile (the root Cargo.lock is not used).
   changes:
     name: Fuzzed Paths
     runs-on: ubuntu-latest
@@ -65,6 +67,10 @@ jobs:
           fuzz=false
           while IFS= read -r path; do
             case "$path" in
+              src/antigravity/protocol/*)
+                echo "Fuzzed path changed: $path"
+                fuzz=true
+                ;;
               src/antigravity/*) ;;
               src/*|genai-rs-macros/*|Cargo.toml|fuzz/*|.github/workflows/fuzz.yml)
                 echo "Fuzzed path changed: $path"
@@ -84,7 +90,11 @@ jobs:
       # Every target runs, so one crash doesn't hide another.
       fail-fast: false
       matrix:
-        target: [sse_parser, stream_event, step, step_delta, content]
+        target: [sse_parser, stream_event, step, step_delta, content, interaction_response, resource, harness_output_event]
+        # A target whose [[bin]] has `required-features` builds with them.
+        include:
+          - target: harness_output_event
+            features: antigravity
     steps:
       - uses: actions/checkout@v4
       # libFuzzer and the sanitizer flags cargo-fuzz passes need nightly.
@@ -107,6 +117,7 @@ jobs:
         working-directory: fuzz
         env:
           TARGET: ${{ matrix.target }}
+          FEATURES: ${{ matrix.features }}
           # Not a free-form expression in the script: the input is passed
           # through the environment and checked to be a number.
           SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || '60' }}
@@ -117,7 +128,8 @@ jobs:
           mkdir -p "corpus/$TARGET"
           # The committed seeds are read but never written; new finds go to
           # the scratch corpus. -timeout flags a hang on one input.
-          cargo +nightly fuzz run "$TARGET" "corpus/$TARGET" "seeds/$TARGET" -- \
+          cargo +nightly fuzz run ${FEATURES:+--features "$FEATURES"} \
+            "$TARGET" "corpus/$TARGET" "seeds/$TARGET" -- \
             -max_total_time="$SECONDS_PER_TARGET" -timeout=10
       # Saved under a fresh key per run, from scheduled and manual runs only:
       # a PR's corpus grew on code that may not merge. Not after a crash, so

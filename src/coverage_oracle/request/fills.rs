@@ -23,11 +23,15 @@
 //! [`TRUSTED`] lists it with the reason the value still sets every field.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use syn::visit::Visit;
 
 use super::super::Allowed;
+
+// The guards' shared source walker (D-068).
+#[path = "../../../tests/common/source_scan.rs"]
+mod source_scan;
 
 /// Constructors the oracle and its strategies may call, each with the
 /// reason the value it builds still sets every field: the type's fields
@@ -363,56 +367,32 @@ fn type_names(files: &[syn::File]) -> BTreeSet<String> {
     out
 }
 
-/// The `.rs` files under `dir`, recursively, that `keep` accepts, sorted.
-fn rust_files(dir: &Path, keep: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display())) {
-        let path = entry.expect("a directory entry").path();
-        if path.is_dir() {
-            if keep(&path) {
-                out.extend(rust_files(&path, keep));
-            }
-        } else if path.extension().is_some_and(|ext| ext == "rs") && keep(&path) {
-            out.push(path);
-        }
-    }
-    out.sort();
-    out
-}
-
-/// The library's own source files: `src/` without the oracle, the unit-test
-/// files and the property tests.
-fn library_files(src: &Path) -> Vec<PathBuf> {
-    rust_files(src, &|path| {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        !(name == "coverage_oracle"
-            || name == "tests.rs"
-            || name.ends_with("_tests.rs")
-            || name.starts_with("proptest_"))
-    })
-}
-
-fn parse(path: &Path) -> syn::File {
-    let source =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    syn::parse_file(&source).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
-}
-
 #[test]
 fn request_values_are_full_literals() {
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let oracle_paths = rust_files(&src.join("coverage_oracle/request"), &|_| true);
-    let strategy_paths: Vec<PathBuf> = rust_files(&src, &|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("proptest_") && name.ends_with(".rs"))
-    });
-    let oracle: Vec<syn::File> = oracle_paths.iter().map(|p| parse(p)).collect();
-    let strategies: Vec<syn::File> = strategy_paths.iter().map(|p| parse(p)).collect();
-    let library: Vec<syn::File> = library_files(&src).iter().map(|p| parse(p)).collect();
+    let src = source_scan::root().join("src");
+    let oracle_paths = source_scan::rust_files(&src.join("coverage_oracle/request"));
+    let strategy_paths: Vec<PathBuf> = source_scan::rust_files(&src)
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("proptest_"))
+        })
+        .collect();
+    let oracle: Vec<syn::File> = oracle_paths
+        .iter()
+        .map(|p| source_scan::parse_file(p))
+        .collect();
+    let strategies: Vec<syn::File> = strategy_paths
+        .iter()
+        .map(|p| source_scan::parse_file(p))
+        .collect();
+    // The library's own source: `src/` without the oracle, the unit-test
+    // files and the property tests.
+    let library: Vec<syn::File> = source_scan::library_sources()
+        .into_iter()
+        .map(|(_, file)| file)
+        .collect();
     let types = type_names(&library);
     for ty in [
         "CustomMetadata",

@@ -64,8 +64,11 @@ inside them are attributed to the request.
   `transform`, keeping the header and variable names. So `dbg!(request)`
   or `tracing::debug!(?builder)` prints none of them, nor does the `Debug`
   of an `InteractionBuilder`, `InteractionRequest` or response that carries
-  one, or of a `wire::WireEvent`. An `extra` map or `Unknown` payload, JSON
-  the crate does not model, prints as it is.
+  one, or of a `wire::WireEvent`. The `extra` map of each of these types
+  (a `Tool`, an allowlist entry, an `EnvVar`, a `RemoteEnvironment`) and of
+  a webhook, and an unknown tool's payload, print such a secret redacted
+  too; any other `extra` map or `Unknown` payload, JSON the crate does not
+  model, prints as it is.
 - At `debug`, request and response bodies are logged in full: prompts, base64
   media, function arguments and results. Treat debug logs as sensitive, and
   don't enable them in production unless you mean to.
@@ -117,11 +120,16 @@ frame.
   with the body (JSON pretty-printed; a non-JSON body is cut at 1,000 bytes).
 - **Base64 fields** (`data`, `signature`) are truncated to about 100 bytes.
   **Secret fields** are redacted: `api_key`, `secret`, `new_signing_secret`,
-  `token`, `client_secret` and `refresh_token` anywhere; `value` inside
-  an `environment_variable` credential or an `env` map; and every header
-  value under `headers` (MCP servers) or `transform` (environment allowlist
-  entries), keeping the header names. The `wire` tracing target redacts the
-  same fields.
+  `token`, `client_secret`, `refresh_token` and the Antigravity harness's
+  `apiKey` anywhere; `value` inside an `environment_variable` credential or
+  an `env` map, and a string directly in an `env` (an MCP server's
+  variables); and every header value under `headers` (MCP servers),
+  `transform` (environment allowlist entries) or `httpHeaders` (a harness
+  model endpoint), keeping the header and variable names. A JSON Schema's
+  property names (the keys of a `properties` map, such as a function
+  declaration's `env` or `api_key` parameter) are not read as fields, so
+  the schema under one prints. The `wire` tracing target redacts the same
+  fields, in harness messages too.
 - **Uploads** print as `>>> UPLOAD "video.mp4" (video/mp4, 150.25 MB)`.
 
 ### Wire Inspection API
@@ -163,7 +171,10 @@ let client = Client::builder("api-key".to_string())
   `WireEvent`'s fields and its serialized form. Only the built-in
   inspectors truncate and redact. A `WireEvent`'s `Debug` redacts the same
   secrets and truncates nothing, so an inspector that logs `{event:?}`
-  prints none of them.
+  prints none of them. The one exception is a message an Antigravity
+  session sends the harness (`WsSend`): its secrets are redacted before
+  any inspector sees it, so the harness's API key reaches none, as the
+  API key sent in an HTTP header reaches none.
 
 ### Forwarding wire events to `tracing`
 

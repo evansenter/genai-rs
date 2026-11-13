@@ -36,19 +36,14 @@ impl ThinkingSummaries {
     /// ```
     ///
     /// So both contexts now take the lowercase spelling and this agrees
-    /// with [`Serialize`]. The seam is kept rather than inlined because
-    /// the two spellings diverged once and could again; deserialization
-    /// still accepts either form (Evergreen).
+    /// with [`Serialize`], an unknown value read from a non-string included:
+    /// it is written as the JSON it came as, not as its `<non-string: ...>`
+    /// type. The seam is kept rather than inlined because the two spellings
+    /// diverged once and could again; deserialization still accepts either
+    /// form (Evergreen).
     #[must_use]
     pub fn to_agent_config_value(&self) -> serde_json::Value {
-        match self {
-            ThinkingSummaries::Auto => serde_json::Value::String("auto".to_string()),
-            ThinkingSummaries::None => serde_json::Value::String("none".to_string()),
-            ThinkingSummaries::Unknown { summaries_type, .. } => {
-                // For unknown values, preserve the original format
-                serde_json::Value::String(summaries_type.clone())
-            }
-        }
+        crate::wire_enum::wire_value(self.as_wire(), self.unknown_data())
     }
 }
 
@@ -205,7 +200,6 @@ impl From<DeepResearchConfig> for AgentConfig {
             serde_json::Value::String("deep-research".into()),
         );
         if let Some(ts) = config.thinking_summaries {
-            // Use agent_config format (THINKING_SUMMARIES_*), not generation_config format (auto/none)
             map.insert("thinking_summaries".into(), ts.to_agent_config_value());
         }
         if let Some(visualization) = config.visualization {

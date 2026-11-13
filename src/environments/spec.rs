@@ -128,6 +128,13 @@ impl EnvironmentSource {
 #[serde(default)]
 pub struct AllowlistEntry {
     /// Domain to allow outbound requests to.
+    ///
+    /// Required on send. An empty domain is not written, so an entry read
+    /// without one (the `{"mode": "disabled"}` a GET echoes for
+    /// [`NetworkConfig::AllowlistDisabled`], beside another key or entry) is
+    /// written back as it was read, and one read with `"domain": ""` is
+    /// written back without it.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub domain: String,
     /// Headers to inject on outbound requests matching this domain.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,7 +150,7 @@ pub struct AllowlistEntry {
 }
 
 // A transform's header values are secrets, such as an injected API key
-// (D-067).
+// (D-067). `extra` goes through the wire's walk.
 impl std::fmt::Debug for AllowlistEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -159,7 +166,7 @@ impl std::fmt::Debug for AllowlistEntry {
             .field("domain", domain)
             .field("transform", &transform)
             .field("credential", credential)
-            .field("extra", extra)
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }
@@ -214,7 +221,7 @@ pub struct EnvVar {
 }
 
 // A plain value is often a secret: a key the sandbox's code reads
-// (D-067).
+// (D-067). `extra` goes through the wire's walk.
 impl std::fmt::Debug for EnvVar {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -225,7 +232,7 @@ impl std::fmt::Debug for EnvVar {
         f.debug_struct("EnvVar")
             .field("value", &redact::optional(value.as_ref()))
             .field("credential", credential)
-            .field("extra", extra)
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }
@@ -470,7 +477,7 @@ pub struct RemoteEnvironment {
 // An `env` the crate could not read (one entry not an `EnvVar`) is kept
 // whole in `extra`, where its values are as secret as in `env`: every string
 // beneath it prints redacted, since a value cannot be told from a name there
-// (D-067). The rest of `extra` prints as it is.
+// (D-067). The rest of `extra` goes through the wire's walk.
 impl std::fmt::Debug for RemoteEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -480,14 +487,11 @@ impl std::fmt::Debug for RemoteEnvironment {
             env,
             extra,
         } = self;
-        let extra: std::borrow::Cow<'_, _> = match extra.get("env") {
-            Some(unread) => {
-                let mut extra = extra.clone();
-                extra.insert("env".into(), redact::json_strings(unread));
-                std::borrow::Cow::Owned(extra)
-            }
-            None => std::borrow::Cow::Borrowed(extra),
-        };
+        let mut extra = redact::map(extra);
+        if let Some(unread) = extra.get_mut("env") {
+            let redacted = redact::json_strings(unread);
+            *unread = redacted;
+        }
         f.debug_struct("RemoteEnvironment")
             .field("environment_id", environment_id)
             .field("sources", sources)
@@ -616,6 +620,15 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
 ///
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
 ///
+/// # Wire form
+///
+/// An object whose `type` is `"remote"`, missing or null reads as
+/// [`Remote`](Self::Remote), and is written with `"type": "remote"`. An
+/// object of any other `type`, a non-string one included (typed
+/// `<non-string: ...>`, as a string enum types it), any other JSON value, and
+/// a remote object that does not read, are kept whole as
+/// [`Unknown`](Self::Unknown) and written back as they came.
+///
 /// # Example
 ///
 /// ```
@@ -629,7 +642,11 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
 ///     .add_source(EnvironmentSource::gcs("gs://bucket", "/data"))
 ///     .into();
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `Debug` prints an `Unknown` spec's JSON through the wire's redaction, so
+/// an environment variable's value in it prints as `[REDACTED]`, as it does
+/// in a remote environment's.
+#[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub enum EnvironmentSpec {
     /// A string ID referencing an existing environment.
@@ -643,6 +660,23 @@ pub enum EnvironmentSpec {
         /// The raw JSON value, preserved for debugging and roundtrip
         data: serde_json::Value,
     },
+}
+
+impl std::fmt::Debug for EnvironmentSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Id(id) => f.debug_tuple("Id").field(id).finish(),
+            Self::Remote(remote) => f.debug_tuple("Remote").field(remote).finish(),
+            Self::Unknown {
+                environment_type,
+                data,
+            } => f
+                .debug_struct("Unknown")
+                .field("environment_type", environment_type)
+                .field("data", &redact::json(data))
+                .finish(),
+        }
+    }
 }
 
 impl EnvironmentSpec {
@@ -713,7 +747,15 @@ impl<'de> Deserialize<'de> for EnvironmentSpec {
         match &value {
             serde_json::Value::String(id) => Ok(Self::Id(id.clone())),
             serde_json::Value::Object(obj) => {
-                let env_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("remote");
+                // Only a missing (or null) `type` reads as "remote". Any other
+                // non-string one is an unrecognized type, typed as `wire_enum!`
+                // types it and kept whole, so it is written back as it came
+                // (D-001).
+                let env_type = match obj.get("type") {
+                    None | Some(serde_json::Value::Null) => "remote".to_string(),
+                    Some(serde_json::Value::String(t)) => t.clone(),
+                    Some(other) => crate::wire_enum::non_string_descriptor(other),
+                };
                 if env_type == "remote" {
                     match serde_json::from_value::<RemoteEnvironment>(value.clone()) {
                         Ok(env) => Ok(Self::Remote(env)),
@@ -735,7 +777,7 @@ impl<'de> Deserialize<'de> for EnvironmentSpec {
                         env_type
                     );
                     Ok(Self::Unknown {
-                        environment_type: env_type.to_string(),
+                        environment_type: env_type,
                         data: value,
                     })
                 }
@@ -840,6 +882,39 @@ mod tests {
             matches!(mixed, NetworkConfig::Allowlist { .. }),
             "{mixed:?}"
         );
+    }
+
+    /// A domain-less entry (the disabled echo's `{"mode": "disabled"}`, read
+    /// as a plain entry once anything sits beside it) is written back without
+    /// a domain, as it was read: an empty `domain` is never written.
+    #[test]
+    fn domain_less_allowlist_entries_are_written_back_as_read() {
+        for wire in [
+            json!({"allowlist": [{"mode": "disabled"}, {"domain": "example.com"}]}),
+            json!({"allowlist": [{"mode": "disabled", "zz": 1}]}),
+            json!({"allowlist": [{"mode": "disabled"}], "zz": 1}),
+            json!({"allowlist": [{}]}),
+        ] {
+            let parsed: NetworkConfig = serde_json::from_value(wire.clone()).unwrap();
+            assert!(
+                matches!(parsed, NetworkConfig::Allowlist { .. }),
+                "{wire} read as {parsed:?}"
+            );
+            assert_eq!(serde_json::to_value(&parsed).unwrap(), wire);
+        }
+        // Through the resource that reads it.
+        let wire = json!({"id": "e", "network": {"allowlist": [{"mode": "disabled", "zz": 1}]}});
+        let environment: crate::Environment = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&environment).unwrap(), wire);
+        // A caller's empty domain is not sent either, and one read as `""`
+        // is written back without it (D-071).
+        assert_eq!(
+            serde_json::to_value(AllowlistEntry::new("")).unwrap(),
+            json!({})
+        );
+        let read: AllowlistEntry = serde_json::from_value(json!({"domain": ""})).unwrap();
+        assert_eq!(read, AllowlistEntry::new(""));
+        assert_eq!(serde_json::to_value(&read).unwrap(), json!({}));
     }
 
     #[test]
@@ -1038,6 +1113,52 @@ mod tests {
         assert_eq!(parsed.unknown_environment_type(), Some("local"));
         assert_eq!(parsed.unknown_data(), Some(&raw));
         assert_eq!(serde_json::to_value(&parsed).unwrap(), raw);
+    }
+
+    /// D-001: a non-string `type` is an unrecognized type, kept whole as
+    /// `Unknown` and written back as it came, not read as "remote".
+    #[test]
+    fn non_string_environment_type_is_kept_whole() {
+        for wire in [
+            json!({"type": 5, "environment_id": "e"}),
+            json!({"type": true, "environment_id": "e"}),
+            json!({"type": {"kind": "remote"}, "environment_id": "e"}),
+            json!({"type": ["remote"], "environment_id": "e"}),
+        ] {
+            let first: EnvironmentSpec = serde_json::from_value(wire.clone()).unwrap();
+            assert!(first.is_unknown(), "{wire} read as {first:?}");
+            assert_eq!(
+                first.unknown_environment_type(),
+                Some(crate::wire_enum::non_string_descriptor(&wire["type"]).as_str())
+            );
+            let written = serde_json::to_value(&first).unwrap();
+            assert_eq!(written, wire, "written JSON differs from the input");
+            let second: EnvironmentSpec = serde_json::from_value(written).unwrap();
+            assert_eq!(second, first);
+        }
+        // Through `Agent::base_environment`, which `Agents::create` re-sends.
+        let wire = json!({"id": "a", "base_environment": {"type": 5}});
+        let agent: crate::Agent = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&agent).unwrap(), wire);
+    }
+
+    /// A missing or null `type` reads as "remote", and is written as it.
+    #[test]
+    fn missing_or_null_environment_type_reads_as_remote() {
+        for wire in [
+            json!({"environment_id": "e"}),
+            json!({"type": null, "environment_id": "e"}),
+        ] {
+            let spec: EnvironmentSpec = serde_json::from_value(wire).unwrap();
+            assert_eq!(
+                spec,
+                EnvironmentSpec::Remote(RemoteEnvironment::new().with_environment_id("e"))
+            );
+            assert_eq!(
+                serde_json::to_value(&spec).unwrap(),
+                json!({"type": "remote", "environment_id": "e"})
+            );
+        }
     }
 
     #[test]

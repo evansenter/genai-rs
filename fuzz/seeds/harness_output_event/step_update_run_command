@@ -1,0 +1,1 @@
+{"seqNum": "12345678901234", "timestampMicros": "2", "stepUpdate": {"trajectoryId": "traj", "stepIndex": 3, "state": "STATE_DONE", "source": "SOURCE_MODEL", "target": "TARGET_USER", "text": "hello", "runCommand": {"commandLine": "ls", "exitCode": 0, "combinedOutput": "a\n"}}, "usageMetadata": {"promptTokenCount": "10", "totalTokenCount": "20"}}

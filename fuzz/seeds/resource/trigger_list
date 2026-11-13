@@ -1,0 +1,1 @@
+{"triggers":[{"name":"triggers/t1","interaction":{"model":"m","input":"hi"}}],"next_page_token":"t"}

@@ -54,8 +54,9 @@
 #[path = "common/source_scan.rs"]
 mod source_scan;
 
+use source_scan::{child_module_dir, is_test_gated, is_test_only_path, item_attrs, test_modules};
+
 use std::collections::BTreeSet;
-use std::path::Path;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Item, Meta, Token};
@@ -548,19 +549,7 @@ fn parse_in_scope(sources: &[(String, String)]) -> (Vec<(&str, syn::File)>, BTre
         })
         .collect();
 
-    let mut test_modules = BTreeSet::new();
-    for (rel, file) in &parsed {
-        let mut finder = GatedModules {
-            dir: child_module_dir(rel),
-            file_dir: Path::new(rel)
-                .parent()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned(),
-            found: &mut test_modules,
-        };
-        finder.visit_file(file);
-    }
+    let test_modules = test_modules(parsed.iter().map(|(rel, file)| (*rel, file)));
 
     let in_scope = parsed
         .into_iter()
@@ -598,30 +587,6 @@ fn analyze(sources: &[(String, String)], exemptions: &[&str], without_extra: &[&
         check.visit_file(file);
     }
     report
-}
-
-/// True if the attributes include a `cfg` that can only hold under `test`:
-/// `test` appears outside any `not(..)`. `any(test, x)` counts, as in the
-/// convention this replaced.
-fn is_test_gated(attrs: &[Attribute]) -> bool {
-    fn mentions_test(meta: &Meta, negated: bool) -> bool {
-        match meta {
-            Meta::Path(path) => !negated && path.is_ident("test"),
-            Meta::List(list) => {
-                let negated = negated ^ list.path.is_ident("not");
-                list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-                    .map(|nested| nested.iter().any(|m| mentions_test(m, negated)))
-                    .unwrap_or(false)
-            }
-            Meta::NameValue(_) => false,
-        }
-    }
-    attrs.iter().any(|attr| {
-        attr.path().is_ident("cfg")
-            && attr
-                .parse_args::<Meta>()
-                .is_ok_and(|meta| mentions_test(&meta, false))
-    })
 }
 
 fn derives_deserialize(attrs: &[Attribute]) -> bool {
@@ -672,86 +637,6 @@ fn has_non_exhaustive(attrs: &[Attribute]) -> bool {
     attrs
         .iter()
         .any(|attr| attr.path().is_ident("non_exhaustive"))
-}
-
-fn item_attrs(item: &Item) -> &[Attribute] {
-    match item {
-        Item::Const(i) => &i.attrs,
-        Item::Enum(i) => &i.attrs,
-        Item::Fn(i) => &i.attrs,
-        Item::Impl(i) => &i.attrs,
-        Item::Mod(i) => &i.attrs,
-        Item::Static(i) => &i.attrs,
-        Item::Struct(i) => &i.attrs,
-        Item::Trait(i) => &i.attrs,
-        Item::Type(i) => &i.attrs,
-        Item::Use(i) => &i.attrs,
-        Item::Macro(i) => &i.attrs,
-        _ => &[],
-    }
-}
-
-/// Where the children of `rel`'s module live: `src/x.rs` declares into
-/// `src/x/`, while `lib.rs` and `mod.rs` declare into their own directory.
-fn child_module_dir(rel: &str) -> String {
-    let path = Path::new(rel);
-    let stem = path.file_stem().unwrap().to_string_lossy();
-    let parent = path.parent().unwrap().to_string_lossy();
-    if stem == "lib" || stem == "mod" || stem == "main" {
-        parent.into_owned()
-    } else {
-        format!("{parent}/{stem}")
-    }
-}
-
-/// The value of a `#[path = "..."]` attribute, if present.
-fn path_attr(attrs: &[Attribute]) -> Option<String> {
-    attrs.iter().find_map(|attr| match &attr.meta {
-        Meta::NameValue(nv) if nv.path.is_ident("path") => match &nv.value {
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(s),
-                ..
-            }) => Some(s.value()),
-            _ => None,
-        },
-        _ => None,
-    })
-}
-
-/// A file is test-only if a gated `mod` declared it: `<m>.rs`, `<m>/mod.rs`,
-/// or anything below `<m>/`.
-fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
-    test_modules
-        .iter()
-        .any(|m| rel == format!("{m}.rs") || rel.starts_with(&format!("{m}/")))
-}
-
-/// Collects out-of-line `#[cfg(test)] mod x;` declarations, following a
-/// `#[path = "x_tests.rs"]` attribute when there is one.
-struct GatedModules<'a> {
-    /// Where an unattributed `mod x;` resolves (see [`child_module_dir`]).
-    dir: String,
-    /// The declaring file's own directory, which a top-level `#[path]` is
-    /// relative to.
-    file_dir: String,
-    found: &'a mut BTreeSet<String>,
-}
-
-impl<'ast> Visit<'ast> for GatedModules<'_> {
-    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
-        if module.content.is_none() && is_test_gated(&module.attrs) {
-            let target = match path_attr(&module.attrs) {
-                Some(path) => {
-                    let path = path.strip_suffix(".rs").unwrap_or(&path).to_owned();
-                    format!("{}/{path}", self.file_dir)
-                }
-                None => format!("{}/{}", self.dir, module.ident),
-            };
-            self.found.insert(target);
-        }
-        // Inline modules are not followed: an out-of-line `mod` inside one
-        // would resolve to a nested directory, and `src/` has none.
-    }
 }
 
 /// Collects the self types of hand-written `impl Deserialize for T`.
@@ -1453,6 +1338,22 @@ fn gated_module_paths_are_scoped_to_their_declaration() {
     assert!(!is_test_only_path("src/http/helpers_extra.rs", &modules));
     assert!(!is_test_only_path("src/helpers.rs", &modules));
 
+    // A test-only file's own modules are test-only too, gated or not.
+    let lib = syn::parse_file("#[cfg(test)] mod proptest_tests; mod request;").unwrap();
+    let proptests = syn::parse_file(r#"#[path = "proptest_content.rs"] mod content;"#).unwrap();
+    let request = syn::parse_file("mod builder;").unwrap();
+    assert_eq!(
+        test_modules([
+            ("src/lib.rs", &lib),
+            ("src/proptest_tests.rs", &proptests),
+            ("src/request.rs", &request),
+        ]),
+        BTreeSet::from([
+            "src/proptest_content".to_string(),
+            "src/proptest_tests".to_string(),
+        ])
+    );
+
     assert_eq!(child_module_dir("src/lib.rs"), "src");
     assert_eq!(child_module_dir("src/http/mod.rs"), "src/http");
     assert_eq!(
@@ -1469,8 +1370,15 @@ fn the_cfg_test_gate_recognises_compound_forms_and_only_those() {
     }
     assert!(gated("#[cfg(test)]"));
     assert!(gated("#[cfg(all(test, not(miri)))]"));
-    assert!(gated("#[cfg(any(test, genai_strict_unknown))]"));
+    assert!(gated("#[cfg(any(test, all(test, unix)))]"));
+    assert!(gated("#[cfg(not(not(test)))]"));
     assert!(gated("#[allow(dead_code)] #[cfg(test)]"));
+    assert!(gated("#[tokio::test]"));
+    // Each of these builds without `test` somewhere.
+    assert!(!gated("#[cfg(any(test, genai_strict_unknown))]"));
+    assert!(!gated("#[cfg(any(target_os = \"linux\", test))]"));
+    assert!(!gated("#[cfg(any(fuzzing, test))]"));
+    assert!(!gated("#[cfg(not(all(test, unix)))]"));
     assert!(!gated("#[cfg(not(test))]"));
     assert!(!gated("#[cfg(all(not(test), unix))]"));
     assert!(!gated("#[cfg(not(any(test, miri)))]"));

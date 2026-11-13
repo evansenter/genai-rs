@@ -111,13 +111,15 @@ expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 2. `ANTIGRAVITY_HARNESS_PATH` environment variable (the same variable the
    Python SDK honors).
 3. `google/antigravity/bin/localharness` inside `python3`'s site-packages,
-   then, on Windows, inside `python`'s.
+   then, on Windows, inside `python`'s, then inside those of the `py`
+   launcher's Python 3 (`py -3`).
 4. `localharness` on `PATH`.
 
 On Windows steps 3 and 4 look for `localharness.exe` first, the name the
 Windows wheel ships, as the Python SDK does. Step 3 asks `python` there
-because python.org's Windows installer provides no `python3`; `python` is
-started only when `python3`'s site-packages lack the harness.
+because python.org's Windows installer provides no `python3`, and `py -3`
+because the launcher it installs can be on `PATH` when `python` is not;
+each is started only when the interpreters before it lack the harness.
 
 A path given in step 1 or 2 is the harness, as the Python SDK takes the
 variable's: when it is not a file, `spawn()` fails with
@@ -127,10 +129,10 @@ so a mistyped path cannot start a different harness. An empty
 `HarnessNotFound` listing every location searched. The search runs on
 tokio's blocking pool, not on your runtime's threads, and each interpreter
 gets 10 seconds to list its site-packages before the search moves on (on
-Windows from `python3` to `python`, then to `PATH`). The read of the
-installed wheel's version beside the binary gets
-the same 10 seconds, on a thread of its own, so a read abandoned at the
-limit does not hold up your runtime's shutdown. File checks and the start
+Windows from `python3` to `python` to `py -3`, then to `PATH`). The read
+of the installed wheel's version beside the binary gets the same 10
+seconds, on a thread of its own, so a read abandoned at the limit does not
+hold up your runtime's shutdown. File checks and the start
 of the binary itself are not bounded.
 
 ## Quick start
@@ -188,7 +190,7 @@ running after a dropped agent, a failed `spawn()` or an escalated
 shutdown. Only the graceful exit stops them there, so call `shutdown()`
 and let it finish. Stdio MCP servers are not affected on Linux and macOS:
 they exit at the end of their stdin, which closes when the harness dies.
-That is unverified on Windows (#536).
+That is unverified on Windows (tracked in #536).
 
 ### Images, documents and slash commands
 
@@ -651,7 +653,7 @@ by the turn deadline like the rest:
 |--------|-------|------------|
 | `on_session_start` | once, before `spawn()` returns | — |
 | `on_session_end` | during `shutdown()` (not on drop) | — |
-| `on_pre_turn` | before each turn, with the user's text | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn` of kind `TurnFailure::Denied`, the reason as its message; the agent stays usable |
+| `on_pre_turn` | before each turn, with the user's text; not consulted on trigger turns (harness 0.1.23, see [Triggers](#triggers)) | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn` of kind `TurnFailure::Denied`, the reason as its message; the agent stays usable |
 | `on_post_turn` | after each turn, with its response text | — |
 | `on_tool_error` | when a tool call fails | `Some(text)` replaces the error the model sees |
 | `on_compaction` | when the harness compacts the history | — |
@@ -675,9 +677,9 @@ by the turn deadline like the rest:
 ```
 
 `on_stop` must stop eventually: check `continuation_count`, or the turn runs
-until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn,
-then the tool hooks and tool errors as calls happen, then stop (again after
-each continue), then post-turn.
+until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn
+(except on a trigger turn), then the tool hooks and tool errors as calls
+happen, then stop (again after each continue), then post-turn.
 
 A turn nobody consumes (one that hit its `with_turn_timeout`, one you
 abandoned by dropping `chat` or its stream, or a trigger turn the next
@@ -969,22 +971,25 @@ budget is exceeded, the crate halts the harness's still-running turn and
 drains its remaining events before returning `AntigravityError::Timeout`, so
 the next turn starts from a clean stream.
 
-The deadline is absolute, stamped when the turn starts, and it covers the
-whole turn rather than the gaps between harness events: that includes this
-crate's own work inside the turn, so a custom tool or hook that hangs ends
-the turn on time, with the `Timeout`'s `operation` naming it
-(`agent turn (custom tool 'x' was still running at the deadline)`). It is
-stamped before your message is sent, so it bounds the send too: a harness
+The deadline is absolute, stamped when `chat` or `send_streaming` is
+called, and it covers the whole turn rather than the gaps between harness
+events: that includes this crate's own work inside the turn, so a custom
+tool or hook that hangs ends the turn on time, with the `Timeout`'s
+`operation` naming it (`agent turn (custom tool 'x' was still running at
+the deadline)`). It covers what the call does before the turn too: the
+wait for a trigger's message still going out to the harness, and the halt
+and drain of an earlier turn still running. And it bounds every message to
+the harness in the turn, your message and the replies to the harness's
+requests (hook answers, tool results, answers to its questions): a harness
 that has stopped reading fails the turn on time (`agent turn (the harness
 did not take the message)`) instead of holding it, however large the
 prompt, at the turn timeout you set, however long. Every other message to
-the harness has a bound of its own: the halt before a turn counts against
-the five-second drain budget, the initialization in `spawn()` and the
-session-end request in `shutdown()` against their 30-second budgets, the
-close in `shutdown()` gives up after half a second, and any other send (a
-`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
-message of a turn with no timeout) gives up after 30 seconds, as a
-`Timeout` where the call returns an error.
+the harness has a bound of its own: the halt before a turn also counts
+against the five-second drain budget, the initialization in `spawn()` and
+the session-end request in `shutdown()` against their 30-second budgets,
+the close in `shutdown()` gives up after half a second, and any other send
+(a `cancel()`, a trigger's delivery, a message in a turn with no timeout)
+gives up after 30 seconds, as a `Timeout` where the call returns an error.
 
 Each custom tool call runs on a tokio task of its own, and a call the
 deadline abandons is aborted: an async tool stops at its next `.await`. A
@@ -1220,6 +1225,13 @@ Delivery semantics (see `antigravity::triggers` for details):
   turn can never surface as (or desync) your turn's response. The trigger's
   effects on conversation history (and any tool calls completed before the
   halt) persist.
+- `on_pre_turn` is not consulted on trigger turns (harness 0.1.23): a
+  trigger's turn runs without asking it, though its stop and post-turn
+  hooks run, so a pre-turn gate (a turn budget, say) does not see those
+  turns. Decide in the trigger whether to send; `spawn()` logs a warning
+  when `on_pre_turn` and a trigger are both set.
+  `test_scripted_a_trigger_turn_skips_the_pre_turn_hook` fails the day the
+  harness starts consulting it.
 
 ## Session persistence and resume
 
@@ -1388,36 +1400,57 @@ let builder = AntigravityAgent::builder()
 # let _ = builder;
 ```
 
-Spawn- and init-time errors (`HandshakeFailed`, `InitFailed`,
-`ConnectionClosed`) carry the tail of the harness's stderr — that is where
-the harness explains itself (e.g. `no text model configuration provided`).
+The errors of a harness that fails to start or goes away
+(`HandshakeFailed`, `InitFailed`, `ConnectionClosed` and `HarnessExited`)
+carry the tail of its stderr — that is where the harness explains itself
+(e.g. `no text model configuration provided`). [Errors](#errors) says when
+each is raised.
 
 ## Errors
 
 `AntigravityError` is structural (`#[non_exhaustive]`, thiserror): match on
-variants, never on message text. Key variants: `HarnessNotFound{searched}`,
-`HandshakeFailed`/`InitFailed`/`ConnectionClosed` (with `stderr`; an
-`InitFailed` from a connect that never succeeded has the `WebSocket` error
-as its source), `HarnessExited` (a failed exit on `shutdown()`, with
-`stderr`), `Config` (spawn-time validation, including the safety gate),
-`Turn { kind, message }` (below), `Timeout`, `ToolDispatch`, `WebSocket`
-(with the transport error as its source), `Protocol` (a harness message
-this client could not parse, with the parse error as its source, a turn
-that ended without its final event, or a message this client could not
-encode) and `Io` (a file `Media::from_file` could not read, named in its
-message, or harness discovery cut short by the runtime shutting down; the
-I/O error is its source). An error's `Display` never repeats its source's
-text, so a reporter that walks `source()` prints each cause once; one that
-prints only the top error shows the step that failed, not the cause. No
-variant converts from another error type with `?`: map your own I/O and
-JSON errors yourself.
+variants, never on message text. Key variants:
+
+- `HarnessNotFound { searched }`: discovery found no binary.
+- `HandshakeFailed`: the binary would not start, or the stdio handshake
+  failed. It carries `stderr`, and the I/O or decode error that failed it,
+  when one did, as its source.
+- `InitFailed`: any failure of `spawn()` after the handshake (the
+  WebSocket connect, the initialization, the session-start hook), a
+  harness that dies then included. It carries `stderr`, and the error that
+  caused it, when one did (the `WebSocket` error of a connect that never
+  succeeded, say), as its source.
+- `ConnectionClosed`: the harness closed the connection after `spawn()`
+  returned. A harness that dies mid-turn, or while `next_trigger_turn`
+  waits, fails the call with it and the tail of its `stderr`. After a turn
+  whose failure ended the session (below), each `chat`, `send_streaming`
+  and `next_trigger_turn` fails with it without sending. A trigger's
+  `TriggerContext::send` gets it, with an empty `stderr`, once the agent is
+  shut down or dropped.
+- `HarnessExited`: a failed exit on `shutdown()`, with `stderr`.
+- `Config`: spawn-time validation, including the safety gate.
+- `Turn { kind, message }`: a failed turn (below).
+- `Timeout` and `ToolDispatch`.
+- `WebSocket`: a read or send on the connection that failed, with the
+  transport error as its source.
+- `Protocol`: a harness message this client could not parse, with the
+  parse error as its source, a turn that ended without its final event, or
+  a message this client could not encode.
+- `Io`: a file `Media::from_file` could not read, named in its message, or
+  harness discovery cut short by the runtime shutting down; the I/O error
+  is its source.
+
+An error's `Display` never repeats its source's text, so a reporter that
+walks `source()` prints each cause once; one that prints only the top
+error shows the step that failed, not the cause. No variant converts from
+another error type with `?`: map your own I/O and JSON errors yourself.
 
 A failed turn is `Turn { kind, message }`, where `kind` is a
 `TurnFailure` (`#[non_exhaustive]`):
 
 | `TurnFailure` | When | The agent after it |
 |---|---|---|
-| `ModelBackend { status }` | the model backend failed a call: with a status the harness does not retry (400, 401 or 403), or with one whose retries ran out (a 503, say) | gone: respawn |
+| `ModelBackend { status }` | the model backend failed a call: with a status the harness does not retry (400, 401 or 403), or with one whose retries ran out (a 503, say) on a call of the agent's own rather than a subagent's | gone: respawn |
 | `Trajectory` | the harness ended the turn with an error of its own, such as an MCP server that failed to load | gone: respawn |
 | `Denied` | the pre-turn hook refused the turn (`message` is its reason) | usable |
 | `Cancelled` | the harness cancelled the turn of its own accord | usable |
@@ -1425,9 +1458,9 @@ A failed turn is `Turn { kind, message }`, where `kind` is a
 
 `kind.ends_session()` answers the last column. On harness 0.1.23 the
 harness's run ends with a `ModelBackend` or `Trajectory` failure, and the
-agent fails every later call with `ConnectionClosed`, without sending: the
-harness can take one more message before it closes its WebSocket and
-answer it with an empty turn.
+agent fails every later `chat`, `send_streaming` and `next_trigger_turn`
+with `ConnectionClosed`, without sending: the harness can take one more
+message before it closes its WebSocket and answer it with an empty turn.
 
 ```rust,no_run
 use genai_rs::antigravity::{AntigravityAgent, AntigravityError, TurnFailure};
@@ -1479,7 +1512,7 @@ The ones a user is likeliest to look for:
 - **Trigger turns are surfaced on request**: `next_trigger_turn` drives
   them; nothing reads them in the background, so call it between user
   turns, and a trigger turn nobody consumes is halted by the next `chat`.
-  A background consumer (#535) would read the harness while the agent is
+  A background consumer (tracked in #535) would read the harness while the agent is
   idle, which means moving turn processing (hooks, policies, custom tools)
   out of `&mut self` into a task of its own: a redesign of
   `AntigravityAgent`. The `schedule` builtin waits on it.

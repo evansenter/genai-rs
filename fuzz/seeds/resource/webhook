@@ -1,0 +1,1 @@
+{"name":"webhooks/w1","uri":"https://example.com/h","subscribed_events":["batch.succeeded",7],"state":"enabled","create_time":"2026-11-05T09:46:00Z","signing_secrets":[{"truncated_secret":"ab","expire_time":"2026-12-01T00:00:00Z"}]}

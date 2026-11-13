@@ -828,3 +828,60 @@ fn output_event_keeps_unmodeled_envelope_keys() {
         Some(OutputPayload::Unknown { ref event_type, .. }) if event_type == "futureEvent"
     ));
 }
+
+/// D-001: a `usageUpdate` that is not an object carries no usage but is
+/// kept in `extra` and written back as it came; it never becomes the
+/// payload.
+#[test]
+fn test_non_object_usage_update_round_trips() {
+    for raw in [
+        json!({"seqNum": 1, "usageUpdate": [1, 2]}),
+        json!({"seqNum": 1, "usageUpdate": "x"}),
+        json!({"seqNum": 1, "usageUpdate": 7, "stepUpdate": {"trajectoryId": "t"}}),
+        json!({"usageUpdate": false, "usageMetadata": {"totalTokenCount": 3}}),
+    ] {
+        let first: OutputEvent = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(first.usage_update, None, "{raw}");
+        assert_eq!(first.extra.get("usageUpdate"), raw.get("usageUpdate"));
+        assert!(
+            !first
+                .payload
+                .as_ref()
+                .is_some_and(|p| p.unknown_event_type() == Some("usageUpdate")),
+            "{raw} read its usageUpdate as the payload"
+        );
+        let written = serde_json::to_value(&first).unwrap();
+        assert_eq!(written, raw, "written JSON differs from the input");
+        let second: OutputEvent = serde_json::from_value(written).unwrap();
+        assert_eq!(second, first);
+    }
+}
+
+/// D-001: a `sessionEndResponse` that is not the proto's bool is kept as
+/// `Unknown`, written back as it came, and still read as the session's end.
+#[test]
+fn test_non_bool_session_end_response_round_trips() {
+    for raw in [
+        json!({"sessionEndResponse": {"hooksRun": 2}}),
+        json!({"sessionEndResponse": "true"}),
+        json!({"sessionEndResponse": 1}),
+        json!({"sessionEndResponse": null}),
+    ] {
+        let first: OutputEvent = serde_json::from_value(raw.clone()).unwrap();
+        let payload = first.payload.as_ref().expect("a payload");
+        assert_eq!(payload.unknown_event_type(), Some("sessionEndResponse"));
+        assert!(payload.is_session_end_response());
+        let written = serde_json::to_value(&first).unwrap();
+        assert_eq!(written, raw, "written JSON differs from the input");
+        let second: OutputEvent = serde_json::from_value(written).unwrap();
+        assert_eq!(second, first);
+    }
+    let ended: OutputEvent = serde_json::from_value(json!({"sessionEndResponse": true})).unwrap();
+    assert_eq!(ended.payload, Some(OutputPayload::SessionEndResponse(true)));
+    assert!(ended.payload.unwrap().is_session_end_response());
+    let other = OutputPayload::Unknown {
+        event_type: "somethingElse".into(),
+        data: json!(1),
+    };
+    assert!(!other.is_session_end_response());
+}
