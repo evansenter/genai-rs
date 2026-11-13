@@ -1268,8 +1268,11 @@ its reason in the guard:
   `EnvironmentSpec::Id`. `EnvironmentSpec::Remote` reads the whole object
   into `RemoteEnvironment`, which keeps its `extra`; nothing wraps it.
   `NetworkConfig::AllowlistDisabled`
-  is read only when `allowlist` is the object's one key; with another key
-  beside it the object is kept whole as `NetworkConfig::Unknown`.
+  is read only when `allowlist` is the object's one key. With another key
+  beside it, `{"allowlist": "disabled"}` is kept whole as
+  `NetworkConfig::Unknown`, and the echo `{"allowlist": [{"mode":
+  "disabled"}]}` reads as `NetworkConfig::Allowlist`, its domain-less entry
+  (`mode` in the entry's `extra`) written back as read (amended below).
 - The untagged unions with no `Unknown` variant, whose arms keep what they
   do not recognize in their own `Unknown` or catch-all: `InteractionInput`,
   `TurnContent`, `ResponseFormatSpec`, `CodeExecutionOutput` and
@@ -1309,6 +1312,15 @@ Carrying the completed event's would make `ExecutingFunctions` and
 `Complete(response)`, the pattern every auto-function caller writes for the
 stream's last chunk, take an `extra` too: two more breaking changes,
 left for the owner to ask for.
+
+*Amended 2026-11-10 (J7).* The list above said a key beside the disabled
+echo kept the object whole as `NetworkConfig::Unknown`. The code reads the
+echo's list form as `NetworkConfig::Allowlist` then, and wrote its
+domain-less `{"mode": "disabled"}` entry back with a `"domain": ""` it never
+had. `AllowlistEntry` no longer writes an empty `domain` (the API requires
+one on send either way), so the entry goes back as it came; the list above
+now says what the code does. Only the string form, `{"allowlist":
+"disabled"}`, is kept whole beside another key.
 
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
@@ -2919,3 +2931,119 @@ passed a scratch copy, though no instance was in the tree:
 
 The known limits are now a bare expression that ends otherwise, and a
 cross-reference to another row's file outside parentheses.
+
+## D-NEXT-J7 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
+
+**Context.** The 2026-11-10 round-trip audit found values lost on the
+*first* read: a non-string environment `type` read as `"remote"`, a
+domain-less allowlist entry given `"domain": ""`, a non-object harness
+`usageUpdate` dropped, a non-bool `sessionEndResponse` read as `false`.
+The fuzz round trip compared the first read with the second and the second
+with the third, so a loss on the first read, after which every write is
+stable, passed it; and no target reached the resources, the interaction
+response or the harness events. The property tests generated no non-string
+unknown where a `wire_enum!` value sits, and compared steps and content
+only through their writes, so the J-11 class (a non-string unknown written
+as its `<non-string: ...>` type) passed them too.
+
+**Decision.** Three new fuzz targets read what the wire sends:
+`interaction_response`, `resource` (`Agent`, `Trigger`, `Webhook`,
+`Environment`, `EnvironmentSpec` and every list page, each tried on the
+same input) and, behind the `antigravity` feature, `harness_output_event`.
+Each runs the round trip the others do, with the value-level
+normalizations extended to what they hold (an unknown tool's tag, a
+request's `Content` input read back as a `user_input` step, the content of a
+code execution result). A type that promises to write back the JSON it
+read is also checked against its input (`src/fuzzing_wire.rs`): both
+sides in a canonical form (a `null`, `[]` or `{}` member is absent, a whole
+float is its integer, the `f32` fields hold what an `f32` can), the input
+through the type's documented normalizations first.
+
+- **Promise it, and are checked:** `EnvironmentSpec` (normalizing a
+  missing or null `type` to `"remote"`, the `env` the API echoes as a list
+  to the map a request sends, the disabled allowlist echo to its request
+  form, and an empty allowlist `domain` to none), `Agent`, which
+  `Agents::create` re-sends (its environment as above, an unknown tool's
+  tag merged in), and the harness's `OutputEvent` (both usage spellings as
+  one `usageUpdate`; read as proto3 reads its JSON, where an int64 string is
+  its number and a scalar at its default is absent, which the first run
+  found: a `toolResponse` with no `id` was written with `"id": ""`).
+- **Normalize more than the check can follow, and are checked on the value
+  alone:** `Step`, `StepDelta` and `Content`, and so `InteractionResponse`
+  and `Trigger`, which hold them (a missing or non-string `type` becomes
+  `"<missing type>"`; D-NEXT-J7-a lists the input's normalization); and the
+  resources and their list pages, which read their int64s, timestamps and
+  list elements leniently, dropping what does not read
+  (`src/serde_util.rs`).
+
+The property tests now draw a string enum's unknown as a string or a
+non-string (`unknown_or`, `<non-string: ...>` with the JSON as data), and
+the step, delta, content and annotation properties also compare the value
+read back with the value written, through the same `Normalize`
+(`assert_first_write_keeps`). Reverting #548's fix to the code execution
+language fails them. `ToolChoice`'s bare mode stays a string: a non-string
+one reads back as `ToolChoice::Unknown`, typed by its shape.
+
+**Consequences.** `InteractionResponse` derives `PartialEq`. The fuzz crate
+has an `antigravity` feature, which only its harness target requires
+(`required-features`); the workflow's matrix passes it through
+`include:`, `tests/ci_coverage.rs` checks that it does, and a change under
+`src/antigravity/protocol/` now fuzzes. A type that adds a normalization
+documents it and adds it to its normalizer in `src/fuzzing_wire.rs`, or the
+target fails on it.
+
+## D-NEXT-J7-a — Two normalizations stay, documented: a single input object, and an `f32` beyond its range (2026-11-10)
+
+**Context.** The audit found two more first-read changes. `InteractionInput`
+reads a single content or step object as a one-element list, so it is
+written back as a one-element array, against its rustdoc's promise to
+re-serialize in the shape the server sent. And an `f32` field
+(`GenerationConfig::temperature` and `top_p`, the retrieval tool's
+hybrid-search `alpha`) read from a number beyond `f32`'s range held an
+infinity, wrote `null` and read back as absent; in range, a value reads
+rounded to an `f32`.
+
+**Decision.** Keep both, and say so. The single object keeps its value;
+only the array around it is new, and both shapes are arms of the spec's
+union. Keeping the shape needs a new public variant (`SingleContent`), which
+every exhaustive match on `InteractionInput` in the crate and the oracle's
+input aliases would have to follow, for a shape the server has not been
+seen to send. `InteractionInput`'s rustdoc, `Trigger::interaction`'s and
+`docs/ENUM_WIRE_FORMATS.md` say it, and a test pins it. For the floats,
+widening to `f64` is breaking for every builder that takes an `f32`
+(`with_temperature`, `with_top_p`, `with_hybrid_search_alpha`), for a range
+the server rejects anyway. A number beyond `f32`'s range is dropped on read
+with a `warn!` instead, as the int64 helpers drop a value that does not fit
+(`serde_util::deserialize_f32_in_range`), so the value is stable from the
+first read; the rounding is documented on `GenerationConfig`.
+
+Also for `EnvironmentSpec`: a null `type` reads as a missing one does
+(`"remote"`), as a null reads for every `Option`; any other non-string one
+is an unknown type, `<non-string: ...>`, kept whole.
+
+**Consequences.** A caller reading a response's single-object input sees a
+one-element list, and one re-sending it sends the array. A config with an
+`f32` beyond its range reads it as unset.
+
+## D-NEXT-J7-b — `speech_config` keeps the keys beside `speakers` in a new field (2026-11-10)
+
+**Context.** `speech_config` reads three forms into one list, and the
+`{"speakers": [...]}` form a stored interaction serves dropped any key
+beside the list. `Option<Vec<SpeechConfig>>` has nowhere to keep one, and
+`GenerationConfig::extra` is the level above it.
+
+**Decision.** A new public field, `GenerationConfig::speech_config_extra`,
+keeps them. While it holds a key, `speech_config` is written in the
+`{"speakers": [...], ...}` form with them, which the API accepts; while it
+is empty, as the list, as before. Rejected: changing `speech_config` to a
+new type holding both (breaking for every builder and caller that sets the
+list), and keeping the whole wrapper in `extra` under `speech_config`
+(written after the modeled field, a duplicate key that a strict reader
+refuses). `GenerationConfig`'s `Serialize` and `Deserialize` are
+hand-written, in the new `src/request/generation_config/wire.rs` with the
+speech-config reader that moved there, since one field's form now depends
+on another.
+
+**Consequences.** Breaking for an exhaustive `GenerationConfig` struct
+literal (D-007). The request oracle leaves the field empty: its keys are the
+API's, not the crate's.

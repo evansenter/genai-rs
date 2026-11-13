@@ -169,6 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GenerationConfig::extra` keeps the generation-config fields the crate
   does not model, from a stored read or a deserialized config, and sends
   them flat beside the modeled ones.
+- `InteractionResponse` implements `PartialEq`.
 - `InteractionBuilder::continue_decode(&response)` continues a decode that
   stopped early without resending the input: it sets the response's model,
   its id as the previous interaction and its `continuation_token`, replacing
@@ -708,9 +709,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so read it there (`item.extra.get("title")`). For file search, read the
   `file_citation` annotations on the answer (`all_annotations()`);
   `has_file_search_results()` still says whether a search ran.
-- **Breaking: `GenerationConfig` has a new public field, `extra`.**
-  Migration: a struct literal needs `extra: Default::default()`, or
-  `..Default::default()`.
+- **Breaking: `GenerationConfig` has two new public fields, `extra` and
+  `speech_config_extra`.** `speech_config_extra` keeps the keys a
+  `{"speakers": [...]}` form of `speech_config` carries beside the list,
+  which a stored interaction read back used to lose; while it holds one,
+  `speech_config` is written in that form with them, and otherwise as the
+  list (D-NEXT-J7-b). Migration: a struct literal needs
+  `extra: Default::default()` and `speech_config_extra: Default::default()`,
+  or `..Default::default()`.
 - **Breaking: `generation_config`, `response_format`,
   `response_modalities`, `safety_settings`, `agent_config` and
   `environment` no longer land in `InteractionResponse::extra`.**
@@ -1005,6 +1011,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Values the API or the harness sent that a round trip lost or rewrote
+  (D-001): an `EnvironmentSpec` whose `type` is not a string (on an
+  interaction, an agent's `base_environment` or a trigger) read as a remote
+  environment and was written back as `"type": "remote"`; it is now
+  `EnvironmentSpec::Unknown`, typed `<non-string: ...>`, and written back
+  as it came. A domain-less allowlist entry, the disabled echo's
+  `{"mode": "disabled"}` beside another entry or key, was written back
+  with a `"domain": ""` it never had; an empty `domain` is no longer
+  written. `ThinkingSummaries::to_agent_config_value`, and so a
+  `DeepResearchConfig` built from a value read from the wire, wrote a
+  non-string unknown as its `<non-string: ...>` type rather than the JSON
+  it came as, and a voice listing filtered by a listed voice's non-string
+  `type` or `pitch` sent that type as its query value. Antigravity's
+  `OutputEvent` dropped a `usageUpdate` that is not an object (it is kept
+  in `extra`) and read a `sessionEndResponse` that is not a bool as
+  `false` (it is kept as `OutputPayload::Unknown`, and still ends the
+  session). An `f32` field (`temperature`, `top_p`, the retrieval tool's
+  `alpha`) read from a number beyond `f32`'s range held an infinity,
+  written as `null`; it is dropped on read with a `warn!` (D-NEXT-J7-a).
+  `InteractionInput`'s docs said a response's input is written back in the
+  shape it came in; a single input object is written back as a
+  one-element array, and they now say so.
 - `Debug` no longer prints the secrets a value holds. `ExaAiSearchConfig`
   and `ParallelAiSearchConfig` printed their `api_key` (and one nested in
   `custom_config`), `McpServerConfig` and `Tool::McpServer` their header
