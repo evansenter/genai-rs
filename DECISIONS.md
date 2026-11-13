@@ -2624,6 +2624,21 @@ caller that printed only the top error of a `WebSocket`, `Protocol`,
 session-ending claim is the 0.1.23 harness's; a harness bump that keeps
 a session after one of these shows up as a failing scripted test.
 
+**Amended 2026-11-10 (PR #548 review, #556).** The backend failure a turn
+remembers is the main trajectory's, and only until a later step of that
+trajectory follows it. Harness 0.1.23 reports a 503 it is about to retry
+with the same system error step as one with no retries left, the retry
+following as the next step, so "any other status is remembered" made a
+turn that recovered from a retried 503 and then failed on its own (an
+unusable model output with no output retries left) a `ModelBackend { status:
+503 }`; a subagent's failed call, whose error is not the turn's, did the
+same. For the same reason the `AgentEvent::Error` of a 5xx step stays
+`Transient`: the step arrives before the harness has retried or given up,
+and only its text tells the two apart. Rejected: reading that text
+("Encountered retryable error from model provider"). The unit tests feed
+each sequence; `test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`
+runs the harness's.
+
 ---
 
 ## D-063 — A harness path the caller names is used as given (2026-11-09)

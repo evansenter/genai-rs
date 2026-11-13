@@ -304,10 +304,12 @@ impl AntigravityAgent {
     /// # Errors
     ///
     /// [`AntigravityError::Config`] for an empty [`Prompt`],
-    /// [`AntigravityError::WebSocket`] when the message cannot be sent, and
-    /// [`AntigravityError::Timeout`] when the harness does not take it
-    /// within the turn timeout, or within 30 seconds when the turn has none
-    /// (it stopped reading). The turn's own failures, as listed for
+    /// [`AntigravityError::ConnectionClosed`], without sending, once an
+    /// earlier turn ended the session, [`AntigravityError::WebSocket`] when
+    /// the message cannot be sent, and [`AntigravityError::Timeout`] when
+    /// the turn timeout passes before the harness takes it, or the harness
+    /// does not take it within 30 seconds and the turn has no timeout (it
+    /// stopped reading). The turn's own failures, as listed for
     /// [`chat`](Self::chat), arrive as the stream's items.
     pub async fn send_streaming(
         &mut self,
@@ -385,7 +387,8 @@ impl AntigravityAgent {
     /// # Errors
     ///
     /// [`AntigravityError::ConnectionClosed`] when the harness closes the
-    /// connection while this waits, and a failed turn's errors, as for
+    /// connection while this waits, and at once, without waiting, once an
+    /// earlier turn ended the session; and a failed turn's errors, as for
     /// [`chat`](Self::chat).
     ///
     /// ```rust,no_run
