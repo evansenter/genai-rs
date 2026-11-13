@@ -22,9 +22,10 @@
 //! workflow and every push to main escalates its failures, a PR runs the
 //! Windows leg, the flakiness report reads every retry it claims to count,
 //! Code Coverage writes its summary on every run, and no shell-level mask
-//! or YAML key lets a guarded step's failure pass. Two docs facts are
-//! guarded in `tests/doc_guards/`: `docs/TESTING.md`'s test-kind table
-//! places every test file under its kind, and every guide is doctested.
+//! or YAML key the guards know lets a guarded step's failure pass. Two
+//! docs facts are guarded in `tests/doc_guards/`: `docs/TESTING.md`'s
+//! test-kind table places every test file under its kind, and every guide
+//! is doctested.
 
 #![allow(
     clippy::unwrap_used,

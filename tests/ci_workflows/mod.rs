@@ -18,12 +18,14 @@
 //!
 //! The steps whose failure must fail their job (the coverage floor and the
 //! runs before it, the release gate, every live nextest step, the scripted
-//! harness step, the sweep's two) are read by `escapes`: no `if:` but the
-//! one a caller allows, no `continue-on-error` or `needs:`, on the step or
-//! its job, no other shell, and no shell-level mask (`shell_masks`:
-//! `|| true`, `; true`, `set +e`, `exit 0` and the like; a script of more
-//! than one line starts with `set -euo pipefail`, and every step that pipes
-//! nextest does).
+//! harness step, the sweep's two) are read by `escapes`: no `if:` or
+//! `needs:` but the ones a caller allows, no `continue-on-error`, on the
+//! step or its job, no `defaults:` on the job or the workflow, no other
+//! shell, and no shell-level mask that `shell::shell_masks` knows (`|| true`,
+//! `; true`, `set +e`, an `exit` whose status may be 0 and the others it
+//! lists; a script of more than one line starts with `set -euo pipefail`,
+//! and every step that pipes nextest does). It reads the script as text,
+//! so a status computed out of its sight could still pass it (D-058).
 //!
 //! The workflows are YAML that only runs in CI, so a regression in how they
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a
@@ -41,14 +43,19 @@ mod builds;
 mod escalation;
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use regex::Regex;
 
 mod coverage;
 mod flakiness;
 mod release;
+mod shell;
 mod sweep;
+
+use shell::{
+    SKIP_COUNT, blank_quotes, exits_with_rc, failed_list_exits, fails_the_step, if_branch,
+    lists_failed_rc, pipes_nextest, run_script, shell_masks, turns_checks_off,
+};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -308,254 +315,27 @@ fn step_name(step: &str) -> &str {
     first.strip_prefix("- name: ").unwrap_or(first)
 }
 
-/// The script of a step's `run:` as the shell reads it, one command line
-/// per entry: a one-line value, or a block's lines, each trimmed, with
-/// blank and comment lines dropped and `\` continuations joined. Empty for
-/// a step with no `run:`.
-fn run_script(step: &str) -> Vec<String> {
-    let lines: Vec<&str> = step.lines().collect();
-    let mut raw: Vec<String> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let Some(value) = step_key(i, line).and_then(|key| key.strip_prefix("run:")) else {
-            continue;
-        };
-        let value = value.trim();
-        if value.starts_with('|') || value.starts_with('>') {
-            raw.extend(
-                lines[i + 1..]
-                    .iter()
-                    .take_while(|line| {
-                        line.trim().is_empty() || line.len() - line.trim_start().len() > 8
-                    })
-                    .map(|line| line.trim().to_string()),
-            );
-        } else if let Some(inner) = value
-            .strip_prefix('\'')
-            .and_then(|rest| rest.strip_suffix('\''))
-        {
-            raw.push(inner.replace("''", "'"));
-        } else if let Some(inner) = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.strip_suffix('"'))
-        {
-            raw.push(inner.to_string());
-        } else {
-            raw.push(value.to_string());
-        }
-        break;
-    }
-    let mut script = Vec::new();
-    let mut joined = String::new();
-    for line in raw {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        match line.strip_suffix('\\') {
-            Some(head) => {
-                joined.push_str(head.trim_end());
-                joined.push(' ');
-            }
-            None => {
-                joined.push_str(&line);
-                script.push(std::mem::take(&mut joined));
-            }
-        }
-    }
-    if !joined.is_empty() {
-        script.push(joined);
-    }
-    script
-}
-
-/// `line` with what is inside its quotes, and each backslash-escaped
-/// character, taken out (the quotes kept), so an operator in a quoted
-/// argument or message is not read as the shell's.
-fn strip_quotes(line: &str) -> String {
-    let mut out = String::new();
-    let mut quote: Option<char> = None;
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        match quote {
-            None if c == '\\' => {
-                chars.next();
-                out.push('_');
-            }
-            None => {
-                out.push(c);
-                if c == '\'' || c == '"' {
-                    quote = Some(c);
-                }
-            }
-            Some('"') if c == '\\' => {
-                chars.next();
-            }
-            Some(open) if c == open => {
-                out.push(c);
-                quote = None;
-            }
-            Some(_) => {}
-        }
-    }
-    out
-}
-
-/// Whether a line, its quotes stripped, has a pipe (`|`, not `||`).
-fn has_pipe(bare: &str) -> bool {
-    let chars: Vec<char> = bare.chars().collect();
-    chars.iter().enumerate().any(|(i, c)| {
-        *c == '|' && (i == 0 || chars[i - 1] != '|') && chars.get(i + 1) != Some(&'|')
-    })
-}
-
-/// Whether a line, its quotes stripped, runs a command in the background
-/// (an `&` that is neither `&&` nor part of a redirection).
-fn backgrounds(bare: &str) -> bool {
-    let chars: Vec<char> = bare.chars().collect();
-    chars.iter().enumerate().any(|(i, c)| {
-        *c == '&'
-            && !(i > 0 && matches!(chars[i - 1], '&' | '>' | '<'))
-            && !matches!(chars.get(i + 1), Some('&' | '>'))
-    })
-}
-
-/// `set +e`, `set +o errexit` or `set +o pipefail`, alone or among other
-/// flags: what turns off the checks a guarded script starts with.
-const SET_PLUS: &str = r"\bset\s[^;&|]*\+(\w*e|o\s+(errexit|pipefail))";
-
-/// Whether a line, its quotes stripped, turns `-e` or `pipefail` off.
-fn turns_checks_off(bare: &str) -> bool {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN
-        .get_or_init(|| Regex::new(SET_PLUS).expect("the set +e pattern"))
-        .is_match(bare)
-}
-
-/// The shell-level masks [`shell_masks`] rejects by pattern, each read on
-/// a line with its quotes stripped.
-fn mask_patterns() -> &'static [(Regex, &'static str)] {
-    static PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
-    PATTERNS.get_or_init(|| {
-        [
-            (
-                r"\bexit\s+0\b",
-                "`exit 0`, which passes the step whatever ran before it",
-            ),
-            (
-                r"(^|;|&&|\|\||\bthen|\bdo|\belse)\s*(true|:)\s*(;|$|\bfi\b|\bdone\b)",
-                "a `true` or `:` command (`; true`), which leaves the step's status 0 when \
-                 it runs last",
-            ),
-            (
-                SET_PLUS,
-                "`set +e` or `set +o pipefail`, which lets a failing command pass",
-            ),
-            (
-                r"(^|;|&&|\|\|)\s*trap\b",
-                "a `trap`, which can rewrite the step's exit status",
-            ),
-            (
-                r"(^|;|&&|\|\||\bthen|\bdo|\belse)\s*!\s",
-                "a `!`, which inverts a command's status and is exempt from `-e`",
-            ),
-            (
-                r"&&",
-                "a `&&` list, where `-e` passes over a failure before its last command",
-            ),
-            (
-                r"\b(if|elif|while|until)\s+(!\s*)?[^\[\s]",
-                "a command as an `if` or loop condition, where `-e` passes over its \
-                 failure (a `[ .. ]` test is the only condition allowed)",
-            ),
-        ]
-        .into_iter()
-        .map(|(pattern, why)| (Regex::new(pattern).expect("a mask pattern"), why))
-        .collect()
-    })
-}
-
-/// What in a step's script lets a failing command pass the step, each
-/// named, empty when the step's status is its commands'. A one-line script
-/// runs one command, with no shell operator; a longer one starts with
-/// `set -euo pipefail` (without `-e` a failing command mid-script is passed
-/// over, without `pipefail` a pipeline takes its last command's status, so
-/// `nextest | tee` passes a failed run). Neither may have an `||` handler
-/// that swallows the failure (`|| true`, `|| :`, `|| echo`, any handler
-/// but `rc=$?` the script exits with, a failed-list entry the script
-/// exits 1 on, `exit` or a `[ .. ]` test), nor any of [`mask_patterns`],
-/// nor a background `&`. One exception: `$(grep -c .. || true)`, a count
-/// whose exit status 1 means zero.
-fn shell_masks(step: &str) -> Vec<String> {
-    static GREP_COUNT: OnceLock<Regex> = OnceLock::new();
-    let grep_count = GREP_COUNT.get_or_init(|| {
-        Regex::new(r"\$\(grep\s+-c\w*\s[^()]*\|\|\s*true\)").expect("the grep-count pattern")
-    });
-    let script = run_script(step);
+/// What in `workflow` itself can change how every one of its bash steps
+/// runs, each named: a workflow-level `defaults:`, whose shell template
+/// (`true {0}`) can run no script at all, and `BASH_ENV`, `SHELLOPTS` or
+/// `BASHOPTS`, which bash reads before a step's script.
+fn workflow_escapes(workflow: &str) -> Vec<String> {
     let mut found = Vec::new();
-    match script.as_slice() {
-        [] => return found,
-        [only] => {
-            let bare = strip_quotes(only);
-            if bare.contains([';', '|', '`']) || bare.contains("$(") || backgrounds(&bare) {
-                found.push(format!(
-                    "a one-line script that is not one command (`{only}`), so the step's \
-                     status may not be the command's"
-                ));
-            }
+    for line in workflow.lines() {
+        if line.starts_with("defaults:") {
+            found.push(
+                "a workflow-level `defaults:`, which can change the shell every step runs \
+                 under"
+                    .into(),
+            );
         }
-        [first, ..] if first != "set -euo pipefail" => found.push(format!(
-            "a script that starts with `{first}`, not `set -euo pipefail`, so a failing \
-             command mid-script, or one piped into another, can pass"
-        )),
-        _ => {}
-    }
-    let lines: Vec<&str> = script.iter().map(String::as_str).collect();
-    let rc_exits = lines.contains(&"exit \"$rc\"");
-    let failed_exits = lines
-        .iter()
-        .position(|line| line.starts_with("if [ \"${#failed[@]}\" -gt 0 ]"))
-        .is_some_and(|at| {
-            if_branch(&lines, at)
-                .iter()
-                .any(|line| fails_the_step(line))
-        });
-    let rc_listed = lines
-        .iter()
-        .any(|line| line.starts_with("[ \"$rc\" -eq 0 ] || failed+=("));
-    for line in &script {
-        let bare = grep_count
-            .replace_all(&strip_quotes(line), "$$()")
-            .into_owned();
-        for (at, _) in bare.match_indices("||") {
-            let handler = bare[at + 2..].trim_start();
-            let word = handler
-                .split(|c: char| c.is_whitespace() || c == ';' || c == ')')
-                .next()
-                .unwrap_or("");
-            let kept = rc_exits || (rc_listed && failed_exits);
-            let why = match word {
-                "true" | ":" => Some("which passes a failing command"),
-                "echo" | "printf" => Some("a handler that only prints, so the failure passes"),
-                "exit" | "[" | "[[" => None,
-                _ if handler.starts_with("rc=$?") => {
-                    (!kept).then_some("which keeps the status, but the script never exits with it")
-                }
-                _ if handler.starts_with("failed+=(") => {
-                    (!failed_exits).then_some("but no non-empty list of failures exits 1")
-                }
-                _ => Some("a handler the guard does not know to fail the step"),
-            };
-            if let Some(why) = why {
-                found.push(format!("`|| {word}` in `{line}`, {why}"));
-            }
-        }
-        for (pattern, why) in mask_patterns() {
-            if pattern.is_match(&bare) {
-                found.push(format!("{why}: `{line}`"));
-            }
-        }
-        if backgrounds(&bare) {
+        let names_shell_env = ["BASH_ENV", "SHELLOPTS", "BASHOPTS"]
+            .iter()
+            .any(|name| line.contains(name));
+        if names_shell_env && !line.trim_start().starts_with('#') {
             found.push(format!(
-                "a background `&`, whose command's status the step never sees: `{line}`"
+                "`{}` in the workflow, which can change how every bash step runs",
+                line.trim()
             ));
         }
     }
@@ -567,12 +347,13 @@ fn shell_masks(step: &str) -> Vec<String> {
 /// step or its job: an `if:`, which can skip it, or a `continue-on-error`
 /// other than `false` (the default), which ignores its failure. On the
 /// job: a `needs:`, which skips the job with a job it needs, or a
-/// `defaults:`; on the step, a `shell:` other than `bash`: either can run
-/// its script under other rules. In its script: a shell-level mask
-/// ([`shell_masks`]). `allowed` lists the `if:` and `needs:` lines (`key:
-/// value`, as written) a caller accepts, such as the live steps' owner gate.
-fn escapes(job: &str, step: &str, allowed: &[&str]) -> Vec<String> {
-    let mut found = Vec::new();
+/// `defaults:`; on the step, a `shell:` other than `bash`; on the workflow,
+/// what [`workflow_escapes`] names: each can run its script under other
+/// rules. In its script: a shell-level mask ([`shell_masks`]). `allowed`
+/// lists the `if:` and `needs:` lines (`key: value`, as written) a caller
+/// accepts, such as the live steps' owner gate.
+fn escapes(workflow: &str, job: &str, step: &str, allowed: &[&str]) -> Vec<String> {
+    let mut found = workflow_escapes(workflow);
     for (i, line) in step.lines().enumerate() {
         let Some(key) = step_key(i, line).map(str::trim_end) else {
             continue;
@@ -631,8 +412,8 @@ fn escapes(job: &str, step: &str, allowed: &[&str]) -> Vec<String> {
 
 /// [`escapes`] with nothing allowed: what would let a step that must run on
 /// every run fail without failing its job.
-fn failure_escapes(job: &str, step: &str) -> Vec<String> {
-    escapes(job, step, &[])
+fn failure_escapes(workflow: &str, job: &str, step: &str) -> Vec<String> {
+    escapes(workflow, job, step, &[])
 }
 
 /// A step that runs nextest against the live API: it runs `nextest run`
@@ -699,34 +480,6 @@ fn nextest_retries_are_set_in_the_step_env() {
     );
 }
 
-/// The lines of the `if` branch that starts at `lines[start]`, up to its
-/// `elif`, `else` or `fi`, nested `if`s included.
-fn if_branch<'a>(lines: &[&'a str], start: usize) -> Vec<&'a str> {
-    let mut depth = 0;
-    let mut branch = Vec::new();
-    for line in &lines[start + 1..] {
-        let opens = line.starts_with("if ") && !line.ends_with("fi");
-        if depth == 0 && (line.starts_with("elif ") || *line == "else" || *line == "fi") {
-            break;
-        }
-        if opens {
-            depth += 1;
-        } else if *line == "fi" {
-            depth -= 1;
-        }
-        branch.push(*line);
-    }
-    branch
-}
-
-/// Whether a shell line fails the step, or marks it to fail: `exit 1` or
-/// `rc=1`, alone or as the body of a one-line `if`.
-fn fails_the_step(line: &str) -> bool {
-    line.split(';')
-        .map(|part| part.trim().trim_start_matches("then ").trim())
-        .any(|part| part == "exit 1" || part == "rc=1")
-}
-
 /// A live nextest step's skip budget: the number of skip markers past
 /// which it fails.
 struct SkipBudget {
@@ -773,17 +526,23 @@ const SKIP_BUDGETS: [SkipBudget; 4] = [
     },
 ];
 
+/// The line that opens a step's over-budget branch, before its budget.
+const BUDGET_LINE: &str = "if [ \"${skips:-0}\" -gt ";
+
 /// Problems with the skip markers of every live nextest step in
 /// `workflows`, and how many such steps there are. Each step keeps passing
-/// tests' output (`--success-output=final`), where the markers are, counts
-/// both kinds, and over its budget in [`SKIP_BUDGETS`] fails: its
-/// over-budget branch exits 1 or sets `rc=1`, and a step that sets `rc`
-/// exits with it afterwards, or lists its binary as failed in a list that,
-/// when not empty, exits 1.
+/// tests' output (`--success-output=final`), where the markers are; counts
+/// both kinds once ([`SKIP_COUNT`]), in the log its nextest run tees, with
+/// no other value given `skips`; and over its budget, a number written as
+/// [`SKIP_BUDGETS`] pins it (`if [ "${skips:-0}" -gt <N> ]; then`), fails:
+/// its over-budget branch exits 1 or sets `rc=1`, and a step that sets
+/// `rc` exits with it as its last line, or lists its binary as failed in a
+/// list that, when not empty, exits 1 at the script's end.
 fn skip_budget_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) {
     let mut live = 0;
     let mut problems = Vec::new();
     let mut pinned_found = [false; SKIP_BUDGETS.len()];
+    let skip_count = Regex::new(SKIP_COUNT).expect("the skip-count pattern");
     for (name, text) in workflows {
         for (job, body) in jobs(text) {
             for step in steps(&body)
@@ -792,14 +551,29 @@ fn skip_budget_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) 
             {
                 live += 1;
                 let title = step.lines().next().unwrap_or("").trim().to_string();
-                let lines: Vec<&str> = command_lines(step).collect();
-                let set_to: Option<u32> = lines.iter().find_map(|line| {
-                    line.strip_prefix("if [ \"${skips:-0}\" -gt ")?
-                        .split_whitespace()
-                        .next()?
-                        .parse()
-                        .ok()
+                let script = run_script(step);
+                let lines: Vec<&str> = script.iter().map(String::as_str).collect();
+                let budget = lines.iter().position(|line| line.starts_with(BUDGET_LINE));
+                // A bare number, or the guard cannot hold it to its pin.
+                let set_to: Option<u32> = budget.and_then(|at| {
+                    let number = lines[at]
+                        .strip_prefix(BUDGET_LINE)?
+                        .strip_suffix(" ]; then")?;
+                    number
+                        .bytes()
+                        .all(|b| b.is_ascii_digit())
+                        .then(|| number.parse().ok())
+                        .flatten()
                 });
+                if let Some(at) = budget
+                    && set_to.is_none()
+                {
+                    problems.push(format!(
+                        "{name} job {job}, step `{title}`: a budget the guard cannot read \
+                         as a number (`{}`, not `{BUDGET_LINE}<N> ]; then`)",
+                        lines[at]
+                    ));
+                }
                 let pinned = SKIP_BUDGETS.iter().position(|pin| {
                     pin.workflow == name.as_str()
                         && pin.job == job.as_str()
@@ -826,39 +600,44 @@ fn skip_budget_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) 
                 let keeps_output = lines.iter().any(|line| {
                     line.contains("nextest run") && line.contains("--success-output=final")
                 });
-                let counts = lines.iter().any(|line| {
-                    line.contains("grep -cE")
-                        && line.contains("SEMANTIC_VALIDATION_SKIPPED")
-                        && line.contains("LIVE_TOOL_EVIDENCE_SKIPPED")
-                });
-                let budget = lines.iter().position(|line| {
-                    line.starts_with("if [ \"${skips:-0}\" -gt") && !line.contains("-gt 0")
-                });
+                let teed = lines
+                    .iter()
+                    .find(|line| line.contains("nextest run"))
+                    .and_then(|line| line.split("| tee ").nth(1))
+                    .and_then(|rest| rest.split_whitespace().next());
+                let counted: Vec<(&str, &str)> = lines
+                    .iter()
+                    .filter_map(|line| skip_count.captures(line))
+                    .filter_map(|found| Some((found.get(1)?.as_str(), found.get(2)?.as_str())))
+                    .collect();
+                // The count is the only value `skips` is given.
+                let set_once = lines
+                    .iter()
+                    .filter(|line| line.starts_with("skips="))
+                    .count()
+                    == 1;
+                let counts = set_once
+                    && matches!(counted.as_slice(), [(pattern, log)]
+                        if pattern.contains("SEMANTIC_VALIDATION_SKIPPED")
+                            && pattern.contains("LIVE_TOOL_EVIDENCE_SKIPPED")
+                            && Some(*log) == teed);
                 let over = budget.map(|at| if_branch(&lines, at)).unwrap_or_default();
                 let fails = over.iter().any(|line| fails_the_step(line));
                 let sets_rc = over.iter().any(|line| {
                     line.split(';')
                         .any(|part| part.trim().trim_start_matches("then ") == "rc=1")
                 });
-                let after = budget.map_or(&[][..], |at| &lines[at..]);
-                let exits_rc = after.contains(&"exit \"$rc\"");
-                let lists_failed = after
-                    .iter()
-                    .any(|line| line.starts_with("[ \"$rc\" -eq 0 ] || failed+="));
+                let exits_rc = exits_with_rc(&lines);
+                let lists_failed = lists_failed_rc(&lines);
                 // A list of failed binaries fails the step only if a
                 // non-empty one exits 1.
-                let failed_exits = after
-                    .iter()
-                    .position(|line| line.starts_with("if [ \"${#failed[@]}\" -gt 0 ]"))
-                    .is_some_and(|at| {
-                        if_branch(after, at).iter().any(|line| {
-                            line.split(';')
-                                .any(|part| part.trim().trim_start_matches("then ") == "exit 1")
-                        })
-                    });
+                let failed_exits = failed_list_exits(&lines);
                 for (ok, what) in [
                     (keeps_output, "no --success-output=final on its nextest run"),
-                    (counts, "does not count both skip markers"),
+                    (
+                        counts,
+                        "does not count both skip markers, once, in the log its nextest run tees",
+                    ),
                     (
                         budget.is_some(),
                         "has no budget over which the markers fail it",
@@ -869,7 +648,7 @@ fn skip_budget_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) 
                     ),
                     (
                         !sets_rc || exits_rc || lists_failed,
-                        "sets rc=1 over budget but never exits with it (`exit \"$rc\"`)",
+                        "sets rc=1 over budget but never exits with it (`exit \"$rc\"` last)",
                     ),
                     (
                         !lists_failed || failed_exits,
@@ -989,6 +768,33 @@ fn the_skip_budget_check_catches_what_it_claims_to() {
             "if [ \"${skips:-0}\" -gt 10 ]; then",
             "if [ \"${skips:-0}\" -gt 11 ]; then",
         ),
+        // ... or written so it reads as no number, or never holds.
+        mutate(
+            "rust.yml",
+            "if [ \"${skips:-0}\" -gt 3 ]; then",
+            "if [ \"${skips:-0}\" -gt \"300\" ]; then",
+        ),
+        mutate(
+            "release.yml",
+            "if [ \"${skips:-0}\" -gt 10 ]; then",
+            "if [ \"${skips:-0}\" -gt \"$((10 * 30))\" ]; then",
+        ),
+        mutate(
+            "rust.yml",
+            "if [ \"${skips:-0}\" -gt 3 ]; then",
+            "if [ \"${skips:-0}\" -gt 3 -a 1 = 0 ]; then",
+        ),
+        // The count reset, or read from a file the run never wrote.
+        mutate(
+            "release.yml",
+            "/tmp/integration.log || true)\n",
+            "/tmp/integration.log || true)\n          skips=0\n",
+        ),
+        mutate(
+            "release.yml",
+            "LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/integration.log || true)",
+            "LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/other.log || true)",
+        ),
         // A live step renamed away from its pin.
         mutate(
             "release.yml",
@@ -1038,7 +844,7 @@ fn live_step_problems(workflows: &[(String, String)]) -> (usize, Vec<String>) {
                 .filter(|step| is_live_nextest_step(step))
             {
                 live += 1;
-                for escape in escapes(&body, step, &LIVE_ALLOWED) {
+                for escape in escapes(text, &body, step, &LIVE_ALLOWED) {
                     problems.push(format!(
                         "{name} job {job}, step `{}`: {escape}",
                         step_name(step)
@@ -1159,6 +965,98 @@ fn the_live_step_check_catches_what_it_claims_to() {
             "    name: Integration Tests (${{ matrix.group }})\n    needs: check\n",
             "    name: Integration Tests (${{ matrix.group }})\n    needs: captured-fixtures\n",
         ),
+        // ... or masked in a spelling the guard once let through: an
+        // `exit` whose status is a quoted or computed 0, a test as the
+        // handler, ...
+        mutated(
+            &all,
+            "rust.yml",
+            "| tee /tmp/antigravity_harness.log || rc=$?",
+            "| tee /tmp/antigravity_harness.log || exit \"0\"",
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "| tee /tmp/antigravity_harness.log || rc=$?",
+            "| tee /tmp/antigravity_harness.log || exit '0'",
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "| tee \"/tmp/$test.log\" || rc=$?",
+            "| tee \"/tmp/$test.log\" || exit 00",
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "| tee \"/tmp/$test.log\" || rc=$?",
+            "| tee \"/tmp/$test.log\" || exit $((0))",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "| tee /tmp/integration.log || rc=$?",
+            "| tee /tmp/integration.log || [ -s /tmp/integration.log ]",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "| tee /tmp/integration.log || rc=$?",
+            "| tee /tmp/integration.log || [[ 1 ]]",
+        ),
+        // ... an early exit, `rc` or the failure list reset before it is
+        // read, or `exit "$rc"` in a branch never taken, ...
+        mutated(
+            &all,
+            "rust.yml",
+            "          done\n          if [ \"${#failed[@]}\" -gt 0 ]; then\n",
+            "          done\n          exit \"0\"\n          if [ \"${#failed[@]}\" -gt 0 ]; then\n",
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "          done\n          if [ \"${#failed[@]}\" -gt 0 ]; then\n",
+            "          done\n          failed=()\n          if [ \"${#failed[@]}\" -gt 0 ]; then\n",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "          exit \"$rc\"\n",
+            "          rc=0\n          exit \"$rc\"\n",
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "          exit \"$rc\"\n",
+            "          if [ 1 = 0 ]; then\n            exit \"$rc\"\n          fi\n",
+        ),
+        // ... pipefail turned off by `shopt`, a script the guard cannot
+        // read, a command substitution's status lost, ...
+        mutated(
+            &all,
+            "rust.yml",
+            "          set -euo pipefail\n          # Fail on an empty key: these tests self-skip",
+            "          set -euo pipefail\n          shopt -u -o pipefail\n          # Fail on an empty key: these tests self-skip",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "          cargo nextest run --workspace --run-ignored all --no-fail-fast --success-output=final 2>&1",
+            "          bash -c 'cargo nextest run --workspace --run-ignored all --no-fail-fast --success-output=final || true' 2>&1",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "          cargo nextest run --workspace --run-ignored all --no-fail-fast --success-output=final 2>&1 |",
+            "          echo \"$(cargo nextest run --workspace --run-ignored all --no-fail-fast --success-output=final 2>&1)\" |",
+        ),
+        // ... or a shell for the whole workflow that never runs a script.
+        mutated(
+            &all,
+            "release.yml",
+            "\njobs:\n",
+            "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
     ];
     for (i, workflows) in broken.iter().enumerate() {
         assert!(
@@ -1166,14 +1064,6 @@ fn the_live_step_check_catches_what_it_claims_to() {
             "mutation {i} went unnoticed"
         );
     }
-}
-
-/// Whether a step's script pipes a nextest run into another command.
-fn pipes_nextest(step: &str) -> bool {
-    run_script(step).iter().any(|line| {
-        let bare = strip_quotes(line);
-        bare.contains("nextest") && has_pipe(&bare)
-    })
 }
 
 /// Problems with every step in `workflows` that pipes nextest, and how many
@@ -1190,7 +1080,7 @@ fn piped_nextest_problems(workflows: &[(String, String)]) -> (usize, Vec<String>
                 let script = run_script(step);
                 let turned_off = script
                     .iter()
-                    .any(|line| turns_checks_off(&strip_quotes(line)));
+                    .any(|line| turns_checks_off(&blank_quotes(line)));
                 if script.first().map(String::as_str) != Some("set -euo pipefail") || turned_off {
                     problems.push(format!("{name} job {job}, step `{}`", step_name(step)));
                 }
@@ -1263,7 +1153,7 @@ fn scripted_step_problems(workflow: &str) -> Vec<String> {
             "the scripted suite runs with the key blanked (`GEMINI_API_KEY: \"\"`):\n{step}"
         ));
     }
-    for escape in failure_escapes(&job, &step) {
+    for escape in failure_escapes(workflow, &job, &step) {
         problems.push(format!(
             "the scripted step has {escape}: its failure must fail the required check"
         ));
@@ -1322,6 +1212,11 @@ fn the_scripted_harness_suite_fails_its_required_check() {
             "    name: Test Suite (antigravity)\n",
             "    name: Test Suite (antigravity)\n    needs: captured-fixtures\n",
         ),
+        // A shell for the whole workflow that never runs a script.
+        workflow.replace(
+            "\njobs:\n",
+            "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
         // The key no longer blanked.
         workflow.replace(
             &format!("{run}        env:\n          GEMINI_API_KEY: \"\"\n"),
@@ -1337,98 +1232,39 @@ fn the_scripted_harness_suite_fails_its_required_check() {
     }
 }
 
-/// Each shell-level mask, alone in an otherwise sound step, is named.
-#[test]
-fn the_shell_mask_check_names_each_mask() {
-    let step = |script: &str| {
-        let body: String = script
-            .lines()
-            .map(|line| format!("          {line}\n"))
-            .collect();
-        format!(
-            "      - name: Guarded\n        run: |\n{body}        env:\n          X: \"a || true\"\n"
-        )
-    };
-    let sound = "set -euo pipefail\nrc=0\ncargo nextest run 2>&1 | tee log || rc=$?\nskips=$(grep -cE 'A|B' log || true)\nif [ \"${skips:-0}\" -gt 3 ]; then\n  echo \"::error::$skips || true\"\n  if [ \"$rc\" -eq 0 ]; then rc=1; fi\nfi\nexit \"$rc\"";
-    assert_eq!(shell_masks(&step(sound)), Vec::<String>::new());
-    let failed_list = "set -euo pipefail\nfailed=()\nfor t in a b; do\n  rc=0\n  run \"$t\" || rc=$?\n  [ \"$rc\" -eq 0 ] || failed+=(\"$t\")\ndone\nif [ \"${#failed[@]}\" -gt 0 ]; then\n  exit 1\nfi";
-    assert_eq!(shell_masks(&step(failed_list)), Vec::<String>::new());
-    assert!(shell_masks("      - run: cargo check -E 'a | b'\n").is_empty());
-    assert!(shell_masks("      - uses: actions/checkout@v4\n").is_empty());
-
-    for (masked, names) in [
-        ("cargo test || true", "|| true"),
-        ("cargo test ||true", "|| true"),
-        ("cargo test || :", "|| :"),
-        ("cargo test || echo failed", "only prints"),
-        ("cargo test || touch ok", "does not know"),
-        ("cargo test || exit 0", "exit 0"),
-        ("cargo test\nexit 0", "exit 0"),
-        ("cargo test; true", "`true` or `:`"),
-        ("cargo test\n:", "`true` or `:`"),
-        ("set +e\ncargo test", "set +e"),
-        ("set +o pipefail\ncargo test | tee log", "set +e"),
-        ("trap 'exit 0' EXIT\ncargo test", "trap"),
-        ("! cargo test", "inverts"),
-        ("cargo test && echo ok", "`&&` list"),
-        ("if cargo test; then echo ok; fi", "condition"),
-        ("while ! cargo test; do sleep 1; done", "condition"),
-        ("cargo test &", "background"),
-        ("rc=0\ncargo test || rc=$?", "never exits with it"),
-        ("cargo test || failed+=(x)", "no non-empty list"),
-    ] {
-        let found = shell_masks(&step(&format!("set -euo pipefail\n{masked}")));
-        assert!(
-            found.iter().any(|escape| escape.contains(names)),
-            "`{masked}`: want a mask naming `{names}`, found {found:?}"
-        );
-    }
-    // A script without the flags, and one-line scripts that are not one
-    // command.
-    assert!(!shell_masks(&step("set -eo pipefail\ncargo test")).is_empty());
-    assert!(!shell_masks(&step("cargo test\ncargo doc")).is_empty());
-    for one_line in [
-        "cargo test || true",
-        "cargo test; true",
-        "cargo test | tee log",
-        "cargo test &",
-        "echo $(cargo test)",
-    ] {
-        assert!(
-            !shell_masks(&format!("      - name: Guarded\n        run: {one_line}\n")).is_empty(),
-            "{one_line}"
-        );
-    }
-}
-
 #[test]
 fn the_failure_escape_check_reads_the_step_and_its_job() {
+    let workflow = "name: X\n\non:\n  push:\n\nenv:\n  A: b\n\njobs:\n";
     let job = "    runs-on: x\n    steps:\n";
     let step = "      - name: Floor\n        run: check\n        env:\n          if: not-a-key\n";
-    assert!(failure_escapes(job, step).is_empty());
+    assert!(failure_escapes(workflow, job, step).is_empty());
     for broken in [
         "      - name: Floor\n        if: always()\n        run: check\n",
         "      - if: github.event_name == 'push'\n        run: check\n",
         "      - name: Floor\n        continue-on-error: true\n        run: check\n",
         "      - name: Floor\n        continue-on-error: ${{ matrix.ok }}\n        run: check\n",
     ] {
-        assert!(!failure_escapes(job, broken).is_empty(), "{broken}");
+        assert!(
+            !failure_escapes(workflow, job, broken).is_empty(),
+            "{broken}"
+        );
     }
     assert!(
         failure_escapes(
+            workflow,
             job,
             "      - name: Floor\n        continue-on-error: false\n        run: check\n"
         )
         .is_empty()
     );
     let lenient = "    runs-on: x\n    continue-on-error: true\n    steps:\n";
-    assert!(!failure_escapes(lenient, step).is_empty());
+    assert!(!failure_escapes(workflow, lenient, step).is_empty());
     let skipped = "    runs-on: x\n    if: github.event_name != 'pull_request'\n    steps:\n";
-    assert!(!failure_escapes(skipped, step).is_empty());
+    assert!(!failure_escapes(workflow, skipped, step).is_empty());
     // A step's `if:` is the step's, not the job's.
     let job_with_step_if =
         "    runs-on: x\n    steps:\n      - name: Other\n        if: always()\n";
-    assert!(failure_escapes(job_with_step_if, step).is_empty());
+    assert!(failure_escapes(workflow, job_with_step_if, step).is_empty());
     // A job that needs another is skipped with it; a job's `defaults:` or a
     // step's shell can run the script under other rules; and the script
     // itself can mask the failure.
@@ -1437,60 +1273,55 @@ fn the_failure_escape_check_reads_the_step_and_its_job() {
         "    runs-on: x\n    needs: [check, test]\n    steps:\n",
         "    runs-on: x\n    defaults:\n      run:\n        shell: bash {0}\n    steps:\n",
     ] {
-        assert!(!failure_escapes(job, step).is_empty(), "{job}");
+        assert!(!failure_escapes(workflow, job, step).is_empty(), "{job}");
     }
     for broken in [
         "      - name: Floor\n        shell: sh -c 'exit 0' {0}\n        run: check\n",
         "      - name: Floor\n        run: check || true\n",
         "      - name: Floor\n        run: |\n          set +e\n          check\n",
     ] {
-        assert!(!failure_escapes(job, broken).is_empty(), "{broken}");
+        assert!(
+            !failure_escapes(workflow, job, broken).is_empty(),
+            "{broken}"
+        );
     }
     assert!(
         failure_escapes(
+            workflow,
             job,
             "      - name: Floor\n        shell: bash\n        run: check\n"
+        )
+        .is_empty()
+    );
+    // The workflow's own `defaults:`, whose shell template can run no
+    // script at all, or a variable bash reads before every script, wherever
+    // the workflow sets it.
+    for broken in [
+        workflow.replace(
+            "\njobs:\n",
+            "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
+        workflow.replace("  A: b\n", "  BASH_ENV: ./mask.sh\n"),
+        format!(
+            "{workflow}  x:\n    steps:\n      - run: echo \"SHELLOPTS=x\" >> \"$GITHUB_ENV\"\n"
+        ),
+    ] {
+        assert!(!failure_escapes(&broken, job, step).is_empty(), "{broken}");
+    }
+    assert!(
+        failure_escapes(
+            &format!("# BASH_ENV is not set here.\n{workflow}"),
+            job,
+            step
         )
         .is_empty()
     );
     // What a caller allows is allowed, exactly as written, and no more.
     let gated = "    runs-on: x\n    needs: check\n    if: github.repository_owner == 'me'\n";
     let allowed = ["needs: check", "if: github.repository_owner == 'me'"];
-    assert!(escapes(gated, step, &allowed).is_empty());
-    assert!(!escapes(gated, step, &allowed[..1]).is_empty());
-    assert!(!escapes(gated, step, &["needs: check", "if: always()"]).is_empty());
-}
-
-#[test]
-fn the_run_script_reader_reads_what_the_shell_runs() {
-    let step = "      - name: Live\n        if: always()\n        run: |\n          set -euo pipefail\n          # a comment\n\n          cargo nextest run \\\n            --run-ignored all | tee log\n        env:\n          X: \"run: no\"\n";
-    assert_eq!(
-        run_script(step),
-        [
-            "set -euo pipefail",
-            "cargo nextest run --run-ignored all | tee log"
-        ]
-    );
-    assert_eq!(
-        run_script("      - run: cargo check\n        env:\n          A: b\n"),
-        ["cargo check"]
-    );
-    assert_eq!(
-        run_script("      - name: Q\n        run: 'it''s'\n"),
-        ["it's"]
-    );
-    assert!(
-        run_script("      - uses: actions/checkout@v4\n        with:\n          run: x\n")
-            .is_empty()
-    );
-    assert_eq!(
-        strip_quotes(r#"echo "a | b \" c" 'd || e' f\;g"#),
-        r#"echo "" '' f_g"#
-    );
-    assert!(pipes_nextest(step));
-    assert!(!pipes_nextest(
-        "      - run: echo \"cargo nextest run -E 'a | b'\"\n"
-    ));
+    assert!(escapes(workflow, gated, step, &allowed).is_empty());
+    assert!(!escapes(workflow, gated, step, &allowed[..1]).is_empty());
+    assert!(!escapes(workflow, gated, step, &["needs: check", "if: always()"]).is_empty());
 }
 
 #[test]

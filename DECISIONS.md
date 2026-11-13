@@ -2381,16 +2381,28 @@ tests: `--fail-under-lines 93 || true` (M3), `|| true` on the release gate
 `nextest | tee` has tee's status, `continue-on-error: true` on a live
 integration step (M8), and a skip budget of 300 (M5). Each now fails one.
 - `failure_escapes` also rejects a job-level `needs:` (a job is skipped
-  with one it needs) or `defaults:`, a step `shell:` other than `bash`,
-  and every shell-level mask in the step's script: `|| true`, `|| :`,
-  `|| echo`, any `||` handler but an `rc=$?` the script exits with, a
-  failed-list entry, `exit` or a `[ .. ]` test; a `true` or `:` command
-  (`; true`); `exit 0`; `set +e` and `set +o pipefail`; a `trap`; a
-  background `&`, a `!` or a `&&` list, and a command as an `if` or loop
-  condition, whose failures `-e` passes over. A one-line script is one
-  command, with no shell operator; a longer one starts with
-  `set -euo pipefail`. The one exception is `$(grep -c .. || true)`, a
-  count whose exit status 1 means zero.
+  with one it needs), a `defaults:` on the job or the workflow (a shell
+  template such as `true {0}` runs no script at all), a step `shell:`
+  other than `bash`, `BASH_ENV`, `SHELLOPTS` or `BASHOPTS` anywhere in the
+  workflow, and the shell-level masks it knows in the step's script
+  (`tests/ci_workflows/shell.rs`). A one-line script is one command, with
+  no shell operator; a longer one starts with `set -euo pipefail`. The
+  only `||` handlers allowed are `rc=$?` when the script ends with
+  `exit "$rc"` (or lists a failure from it), a failure-list entry when it
+  ends by exiting 1 on a non-empty list, and `exit`; `|| true`, `|| :`,
+  `|| echo` and `|| [ .. ]` are among those rejected. Every `exit` has a
+  literal status from 1 to 255, but `exit "$rc"` as the last line and a
+  bare `exit` after `||`, so `exit 0`, `exit "0"`, `exit 00` and
+  `exit $((0))` fail. `rc`, `failed` and `skips` are set only in the
+  forms the steps use, `rc` is not read after `rc=0` with no capture
+  since, and the failure list is not emptied once filled. Also rejected:
+  a `true` or `:` command (`; true`), `set +e`, `set +o pipefail` or a
+  `shopt` of either, a `trap`, a background `&`, a `!`, a `&&` list, a
+  command as an `if` or loop condition, a condition that reads no
+  variable, a command substitution anywhere but the value of a plain
+  assignment, an `exec`, `eval`, `source` or `bash -c`, a function, and
+  arithmetic (`let`, `(( ))`). The one `|| true` allowed is
+  `$(grep -c .. || true)`, a count whose exit status 1 means zero.
 - The floor step runs `cargo llvm-cov report --workspace
   --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
   nothing else, and the coverage runs before it are held to the same
@@ -2403,7 +2415,10 @@ integration step (M8), and a skip budget of 300 (M5). Each now fails one.
 - Each skip budget is pinned with its reason (`SKIP_BUDGETS` in
   `tests/ci_workflows/mod.rs`): 3 for each integration binary and both
   harness steps, 10 for `release.yml`'s whole-workspace run. A budget
-  raised, a live step without a pin, or a pin without a step fails.
+  raised, one not written as a bare number (`-gt "300"`), a live step
+  without a pin, or a pin without a step fails, as does a count of the
+  markers made twice or read from a log other than the one the step's
+  nextest run tees.
 - The scripted harness step in `test-antigravity`, part of the required
   Test Suite (antigravity) check, runs with the key blanked and has no
   escape.
@@ -2412,9 +2427,16 @@ integration step (M8), and a skip budget of 300 (M5). Each now fails one.
   `tokio`) or toolchain change can break the libproc path as surely as
   the code can, and it was first seen on main's push run.
 
-The guard still reads the workflow as text and knows the masks it names.
-A mask it does not know, inside a command substitution in quotes or behind
-a function the script defines, could pass it.
+The guard reads the workflow as text, against the forms it names. It
+catches the ways a step is known, or likely, to be weakened, not every
+way a script can compute its status: a condition that reads a variable
+but never holds, a loop over an empty list, a status variable set by a
+command it does not read, or an environment variable that changes how
+bash runs, set by a name built at run time, could still pass a failure.
+A review of the first version found spellings it let through, among
+them `|| exit "0"`, `|| [ -s log ]`, an `rc=0` before `exit "$rc"`, a
+workflow-level `defaults:`, `shopt -u -o pipefail`, `bash -c` and a budget
+written `-gt "300"`; each is now a case in the mutation tests.
 
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 

@@ -4,9 +4,9 @@
 
 use super::{command_lines, escapes, is_scheduled, jobs, read, root, steps};
 
-/// The sweep job and its steps, from a scheduled `api-surface-sweep.yml`
-/// that can write issues.
-fn sweep_job() -> (String, Vec<String>) {
+/// The sweep workflow, its sweep job and the job's steps, from a scheduled
+/// `api-surface-sweep.yml` that can write issues.
+fn sweep_job() -> (String, String, Vec<String>) {
     let workflow = read(&root().join(".github/workflows/api-surface-sweep.yml"));
     assert!(
         is_scheduled(&workflow),
@@ -22,7 +22,7 @@ fn sweep_job() -> (String, Vec<String>) {
         .map(|(_, body)| body)
         .expect("api-surface-sweep.yml has a sweep job");
     let job_steps = steps(&job);
-    (job, job_steps)
+    (workflow, job, job_steps)
 }
 
 /// The step that runs `script`, checked to run whatever the steps before
@@ -30,7 +30,7 @@ fn sweep_job() -> (String, Vec<String>) {
 /// but that `if:` from `escapes`: no `continue-on-error`, no shell-level
 /// mask such as `|| true`), and to have the job's token for its `gh` calls.
 /// Panics naming what is missing.
-fn step_running((job, steps): &(String, Vec<String>), script: &str) -> String {
+fn step_running((workflow, job, steps): &(String, String, Vec<String>), script: &str) -> String {
     let step = steps
         .iter()
         .find(|step| {
@@ -43,7 +43,7 @@ fn step_running((job, steps): &(String, Vec<String>), script: &str) -> String {
         lines.contains(&"if: ${{ !cancelled() }}"),
         "{script} runs whatever the steps before it did:\n{step}"
     );
-    let found = escapes(job, &step, &["if: ${{ !cancelled() }}"]);
+    let found = escapes(workflow, job, &step, &["if: ${{ !cancelled() }}"]);
     assert!(
         found.is_empty(),
         "a failing {script} fails the run, which escalates, but its step has \

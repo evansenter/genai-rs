@@ -751,10 +751,10 @@ jobs:
       # fails the job. The floor sits just under the library's line
       # coverage measured when it was set (D-058): raise it as coverage
       # grows, and lower it only with the reason in the commit. This one
-      # command and nothing else, with no `if:`, `continue-on-error` or
-      # `needs:` here or on the job: tests/ci_workflows/ rejects each, and a
-      # shell-level mask (`|| true`, `; true`, `set +e`), so a drop fails the
-      # job.
+      # command and nothing else, with no `if:`, `continue-on-error`,
+      # `needs:` or `defaults:` here, on the job or on the workflow:
+      # tests/ci_workflows/ rejects each, and the shell-level masks it knows
+      # (`|| true`, `; true`, `set +e`, `exit "0"`), so a drop fails the job.
       - name: Enforce the coverage floor
         run: cargo llvm-cov report --workspace --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines 93
       # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,

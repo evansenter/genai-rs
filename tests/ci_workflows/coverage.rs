@@ -1,7 +1,8 @@
 //! The Code Coverage job reports somewhere every run, measures the
 //! `antigravity` feature with its scripted suite, counts library files
 //! alone, and fails under a floor that no `if:`, `continue-on-error`,
-//! `needs:` or shell-level mask skips or ignores (#504, D-058).
+//! `needs:`, `defaults:` or shell-level mask the guards know skips or
+//! ignores (#504, D-058).
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -154,9 +155,10 @@ fn library_files() -> &'static [(String, bool)] {
 /// inline `#[cfg(test)] mod tests { .. }` in a library file is beyond a
 /// filename pattern, and still counted); and a step after the summary runs
 /// one command that fails under a floor near the measured value, with
-/// nothing to skip it or pass its failure ([`failure_escapes`]: an `if:`,
-/// `continue-on-error` or `needs:`, on the step or its job, or a
-/// shell-level mask such as `|| true`), as the runs before it have.
+/// nothing the guards know to skip it or pass its failure
+/// ([`failure_escapes`]: an `if:`, `continue-on-error` or `needs:`, on the
+/// step or its job, a `defaults:`, or a shell-level mask such as
+/// `|| true` or `exit "0"`), as the runs before it have.
 fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
     let (job, all) = coverage_job(workflow);
     let mut problems = Vec::new();
@@ -190,7 +192,7 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
         .iter()
         .filter(|step| command_lines(step).any(|line| line.contains("cargo llvm-cov nextest")))
     {
-        for escape in failure_escapes(&job, step) {
+        for escape in failure_escapes(workflow, &job, step) {
             problems.push(format!(
                 "a coverage run's step has {escape}: a failing test must fail the job, not \
                  leave a figure from a partial run"
@@ -306,7 +308,7 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
             "the floor is checked after the summary, so a drop is shown before it fails".into(),
         );
     }
-    for escape in failure_escapes(&job, &all[floor_at]) {
+    for escape in failure_escapes(workflow, &job, &all[floor_at]) {
         problems.push(format!(
             "the floor step has {escape}: a drop must fail the job on every run"
         ));
@@ -415,6 +417,15 @@ fn the_coverage_check_catches_what_it_claims_to() {
         workflow.replace(
             "        run: |\n          set -euo pipefail\n          cargo llvm-cov clean --workspace\n",
             "        run: |\n          set -eo pipefail\n          cargo llvm-cov clean --workspace\n",
+        ),
+        workflow.replace(
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report\n",
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report || exit \"0\"\n",
+        ),
+        // A shell for the whole workflow that never runs a script.
+        workflow.replace(
+            "\njobs:\n",
+            "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
         ),
         // The antigravity feature, or the scripted suite, gone.
         workflow.replace(

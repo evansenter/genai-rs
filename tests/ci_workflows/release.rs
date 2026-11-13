@@ -11,8 +11,8 @@ use super::{command_lines, failure_escapes, jobs, read, root, steps};
 /// rust.yml on main, which runs the Cross Platform legs and the rest, must
 /// be green on every job before anything publishes: `validate` runs
 /// `check_release_push_run.sh` on the tagged commit, with the token able
-/// to read Actions, with nothing to skip the step or pass its failure
-/// ([`failure_escapes`]), and `publish` needs `validate`.
+/// to read Actions, with nothing the guards know to skip the step or pass
+/// its failure ([`failure_escapes`]), and `publish` needs `validate`.
 fn push_run_gate_problems(release: &str) -> Vec<String> {
     let all = jobs(release);
     let job = |id: &str| {
@@ -44,7 +44,7 @@ fn push_run_gate_problems(release: &str) -> Vec<String> {
             "the check's gh calls need the job's token:\n{check}"
         ));
     }
-    for escape in failure_escapes(&validate, &check) {
+    for escape in failure_escapes(release, &validate, &check) {
         problems.push(format!(
             "the check runs on every release and its failure stops it, but it has {escape}"
         ));
@@ -84,6 +84,8 @@ fn the_push_run_gate_check_catches_what_it_claims_to() {
         release.replace(gate, &gate.replace("\"\n", "\" || true\n")),
         release.replace(gate, &gate.replace("\"\n", "\"; true\n")),
         release.replace(gate, &gate.replace("\"\n", "\" || exit 0\n")),
+        release.replace(gate, &gate.replace("\"\n", "\" || exit \"0\"\n")),
+        release.replace(gate, &gate.replace("\"\n", "\" || [ 1 ]\n")),
         release.replace(
             gate,
             "        run: |\n          set +e\n          .github/scripts/check_release_push_run.sh \"$GITHUB_SHA\"\n",
@@ -105,6 +107,15 @@ fn the_push_run_gate_check_catches_what_it_claims_to() {
         ),
         release.replace("          GH_TOKEN: ${{ github.token }}\n", ""),
         release.replace("    needs: validate\n", ""),
+        // ... or run, with every step, by a shell that never runs a script.
+        release.replace(
+            "\njobs:\n",
+            "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
+        release.replace(
+            "  CARGO_TERM_COLOR: always\n",
+            "  CARGO_TERM_COLOR: always\n  BASH_ENV: .github/mask.sh\n",
+        ),
     ];
     for (i, text) in broken.iter().enumerate() {
         assert_ne!(text, &release, "mutation {i} did not apply");
