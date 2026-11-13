@@ -2706,15 +2706,18 @@ wire's walk: `apiKey` joined its `REDACT_FIELDS`, `httpHeaders` its
 stdio server's variables) is redacted beside an `env` entry's `value`.
 So the copy of a sent message the session hands its inspectors goes
 through the same list as an Interactions API body, and `LOUD_WIRE`, the
-`TracingForwarder` and `WireEvent`'s `Debug` redact a message the harness
-sends back as they do one sent to it (#555 item 2), where they printed it
-as received. The session still redacts what it sends before any inspector
-sees it, so the harness's API key reaches no inspector, as the Gemini key
-in an HTTP header reaches none. `src/redact.rs` holds the helpers:
-`optional`, `values` for a header or environment map, `json`, `raw_json`
-and `map` through the walk, `keys` and `json_strings`. `AgentBuilder`'s
-`Debug` destructures it too. `tests/redaction_guards.rs` fails on a
-placeholder spelled anywhere else in the library's non-test code.
+`TracingForwarder` and `WireEvent`'s `Debug` redact the harness's own keys
+in a message it sends back as in one sent to it (#555 item 2). `LOUD_WIRE`
+and `WireEvent`'s `Debug` already ran a received message through the walk,
+which missed `apiKey`, `httpHeaders` and an `env`'s strings, and the
+forwarder logged it raw. The session still redacts what it sends before
+any inspector sees it, so the harness's API key reaches no inspector, as
+the Gemini key in an HTTP header reaches none. `src/redact.rs` holds the
+helpers: `optional`, `values` for a header or environment map, `json`,
+`raw_json` and `map` through the walk, `keys` and `json_strings`.
+`AgentBuilder`'s `Debug` destructures it too. `tests/redaction_guards.rs`
+fails on a placeholder spelled anywhere else in the library's non-test
+code, a doc comment aside.
 
 ---
 
@@ -2887,20 +2890,30 @@ have moved:
   type without `..`. `Client` prints its key through `HttpContext`'s
   `Debug`, and `SigningSecret` its `extra` as keys alone (`redact::keys`).
 - `Tool`'s `Debug` prints each arm's `extra` and an `Unknown` tool's
-  `data` through the wire's walk (`redact::map`, `redact::json`), so a
-  secret there under a name the wire redacts prints redacted. Every other
-  `extra` map and `Unknown` payload still prints as it is, for the reason
-  above.
+  `data` through the wire's walk (`redact::map`, `redact::json`), and so
+  does every other impl here that prints an `extra`: `AllowlistEntry`'s,
+  `EnvVar`'s, `RemoteEnvironment`'s (beside the `env` it could not read),
+  `Webhook`'s and `RotateSigningSecretResponse`'s. So a secret there under
+  a name the wire redacts prints redacted. Every other `extra` map and
+  `Unknown` payload still prints as it is, for the reason above: its type
+  derives `Debug`, or, for `InteractionBuilder`, whose `Debug` is
+  hand-written only to skip its tool service, prints it as the derived
+  `Debug` of the `InteractionRequest` it builds does.
 - `tests/redaction_guards.rs` reads the wire's `REDACT_FIELDS`,
   `REDACT_VALUES_BENEATH` and `ENV_FIELD` from `src/wire/mod.rs` and fails
   when a type in the library's non-test code derives `Debug` over a field
   so named (in snake case, or by `#[serde(rename)]`), unless its
   `NOT_SECRET` list gives the reason the value is not a secret; none
-  needs one today. So a new type holding one of these secrets under the
-  wire's name is found; one holding it under another name, or a name
-  added to an impl but not to the wire's lists, still needs its row in the
-  sentinel test. It also fails on a placeholder spelled outside
-  `src/redact.rs`.
+  needs one today. So a new type holding one of these secrets under a
+  name on those lists is found. The guard does not read the wire's
+  `CONTEXT_REDACT_FIELD` (`value`), which the wire redacts only beside
+  `"type": "environment_variable"` or beneath an `env`, since a field so
+  named anywhere else is no secret: a type holding an environment
+  variable's value as a `value` is found only through a derived `Debug`
+  over the `env` that holds it. Such a type, one holding a secret under
+  another name, and a name added to an impl but not to the wire's lists
+  still need their row in the sentinel test. The guard also fails on a
+  placeholder spelled outside `src/redact.rs`, a doc comment aside.
 
 The wire's walk now holds the Antigravity harness's camelCase keys too
 (D-064's amendment), so `WireEvent`'s `Debug` redacts a harness message
@@ -2984,13 +2997,21 @@ than being skipped, and the coverage oracle's
 `request_values_are_full_literals` (`src/coverage_oracle/request/fills.rs`)
 drops its own `rust_files` and includes this file by `#[path]`, as
 `src/coverage_oracle/mod.rs` includes `tests/api_surface/`. The file also
-holds what reads the library's own source: `is_test_gated` (a `cfg` with
-`test` outside a `not(..)`, or a test attribute), `is_test_only_file` (the
-`src/` files `Cargo.toml`'s `include` leaves out, read from the manifest,
-which the `check` job keeps true) and `library_sources` (every other
-`src/` file, parsed, with its test-only items removed). The oracle's type
-scan, `tests/redaction_guards.rs` (D-067) and `tests/setter_convention.rs`
-read it; the last fails on a public `with_*` that pushes, inserts, extends
-or appends onto a collection it reaches through `self`, or an `add_*` that
-assigns a field of `self` whole, which reverting either of #504's I-10
-renames does.
+holds what reads the library's own source: `is_test_gated` (a test
+attribute, or a `cfg` that cannot hold unless `test` is set, so
+`any(target_os = "linux", test)` is library code), `item_attrs`,
+`test_modules` (the modules a test-gated `mod` declares, and every module
+a test-only file declares in turn, such as `proptest_tests.rs`'s
+`proptest_*.rs`) and `library_sources` (every other `src/` file, parsed,
+with its test-only items removed). `tests/non_exhaustive_responses.rs`
+dropped its own copies of the first three for these; the files it reads
+as library code are now the ones `Cargo.toml`'s `include` ships, the
+`proptest_*.rs` files no longer among them. The oracle's type scan,
+`tests/redaction_guards.rs` (D-067) and `tests/setter_convention.rs` read
+`library_sources`. The last fails on a public `with_*` that pushes,
+inserts, extends or appends onto a collection it reaches through `self`,
+directly or through a name the body binds to a part of it (`if let
+Stdio { env, .. } = &mut self.transport { env.insert(..) }`), or an
+`add_*` that assigns a field of `self` whole, either way; reverting either
+of #504's I-10 renames fails it, and so does renaming any of the
+`add_*` setters that append through such a binding.

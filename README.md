@@ -412,7 +412,9 @@ For programmatic capture (snapshot tests, bug reports), implement the
 `ClientBuilder::add_wire_inspector()` — inspectors receive structured
 `WireEvent`s (requests, response bodies, SSE frames, harness WebSocket
 traffic) with per-client correlation ids. Bodies reach custom inspectors
-unredacted; only the built-in `LOUD_WIRE` and tracing printers redact secrets.
+unredacted, except a message an Antigravity session sends its harness, whose
+secrets are redacted first; only the built-in `LOUD_WIRE` and tracing printers
+redact secrets.
 See [Logging Strategy](docs/LOGGING_STRATEGY.md) for details.
 
 ## Forward Compatibility

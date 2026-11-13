@@ -64,9 +64,11 @@ inside them are attributed to the request.
   `transform`, keeping the header and variable names. So `dbg!(request)`
   or `tracing::debug!(?builder)` prints none of them, nor does the `Debug`
   of an `InteractionBuilder`, `InteractionRequest` or response that carries
-  one, or of a `wire::WireEvent`. A `Tool`'s `extra` map and an unknown
-  tool's payload print such a secret redacted too; any other `extra` map or
-  `Unknown` payload, JSON the crate does not model, prints as it is.
+  one, or of a `wire::WireEvent`. The `extra` map of each of these types
+  (a `Tool`, an allowlist entry, an `EnvVar`, a `RemoteEnvironment`) and of
+  a webhook, and an unknown tool's payload, print such a secret redacted
+  too; any other `extra` map or `Unknown` payload, JSON the crate does not
+  model, prints as it is.
 - At `debug`, request and response bodies are logged in full: prompts, base64
   media, function arguments and results. Treat debug logs as sensitive, and
   don't enable them in production unless you mean to.
