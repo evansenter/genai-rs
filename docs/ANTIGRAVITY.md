@@ -188,7 +188,7 @@ running after a dropped agent, a failed `spawn()` or an escalated
 shutdown. Only the graceful exit stops them there, so call `shutdown()`
 and let it finish. Stdio MCP servers are not affected on Linux and macOS:
 they exit at the end of their stdin, which closes when the harness dies.
-That is unverified on Windows (#536).
+That is unverified on Windows (tracked in #536).
 
 ### Images, documents and slash commands
 
@@ -1479,7 +1479,7 @@ The ones a user is likeliest to look for:
 - **Trigger turns are surfaced on request**: `next_trigger_turn` drives
   them; nothing reads them in the background, so call it between user
   turns, and a trigger turn nobody consumes is halted by the next `chat`.
-  A background consumer (#535) would read the harness while the agent is
+  A background consumer (tracked in #535) would read the harness while the agent is
   idle, which means moving turn processing (hooks, policies, custom tools)
   out of `&mut self` into a task of its own: a redesign of
   `AntigravityAgent`. The `schedule` builtin waits on it.

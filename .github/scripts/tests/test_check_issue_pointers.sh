@@ -107,17 +107,22 @@ logged() { grep -qF -- "$1" "$WORK/gh.log"; }
 ours() { jq -n --arg t "$TITLE" --arg s "$1" '[{number: 560, title: $t, state: $s}]'; }
 OTHER=$(jq -n '[{number: 7, title: "Issue pointers name closed issues, almost", state: "OPEN"}]')
 
-# --print lists every pointer to a closed or missing issue, wrapped and in
-# any case, and nothing it should not read; it never touches an issue.
+# --print lists every pointer, wrapped and in any case, with its issue's
+# state, and nothing it should not read; it never touches an issue. It
+# fails on a pointer to a closed or missing issue.
 run --print "$T"
 expect_rc "--print with stale pointers" 1
-for want in 'docs/GUIDE.md:4: "see #500 for" names #500 (closed: Streaming and HTTP robustness follow-ups)' \
+for want in 'docs/GUIDE.md:3: "tracked in #535" names #535 (open: Antigravity: consume trigger turns)' \
+    'docs/GUIDE.md:4: "until #536" names #536 (open: Antigravity on Windows)' \
+    'docs/GUIDE.md:4: "see #500 for" names #500 (closed: Streaming and HTTP robustness follow-ups)' \
+    'src/lib.rs:3: "tracked in #539" names #539 (open: Files API: a chosen upload name)' \
     'src/lib.rs:4: "TRACKED BY #12" names #12 (closed: A merged pull request)' \
     'src/lib.rs:6: "until #404" names #404 (no such issue)' \
     '6 pointer(s) to 6 issue(s); 3 name a closed one.'; do
     grep -qF -- "$want" <<<"$out" || fail "--print lacks: $want"$'\n'"$out"
 done
-for unwanted in '#535' '#536 (' '#539 (' '#493' 'CHANGELOG.md' 'DECISIONS.md' 'fixtures' 'test_x.sh' 'NOTES.md'; do
+[ "$(grep -c ' names #' <<<"$out")" = 6 ] || fail "--print lists other than the 6 pointers:"$'\n'"$out"
+for unwanted in '#493' 'CHANGELOG.md' 'DECISIONS.md' 'fixtures' 'test_x.sh' 'NOTES.md'; do
     grep -qF -- "$unwanted" <<<"$out" && fail "--print reports $unwanted:"$'\n'"$out"
 done
 [ -s "$WORK/gh.log" ] && fail "--print called gh issue: $(cat "$WORK/gh.log")"

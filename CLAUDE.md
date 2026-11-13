@@ -52,14 +52,15 @@ by what it claims rather than its wording (D-051). A provenance tag names
 where a rule or behavior was decided or found (`(#491)`, or "#493 item 3"
 on what that item added), and stays when the issue closes, as a decision
 number does. A pointer claims the issue holds current status or pending
-work ("tracked in #N", "see #N for what is left", "until #N lands", "#N
-item M" while that item is open), so it names an open issue only: when
-the issue closes, state the outcome in place and drop the pointer.
-The daily `api-surface-sweep` lists each "tracked in #N", "see #N for"
-and "until #N" that names a closed issue on a rolling `documentation`
-issue (`check_issue_pointers.sh`). It reads wording only: it does not tell
-a pointer from a provenance tag worded like one, and it misses a pointer
-worded otherwise, a bare "#N item M" included.
+work, so it names an open issue only: when the issue closes, state the
+outcome in place and drop the pointer. A pointer uses one of the
+phrasings `check_issue_pointers.sh` reads: "tracked in #N" (or by, on,
+at; "tracked in #N item M" for an item), "see #N for" or "until #N", never
+a bare `(#N)` or "#N item M", which read as provenance. The daily
+`api-surface-sweep` lists each one that names a closed issue on a rolling
+`documentation` issue, and `check_issue_pointers.sh --print` lists every
+pointer with its issue's state. It reads wording only: it does not tell a
+pointer from a provenance tag worded like one.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the

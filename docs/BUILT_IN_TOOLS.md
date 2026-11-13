@@ -521,7 +521,7 @@ is counted by `tool_calls()` and `step_summary().tool_call_count`, not by
 `mcp_calls()` (#459).
 
 An MCP interaction has ended in `RequiresAction` even after every call was
-answered (a server bug, #473, not reproduced in the latest checks; see
+answered (a server bug, tracked in #473, not reproduced in the latest checks; see
 [Server-side changes](INTERACTIONS_API_GAP.md#server-side-changes-live-2026-10-01)).
 Treat `RequiresAction` with an empty `pending_function_calls()` and a text
 answer as finished.

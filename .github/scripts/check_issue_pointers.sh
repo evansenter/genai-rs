@@ -7,7 +7,7 @@
 # D-051 tells a pointer from a provenance tag by what the sentence claims,
 # which no script can read. This check is narrower: it finds the pointer
 # phrasings CLAUDE.md lists, "tracked in #N" (or by, on, at), "see #N for"
-# and "until #N", in ROOT's tracked files (default: the current directory,
+# and "until #N", which D-051 requires a pointer to use, in ROOT's tracked files (default: the current directory,
 # a git work tree), on one line or wrapped across two, and looks each N up
 # with `gh`. Not read: CHANGELOG.md and DECISIONS.md (history), fixtures
 # (any `fixtures/` directory) and the script harnesses'
@@ -24,8 +24,9 @@
 # every run with a finding; a comment is added only when the findings
 # changed (a marker in the body records them).
 #
-# --print: list the pointers to closed issues and exit 1 if there are any,
-# without touching the rolling issue (a local run).
+# --print: list every pointer found, with its issue's state, and exit 1 if
+# any names a closed issue or none, without touching the rolling issue (a
+# local run). Without it, only those are listed.
 #
 # Exit status: 0 when the check ran, whatever it found (with --print: when
 # no pointer names a closed issue); 1 when a `gh` call failed (or, with
@@ -130,9 +131,9 @@ for number in sorted({p[3] for p in pointers}):
 
 stale = [p for p in pointers if states[p[3]][0] != "open"]
 print(f"{len(pointers)} pointer(s) to {len(states)} issue(s); {len(stale)} name a closed one.")
-for path, n, phrase, number in stale:
+for path, n, phrase, number in pointers if print_only else stale:
     state, title = states[number]
-    what = "no such issue" if state == "missing" else f"closed: {title}"
+    what = "no such issue" if state == "missing" else f"{state}: {title}"
     print(f"{path}:{n}: \"{phrase}\" names #{number} ({what})")
 if print_only:
     sys.exit(1 if stale else 0)

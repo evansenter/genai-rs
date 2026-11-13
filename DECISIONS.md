@@ -1289,7 +1289,7 @@ its reason in the guard:
 list above: each keeps the SSE event's keys it does not read in an `extra`
 map (D-054), and the guard no longer exempts them.
 
-*Amended 2026-11-09 (I-11).* `AutoFunctionStreamChunk::Delta` left the
+*Amended 2026-11-09 (#504, I-11).* `AutoFunctionStreamChunk::Delta` left the
 list above too: it is `Delta { delta, extra }`, with the `step.delta`
 event's `extra` (D-054), and the auto-function stream passes on an event of
 a type the crate does not know as `AutoFunctionStreamChunk::Unknown`, where
@@ -1304,7 +1304,7 @@ on, nor are the round's `interaction.created`, `status_update`,
 `step.start` and `step.stop` events, which the loop reads without yielding.
 Those reach `execute_stream()` only. That line is scope, not principle:
 the completed event's map is empty on every event the API sends today, as
-`step.delta`'s is, and `Delta` carries its own because I-11 named it.
+`step.delta`'s is, and `Delta` carries its own because #504's I-11 named it.
 Carrying the completed event's would make `ExecutingFunctions` and
 `Complete(response)`, the pattern every auto-function caller writes for the
 stream's last chunk, take an `extra` too: two more breaking changes,
@@ -1722,7 +1722,7 @@ open, with its streak, until each is fixed. A Windows-only timing flake
 that failed on both Windows legs in one run would also be labelled
 deterministic; its failure count tells a one-off from a break.
 
-**Amended 2026-11-09 (I-14).** A chronic share now also counts a run in
+**Amended 2026-11-09 (#504, I-14).** A chronic share now also counts a run in
 which the test retried a model-side flake inside itself, which a
 `TRANSIENT_RETRIED` marker shows: D-052's amendment of the same date has
 the rule and its reasons. The 1% rate is unchanged.
@@ -1852,7 +1852,7 @@ its major version part of genai-rs's; a caller who needs it downcasts.
 `WebSocket { message, source }`. A `tokio-tungstenite` upgrade changes
 what a downcast finds, not genai-rs's API.
 
-*Amended 2026-11-09 (I-6).* `Display` no longer carries the cause's
+*Amended 2026-11-09 (#504, I-6).* `Display` no longer carries the cause's
 text: an error whose `source()` returns the cause leaves it to the chain,
 so a reporter that walks `source()` (anyhow, eyre, a `while let` loop)
 prints it once, not twice. A caller that prints only the top error now
@@ -1942,7 +1942,7 @@ wording. A sentence that could be read either way is reworded to say
 which it is, as those two now do. Still no check: telling the two apart
 means reading what the sentence claims.
 
-**Amended 2026-11-09 (I-19).** A narrow check exists now, one that reads
+**Amended 2026-11-09 (#504, I-19).** A narrow check exists now, one that reads
 wording rather than claims. The daily api-surface-sweep runs
 `.github/scripts/check_issue_pointers.sh`: it finds the pointer phrasings
 above ("tracked in #N", or by, on or at; "see #N for"; "until #N"), on one
@@ -1957,6 +1957,21 @@ any other way, which a reviewer still catches, and it does not match a
 bare "#N item M", the form this decision also gives a provenance tag. It
 runs daily, not in `make test-scripts` or on a PR: an issue closed
 elsewhere would turn an unrelated PR red.
+
+**Amended 2026-11-10 (#504, J-8).** A pointer must use one of the
+phrasings the check reads: "tracked in #N" (or by, on or at, and "tracked
+in #N item M" for an item), "see #N for" or "until #N". The check then
+sees every pointer that follows the rule. It saw one of the six live
+pointers in the tree; the other five read "unverified (#530)", "That is
+unverified on Windows (#536)", "A background consumer (#535) would" and
+"a server bug, #473, not reproduced", which say the issue holds pending
+work but are worded as provenance tags, and nothing would have flagged them
+when their issues closed. Each now reads "tracked in #N". A bare `(#N)`
+or "#N item M" stays a provenance tag, as above. `--print` lists every
+pointer it finds with its issue's state, open ones included, so a local
+run shows what the check sees. `CHANGELOG.md` and `DECISIONS.md` are still
+not read: they are history, and a decision's pointer is amended in place
+like the rest of it.
 
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
@@ -2035,7 +2050,7 @@ the last attempt as it came. As in the `400` form, a failure that names
 the case that met it most, is fixed at its cause (it resends the tool);
 the retry is for the broken call a model makes now and then anywhere.
 
-**Amended 2026-11-09 (I-14).** The retry stays, and the flakiness report
+**Amended 2026-11-09 (#504, I-14).** The retry stays, and the flakiness report
 now sees it. Before #545, nextest retried a broken tool call and the
 report counted it; in the week before the fix, the `400` form was retried
 inside the test in 16 jobs, where the report could not see it, so the
@@ -2172,7 +2187,7 @@ auto-function stream passes on no chunk's `extra` (D-034's
 `AutoFunctionStreamChunk` bullet), so an envelope key reaches only a
 caller of `execute_stream()`.
 
-*Amended 2026-11-09 (I-11).* The auto-function stream passes on a delta's
+*Amended 2026-11-09 (#504, I-11).* The auto-function stream passes on a delta's
 `extra`: `AutoFunctionStreamChunk::Delta { delta, extra }`, whose
 `{chunk_type, data}` form writes and reads it as `StreamChunk`'s does. An
 unknown event is passed on as `AutoFunctionStreamChunk::Unknown`, which
@@ -2251,7 +2266,7 @@ of 800 lines, changes on three lines and grows by none: the two
 carries the parse error's text in `message`, so a printed error still
 says what failed.
 
-*Amended 2026-11-09 (I-6).* `Protocol`'s and `Io`'s `Display` no longer
+*Amended 2026-11-09 (#504, I-6).* `Protocol`'s and `Io`'s `Display` no longer
 carry the source's text, as D-049's amendment gives for `WebSocket`:
 `message` says what was being done, and `source()` says why.
 
@@ -2323,7 +2338,7 @@ required is the owner's call. The job takes a few minutes longer for the
 antigravity build and the scripted suite. A release can wait on its push
 run, and a red leg there stops it before anything is published.
 
-**Amended 2026-11-09 (I-13, I-15, I-16).** The #504 grade of 2026-11-08
+**Amended 2026-11-09 (#504, I-13, I-15, I-16).** The #504 grade of 2026-11-08
 found two guard holes, a release gate that let any job be skipped, a
 coverage figure diluted by test code, and macOS process-tree tests that no
 PR ran.
@@ -2499,7 +2514,7 @@ those wrappers were not probed.
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
 **Context.** #504's 2026-11-08 grade found three holes in the request side
-of the coverage oracle (I-2 to I-4). A value the oracle built through a
+of the coverage oracle (#504, I-2 to I-4). A value the oracle built through a
 constructor escaped the full-literal scan: a field added to
 `CustomMetadata` and left to `Default` by `CustomMetadata::string` passed
 every test. Values added to an enumeration only a request reaches
@@ -2889,7 +2904,7 @@ guards stay: `tests/model_literals.rs` (which also tolerates an unreadable
 entry) and `tests/temp_file_tests.rs`'s scan of `examples/` for media
 constants.
 
-**Amended 2026-11-09 (I-20).** Four holes in `check_dated_facts.sh`
+**Amended 2026-11-09 (#504, I-20).** Four holes in `check_dated_facts.sh`
 passed a scratch copy, though no instance was in the tree:
 - "A module compiled only under such a `cfg`" held only for a file module
   (`mod x;`): a doc block on an inline item under a `cfg` the doctest run
