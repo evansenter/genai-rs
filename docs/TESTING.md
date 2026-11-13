@@ -570,7 +570,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, and each endpoint's query and header parameters (each with whether it is required and its schema), request body and responses by status (each with its schema by content type and its headers); the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, and each endpoint's path, query and header parameters (each with whether it is required and its schema), request body (with whether it is required) and responses by status (each with its schema by content type and its headers); the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:
@@ -642,9 +642,9 @@ checks on it:
   from either copy fails. The specs' header parameters are held to the
   headers the verbs send: one a request to its endpoint goes without, or
   sends with a value the spec's `const` or `enum` does not allow, needs a
-  reason in `SPEC_HEADERS`. A parameter's schema, a response and a request
-  body are in the snapshot for the daily watch only, not diffed against the
-  crate (D-060). Keys go through `with_query`:
+  reason in `SPEC_HEADERS`. A path parameter, a parameter's schema, a
+  response and a request body are in the snapshot for the daily watch only,
+  not diffed against the crate (D-060). Keys go through `with_query`:
   `query_keys_are_added_only_through_with_query` fails on what else in
   `src/http/`'s library code would add one, which a verb could send only
   when an input the test does not set calls for it: a string literal that

@@ -6,13 +6,12 @@ Usage: snapshot_openapi.py <spec.json> <source URL> <fetched YYYY-MM-DD>
 Keeps every schema's structure (properties, types, formats, enums, `$ref`,
 `oneOf`, `required`, `deprecated`, `readOnly`), the endpoint list, and each
 endpoint's operation:
-- its query and header parameters (`query`, `header`, and `cookie` if it
-  has one), each with whether it is required, its schema (type, array
-  items, format, default, enum, const) and any other non-prose key it has
-  (`style`, `explode`, ...); a path parameter is in the endpoint's path, so
-  it is not kept again;
-- its request body's schema by content type (`body`, a `$ref`, or the
-  schema without its prose);
+- its path, query and header parameters (`path`, `query`, `header`, and
+  `cookie` if it has one), each with whether it is required, its schema
+  (type, array items, format, default, enum, const) and any other
+  non-prose key it has (`style`, `explode`, ...);
+- its request body (`body`): whether it is required, and its schema by
+  content type (`content`, a `$ref`, or the schema without its prose);
 - its responses by status (`responses`), each with its schema by content
   type (`content`) and, when it has any, its headers (`headers`).
 Drops the prose (descriptions, examples, code samples), which is most of the
@@ -79,9 +78,8 @@ def resolve(spec, node, kind):
 
 
 # Parameter locations every operation has a map for, empty when it has none.
-# A parameter elsewhere (`cookie`) gets a map of its own; a path parameter
-# none, since the endpoint's path names it.
-LOCATIONS = ("query", "header")
+# A parameter elsewhere (`cookie`) gets a map of its own.
+LOCATIONS = ("path", "query", "header")
 
 
 def parameter(param):
@@ -101,10 +99,10 @@ def content(media_types):
 
 
 def operation(spec, path_item, op):
-    """An operation's query and header parameters (name -> parameter), its
-    request body (content type -> schema) and its responses (status ->
-    content and headers). An operation's own parameter replaces the path
-    item's of the same name and location."""
+    """An operation's parameters by location (name -> parameter), its
+    request body (required flag and content type -> schema) and its
+    responses (status -> content and headers). An operation's own parameter
+    replaces the path item's of the same name and location."""
     params = {}
     for source in (path_item.get("parameters", []), op.get("parameters", [])):
         for param in source:
@@ -112,11 +110,13 @@ def operation(spec, path_item, op):
             params[(param.get("in"), param.get("name"))] = param
     out = {location: {} for location in LOCATIONS}
     for (location, name), param in params.items():
-        if location != "path":
-            out.setdefault(location, {})[name] = parameter(param)
+        out.setdefault(location, {})[name] = parameter(param)
     body = resolve(spec, op.get("requestBody"), "requestBodies")
     if body:
-        out["body"] = content(body.get("content"))
+        out["body"] = {
+            "required": bool(body.get("required", False)),
+            "content": content(body.get("content")),
+        }
     responses = {}
     for status, response in op.get("responses", {}).items():
         response = resolve(spec, response, "responses")

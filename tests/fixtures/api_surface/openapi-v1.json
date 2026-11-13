@@ -9,6 +9,26 @@
  "operations": {
   "DELETE /{api_version}/interactions/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "interactionsId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "200": {
@@ -48,6 +68,20 @@
   },
   "GET /{api_version}/interactions/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "last_event_id": {
      "required": false,
@@ -108,18 +142,29 @@
   },
   "POST /{api_version}/interactions": {
    "body": {
-    "application/json": {
-     "oneOf": [
-      {
-       "$ref": "#/components/schemas/CreateAgentInteractionParams"
-      },
-      {
-       "$ref": "#/components/schemas/CreateModelInteractionParams"
-      }
-     ]
-    }
+    "content": {
+     "application/json": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/CreateAgentInteractionParams"
+       },
+       {
+        "$ref": "#/components/schemas/CreateModelInteractionParams"
+       }
+      ]
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "200": {
@@ -166,6 +211,20 @@
   },
   "POST /{api_version}/interactions/{id}/cancel": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "200": {

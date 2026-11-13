@@ -42,6 +42,20 @@
  "operations": {
   "DELETE /{api_version}/agents/{agentsId}": {
    "header": {},
+   "path": {
+    "agentsId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -55,6 +69,20 @@
   },
   "DELETE /{api_version}/credentials/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -68,6 +96,20 @@
   },
   "DELETE /{api_version}/environments/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -81,6 +123,26 @@
   },
   "DELETE /{api_version}/interactions/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "interactionsId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "200": {
@@ -120,6 +182,20 @@
   },
   "DELETE /{api_version}/triggers/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -133,6 +209,20 @@
   },
   "DELETE /{api_version}/voices/{voicesId}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "voicesId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -146,6 +236,20 @@
   },
   "DELETE /{api_version}/webhooks/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -159,6 +263,14 @@
   },
   "GET /{api_version}/agents": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "page_size": {
      "required": false,
@@ -192,6 +304,20 @@
   },
   "GET /{api_version}/agents/{agentsId}": {
    "header": {},
+   "path": {
+    "agentsId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -205,6 +331,14 @@
   },
   "GET /{api_version}/credentials": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "page_size": {
      "required": false,
@@ -232,6 +366,20 @@
   },
   "GET /{api_version}/credentials/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -245,6 +393,14 @@
   },
   "GET /{api_version}/environments": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "page_size": {
      "required": false,
@@ -272,6 +428,26 @@
   },
   "GET /{api_version}/environments/{environment}/files/{path}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "environment": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "path": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "page_size": {
      "required": false,
@@ -305,6 +481,20 @@
   },
   "GET /{api_version}/environments/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -318,6 +508,20 @@
   },
   "GET /{api_version}/interactions/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "last_event_id": {
      "required": false,
@@ -378,6 +582,14 @@
   },
   "GET /{api_version}/triggers": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "filter": {
      "required": false,
@@ -411,6 +623,20 @@
   },
   "GET /{api_version}/triggers/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -424,6 +650,20 @@
   },
   "GET /{api_version}/triggers/{triggerId}/executions": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "triggerId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "filter": {
      "required": false,
@@ -457,6 +697,14 @@
   },
   "GET /{api_version}/voices": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "accent": {
      "required": false,
@@ -562,6 +810,20 @@
   },
   "GET /{api_version}/voices/{voicesId}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "voicesId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -575,6 +837,14 @@
   },
   "GET /{api_version}/webhooks": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "page_size": {
      "required": false,
@@ -602,6 +872,20 @@
   },
   "GET /{api_version}/webhooks/{id}": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -615,11 +899,28 @@
   },
   "PATCH /{api_version}/credentials/{id}": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/CredentialUpdateParams"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/CredentialUpdateParams"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "update_mask": {
      "required": false,
@@ -640,11 +941,28 @@
   },
   "PATCH /{api_version}/triggers/{id}": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/UpdateTriggerRequest"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/UpdateTriggerRequest"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -658,11 +976,28 @@
   },
   "PATCH /{api_version}/webhooks/{id}": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/UpdateWebhookRequest"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/UpdateWebhookRequest"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -676,11 +1011,22 @@
   },
   "POST /{api_version}/agents": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/Agent"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/Agent"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "parent": {
      "required": true,
@@ -701,11 +1047,22 @@
   },
   "POST /{api_version}/credentials": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/CredentialCreateParams"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/CredentialCreateParams"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -719,11 +1076,22 @@
   },
   "POST /{api_version}/environments": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/CreateEnvironmentRequest"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/CreateEnvironmentRequest"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -737,18 +1105,29 @@
   },
   "POST /{api_version}/interactions": {
    "body": {
-    "application/json": {
-     "oneOf": [
-      {
-       "$ref": "#/components/schemas/CreateAgentInteractionParams"
-      },
-      {
-       "$ref": "#/components/schemas/CreateModelInteractionParams"
-      }
-     ]
-    }
+    "content": {
+     "application/json": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/CreateAgentInteractionParams"
+       },
+       {
+        "$ref": "#/components/schemas/CreateModelInteractionParams"
+       }
+      ]
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "200": {
@@ -795,6 +1174,20 @@
   },
   "POST /{api_version}/interactions/{id}/cancel": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "200": {
@@ -838,11 +1231,22 @@
   },
   "POST /{api_version}/triggers": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/Trigger"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/Trigger"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -856,6 +1260,20 @@
   },
   "POST /{api_version}/triggers/{triggerId}/executions": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "triggerId": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -869,11 +1287,22 @@
   },
   "POST /{api_version}/voices": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/CreateVoiceRequest"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/CreateVoiceRequest"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -887,11 +1316,22 @@
   },
   "POST /{api_version}/webhooks": {
    "body": {
-    "application/json": {
-     "$ref": "#/components/schemas/CreateWebhookRequest"
-    }
+    "content": {
+     "application/json": {
+      "$ref": "#/components/schemas/CreateWebhookRequest"
+     }
+    },
+    "required": true
    },
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "webhook_id": {
      "required": false,
@@ -912,6 +1352,20 @@
   },
   "POST /{api_version}/webhooks/{id}:ping": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -925,6 +1379,20 @@
   },
   "POST /{api_version}/webhooks/{id}:rotateSigningSecret": {
    "header": {},
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "id": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
    "query": {},
    "responses": {
     "default": {
@@ -966,6 +1434,26 @@
      "schema": {
       "const": "resumable",
       "default": "resumable",
+      "type": "string"
+     }
+    }
+   },
+   "path": {
+    "api_version": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "environment": {
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    "path": {
+     "required": true,
+     "schema": {
       "type": "string"
      }
     }

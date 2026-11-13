@@ -30,12 +30,14 @@
 //!
 //! - `not sent`: a request to its endpoint goes without it, or no verb
 //!   reaches the endpoint;
-//! - `value`: the spec fixes its value (a `const` or an `enum`), and a
-//!   request sends another.
+//! - `value`: the spec fixes its value (a `const` or an `enum`, followed
+//!   through a `$ref` and `allOf`, `oneOf` or `anyOf`), and a request sends
+//!   another.
 //!
-//! The snapshot also keeps each parameter's schema and each operation's
-//! responses, which the watch sees change; nothing here diffs them against
-//! the crate (D-060).
+//! The snapshot also keeps each operation's path parameters, each
+//! parameter's schema, its request body (with whether it is required) and
+//! its responses, which the watch sees change; nothing here diffs them
+//! against the crate (D-060).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -162,8 +164,7 @@ pub fn spec_copies() -> Vec<(&'static str, SpecEndpoints)> {
 
 /// A spec's header parameters: `METHOD /path` (the bindings' form) and each
 /// header the operation names, with the values its schema allows when it
-/// fixes them (a `const`, or an `enum` of strings), `None` when it does
-/// not.
+/// fixes them (see [`fixed_values`]), `None` when it does not.
 pub type SpecHeaders = BTreeMap<String, BTreeMap<String, Option<BTreeSet<String>>>>;
 
 /// The header parameters of a spec snapshot (`header` in each operation).
@@ -180,27 +181,76 @@ pub fn spec_headers(snapshot: &Value) -> SpecHeaders {
                     panic!("{endpoint}: no header object: refresh it with snapshot_openapi.py")
                 })
                 .iter()
-                .map(|(name, param)| (name.clone(), fixed_values(&param["schema"])))
+                .map(|(name, param)| {
+                    let values = fixed_values(&param["schema"], &snapshot["schemas"], 0)
+                        .unwrap_or_else(|e| panic!("{endpoint} header {name}: {e}"));
+                    (name.clone(), values)
+                })
                 .collect();
             (bindings_form(endpoint), headers)
         })
         .collect()
 }
 
-/// The values a parameter schema allows, when it fixes them: its `const`,
-/// or its `enum`. A value that is not a string is kept as its JSON text.
-fn fixed_values(schema: &Value) -> Option<BTreeSet<String>> {
+/// The values a parameter schema allows, when it fixes them, or `None`.
+/// Its `const`, its `enum`, what its `$ref` names (in `schemas`, the
+/// snapshot's) and each `allOf` member each constrain it, so the values are
+/// those every constraint that fixes them allows; a `oneOf` or `anyOf` fixes
+/// them only when each member does, to any member's. A value that is not a
+/// string is kept as its JSON text. A reference `schemas` does not define,
+/// or one nested too deep (a cycle), is an error rather than "not fixed",
+/// which would leave the value check nothing to hold.
+fn fixed_values(
+    schema: &Value,
+    schemas: &Value,
+    depth: usize,
+) -> Result<Option<BTreeSet<String>>, String> {
+    if depth > 16 {
+        return Err("a schema nested more than 16 references deep".into());
+    }
     let text = |value: &Value| match value {
         Value::String(s) => s.clone(),
         other => other.to_string(),
     };
+    let mut constraints: Vec<Option<BTreeSet<String>>> = Vec::new();
     if let Some(value) = schema.get("const") {
-        return Some(BTreeSet::from([text(value)]));
+        constraints.push(Some(BTreeSet::from([text(value)])));
     }
-    schema
-        .get("enum")
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        constraints.push(Some(values.iter().map(text).collect()));
+    }
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        let target = reference
+            .strip_prefix("#/components/schemas/")
+            .and_then(|name| schemas.get(name))
+            .ok_or_else(|| format!("{reference} names no schema in the snapshot"))?;
+        constraints.push(fixed_values(target, schemas, depth + 1)?);
+    }
+    for member in schema
+        .get("allOf")
         .and_then(Value::as_array)
-        .map(|values| values.iter().map(text).collect())
+        .into_iter()
+        .flatten()
+    {
+        constraints.push(fixed_values(member, schemas, depth + 1)?);
+    }
+    for key in ["oneOf", "anyOf"] {
+        if let Some(members) = schema.get(key).and_then(Value::as_array) {
+            let each = members
+                .iter()
+                .map(|member| fixed_values(member, schemas, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?;
+            let any = each
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .map(|sets| sets.into_iter().flatten().collect());
+            constraints.push(any);
+        }
+    }
+    Ok(constraints
+        .into_iter()
+        .flatten()
+        .reduce(|a, b| a.intersection(&b).cloned().collect()))
 }
 
 /// Each spec snapshot's header parameters, by its version.
@@ -362,9 +412,9 @@ fn copy_differences(
     differences
 }
 
-/// The snapshots carry each operation's query and header parameters and its
-/// responses, and both specs load, each on its own: an inert loader would
-/// pass the checks above vacuously.
+/// The snapshots carry each operation's path, query and header parameters,
+/// its request body's required flag and its responses, and both specs load,
+/// each on its own: an inert loader would pass the checks above vacuously.
 #[test]
 fn spec_snapshots_carry_query_parameters() {
     let copies: BTreeMap<&str, SpecEndpoints> = spec_copies().into_iter().collect();
@@ -420,11 +470,27 @@ fn spec_snapshots_carry_query_parameters() {
             "{file}: an endpoint without its operation"
         );
         for (endpoint, operation) in snapshot["operations"].as_object().expect("operations") {
+            // Each path parameter the endpoint names is kept, with its schema.
+            let path = operation["path"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{file}: {endpoint} has no path parameters"));
+            for name in endpoint.split(['{', '}']).skip(1).step_by(2) {
+                assert!(
+                    path.get(name).is_some_and(|p| p["schema"].is_object()),
+                    "{file}: {endpoint} keeps no path parameter {name} with its schema"
+                );
+            }
             let responses = operation["responses"]
                 .as_object()
                 .unwrap_or_else(|| panic!("{file}: {endpoint} has no responses"));
             assert!(!responses.is_empty(), "{file}: {endpoint} has no responses");
-            let bodies = operation["body"].as_object().into_iter();
+            if let Some(body) = operation.get("body") {
+                assert!(
+                    body["required"].is_boolean(),
+                    "{file}: {endpoint}'s body has no required flag"
+                );
+            }
+            let bodies = operation["body"]["content"].as_object().into_iter();
             let replies = responses
                 .values()
                 .filter_map(|response| response["content"].as_object());
@@ -627,4 +693,74 @@ fn a_spec_header_parameter_change_is_a_finding() {
     let gained = spec_header_findings(&[("a", revision()), ("b", revision())], &both, &reasoned);
     assert_eq!(gained.len(), 1, "{gained:?}");
     assert!(gained[0].starts_with("b PUT /upload/{}/things/{} header X-Api-Revision: not sent"));
+}
+
+/// A header's fixed values are read through a `$ref`, `allOf`, `oneOf` and
+/// `anyOf`, so a spec that moves them behind one keeps the value check; a
+/// member that fixes nothing leaves a `oneOf` or `anyOf` unfixed; and a
+/// reference the snapshot does not define, or a cycle, is an error, not
+/// "not fixed".
+#[test]
+fn spec_header_values_are_read_through_references() {
+    let snapshot = serde_json::json!({
+        "schemas": {
+            "Protocol": {"type": "string", "enum": ["resumable", "multipart"]},
+            "Resumable": {"$ref": "#/components/schemas/Protocol", "const": "resumable"},
+            "Loop": {"allOf": [{"$ref": "#/components/schemas/Loop"}]},
+        },
+        "operations": {
+            "PUT /upload/{api_version}/things/{id}": {"header": {
+                "A": {"schema": {"$ref": "#/components/schemas/Protocol"}},
+                "B": {"schema": {"$ref": "#/components/schemas/Resumable"}},
+                "C": {"schema": {"allOf": [
+                    {"$ref": "#/components/schemas/Protocol"},
+                    {"enum": ["multipart", "other"]},
+                ]}},
+                "D": {"schema": {"oneOf": [{"const": "start"}, {"const": "upload"}]}},
+                "E": {"schema": {"anyOf": [{"const": "start"}, {"type": "string"}]}},
+                "F": {"schema": {"type": "integer"}},
+            }},
+            "GET /{api_version}/things": {"header": {}},
+        },
+    });
+    let copy = spec_headers(&snapshot);
+    let headers = &copy["PUT /upload/{}/things/{}"];
+    let set = |values: &[&str]| Some(values.iter().map(ToString::to_string).collect());
+    assert_eq!(headers["A"], set(&["multipart", "resumable"]));
+    assert_eq!(headers["B"], set(&["resumable"]));
+    assert_eq!(headers["C"], set(&["multipart"]));
+    assert_eq!(headers["D"], set(&["start", "upload"]));
+    assert_eq!(headers["E"], None);
+    assert_eq!(headers["F"], None);
+
+    // So a value outside the referenced enum is a finding.
+    let sent: Vec<Sent> = vec![(
+        "PUT".to_string(),
+        "/upload/v1beta/things/t".to_string(),
+        ["A", "B", "C", "D", "E", "F"]
+            .iter()
+            .map(|name| ((*name).to_string(), "multipart".to_string()))
+            .collect(),
+    )];
+    let findings = spec_header_findings(&[("a", copy.clone())], &sent, &[]);
+    let kinds: Vec<&str> = findings
+        .iter()
+        .map(|f| f.split(": ").next().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "a PUT /upload/{}/things/{} header B",
+            "a PUT /upload/{}/things/{} header D",
+        ],
+        "{findings:?}"
+    );
+
+    let schemas = &snapshot["schemas"];
+    let dangling = serde_json::json!({"$ref": "#/components/schemas/Missing"});
+    assert!(fixed_values(&dangling, schemas, 0).is_err());
+    let elsewhere = serde_json::json!({"$ref": "#/components/parameters/Protocol"});
+    assert!(fixed_values(&elsewhere, schemas, 0).is_err());
+    let cycle = serde_json::json!({"$ref": "#/components/schemas/Loop"});
+    assert!(fixed_values(&cycle, schemas, 0).is_err());
 }

@@ -55,6 +55,11 @@ cat >"$work/spec.json" <<'EOF'
       }
     },
     "/{api_version}/things/{id}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/ApiVersion"},
+        {"name": "id", "in": "path", "required": true, "description": "Prose.",
+         "schema": {"type": "string"}}
+      ],
       "patch": {"requestBody": {"$ref": "#/components/requestBodies/Patch"}},
       "put": {
         "parameters": [{"$ref": "#/components/parameters/Command"}],
@@ -65,6 +70,8 @@ cat >"$work/spec.json" <<'EOF'
   },
   "components": {
   "parameters": {
+    "ApiVersion": {"name": "api_version", "in": "path", "required": true, "description": "Prose.",
+                   "schema": {"type": "string"}},
     "Filter": {"name": "filter", "in": "query", "description": "Prose.", "schema": {"type": "string"}},
     "Command": {"name": "X-Upload-Command", "in": "header", "required": true, "description": "Prose.",
                 "schema": {"type": "string", "const": "start", "default": "start"}}
@@ -123,7 +130,7 @@ ok = [
     # Each operation keeps its query parameters, those of the path item and
     # the operation overriding one of the same name, a `$ref` followed,
     # with whether each is required and its schema and other keys without
-    # their prose; path parameters are left out.
+    # their prose.
     d["operations"]["POST /{api_version}/things"]["query"]
     == {"page_size": {"required": False}, "thing_id": {"required": False}},
     d["operations"]["GET /{api_version}/things"]["query"]
@@ -136,27 +143,39 @@ ok = [
         },
         "page_size": {"required": True, "schema": {"format": "int32", "type": "integer"}},
     },
-    # Header parameters the same way, those of the path item included; one in
-    # another location gets a map of its own.
+    # Path and header parameters the same way, those of the path item
+    # included; one in another location gets a map of its own.
+    d["operations"]["GET /{api_version}/things"]["path"]
+    == {"api_version": {"required": True}},
+    d["operations"]["PUT /{api_version}/things/{id}"]["path"]
+    == {
+        "api_version": {"required": True, "schema": {"type": "string"}},
+        "id": {"required": True, "schema": {"type": "string"}},
+    },
     d["operations"]["POST /{api_version}/things"]["header"] == {"trace": {"required": False}},
     d["operations"]["PUT /{api_version}/things/{id}"]["header"]
     == {"X-Upload-Command": {
         "required": True, "schema": {"const": "start", "default": "start", "type": "string"}}},
     d["operations"]["GET /{api_version}/things"]["cookie"] == {"session": {"required": False}},
     "cookie" not in d["operations"]["POST /{api_version}/things"],
-    # And its request body by content type: a `$ref` as it is, an inline
-    # schema (or one behind a `requestBodies` reference) without its prose.
+    # And its request body: whether it is required, and its schema by
+    # content type, a `$ref` as it is, an inline schema (or one behind a
+    # `requestBodies` reference) without its prose.
     d["operations"]["POST /{api_version}/things"]["body"]
-    == {"application/json": {"$ref": "#/components/schemas/Thing"}},
+    == {"required": True, "content": {"application/json": {"$ref": "#/components/schemas/Thing"}}},
     "body" not in d["operations"]["GET /{api_version}/things"],
     d["operations"]["PATCH /{api_version}/things/{id}"]
     == {
+        "path": {
+            "api_version": {"required": True, "schema": {"type": "string"}},
+            "id": {"required": True, "schema": {"type": "string"}},
+        },
         "query": {},
         "header": {},
-        "body": {"application/json": {
+        "body": {"required": False, "content": {"application/json": {
             "type": "object",
             "properties": {"thing": {"$ref": "#/components/schemas/Thing"}},
-        }},
+        }}},
         "responses": {},
     },
     # And its responses by status: the schema of each content type without its
@@ -185,8 +204,9 @@ esac
 
 # A drift in what the snapshot keeps changes the reduced output (#504 J-1):
 # the first three reduced to the same bytes before header parameters,
-# parameter schemas and responses were kept, so the daily watch stayed
-# green. Each mutation is a Python statement on `spec`.
+# parameter schemas and responses were kept, and the last three before path
+# parameters and a request body's required flag were, so the daily watch
+# stayed green. Each mutation is a Python statement on `spec`.
 mutate() {
     python3 -c '
 import json, sys
@@ -221,6 +241,15 @@ expect_drift "a header parameter made optional" \
 expect_drift "a response header removed" \
     'spec["paths"]["/{api_version}/things/{id}"]["put"]["responses"]["200"].pop("headers")' \
     'd["operations"]["PUT /{api_version}/things/{id}"]["responses"]["200"] == {"content": {}}'
+expect_drift "a path parameter retyped and made optional" \
+    'spec["paths"]["/{api_version}/things/{id}"]["parameters"][1].update(required=False, schema={"type": "integer", "format": "int64"})' \
+    'd["operations"]["PATCH /{api_version}/things/{id}"]["path"]["id"] == {"required": False, "schema": {"format": "int64", "type": "integer"}}'
+expect_drift "a path parameter given an enum behind its reference" \
+    'spec["components"]["parameters"]["ApiVersion"]["schema"] = {"type": "string", "enum": ["v1alpha"]}' \
+    'd["operations"]["PUT /{api_version}/things/{id}"]["path"]["api_version"]["schema"] == {"enum": ["v1alpha"], "type": "string"}'
+expect_drift "a request body made optional" \
+    'spec["paths"]["/{api_version}/things"]["post"]["requestBody"]["required"] = False' \
+    'd["operations"]["POST /{api_version}/things"]["body"]["required"] is False'
 
 # A reference the spec does not resolve fails, rather than dropping what it
 # stood for: a parameter, a response or a response header.
