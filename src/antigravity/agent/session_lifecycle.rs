@@ -19,7 +19,10 @@ pub(super) const SESSION_END_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl AntigravityAgent {
     /// Answers the session-start hook, which the harness calls right after
-    /// initialization when it is enabled. Bounded by [`INIT_TIMEOUT`].
+    /// initialization when it is enabled. Bounded by [`INIT_TIMEOUT`], and
+    /// part of `spawn()`'s start-up as [`Self::initialize`] is: every
+    /// failure is [`AntigravityError::InitFailed`] with the harness's
+    /// stderr tail, and the error that caused it, if any, as its source.
     pub(in crate::antigravity) async fn start_session(&mut self) -> Result<(), AntigravityError> {
         if self.lifecycle.session_start.is_none() {
             return Ok(());
@@ -35,7 +38,13 @@ impl AntigravityAgent {
                         self.harness.stderr_tail().await,
                     ));
                 }
-                Ok(Err(e)) => return Err(e),
+                Ok(Err(e)) => {
+                    return Err(AntigravityError::init_failed_by(
+                        "reading the harness's messages before the session-start hook failed",
+                        self.harness.stderr_tail().await,
+                        e,
+                    ));
+                }
                 Err(_) => {
                     return Err(AntigravityError::init_failed(
                         format!(
@@ -51,14 +60,27 @@ impl AntigravityAgent {
                 Some(OutputPayload::CallHookRequest(request))
                     if request.hook_type == Some(protocol::LifecycleHook::OnSessionStart)
             );
-            tokio::time::timeout_at(deadline, self.process_event(event, &mut state))
-                .await
-                .map_err(|_| AntigravityError::Timeout {
-                    operation: "the session-start hook".to_string(),
-                    timeout: INIT_TIMEOUT,
-                })??;
-            if is_start {
-                return Ok(());
+            match tokio::time::timeout_at(deadline, self.process_event(event, &mut state)).await {
+                Ok(Ok(())) if is_start => return Ok(()),
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    let step = if is_start {
+                        "answering the session-start hook failed"
+                    } else {
+                        "handling a harness message before the session-start hook failed"
+                    };
+                    return Err(AntigravityError::init_failed_by(
+                        step,
+                        self.harness.stderr_tail().await,
+                        e,
+                    ));
+                }
+                Err(_) => {
+                    return Err(AntigravityError::init_failed(
+                        format!("the session-start hook did not finish within {INIT_TIMEOUT:?}"),
+                        self.harness.stderr_tail().await,
+                    ));
+                }
             }
         }
     }
@@ -178,3 +200,7 @@ impl AntigravityAgent {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "session_lifecycle_tests.rs"]
+mod tests;

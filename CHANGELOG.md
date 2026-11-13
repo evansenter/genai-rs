@@ -874,22 +874,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cancelled the turn) or `Hook` (a hook's thread did not run).
   `TurnFailure::ends_session()` is true for `ModelBackend` and
   `Trajectory`, after which harness 0.1.23 ends its run, and the agent
-  fails every later call with `ConnectionClosed` without sending. `message`
-  is the harness's text alone, and `Display` names the kind. Migration:
+  fails every later `chat`, `send_streaming` and `next_trigger_turn` with
+  `ConnectionClosed` without sending. `message` is the harness's text
+  alone, and `Display` names the kind. Migration:
   match `AntigravityError::Turn { kind, message }` where you matched
   `Turn(message)`, and decide on `kind` (or `kind.ends_session()` for
   whether to spawn a new agent) where you searched the message for "HTTP
   400" or a reason.
-- **Breaking: `AntigravityError::InitFailed` has a `source` field, and no
-  Antigravity error repeats its source's text in `Display`.** A WebSocket
-  connect that fails during `spawn()`, and a failed read of the harness's
-  initialization reply, are `InitFailed` errors whose `source()` is the
-  `WebSocket` error (it held only the text). `WebSocket`, `Protocol`, `Io`
-  and `InitFailed` print what was being done; `source()` gives the cause,
-  so a reporter that walks the chain prints each cause once. Migration:
-  match `InitFailed { message, stderr, .. }`, and walk `source()` (or use
-  a reporter that does) where you printed only the top error and want the
-  cause.
+- **Breaking: `AntigravityError::InitFailed` and `HandshakeFailed` have a
+  `source` field, no Antigravity error repeats its source's text in
+  `Display`, and every failure of `spawn()` after the handshake is
+  `InitFailed`.** A WebSocket connect that fails during `spawn()`, and a
+  failed read of the harness's initialization reply, are `InitFailed`
+  errors whose `source()` is the `WebSocket` error (it held only the
+  text). With `on_session_start` set, a failed read, a failed answer or a
+  harness message that failed a turn while `spawn()` waits for the
+  session-start hook was the bare `WebSocket`, `Protocol` or `Turn` error,
+  with no stderr, and a hook that overran its 30 s was `Timeout`; each is
+  now `InitFailed`, with the stderr tail and the cause, when there is one,
+  as its source. A `HandshakeFailed` from a binary that would not start,
+  a failed handshake exchange or a reply that does not decode has that I/O
+  or decode error as its source, where its message held the text.
+  `WebSocket`, `Protocol`, `Io`, `HandshakeFailed` and `InitFailed` print
+  what was being done; `source()` gives the cause, so a reporter that
+  walks the chain prints each cause once. Migration: match
+  `InitFailed { message, stderr, .. }` and
+  `HandshakeFailed { message, stderr, .. }`; match `InitFailed` where you
+  matched `WebSocket`, `Protocol`, `Turn` or `Timeout` from a `spawn()`
+  with `on_session_start`; and walk `source()` (or use a reporter that
+  does) where you printed only the top error and want the cause.
 - **Breaking: `AgentBuilder::with_tool_service` is `add_tool_service`.**
   It appends, so each call registers another service; the `with_` prefix
   says a second call replaces. Migration: rename the call.
@@ -1092,11 +1105,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed
   harness was not found without `ANTIGRAVITY_HARNESS_PATH`.
-- On Windows, Antigravity harness discovery asks `python` for its
-  site-packages after `python3`. python.org's installer provides no
-  `python3` (often only the Microsoft Store's stub is there), so a wheel
-  installed with its `pip` was not found without `ANTIGRAVITY_HARNESS_PATH`.
-  `python` is started only when `python3`'s site-packages lack the harness.
+- On Windows, Antigravity harness discovery asks `python`, then the `py`
+  launcher (`py -3`), for its site-packages after `python3`. python.org's
+  installer provides no `python3` (often only the Microsoft Store's stub
+  is there), and its launcher can be on `PATH` when `python` is not, so a
+  wheel installed with its `pip` was not found without
+  `ANTIGRAVITY_HARNESS_PATH`. Each is started only when the interpreters
+  before it lack the harness.
 - Antigravity's `spawn()` no longer waits forever on a harness that
   accepts the WebSocket connection but never answers the upgrade: each of
   the 5 connect attempts gives up after 5 s and counts as failed, so

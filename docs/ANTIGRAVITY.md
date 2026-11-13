@@ -111,13 +111,15 @@ expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 2. `ANTIGRAVITY_HARNESS_PATH` environment variable (the same variable the
    Python SDK honors).
 3. `google/antigravity/bin/localharness` inside `python3`'s site-packages,
-   then, on Windows, inside `python`'s.
+   then, on Windows, inside `python`'s, then inside those of the `py`
+   launcher's Python 3 (`py -3`).
 4. `localharness` on `PATH`.
 
 On Windows steps 3 and 4 look for `localharness.exe` first, the name the
 Windows wheel ships, as the Python SDK does. Step 3 asks `python` there
-because python.org's Windows installer provides no `python3`; `python` is
-started only when `python3`'s site-packages lack the harness.
+because python.org's Windows installer provides no `python3`, and `py -3`
+because the launcher it installs can be on `PATH` when `python` is not;
+each is started only when the interpreters before it lack the harness.
 
 A path given in step 1 or 2 is the harness, as the Python SDK takes the
 variable's: when it is not a file, `spawn()` fails with
@@ -127,10 +129,10 @@ so a mistyped path cannot start a different harness. An empty
 `HarnessNotFound` listing every location searched. The search runs on
 tokio's blocking pool, not on your runtime's threads, and each interpreter
 gets 10 seconds to list its site-packages before the search moves on (on
-Windows from `python3` to `python`, then to `PATH`). The read of the
-installed wheel's version beside the binary gets
-the same 10 seconds, on a thread of its own, so a read abandoned at the
-limit does not hold up your runtime's shutdown. File checks and the start
+Windows from `python3` to `python` to `py -3`, then to `PATH`). The read
+of the installed wheel's version beside the binary gets the same 10
+seconds, on a thread of its own, so a read abandoned at the limit does not
+hold up your runtime's shutdown. File checks and the start
 of the binary itself are not bounded.
 
 ## Quick start
@@ -1398,29 +1400,50 @@ let builder = AntigravityAgent::builder()
 # let _ = builder;
 ```
 
-Spawn- and init-time errors (`HandshakeFailed`, `InitFailed`,
-`ConnectionClosed`) carry the tail of the harness's stderr — that is where
-the harness explains itself (e.g. `no text model configuration provided`).
+The errors of a harness that fails to start or goes away
+(`HandshakeFailed`, `InitFailed`, `ConnectionClosed` and `HarnessExited`)
+carry the tail of its stderr — that is where the harness explains itself
+(e.g. `no text model configuration provided`). [Errors](#errors) says when
+each is raised.
 
 ## Errors
 
 `AntigravityError` is structural (`#[non_exhaustive]`, thiserror): match on
-variants, never on message text. Key variants: `HarnessNotFound{searched}`,
-`HandshakeFailed`/`InitFailed`/`ConnectionClosed` (with `stderr`; an
-`InitFailed` from a connect that never succeeded has the `WebSocket` error
-as its source), `HarnessExited` (a failed exit on `shutdown()`, with
-`stderr`), `Config` (spawn-time validation, including the safety gate),
-`Turn { kind, message }` (below), `Timeout`, `ToolDispatch`, `WebSocket`
-(with the transport error as its source), `Protocol` (a harness message
-this client could not parse, with the parse error as its source, a turn
-that ended without its final event, or a message this client could not
-encode) and `Io` (a file `Media::from_file` could not read, named in its
-message, or harness discovery cut short by the runtime shutting down; the
-I/O error is its source). An error's `Display` never repeats its source's
-text, so a reporter that walks `source()` prints each cause once; one that
-prints only the top error shows the step that failed, not the cause. No
-variant converts from another error type with `?`: map your own I/O and
-JSON errors yourself.
+variants, never on message text. Key variants:
+
+- `HarnessNotFound { searched }`: discovery found no binary.
+- `HandshakeFailed`: the binary would not start, or the stdio handshake
+  failed. It carries `stderr`, and the I/O or decode error that failed it,
+  when one did, as its source.
+- `InitFailed`: any failure of `spawn()` after the handshake (the
+  WebSocket connect, the initialization, the session-start hook), a
+  harness that dies then included. It carries `stderr`, and the error that
+  caused it, when one did (the `WebSocket` error of a connect that never
+  succeeded, say), as its source.
+- `ConnectionClosed`: the harness closed the connection after `spawn()`
+  returned. A harness that dies mid-turn, or while `next_trigger_turn`
+  waits, fails the call with it and the tail of its `stderr`. After a turn
+  whose failure ended the session (below), each `chat`, `send_streaming`
+  and `next_trigger_turn` fails with it without sending. A trigger's
+  `TriggerContext::send` gets it, with an empty `stderr`, once the agent is
+  shut down or dropped.
+- `HarnessExited`: a failed exit on `shutdown()`, with `stderr`.
+- `Config`: spawn-time validation, including the safety gate.
+- `Turn { kind, message }`: a failed turn (below).
+- `Timeout` and `ToolDispatch`.
+- `WebSocket`: a read or send on the connection that failed, with the
+  transport error as its source.
+- `Protocol`: a harness message this client could not parse, with the
+  parse error as its source, a turn that ended without its final event, or
+  a message this client could not encode.
+- `Io`: a file `Media::from_file` could not read, named in its message, or
+  harness discovery cut short by the runtime shutting down; the I/O error
+  is its source.
+
+An error's `Display` never repeats its source's text, so a reporter that
+walks `source()` prints each cause once; one that prints only the top
+error shows the step that failed, not the cause. No variant converts from
+another error type with `?`: map your own I/O and JSON errors yourself.
 
 A failed turn is `Turn { kind, message }`, where `kind` is a
 `TurnFailure` (`#[non_exhaustive]`):
@@ -1435,9 +1458,9 @@ A failed turn is `Turn { kind, message }`, where `kind` is a
 
 `kind.ends_session()` answers the last column. On harness 0.1.23 the
 harness's run ends with a `ModelBackend` or `Trajectory` failure, and the
-agent fails every later call with `ConnectionClosed`, without sending: the
-harness can take one more message before it closes its WebSocket and
-answer it with an empty turn.
+agent fails every later `chat`, `send_streaming` and `next_trigger_turn`
+with `ConnectionClosed`, without sending: the harness can take one more
+message before it closes its WebSocket and answer it with an empty turn.
 
 ```rust,no_run
 use genai_rs::antigravity::{AntigravityAgent, AntigravityError, TurnFailure};

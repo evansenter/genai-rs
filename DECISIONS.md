@@ -1902,6 +1902,19 @@ the binary, not the interpreter. The `py` launcher is not tried; it needs
 its own arguments (`py -3`), and `ANTIGRAVITY_HARNESS_PATH` covers an
 install found neither way.
 
+*Amended 2026-11-10 (#557).* The `py` launcher is tried too, after
+`python`, which replaces the sentence above: python.org installs it even
+when `python` is not on `PATH`, so a wheel installed through it was found
+by neither name. An interpreter is now a program and the arguments it
+takes before `-c`, so `python_interpreters(true)` is `python3`, `python`,
+`py -3`: the launcher reads its version flag before the script, and `-3`
+picks its latest Python 3. It is started last, only when the two before it
+gave no site-packages holding the harness, with the same discovery
+timeout, and a harness it finds is version-checked from the wheel
+metadata as any other. Off Windows the list stays `python3` alone. A test
+on every OS checks the order and the arguments, and stand-in interpreters
+on Unix check that the arguments go before the script.
+
 ---
 
 ## D-051 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)
@@ -2278,6 +2291,14 @@ says what failed.
 *Amended 2026-11-09 (#504, I-6).* `Protocol`'s and `Io`'s `Display` no longer
 carry the source's text, as D-049's amendment gives for `WebSocket`:
 `message` says what was being done, and `source()` says why.
+
+*Amended 2026-11-10 (J-10).* `HandshakeFailed` formatted its `io::Error`
+into `message`. It gets `InitFailed`'s
+`source: Option<Box<dyn Error + Send + Sync>>` (D-062): the I/O error of a
+binary that would not start or of the handshake exchange, or the error
+decoding the reply. A handshake with no reply in time has none. Breaking,
+with a CHANGELOG migration: a pattern listing `{ message, stderr }` adds
+`..`.
 
 ---
 
@@ -2772,6 +2793,26 @@ retried or given up, and only its text tells the two apart. Rejected:
 reading that text ("Encountered retryable error from model provider").
 The unit tests feed each sequence; `test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`
 runs the harness's.
+
+*Amended 2026-11-10 (J-10).* The wait for the session-start hook is part
+of `spawn()`'s start-up as the initialization is. With `on_session_start`
+set, a read that failed, or a message whose handling failed (the hook's
+answer included), reached the caller as the bare `WebSocket`, `Protocol`
+or `Turn` error with no stderr, and a hook that overran the budget as
+`Timeout`, against `WebSocket`'s rustdoc, which promised `InitFailed` for
+a read or send that fails during `spawn()`. Each is now `InitFailed` with
+the stderr tail, the error that caused it as its source, and an overrun
+with none, as the initialization's own timeouts have none. So every
+failure of `spawn()` after the handshake is `InitFailed`. Rejected:
+keeping `Timeout` for an overrun, on the ground that the caller's hook
+rather than the harness is slow there. `spawn()` would then have one more
+variant for a start-up that failed, and the overrun would lose the stderr
+beside it. Unit tests on a stand-in peer cover each failure of
+`agent/session_lifecycle.rs`. The "every later call" refused after a
+session-ending failure, above, is each call that starts or waits for a
+turn (`chat`, `send_streaming`, `next_trigger_turn`), as
+`ConnectionClosed`'s rustdoc now names them; `cancel()` and `shutdown()`
+do not check.
 
 ---
 

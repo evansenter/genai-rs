@@ -151,11 +151,16 @@ arm64/x86_64, Linux x86_64/aarch64, Windows amd64/arm64). Discovery order
 3. Scan installed `google-antigravity` pip package for
    `google/antigravity/bin/localharness[.exe]` (site-packages of `python3`
    on PATH, then on Windows of `python`, which python.org's installer
-   provides instead, plus their user-site directories).
+   provides instead, and of its `py` launcher's Python 3 (`py -3`), plus
+   their user-site directories).
 4. `localharness` on `PATH`.
 
-If not found, the error message tells the user to
-`pip install google-antigravity` or set `ANTIGRAVITY_HARNESS_PATH`.
+A path named in step 1 or 2 stops the search (D-063): when it is not a
+file, discovery fails naming it, and the error tells the user to fix that
+path (or, for the variable, to unset it to search). Otherwise, when
+nothing is found, the error lists every location searched and tells the
+user to `pip install google-antigravity` or set
+`ANTIGRAVITY_HARNESS_PATH`.
 We do **not** vendor the 30 MB binary in the crate. A `harness fetch` helper
 (downloading the matching wheel from PyPI and extracting the binary to a
 cache dir) is a possible follow-up, not v1.
@@ -213,7 +218,11 @@ protocol into directories (D-021). The layout as of 0.1.23 parity:
 src/antigravity/
   mod.rs           Re-exports the public API
   agent.rs         AntigravityAgent: chat, streaming turns, trigger turns,
-                   session start/end, shutdown
+                   shutdown
+  agent/session_lifecycle.rs
+                   The initialization exchange, the session-start hook
+                   during spawn, the session-end hooks during shutdown
+                   (D-065)
   builder/         AgentBuilder: mod.rs (setters, spawn), hooks.rs (hook
                    setters), options.rs (model, subagent and harness option
                    setters), validate.rs (spawn-time checks), wire.rs (the
