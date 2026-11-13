@@ -1961,17 +1961,17 @@ elsewhere would turn an unrelated PR red.
 **Amended 2026-11-10 (#504, J-8).** A pointer must use one of the
 phrasings the check reads: "tracked in #N" (or by, on or at, and "tracked
 in #N item M" for an item), "see #N for" or "until #N". The check then
-sees every pointer that follows the rule. It saw one of the six live
-pointers in the tree; the other five read "unverified (#530)", "That is
-unverified on Windows (#536)", "A background consumer (#535) would" and
-"a server bug, #473, not reproduced", which say the issue holds pending
-work but are worded as provenance tags, and nothing would have flagged them
-when their issues closed. Each now reads "tracked in #N". A bare `(#N)`
-or "#N item M" stays a provenance tag, as above. `--print` lists every
-pointer it finds with its issue's state, open ones included, so a local
-run shows what the check sees. `CHANGELOG.md` and `DECISIONS.md` are still
-not read: they are history, and a decision's pointer is amended in place
-like the rest of it.
+sees every pointer that follows the rule in the files it reads. It saw one
+of the six live pointers there; the other five ("unverified (#530)"
+twice, "That is unverified on Windows (#536)", "A background consumer
+(#535) would" and "a server bug, #473, not reproduced") said the issue
+holds pending work but were worded as provenance tags, so nothing would
+have flagged them when their issues closed. Each now reads "tracked in
+#N". A bare `(#N)` or "#N item M" stays a provenance tag, as above.
+`--print` lists every pointer it finds with its issue's state, open ones
+included, so a local run shows what the check sees. `CHANGELOG.md` and
+`DECISIONS.md` are still not read: they are history, so a pointer in a
+decision is left to review.
 
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
