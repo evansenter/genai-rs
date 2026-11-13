@@ -232,10 +232,9 @@ impl std::fmt::Debug for Webhook {
             )
             .field("create_time", create_time)
             .field("update_time", update_time)
-            // Listed so unmodeled keys stay visible. They print verbatim:
-            // nothing can redact a secret-bearing field the crate does not
-            // model yet.
-            .field("extra", extra)
+            // Unmodeled keys stay visible; a secret among them under a name
+            // the wire redacts prints redacted, through the wire's walk.
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }
@@ -410,10 +409,9 @@ impl std::fmt::Debug for RotateSigningSecretResponse {
         let Self { secret, extra } = self;
         f.debug_struct("RotateSigningSecretResponse")
             .field("secret", &redact::optional(secret.as_ref()))
-            // Listed so unmodeled keys stay visible. They print verbatim, as
-            // on `Webhook`: nothing can redact a field the crate does not
-            // model yet.
-            .field("extra", extra)
+            // As on `Webhook`: unmodeled keys stay visible, and a secret
+            // among them under a name the wire redacts prints redacted.
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }

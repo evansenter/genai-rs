@@ -27,9 +27,11 @@ fn header(name: &str) -> HashMap<String, String> {
 /// The types that redacted before (`Client`, the credential and webhook
 /// secrets) are here too, and so are the JSON values that carry these
 /// secrets: a retrieval config's `custom_config`, an `env` the crate could
-/// not read, a `Tool`'s `extra` and an unknown tool's payload, and a
-/// `WireEvent`'s bodies and harness messages. Every one shows the
-/// placeholder where the secret was, and the names around the secret stay.
+/// not read, the `extra` of a `Tool`, a webhook and the environment pieces
+/// and an unknown tool's payload, and a `WireEvent`'s bodies and harness
+/// messages. Every one
+/// shows the placeholder where the secret was, and the names around the
+/// secret stay.
 #[test]
 fn debug_never_prints_a_secret() {
     let exa = ExaAiSearchConfig::new(SECRET);
@@ -79,6 +81,21 @@ fn debug_never_prints_a_secret() {
             .unwrap()
             .clone(),
     };
+    let webhook_extra = json!({"secret": SECRET, "delivery": {"token": SECRET}})
+        .as_object()
+        .unwrap()
+        .clone();
+    // The environment pieces' own `extra`, beside the secrets they model.
+    let unmodeled = json!({"auth": {"api_key": SECRET}})
+        .as_object()
+        .unwrap()
+        .clone();
+    let mut allowlist_extra = AllowlistEntry::new("api.example.com");
+    allowlist_extra.extra = unmodeled.clone();
+    let mut env_var_extra = EnvVar::credential("cred-1");
+    env_var_extra.extra = unmodeled.clone();
+    let mut environment_extra = RemoteEnvironment::new();
+    environment_extra.extra = unmodeled.clone();
 
     let cases = [
         ("ExaAiSearchConfig", format!("{exa:?}")),
@@ -285,6 +302,32 @@ fn debug_never_prints_a_secret() {
         ),
         ("Tool::Unknown", format!("{unknown_tool:?}")),
         ("Tool's extra", format!("{tool_extra:?}")),
+        ("AllowlistEntry's extra", format!("{allowlist_extra:?}")),
+        ("EnvVar's extra", format!("{env_var_extra:?}")),
+        (
+            "RemoteEnvironment's extra",
+            format!("{environment_extra:?}"),
+        ),
+        (
+            "Webhook's extra",
+            format!(
+                "{:?}",
+                Webhook {
+                    extra: webhook_extra.clone(),
+                    ..Default::default()
+                }
+            ),
+        ),
+        (
+            "RotateSigningSecretResponse's extra",
+            format!(
+                "{:?}",
+                RotateSigningSecretResponse {
+                    extra: webhook_extra.clone(),
+                    ..Default::default()
+                }
+            ),
+        ),
     ];
 
     for (what, debug) in &cases {
@@ -299,11 +342,16 @@ fn debug_never_prints_a_secret() {
     }
     // The names around a secret stay: the header's, the variable's.
     let request_names = ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"];
-    let kept: [(&str, &[&str]); 4] = [
+    let kept: [(&str, &[&str]); 9] = [
         ("InteractionRequest", &request_names),
         ("WireEvent::Request", &request_names),
         ("WireEvent::WsReceive", &["Authorization", "API_KEY"]),
         ("Tool's extra", &["Authorization"]),
+        ("AllowlistEntry's extra", &["auth"]),
+        ("EnvVar's extra", &["auth", "cred-1"]),
+        ("RemoteEnvironment's extra", &["auth"]),
+        ("Webhook's extra", &["delivery"]),
+        ("RotateSigningSecretResponse's extra", &["delivery"]),
     ];
     for (what, names) in kept {
         let (_, debug) = cases.iter().find(|(w, _)| *w == what).unwrap();

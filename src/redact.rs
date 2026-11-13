@@ -11,10 +11,11 @@
 //!
 //! A modeled secret field is redacted by its type's impl. JSON a type
 //! carries where these secrets travel (a `WireEvent`'s bodies, a retrieval
-//! config's `custom_config`, a `Tool`'s `extra` and an unknown tool's
-//! payload) goes through the wire's own walk ([`json`], [`map`]), so there
-//! the two share one list, and so does the copy of an outgoing harness
-//! message an Antigravity session hands its inspectors.
+//! config's `custom_config`, the `extra` of a type with a hand-written
+//! `Debug` and an unknown tool's payload) goes through the wire's own walk
+//! ([`json`], [`map`]), so there the two share one list, and so does the
+//! copy of an outgoing harness message an Antigravity session hands its
+//! inspectors.
 //!
 //! Each impl destructures its type without `..`, so a field added later
 //! fails to compile until the impl prints it, or redacts it. This module
