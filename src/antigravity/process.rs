@@ -593,8 +593,9 @@ impl HarnessProcess {
     /// the group of each of its children (`process_tree`). Elsewhere
     /// (Windows) there are no groups and no SIGTERM: either signal
     /// terminates the harness process alone, and the `run_command` commands
-    /// it started keep running.
-    /// (Stdio MCP servers exit either way, at the end of their stdin.)
+    /// it started keep running. Stdio MCP servers exit when their stdin
+    /// closes with the harness on Linux and macOS; on Windows that is
+    /// unverified (tracked in #536).
     fn signal(&mut self, signal: Signal) {
         let Some(child) = self.child.as_mut() else {
             return;

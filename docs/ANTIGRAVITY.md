@@ -1390,29 +1390,49 @@ let builder = AntigravityAgent::builder()
 # let _ = builder;
 ```
 
-Spawn- and init-time errors (`HandshakeFailed`, `InitFailed`,
-`ConnectionClosed`) carry the tail of the harness's stderr — that is where
-the harness explains itself (e.g. `no text model configuration provided`).
+The errors of a harness that fails to start or goes away
+(`HandshakeFailed`, `InitFailed`, `ConnectionClosed` and `HarnessExited`)
+carry the tail of its stderr — that is where the harness explains itself
+(e.g. `no text model configuration provided`). [Errors](#errors) says when
+each is raised.
 
 ## Errors
 
 `AntigravityError` is structural (`#[non_exhaustive]`, thiserror): match on
-variants, never on message text. Key variants: `HarnessNotFound{searched}`,
-`HandshakeFailed`/`InitFailed`/`ConnectionClosed` (with `stderr`; an
-`InitFailed` from a connect that never succeeded has the `WebSocket` error
-as its source), `HarnessExited` (a failed exit on `shutdown()`, with
-`stderr`), `Config` (spawn-time validation, including the safety gate),
-`Turn { kind, message }` (below), `Timeout`, `ToolDispatch`, `WebSocket`
-(with the transport error as its source), `Protocol` (a harness message
-this client could not parse, with the parse error as its source, a turn
-that ended without its final event, or a message this client could not
-encode) and `Io` (a file `Media::from_file` could not read, named in its
-message, or harness discovery cut short by the runtime shutting down; the
-I/O error is its source). An error's `Display` never repeats its source's
-text, so a reporter that walks `source()` prints each cause once; one that
-prints only the top error shows the step that failed, not the cause. No
-variant converts from another error type with `?`: map your own I/O and
-JSON errors yourself.
+variants, never on message text. Key variants:
+
+- `HarnessNotFound { searched }`: discovery found no binary.
+- `HandshakeFailed`: the binary would not start, or the stdio handshake
+  failed. It carries `stderr`, and the I/O or decode error that failed it,
+  when one did, as its source.
+- `InitFailed`: any failure of `spawn()` after the handshake (the
+  WebSocket connect, the initialization, the session-start hook), a
+  harness that dies then included. It carries `stderr`, and the error that
+  caused it, when one did (the `WebSocket` error of a connect that never
+  succeeded, say), as its source.
+- `ConnectionClosed`: the harness closed the connection after `spawn()`
+  returned. A harness that dies mid-turn, or while `next_trigger_turn`
+  waits, fails the call with it and the tail of its `stderr`; so does every
+  call after a turn whose failure ended the session (below), without
+  sending. A trigger's `TriggerContext::send` gets it, with an empty
+  `stderr`, once the agent is shut down or dropped.
+- `HarnessExited`: a failed exit on `shutdown()`, with `stderr`.
+- `Config`: spawn-time validation, including the safety gate.
+- `Turn { kind, message }`: a failed turn (below).
+- `Timeout` and `ToolDispatch`.
+- `WebSocket`: a read or send on the connection that failed, with the
+  transport error as its source.
+- `Protocol`: a harness message this client could not parse, with the
+  parse error as its source, a turn that ended without its final event, or
+  a message this client could not encode.
+- `Io`: a file `Media::from_file` could not read, named in its message, or
+  harness discovery cut short by the runtime shutting down; the I/O error
+  is its source.
+
+An error's `Display` never repeats its source's text, so a reporter that
+walks `source()` prints each cause once; one that prints only the top
+error shows the step that failed, not the cause. No variant converts from
+another error type with `?`: map your own I/O and JSON errors yourself.
 
 A failed turn is `Turn { kind, message }`, where `kind` is a
 `TurnFailure` (`#[non_exhaustive]`):
