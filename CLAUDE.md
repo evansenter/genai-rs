@@ -386,10 +386,15 @@ wheel's protos with `python3`).
   red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
   checks both, along with fail-fast, beta, the Windows PR leg and the
   cross-platform steps, the macOS PR job, the skip-marker budget (whose
-  over-budget branch must fail its step), the coverage floor (with no
-  `if:` or `continue-on-error`, on its step or its job) and its
-  library-only pattern, the steps the flakiness report counts (no offline
-  test of the retry helper runs in them), and
+  over-budget branch must fail its step, each budget pinned with its
+  reason), the coverage floor (its one command) and its library-only
+  pattern, the steps the flakiness report counts (no offline test of the
+  retry helper runs in them), that no `if:` (but the live steps' owner
+  gate), `continue-on-error`, `needs:` or shell-level mask (`|| true`,
+  `; true`, `set +e`, `exit 0`; `set -euo pipefail` first in a longer
+  script, and wherever nextest is piped) lets the floor, a coverage run,
+  the release gate, a live nextest step or the scripted harness step pass
+  a failure, and
   release's push-run gate, which lets only the jobs a push skips by
   design be skipped and wants all six Cross Platform legs, and
   `api-surface-sweep`'s spec-watch and issue-pointer steps.

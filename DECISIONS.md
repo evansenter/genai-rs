@@ -2372,6 +2372,46 @@ PR ran.
   job; `rust.yml` is in the filter so that a change to the job runs it.
   It is not a required check, and on a push it is skipped by design.
 
+**Amended 2026-11-10 (J-4).** The #504 grade of 2026-11-09 found
+that "nothing skips the floor or ignores its failure" did not hold: the
+guard read the YAML keys alone, and seven edits passed all 60 ci_coverage
+tests: `--fail-under-lines 93 || true` (M3), `|| true` on the release gate
+(R1) and on the required scripted harness step (M9), `set -e` without
+`pipefail` in the live integration and harness steps (M4b, M4c), where
+`nextest | tee` has tee's status, `continue-on-error: true` on a live
+integration step (M8), and a skip budget of 300 (M5). Each now fails one.
+- `failure_escapes` also rejects a job-level `needs:` (a job is skipped
+  with one it needs) or `defaults:`, a step `shell:` other than `bash`,
+  and every shell-level mask in the step's script: `|| true`, `|| :`,
+  `|| echo`, any `||` handler but an `rc=$?` the script exits with, a
+  failed-list entry, `exit` or a `[ .. ]` test; a `true` or `:` command
+  (`; true`); `exit 0`; `set +e` and `set +o pipefail`; a `trap`; a
+  background `&`, a `!` or a `&&` list, and a command as an `if` or loop
+  condition, whose failures `-e` passes over. A one-line script is one
+  command, with no shell operator; a longer one starts with
+  `set -euo pipefail`. The one exception is `$(grep -c .. || true)`, a
+  count whose exit status 1 means zero.
+- The floor step runs `cargo llvm-cov report --workspace
+  --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
+  nothing else, and the coverage runs before it are held to the same
+  escapes, so a failing test fails the job rather than leaving a figure.
+- Every live nextest step (rust.yml's integration groups and harness step,
+  release.yml's two) is held to them too. The only `if:` allowed, on the
+  step or its job, is the fork and owner gate, and the only `needs:` is
+  `needs: check`. The four steps now start with `set -euo pipefail`, which
+  every step that pipes nextest, in any workflow, must.
+- Each skip budget is pinned with its reason (`SKIP_BUDGETS` in
+  `tests/ci_workflows/mod.rs`): 3 for each integration binary and both
+  harness steps, 10 for `release.yml`'s whole-workspace run. A budget
+  raised, a live step without a pin, or a pin without a step fails.
+- The scripted harness step in `test-antigravity`, part of the required
+  Test Suite (antigravity) check, runs with the key blanked and has no
+  escape.
+
+The guard still reads the workflow as text and knows the masks it names.
+A mask it does not know, inside a command substitution in quotes or behind
+a function the script defines, could pass it.
+
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
 **Context.** #504's final grade put Docs at A-: five contradictions and

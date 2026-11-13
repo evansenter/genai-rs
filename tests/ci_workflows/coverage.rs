@@ -1,14 +1,14 @@
 //! The Code Coverage job reports somewhere every run, measures the
 //! `antigravity` feature with its scripted suite, counts library files
-//! alone, and fails under a floor that nothing skips or ignores (#504,
-//! D-058).
+//! alone, and fails under a floor that no `if:`, `continue-on-error`,
+//! `needs:` or shell-level mask skips or ignores (#504, D-058).
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{command_lines, failure_escapes, jobs, read, root, steps};
+use super::{command_lines, failure_escapes, jobs, read, root, run_script, steps};
 use crate::source_scan;
 
 /// The Code Coverage job of `workflow`, and its steps.
@@ -152,10 +152,11 @@ fn library_files() -> &'static [(String, bool)] {
 /// leaves out the test-only files by one `COVERAGE_IGNORE` pattern, which
 /// matches every module file only a test build compiles and no other (an
 /// inline `#[cfg(test)] mod tests { .. }` in a library file is beyond a
-/// filename pattern, and still counted); and a step after the summary fails
-/// under a floor near the measured value, with no `if:` and no
-/// `continue-on-error`, on the step or its job, to skip it or ignore its
-/// failure.
+/// filename pattern, and still counted); and a step after the summary runs
+/// one command that fails under a floor near the measured value, with
+/// nothing to skip it or pass its failure ([`failure_escapes`]: an `if:`,
+/// `continue-on-error` or `needs:`, on the step or its job, or a
+/// shell-level mask such as `|| true`), as the runs before it have.
 fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
     let (job, all) = coverage_job(workflow);
     let mut problems = Vec::new();
@@ -182,6 +183,17 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
         if !run.contains("--no-report") {
             problems.push(format!(
                 "the runs feed one report, so each is --no-report: {run}"
+            ));
+        }
+    }
+    for step in all
+        .iter()
+        .filter(|step| command_lines(step).any(|line| line.contains("cargo llvm-cov nextest")))
+    {
+        for escape in failure_escapes(&job, step) {
+            problems.push(format!(
+                "a coverage run's step has {escape}: a failing test must fail the job, not \
+                 leave a figure from a partial run"
             ));
         }
     }
@@ -299,12 +311,16 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
             "the floor step has {escape}: a drop must fail the job on every run"
         ));
     }
-    let floor_line = command_lines(&all[floor_at])
-        .find(|line| line.contains("--fail-under-lines"))
-        .unwrap_or_default();
-    if !floor_line.contains("--workspace") {
+    // One command, which reads the packages the runs measured, so its
+    // status is the floor's verdict and nothing else's.
+    let expected = format!(
+        "cargo llvm-cov report --workspace --ignore-filename-regex \"$COVERAGE_IGNORE\" \
+         --fail-under-lines {floor}"
+    );
+    let script = run_script(&all[floor_at]);
+    if script != [expected.as_str()] {
         problems.push(format!(
-            "the floor reads the packages the runs measured: {floor_line}"
+            "the floor step runs `{expected}` and nothing else: found {script:?}"
         ));
     }
     problems
@@ -362,6 +378,44 @@ fn the_coverage_check_catches_what_it_claims_to() {
         workflow.replace("|fuzzing)'", "|fuzzing|antigravity/)'"),
         // No pattern at all.
         workflow.replace("      COVERAGE_IGNORE: '", "      COVERAGE_SKIP: '"),
+        // M3: the floor's failure masked in the shell, in each spelling.
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93 || true\n",
+        ),
+        workflow.replace("--fail-under-lines 93\n", "--fail-under-lines 93; true\n"),
+        workflow.replace("--fail-under-lines 93\n", "--fail-under-lines 93 || :\n"),
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93 || echo \"below the floor\"\n",
+        ),
+        workflow.replace(
+            &format!("{floor}93\n"),
+            &format!(
+                "        run: |\n          set +e\n          {}93\n",
+                floor.trim_start().trim_start_matches("run: ")
+            ),
+        ),
+        // ... or skipped with a job it needs, or run under another shell.
+        workflow.replace(
+            "    name: Code Coverage\n",
+            "    name: Code Coverage\n    needs: captured-fixtures\n",
+        ),
+        workflow.replace(floor, &format!("        shell: bash {{0}}\n{floor}")),
+        // ... or a flag beside it that reads another figure.
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93 --ignore-filename-regex '.*'\n",
+        ),
+        // A failing test in a coverage run passed over.
+        workflow.replace(
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report\n",
+            "cargo llvm-cov nextest --workspace --features antigravity --no-report || true\n",
+        ),
+        workflow.replace(
+            "        run: |\n          set -euo pipefail\n          cargo llvm-cov clean --workspace\n",
+            "        run: |\n          set -eo pipefail\n          cargo llvm-cov clean --workspace\n",
+        ),
         // The antigravity feature, or the scripted suite, gone.
         workflow.replace(
             "cargo llvm-cov nextest --workspace --features antigravity --no-report\n",

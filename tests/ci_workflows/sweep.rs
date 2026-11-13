@@ -2,11 +2,11 @@
 //! pointer check run on every scheduled run, and a failure in either is
 //! seen (#504).
 
-use super::{command_lines, is_scheduled, jobs, read, root, steps};
+use super::{command_lines, escapes, is_scheduled, jobs, read, root, steps};
 
-/// The sweep job's steps, from a scheduled `api-surface-sweep.yml` that can
-/// write issues.
-fn sweep_steps() -> Vec<String> {
+/// The sweep job and its steps, from a scheduled `api-surface-sweep.yml`
+/// that can write issues.
+fn sweep_job() -> (String, Vec<String>) {
     let workflow = read(&root().join(".github/workflows/api-surface-sweep.yml"));
     assert!(
         is_scheduled(&workflow),
@@ -21,14 +21,16 @@ fn sweep_steps() -> Vec<String> {
         .find(|(id, _)| id == "sweep")
         .map(|(_, body)| body)
         .expect("api-surface-sweep.yml has a sweep job");
-    steps(&job)
+    let job_steps = steps(&job);
+    (job, job_steps)
 }
 
 /// The step that runs `script`, checked to run whatever the steps before
-/// it did (`!cancelled()`), to fail the run when the script does (no
-/// `continue-on-error`, no `|| true`), and to have the job's token for its
-/// `gh` calls. Panics naming what is missing.
-fn step_running(steps: &[String], script: &str) -> String {
+/// it did (`!cancelled()`), to fail the run when the script does (nothing
+/// but that `if:` from `escapes`: no `continue-on-error`, no shell-level
+/// mask such as `|| true`), and to have the job's token for its `gh` calls.
+/// Panics naming what is missing.
+fn step_running((job, steps): &(String, Vec<String>), script: &str) -> String {
     let step = steps
         .iter()
         .find(|step| {
@@ -41,9 +43,11 @@ fn step_running(steps: &[String], script: &str) -> String {
         lines.contains(&"if: ${{ !cancelled() }}"),
         "{script} runs whatever the steps before it did:\n{step}"
     );
+    let found = escapes(job, &step, &["if: ${{ !cancelled() }}"]);
     assert!(
-        !step.contains("continue-on-error") && !step.contains("|| true"),
-        "a failing {script} fails the run, which escalates:\n{step}"
+        found.is_empty(),
+        "a failing {script} fails the run, which escalates, but its step has \
+         {found:?}:\n{step}"
     );
     assert!(
         lines.contains(&"GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"),
@@ -65,7 +69,7 @@ fn step_running(steps: &[String], script: &str) -> String {
 /// nothing else.
 #[test]
 fn the_sweep_watches_both_published_specs() {
-    let step = step_running(&sweep_steps(), "watch_spec_urls.sh");
+    let step = step_running(&sweep_job(), "watch_spec_urls.sh");
     for snapshot in [
         "tests/fixtures/api_surface/openapi-v1beta.json",
         "tests/fixtures/api_surface/openapi-v1.json",
@@ -84,7 +88,7 @@ fn the_sweep_watches_both_published_specs() {
 /// names the repository.
 #[test]
 fn the_sweep_flags_pointers_to_closed_issues() {
-    let step = step_running(&sweep_steps(), "check_issue_pointers.sh");
+    let step = step_running(&sweep_job(), "check_issue_pointers.sh");
     assert!(
         command_lines(&step).any(|line| line == "GH_REPO: ${{ github.repository }}"),
         "the pointer check looks issues up in this repository:\n{step}"
