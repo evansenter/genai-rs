@@ -174,7 +174,8 @@ pub struct Trigger {
         deserialize_with = "crate::serde_util::deserialize_string_i64::<_, crate::serde_util::ForTrigger>"
     )]
     pub consecutive_failure_count: Option<i64>,
-    /// Per-execution timeout in seconds (the server defaults it to 600).
+    /// Per-execution timeout in seconds (the server defaults it to 600, its
+    /// maximum).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -370,9 +371,10 @@ pub struct CreateTriggerRequest {
         deserialize_with = "crate::serde_util::deserialize_strict_string_i64"
     )]
     pub max_consecutive_failures: Option<i64>,
-    /// Per-execution timeout in seconds. Sends as a plain JSON number
-    /// (see [`Self::max_consecutive_failures`] on the wire-form
-    /// asymmetry with [`Trigger`]).
+    /// Per-execution timeout in seconds, at most 600 (the API rejects more
+    /// with a 400). Sends as a plain JSON number (see
+    /// [`Self::max_consecutive_failures`] on the wire-form asymmetry with
+    /// [`Trigger`]).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -503,7 +505,7 @@ impl CreateTriggerRequest {
         self
     }
 
-    /// Sets the per-execution timeout in seconds.
+    /// Sets the per-execution timeout in seconds, at most 600.
     #[must_use]
     pub fn with_execution_timeout_seconds(mut self, seconds: i64) -> Self {
         self.execution_timeout_seconds = Some(seconds);
@@ -522,6 +524,9 @@ impl CreateTriggerRequest {
 /// applies exactly the fields present in the body.
 /// Nothing else is updatable; sending `schedule` gets
 /// `400 Unknown parameter 'schedule'`, so a new schedule means a new trigger.
+/// The body is flat, as the bindings define it: the OpenAPI spec's wrapped
+/// form (`{trigger, update_mask, id}`) is a `400 Unknown parameter` (under
+/// "Spec-only query parameters" in `docs/INTERACTIONS_API_GAP.md`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TriggerUpdate {
     /// New display name.
@@ -707,23 +712,32 @@ impl<'a> Triggers<'a> {
         crate::http::triggers::delete_trigger(&self.client.http, trigger_id).await
     }
 
-    /// Fires a trigger immediately, outside its schedule.
+    /// Fires a trigger immediately, outside its schedule, and returns the
+    /// run's execution once the run has ended.
     ///
     /// This posts to the `executions` sub-collection (not a `:run` colon
-    /// verb), the path in the google-genai generated bindings. The firing
-    /// is asynchronous, and works on a paused trigger too.
+    /// verb), the path in the google-genai generated bindings. It works on
+    /// a paused trigger too.
     ///
-    /// **The returned execution is empty today.** The bindings type the
-    /// response as a `TriggerExecution`, but the API answers `{}`, so every
-    /// field is `None`. Find the execution with
-    /// [`list_executions`](Self::list_executions), whose entries carry the
-    /// ID, status and the fired interaction's ID. The return type keeps the
-    /// spec's shape so that callers see the fields if the API starts
-    /// sending them.
+    /// **The call lasts as long as the run.** The API holds the request
+    /// until the run ends, up to the trigger's
+    /// [`execution_timeout_seconds`](Trigger::execution_timeout_seconds)
+    /// (at most 600), and then answers with the execution:
+    /// [`Completed`](TriggerExecutionStatus::Completed) with the stored
+    /// [`interaction_id`](TriggerExecution::interaction_id), or
+    /// [`TimedOut`](TriggerExecutionStatus::TimedOut) with an
+    /// [`error`](TriggerExecution::error) and no interaction, for example.
+    /// A client [timeout](crate::ClientBuilder::with_timeout) shorter than
+    /// the run ends the call with an error, not the run:
+    /// [`list_executions`](Self::list_executions) lists it, in progress or
+    /// ended. Every field of the execution stays optional, since the API
+    /// once answered `{}`; the record is under Triggers in
+    /// `docs/INTERACTIONS_API_GAP.md`.
     ///
     /// # Errors
     ///
-    /// Returns an error on network failure or when the trigger doesn't exist.
+    /// Returns an error on network failure, when the trigger doesn't exist,
+    /// or when a client timeout ends the call before the run does.
     pub async fn run(self, trigger_id: &str) -> Result<TriggerExecution, GenaiError> {
         crate::http::triggers::run_trigger(&self.client.http, trigger_id).await
     }

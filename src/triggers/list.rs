@@ -25,9 +25,8 @@ pub struct TriggerExecution {
     /// [`Interactions::get`](crate::Interactions::get).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interaction_id: Option<String>,
-    /// Output only. The environment the firing ran against. In the spec;
-    /// not sent on a completed manual run, where
-    /// [`Trigger::environment_id`] carries it.
+    /// Output only. The environment the firing ran against, also on
+    /// [`Trigger::environment_id`]. Not sent for a run that timed out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. Status of this execution.

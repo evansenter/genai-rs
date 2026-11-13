@@ -98,13 +98,15 @@ pub async fn delete_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<(), G
     Ok(())
 }
 
-/// Fires a trigger immediately (`POST /v1beta/triggers/{id}/executions`).
+/// Fires a trigger immediately (`POST /v1beta/triggers/{id}/executions`)
+/// and reads the execution the API answers with once the run has ended.
 ///
 /// Note the path shape: unlike the colon custom-method verbs on webhooks
 /// (`:ping`, `:rotateSigningSecret`), run-now is spec'd as a POST to the
 /// `executions` sub-collection — verified against the google-genai 2.17.0
 /// generated bindings (`path="/{api_version}/triggers/{trigger_id}/executions"`)
-/// and live, where the response is `{}`; see [`Triggers::run`].
+/// and live. The response is held until the run ends; see
+/// [`Triggers::run`].
 ///
 /// [`Triggers::run`]: crate::Triggers::run
 pub async fn run_trigger(

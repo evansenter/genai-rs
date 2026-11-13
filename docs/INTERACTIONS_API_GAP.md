@@ -371,8 +371,25 @@ from here rather than repeated.
 - **Update** applies exactly the fields in the PATCH body, and only
   `display_name` and `status` are updatable: `schedule` is `400 Unknown
   parameter 'schedule'` (2026-11-01).
-- **Run** fires asynchronously and answers `{}` (2026-11-01), so the firing
-  is found through `list_executions`.
+- **Run** answers with the run's `TriggerExecution` once the run has
+  ended: the request is held until then. On 2026-11-01 it answered `{}` at
+  once, and the firing was found through `list_executions`; on 2026-11-09
+  it answered with the completed execution about 10 s later. Re-probed on
+  2026-11-13, every run answered 200 with its execution, the same record
+  `list_executions` then listed: three runs of a "Say OK." trigger after
+  13.6 s, 9.2 s and 8.8 s, each `completed` with its `id`, `trigger_id`,
+  `start_time`, `end_time`, `interaction_id` and `environment_id`; a run
+  that slept 150 s in the sandbox after 162.8 s, `completed`; and the same
+  run on a trigger whose `execution_timeout_seconds` is 60 after 61.4 s,
+  `timed_out`, with `error: "Deadline expired before operation could
+  complete."` and no `interaction_id` or `environment_id`. A client that
+  stops waiting (a 3 s timeout) leaves the run going: it was listed
+  `in_progress`, then `completed`. So a call lasts as long as the run, up
+  to the trigger's execution timeout. That timeout is at most 600 s
+  (`'execution_timeout_seconds' cannot exceed 600 seconds.` on create).
+  The timed-out run left behind the environment it had created, which
+  neither the execution nor the trigger names, and its sandbox kept
+  running the command past the deadline.
 - **What it stores** (2026-11-01): a text input comes back as one
   `user_input` step, and the echo adds `store: true` and `object:
   "interaction"`. Without an `environment_id` on create, the first firing
@@ -383,7 +400,8 @@ from here rather than repeated.
   sending `status: "error"` is `400 Invalid status transition from active
   to error`. The executions list's envelope key is `trigger_executions`; an
   execution's `trigger_id` is bare, and a manual run's execution has no
-  `scheduled_time` or `environment_id`. Paging and empty lists are under
+  `scheduled_time`. It had no `environment_id` either; on 2026-11-13 a
+  completed one carried it. Paging and empty lists are under
   TriggerStatus in `docs/ENUM_WIRE_FORMATS.md`.
 
 ### Files
