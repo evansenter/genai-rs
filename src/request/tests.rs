@@ -209,3 +209,52 @@ fn test_interaction_input_serialized_strings() {
         );
     }
 }
+
+/// Pins the one normalization `InteractionInput` makes (D-NEXT-J7-a): a
+/// single content or step object, read from a response or a stored trigger,
+/// keeps its value but is written back as a one-element array. Asserted so
+/// that its rustdoc, `Trigger::interaction`'s and
+/// `docs/ENUM_WIRE_FORMATS.md` cannot go stale in silence.
+#[test]
+fn a_single_input_object_is_written_back_as_a_one_element_array() {
+    let content = serde_json::json!({"type": "text", "text": "hi"});
+    let step = serde_json::json!({
+        "type": "user_input",
+        "content": [{"type": "text", "text": "hi"}],
+    });
+    for single in [content, step] {
+        let response: crate::InteractionResponse = serde_json::from_value(serde_json::json!({
+            "steps": [],
+            "status": "completed",
+            "input": single.clone(),
+        }))
+        .unwrap();
+        let written = serde_json::to_value(&response).unwrap();
+        assert_eq!(written["input"], serde_json::json!([single.clone()]));
+        let again: crate::InteractionResponse = serde_json::from_value(written).unwrap();
+        assert_eq!(again.input, response.input, "the value survives");
+
+        let trigger: crate::Trigger = serde_json::from_value(serde_json::json!({
+            "name": "triggers/abc",
+            "interaction": {"model": "test-model", "input": single.clone()},
+        }))
+        .unwrap();
+        let written = serde_json::to_value(&trigger).unwrap();
+        // A step goes out as the array holding it; a content block, wrapped
+        // in a `user_input` step as every request's `Content` input is (the
+        // other asymmetry), so only the step reads back as the same value.
+        if single["type"] == "text" {
+            assert_eq!(
+                written["interaction"]["input"],
+                serde_json::json!([{"type": "user_input", "content": [single]}])
+            );
+        } else {
+            assert_eq!(written["interaction"]["input"], serde_json::json!([single]));
+            let again: crate::Trigger = serde_json::from_value(written).unwrap();
+            assert_eq!(
+                again.interaction.as_ref().map(|i| &i.input),
+                trigger.interaction.as_ref().map(|i| &i.input)
+            );
+        }
+    }
+}
