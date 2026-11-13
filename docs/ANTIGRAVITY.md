@@ -969,22 +969,25 @@ budget is exceeded, the crate halts the harness's still-running turn and
 drains its remaining events before returning `AntigravityError::Timeout`, so
 the next turn starts from a clean stream.
 
-The deadline is absolute, stamped when the turn starts, and it covers the
-whole turn rather than the gaps between harness events: that includes this
-crate's own work inside the turn, so a custom tool or hook that hangs ends
-the turn on time, with the `Timeout`'s `operation` naming it
-(`agent turn (custom tool 'x' was still running at the deadline)`). It is
-stamped before your message is sent, so it bounds the send too: a harness
+The deadline is absolute, stamped when `chat` or `send_streaming` is
+called, and it covers the whole turn rather than the gaps between harness
+events: that includes this crate's own work inside the turn, so a custom
+tool or hook that hangs ends the turn on time, with the `Timeout`'s
+`operation` naming it (`agent turn (custom tool 'x' was still running at
+the deadline)`). It covers what the call does before the turn too: the
+wait for a trigger's message still going out to the harness, and the halt
+and drain of an earlier turn still running. And it bounds every message to
+the harness in the turn, your message and the replies to the harness's
+requests (hook answers, tool results, answers to its questions): a harness
 that has stopped reading fails the turn on time (`agent turn (the harness
 did not take the message)`) instead of holding it, however large the
 prompt, at the turn timeout you set, however long. Every other message to
-the harness has a bound of its own: the halt before a turn counts against
-the five-second drain budget, the initialization in `spawn()` and the
-session-end request in `shutdown()` against their 30-second budgets, the
-close in `shutdown()` gives up after half a second, and any other send (a
-`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
-message of a turn with no timeout) gives up after 30 seconds, as a
-`Timeout` where the call returns an error.
+the harness has a bound of its own: the halt before a turn also counts
+against the five-second drain budget, the initialization in `spawn()` and
+the session-end request in `shutdown()` against their 30-second budgets,
+the close in `shutdown()` gives up after half a second, and any other send
+(a `cancel()`, a trigger's delivery, a message in a turn with no timeout)
+gives up after 30 seconds, as a `Timeout` where the call returns an error.
 
 Each custom tool call runs on a tokio task of its own, and a call the
 deadline abandons is aborted: an async tool stops at its next `.await`. A

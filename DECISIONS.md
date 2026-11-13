@@ -2778,6 +2778,34 @@ send bound, a send bounded by a later deadline alone, the close bound and
 a dropped connection, and the scripted `lifecycle.rs` kills the harness
 mid-turn and while `next_trigger_turn` waits.
 
+**Amended 2026-11-10 (J-12, #552).** Two of the bounds above moved to the
+turn deadline.
+- A reply to the harness mid-turn (a hook's answer, a tool result, a
+  question reply, a tool confirmation, a policy decision) goes through
+  `send_before` with the turn's deadline, as the turn's own message does,
+  and fails with the turn's `Timeout`, naming the reply the harness did
+  not take. So a turn whose timeout is longer than 30 s no longer fails at
+  30 s when the harness stops reading mid-turn; a turn with no timeout
+  keeps `SEND_TIMEOUT`. No reason to keep the 30 s cap inside a longer
+  deadline came up: the reply is part of the turn the caller budgeted.
+- The turn's state, and so its deadline, is created before `chat()` and
+  `send_streaming()` take `turn_sync`, which a trigger's delivery holds
+  across its send (up to `SEND_TIMEOUT`). The wait for that lock is
+  bounded by the deadline (`agent turn (the harness did not take a
+  trigger's message)`), and so is the halt-and-drain of an earlier turn,
+  whose five-second budget the deadline cuts short when it comes first;
+  a message whose deadline has passed by then is not sent. So `chat()`
+  can no longer wait about 35 s before its deadline starts.
+  `next_trigger_turn` creates its state, as it documents, at the turn's
+  first event, before it takes the lock. A `with_turn_timeout` too large
+  to add to the clock (`Duration::MAX`) sets no deadline, as
+  `tokio::time::sleep` treats one, where it panicked at the first turn.
+
+Paused-clock tests in `agent_tests.rs` hold a reply's send for 45 s
+inside a two-minute turn and past a one-minute one, hold `turn_sync` past
+a 10 s turn for `chat()` and `send_streaming()`, hold the halt before a
+3 s turn past its deadline, and run a turn with `Duration::MAX`.
+
 ## D-067 — `Debug` redacts the secrets `LOUD_WIRE` redacts, outside unmodeled JSON (2026-11-09)
 
 **Context.** The crate's rule is that a type holding a secret prints it

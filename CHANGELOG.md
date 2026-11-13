@@ -1265,19 +1265,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Ok` with the error only in `errors()`, and the next call failed on the
   closed connection.
 - Antigravity: no message to the harness can wait forever. `chat()` and
-  `send_streaming()` start the turn deadline before sending the message, so
-  a harness that has stopped reading fails the turn with
-  `AntigravityError::Timeout` at `with_turn_timeout` (the default 300 s
-  included) instead of holding the call past it, however large the prompt
-  (inline media included). The halt sent before a turn counts against the
-  five-second halt-and-drain budget, the initialization and the session-end
-  request against their 30 s budgets (a stuck or failed initialization
-  message fails `spawn()` with `InitFailed` and the stderr tail, where a
-  failed one was a `WebSocket` error), the close in `shutdown()` waits for a
-  send in progress only within its half-second bound, and any other send
-  (`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
-  message of a turn with no timeout) gives up after 30 s with `Timeout`
-  (#504, D-066).
+  `send_streaming()` start the turn deadline when called, so it bounds the
+  wait for a trigger's message still going out, the halt of an earlier
+  turn, the message and every reply to the harness mid-turn (hook answers,
+  tool results, answers to its questions): a harness that has stopped
+  reading fails the turn with `AntigravityError::Timeout` at
+  `with_turn_timeout` (the default 300 s included) instead of holding the
+  call past it, however large the prompt (inline media included). The halt
+  sent before a turn also counts against the five-second halt-and-drain
+  budget, the initialization and the session-end request against their
+  30 s budgets (a stuck or failed initialization message fails `spawn()`
+  with `InitFailed` and the stderr tail, where a failed one was a
+  `WebSocket` error), the close in `shutdown()` waits for a send in
+  progress only within its half-second bound, and any other send
+  (`cancel()`, a trigger's delivery, a message in a turn with no timeout)
+  gives up after 30 s with `Timeout` (#504, D-066).
+- Antigravity: `with_turn_timeout(Duration::MAX)` panicked at the first
+  turn. A timeout too large to add to the clock now sets no deadline, as
+  `without_turn_timeout()` does.
 - Antigravity: a harness that dies mid-turn, or while `next_trigger_turn`
   waits, fails the call with `AntigravityError::ConnectionClosed` and the
   tail of the harness's stderr, as that variant says. A connection that

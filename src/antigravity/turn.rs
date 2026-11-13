@@ -517,12 +517,29 @@ impl TurnState {
             reported_calls: HashSet::new(),
             running: None,
             timeout,
-            deadline: timeout.map(|t| tokio::time::Instant::now() + t),
+            // A timeout too large for the clock (`Duration::MAX`) is no
+            // deadline, as it is for `tokio::time::sleep`.
+            deadline: timeout.and_then(|t| tokio::time::Instant::now().checked_add(t)),
             _turn_guard: turn_guard,
             draining: false,
             pre_turn_denied: false,
             backend_status: None,
             trajectory_error: None,
+        }
+    }
+
+    /// Takes the guard that marks the agent busy for the turn's lifetime.
+    /// The turn's state, and so its deadline, exists before the guard: the
+    /// wait for the lock the guard is taken under counts against it.
+    pub(super) fn hold(&mut self, guard: TurnGuard) {
+        self._turn_guard = Some(guard);
+    }
+
+    /// The turn's timeout error, `cause` saying what held it.
+    pub(super) fn timed_out(&self, cause: &str) -> AntigravityError {
+        AntigravityError::Timeout {
+            operation: format!("agent turn ({cause})"),
+            timeout: self.timeout.unwrap_or_default(),
         }
     }
 

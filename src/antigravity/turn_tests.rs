@@ -270,6 +270,16 @@ fn test_backend_status_reads_http_errors_on_system_steps_only() {
 }
 
 #[test]
+fn test_a_turn_timeout_too_large_for_the_clock_is_no_deadline() {
+    // `with_turn_timeout(Duration::MAX)` panicked at the first turn (J-12).
+    let turn = TurnState::new(Some(Duration::MAX), None);
+    assert_eq!(turn.deadline, None);
+    assert_eq!(turn.timeout, Some(Duration::MAX));
+    let turn = TurnState::new(Some(Duration::from_secs(5)), None);
+    assert!(turn.deadline.is_some());
+}
+
+#[test]
 fn test_subagent_trajectory_cancelled_is_not_fatal() {
     // A cancelled subagent trajectory must not fail the parent's turn
     // (mirroring the subagent-idle no-op); subagent failures surface

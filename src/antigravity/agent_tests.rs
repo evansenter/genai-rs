@@ -232,3 +232,141 @@ async fn test_initialization_and_session_end_count_their_send_against_their_budg
 
     stalled.finish().await;
 }
+
+/// A harness request whose answer goes out mid-turn: a post-tool callback
+/// with no post-tool hook set, answered with an empty result.
+fn hook_request() -> OutputEvent {
+    serde_json::from_value(serde_json::json!({
+        "callHookRequest": {"requestId": "r-3470", "postToolArgs": {"toolName": "view_file"}}
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn test_a_reply_mid_turn_is_bounded_by_the_turn_deadline_alone() {
+    // #552: replies went through the session's 30 s bound on a send, so a
+    // turn whose deadline was further off failed at 30 s.
+    let mut stalled = Stalled::spawn(AntigravityAgent::builder()).await;
+    let agent = &mut stalled.agent;
+
+    // Held past 30 s, inside a two-minute turn: the reply goes out.
+    let mut turn = TurnState::new(Some(Duration::from_secs(120)), None);
+    let releaser = hold_the_sink(agent, Duration::from_secs(45)).await;
+    let started = tokio::time::Instant::now();
+    let replied = tokio::time::timeout(GUARD, agent.process_event(hook_request(), &mut turn))
+        .await
+        .expect("the reply gives up rather than hanging");
+    assert!(replied.is_ok(), "{replied:?}");
+    assert!(started.elapsed() >= Duration::from_secs(45));
+    releaser.await.unwrap();
+
+    // Held past the turn deadline: the turn fails there, naming the reply.
+    let turn_timeout = Duration::from_secs(60);
+    let mut turn = TurnState::new(Some(turn_timeout), None);
+    let releaser = hold_the_sink(agent, Duration::from_secs(200)).await;
+    let started = tokio::time::Instant::now();
+    let replied = tokio::time::timeout(GUARD, agent.process_event(hook_request(), &mut turn))
+        .await
+        .expect("the reply gives up rather than hanging");
+    let elapsed = started.elapsed();
+    assert!(timed_out_at(&replied, turn_timeout), "{replied:?}");
+    let Err(AntigravityError::Timeout { operation, .. }) = &replied else {
+        unreachable!()
+    };
+    assert!(operation.contains("a hook's answer"), "{operation}");
+    assert!(
+        elapsed >= turn_timeout && elapsed < turn_timeout + Duration::from_secs(1),
+        "{elapsed:?}"
+    );
+    releaser.await.unwrap();
+
+    stalled.finish().await;
+}
+
+#[tokio::test]
+async fn test_the_turn_deadline_starts_before_the_wait_for_a_trigger_delivery() {
+    // J-12: a trigger's delivery holds `turn_sync` across its send, up to
+    // 30 s on a harness that stopped reading, and the deadline started
+    // only after chat() had taken it.
+    let turn_timeout = Duration::from_secs(10);
+    for streaming in [false, true] {
+        let mut stalled =
+            Stalled::spawn(AntigravityAgent::builder().with_turn_timeout(turn_timeout)).await;
+        let agent = &mut stalled.agent;
+        let delivery = Arc::clone(&agent.turn_sync).lock_owned().await;
+        let releaser = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            drop(delivery);
+        });
+        let started = tokio::time::Instant::now();
+        let result = if streaming {
+            tokio::time::timeout(GUARD, agent.send_streaming("hi"))
+                .await
+                .expect("send_streaming gives up rather than hanging")
+                .map(|_| ())
+        } else {
+            tokio::time::timeout(GUARD, agent.chat("hi"))
+                .await
+                .expect("chat gives up rather than hanging")
+                .map(|_| ())
+        };
+        let elapsed = started.elapsed();
+        assert!(timed_out_at(&result, turn_timeout), "{result:?}");
+        let Err(AntigravityError::Timeout { operation, .. }) = &result else {
+            unreachable!()
+        };
+        assert!(operation.contains("trigger"), "{operation}");
+        assert!(
+            elapsed >= turn_timeout && elapsed < turn_timeout + Duration::from_secs(1),
+            "{elapsed:?}"
+        );
+        // Nothing was started: the agent is idle, with no turn to drain.
+        assert!(*agent.idle.borrow());
+        assert!(!agent.turn_unfinished);
+        releaser.await.unwrap();
+        stalled.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn test_a_turn_timeout_too_large_for_the_clock_runs_without_a_deadline() {
+    // J-12: `with_turn_timeout(Duration::MAX)` panicked at the first turn.
+    let mut stalled =
+        Stalled::spawn(AntigravityAgent::builder().with_turn_timeout(Duration::MAX)).await;
+    let waited = tokio::time::timeout(GUARD, stalled.agent.chat("hi")).await;
+    assert!(waited.is_err(), "no deadline ends the turn: {waited:?}");
+    stalled.finish().await;
+}
+
+#[tokio::test]
+async fn test_halting_an_earlier_turn_counts_against_the_turn_deadline() {
+    // J-12: the halt-and-drain before a turn ran on its own five-second
+    // budget ahead of the deadline. Now a deadline that comes first cuts it
+    // short, and the turn's message is not sent past it.
+    let turn_timeout = Duration::from_secs(3);
+    let mut stalled =
+        Stalled::spawn(AntigravityAgent::builder().with_turn_timeout(turn_timeout)).await;
+    let agent = &mut stalled.agent;
+    // An earlier turn never ended, and the harness does not take the halt.
+    agent.turn_unfinished = true;
+    let releaser = hold_the_sink(agent, Duration::from_secs(20)).await;
+    let started = tokio::time::Instant::now();
+    let result = tokio::time::timeout(GUARD, agent.chat("hi"))
+        .await
+        .expect("chat gives up rather than hanging");
+    let elapsed = started.elapsed();
+    assert!(timed_out_at(&result, turn_timeout), "{result:?}");
+    let Err(AntigravityError::Timeout { operation, .. }) = &result else {
+        unreachable!()
+    };
+    assert!(
+        operation.contains("before the message was sent"),
+        "{operation}"
+    );
+    assert!(
+        elapsed >= turn_timeout && elapsed < turn_timeout + Duration::from_secs(1),
+        "{elapsed:?}"
+    );
+    releaser.await.unwrap();
+    stalled.finish().await;
+}

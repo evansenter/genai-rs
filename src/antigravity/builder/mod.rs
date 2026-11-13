@@ -417,10 +417,15 @@ impl AgentBuilder {
     /// Sets a wall-clock budget per turn. When exceeded, `chat` /
     /// `send_streaming` fail with [`AntigravityError::Timeout`].
     ///
-    /// The budget starts before the message is sent and bounds the send
-    /// too, so a harness that has stopped reading fails the turn on time
-    /// rather than holding it. A halt of an earlier turn, sent first when
-    /// one is still running, has a five-second budget of its own.
+    /// The budget starts when `chat` or `send_streaming` is called, and
+    /// bounds everything the call does: the wait for a trigger's message
+    /// still going out to the harness, the halt of an earlier turn still
+    /// running (five seconds at most), and every message to the harness in
+    /// the turn, its own and the replies to the harness's requests. So a
+    /// harness that has stopped reading fails the turn on time rather than
+    /// holding it. A `Duration` too large to add to the clock
+    /// (`Duration::MAX`) sets no deadline, as
+    /// [`without_turn_timeout`](Self::without_turn_timeout) does.
     ///
     /// Defaults to [`DEFAULT_TURN_TIMEOUT`]. Raise it for agents that
     /// legitimately run long (deep subagent trees, many tool calls); lower

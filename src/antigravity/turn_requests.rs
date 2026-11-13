@@ -2,7 +2,9 @@
 //! tool calls, the tool hooks (pre-tool and post-tool), the auto policy's
 //! decision requests, tool confirmations and user questions. The other
 //! lifecycle hooks are in `lifecycle.rs`. Every user hook runs through
-//! [`run_hook`], so the turn deadline bounds it.
+//! [`run_hook`], so the turn deadline bounds it, and every answer goes out
+//! through [`send_in_turn`](AntigravityAgent::send_in_turn), bounded by the
+//! same deadline.
 
 use super::hook_mapping::{
     confirmation_decision, map_question_reply, map_questions, normalize_tool_error, pre_tool_gate,
@@ -21,6 +23,26 @@ use serde_json::Value;
 use std::sync::Arc;
 
 impl AntigravityAgent {
+    /// Sends `message` within a turn: bounded by the turn's deadline alone
+    /// when it has one, however far off, and otherwise (no turn timeout, or
+    /// a drain's throwaway state) by the session's 30 s bound on a send.
+    /// Past the deadline the turn fails with its `Timeout`, `what` naming
+    /// the message the harness did not take.
+    pub(super) async fn send_in_turn(
+        &self,
+        message: &InputEvent,
+        turn: &TurnState,
+        what: &str,
+    ) -> Result<(), AntigravityError> {
+        let Some(deadline) = turn.deadline else {
+            return self.session.send(message).await;
+        };
+        self.session
+            .send_before(message, deadline)
+            .await
+            .unwrap_or_else(|_| Err(turn.timed_out(&format!("the harness did not take {what}"))))
+    }
+
     /// Policy-checks a pending harness-side tool and replies with a
     /// `tool_confirmation`. When the decision is a denial, the blocked
     /// action is surfaced as a [`AgentEvent::ToolAction`] with a
@@ -60,12 +82,12 @@ impl AntigravityAgent {
                 step.trajectory_id.clone(),
             );
         }
-        self.session
-            .send(&InputEvent::ToolConfirmation(protocol::ToolConfirmation {
-                trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
-                step_index: step.step_index.unwrap_or_default(),
-                accepted,
-            }))
+        let confirmation = InputEvent::ToolConfirmation(protocol::ToolConfirmation {
+            trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
+            step_index: step.step_index.unwrap_or_default(),
+            accepted,
+        });
+        self.send_in_turn(&confirmation, turn, "a tool confirmation")
             .await
     }
 
@@ -106,9 +128,12 @@ impl AntigravityAgent {
         let mut response = map_question_reply(reply, &batch);
         response.trajectory_id = step.trajectory_id.clone().unwrap_or_default();
         response.step_index = step.step_index.unwrap_or_default();
-        self.session
-            .send(&InputEvent::QuestionResponse(response))
-            .await
+        self.send_in_turn(
+            &InputEvent::QuestionResponse(response),
+            turn,
+            "the answers to its questions",
+        )
+        .await
     }
 
     /// Dispatches a custom (client-executed) tool call through the crate's
@@ -132,22 +157,20 @@ impl AntigravityAgent {
             Ok(args) => args,
             Err(error) => {
                 tracing::warn!("Not running custom tool '{name}': {error}");
-                return self
-                    .session
-                    .send(&InputEvent::ToolResponse(protocol::ToolResponse {
-                        id,
-                        response_json: Some(
-                            serde_json::json!({
-                                "error": format!(
-                                    "Tool execution denied: the arguments could not be parsed \
-                                     ({error})"
-                                )
-                            })
-                            .to_string(),
-                        ),
-                        ..Default::default()
-                    }))
-                    .await;
+                let refusal = InputEvent::ToolResponse(protocol::ToolResponse {
+                    id,
+                    response_json: Some(
+                        serde_json::json!({
+                            "error": format!(
+                                "Tool execution denied: the arguments could not be parsed \
+                                 ({error})"
+                            )
+                        })
+                        .to_string(),
+                    ),
+                    ..Default::default()
+                });
+                return self.send_in_turn(&refusal, turn, "a tool result").await;
             }
         };
 
@@ -179,13 +202,12 @@ impl AntigravityAgent {
             name: name.clone(),
             id: id.clone(),
         });
-        self.session
-            .send(&InputEvent::ToolResponse(protocol::ToolResponse {
-                id,
-                response_json: Some(result.to_string()),
-                ..Default::default()
-            }))
-            .await
+        let response = InputEvent::ToolResponse(protocol::ToolResponse {
+            id,
+            response_json: Some(result.to_string()),
+            ..Default::default()
+        });
+        self.send_in_turn(&response, turn, "a tool result").await
     }
 
     /// Answers a lifecycle hook callback. The protocol requires a response
@@ -260,9 +282,12 @@ impl AntigravityAgent {
             self.answer_lifecycle_hook(&request, &mut response, turn)
                 .await?;
         }
-        self.session
-            .send(&InputEvent::CallHookResponse(Box::new(response)))
-            .await
+        self.send_in_turn(
+            &InputEvent::CallHookResponse(Box::new(response)),
+            turn,
+            "a hook's answer",
+        )
+        .await
     }
 
     /// Answers a `policyDecisionRequest`: the auto policy flagged a call
@@ -311,14 +336,12 @@ impl AntigravityAgent {
                 (PolicyEvaluationOutcome::Allow, None)
             }
         };
-        self.session
-            .send(&InputEvent::PolicyDecisionResponse(
-                protocol::PolicyDecisionResponse {
-                    request_id: request.request_id.unwrap_or_default(),
-                    outcome: Some(outcome),
-                    deny_reason,
-                },
-            ))
+        let response = InputEvent::PolicyDecisionResponse(protocol::PolicyDecisionResponse {
+            request_id: request.request_id.unwrap_or_default(),
+            outcome: Some(outcome),
+            deny_reason,
+        });
+        self.send_in_turn(&response, turn, "a policy decision")
             .await
     }
 
