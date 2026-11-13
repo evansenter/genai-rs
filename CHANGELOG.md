@@ -875,16 +875,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Turn(message)`, and decide on `kind` (or `kind.ends_session()` for
   whether to spawn a new agent) where you searched the message for "HTTP
   400" or a reason.
-- **Breaking: `AntigravityError::InitFailed` has a `source` field, and no
-  Antigravity error repeats its source's text in `Display`.** A WebSocket
-  connect that fails during `spawn()`, and a failed read of the harness's
-  initialization reply, are `InitFailed` errors whose `source()` is the
-  `WebSocket` error (it held only the text). `WebSocket`, `Protocol`, `Io`
-  and `InitFailed` print what was being done; `source()` gives the cause,
-  so a reporter that walks the chain prints each cause once. Migration:
-  match `InitFailed { message, stderr, .. }`, and walk `source()` (or use
-  a reporter that does) where you printed only the top error and want the
-  cause.
+- **Breaking: `AntigravityError::InitFailed` and `HandshakeFailed` have a
+  `source` field, no Antigravity error repeats its source's text in
+  `Display`, and every failure of `spawn()` after the handshake is
+  `InitFailed`.** A WebSocket connect that fails during `spawn()`, and a
+  failed read of the harness's initialization reply, are `InitFailed`
+  errors whose `source()` is the `WebSocket` error (it held only the
+  text). With `on_session_start` set, a failed read or a failed answer
+  while `spawn()` waits for the session-start hook was the bare
+  `WebSocket`, `Protocol` or `Turn` error, with no stderr, and a hook that
+  overran its 30 s was `Timeout`; each is now `InitFailed`, with the
+  stderr tail and the cause, when there is one, as its source. A
+  `HandshakeFailed` from a binary that would not start, a failed handshake
+  exchange or a reply that does not decode has that I/O or decode error
+  as its source, where its message held the text. `WebSocket`,
+  `Protocol`, `Io`, `HandshakeFailed` and `InitFailed` print what was
+  being done; `source()` gives the cause, so a reporter that walks the
+  chain prints each cause once. Migration: match
+  `InitFailed { message, stderr, .. }` and
+  `HandshakeFailed { message, stderr, .. }`; match `InitFailed` where you
+  matched `WebSocket`, `Protocol`, `Turn` or `Timeout` from a `spawn()`
+  with `on_session_start`; and walk `source()` (or use a reporter that
+  does) where you printed only the top error and want the cause.
 - **Breaking: `AgentBuilder::with_tool_service` is `add_tool_service`.**
   It appends, so each call registers another service; the `with_` prefix
   says a second call replaces. Migration: rename the call.

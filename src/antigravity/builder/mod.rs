@@ -584,21 +584,34 @@ impl AgentBuilder {
     }
 
     /// Launches the harness, performs the handshake, connects the
-    /// WebSocket, and initializes the conversation.
+    /// WebSocket, initializes the conversation, and runs the session-start
+    /// hook ([`Self::on_session_start`]) when one is set.
     ///
     /// # Errors
     ///
-    /// - [`AntigravityError::Config`] when write-capable built-ins or MCP
-    ///   servers are enabled without any policy or pre-tool hook (safety
-    ///   parity with the reference SDK), when subagents are enabled
-    ///   alongside a gate they bypass without
-    ///   [`Self::with_ungated_subagents`], or when a model or a Gemini base
-    ///   URL is configured without a non-blank API key.
+    /// - [`AntigravityError::Config`] when the configuration cannot work or
+    ///   would be unsafe, before anything starts: write-capable built-ins
+    ///   or MCP servers enabled without any policy or pre-tool hook (safety
+    ///   parity with the reference SDK), subagents enabled alongside a gate
+    ///   they bypass without [`Self::with_ungated_subagents`], a model or a
+    ///   Gemini base URL configured without a non-blank API key, and the
+    ///   other checks the setters name.
     /// - [`AntigravityError::HarnessNotFound`] when discovery fails, or
     ///   when the path [`Self::with_harness_path`] or
     ///   `ANTIGRAVITY_HARNESS_PATH` names is not a file.
-    /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
-    ///   with the harness's stderr tail when startup fails.
+    /// - [`AntigravityError::Io`] when discovery is cut short by the
+    ///   runtime shutting down.
+    /// - [`AntigravityError::HandshakeFailed`], with the harness's stderr
+    ///   tail, when the binary cannot be started or the stdio handshake
+    ///   fails (no reply within 10 s, or one that does not decode).
+    /// - [`AntigravityError::InitFailed`], with the harness's stderr tail,
+    ///   for any failure after the handshake: the WebSocket connect (5
+    ///   attempts), the initialization exchange, or the session-start hook
+    ///   (30 s each), a harness that closes the connection or sends what
+    ///   this client cannot read included. The error that caused it, when
+    ///   one did (an [`AntigravityError::WebSocket`] or
+    ///   [`AntigravityError::Protocol`] error, or the session-start hook's
+    ///   failed answer), is its [`source()`](std::error::Error::source).
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
         let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
         self.validate(&dispatcher)?;

@@ -8,10 +8,15 @@ use crate::antigravity::DEFAULT_TURN_TIMEOUT;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::protocol::Message;
 
-/// A stand-in harness in `dir`: a script that answers the stdio handshake
-/// with `port`, where the test's own WebSocket peer listens, then reads
-/// stdin until its EOF, as the real harness does.
-fn fake_harness(dir: &std::path::Path, port: u16) -> std::path::PathBuf {
+/// The line the stand-in harness writes to its stderr as it starts, which
+/// an error carrying the stderr tail shows.
+pub(super) const STAND_IN_STDERR: &str = "stand-in harness: listening";
+
+/// A stand-in harness in `dir`: a script that writes [`STAND_IN_STDERR`]
+/// to its stderr, answers the stdio handshake with `port`, where the test's
+/// own WebSocket peer listens, then reads stdin until its EOF, as the real
+/// harness does.
+pub(super) fn fake_harness(dir: &std::path::Path, port: u16) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     // The OutputConfig: field 1, the port (a varint); field 2, the token.
@@ -33,7 +38,7 @@ fn fake_harness(dir: &std::path::Path, port: u16) -> std::path::PathBuf {
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\ncat '{}'\nexec cat >/dev/null\n",
+            "#!/bin/sh\necho '{STAND_IN_STDERR}' >&2\ncat '{}'\nexec cat >/dev/null\n",
             frame_path.display()
         ),
     )
@@ -177,7 +182,10 @@ async fn test_a_harness_that_stops_reading_fails_each_turn_at_its_deadline() {
 }
 
 /// Holds `agent`'s sink, as a send stuck on the harness does, for `hold`.
-async fn hold_the_sink(agent: &AntigravityAgent, hold: Duration) -> tokio::task::JoinHandle<()> {
+pub(super) async fn hold_the_sink(
+    agent: &AntigravityAgent,
+    hold: Duration,
+) -> tokio::task::JoinHandle<()> {
     let held = agent.session.hold_sink().await;
     tokio::spawn(async move {
         tokio::time::sleep(hold).await;

@@ -2255,6 +2255,14 @@ says what failed.
 carry the source's text, as D-049's amendment gives for `WebSocket`:
 `message` says what was being done, and `source()` says why.
 
+*Amended 2026-11-10 (J-10).* `HandshakeFailed` formatted its `io::Error`
+into `message`. It gets `InitFailed`'s
+`source: Option<Box<dyn Error + Send + Sync>>` (D-062): the I/O error of a
+binary that would not start or of the handshake exchange, or the error
+decoding the reply. A handshake with no reply in time has none. Breaking,
+with a CHANGELOG migration: a pattern listing `{ message, stderr }` adds
+`..`.
+
 ---
 
 ## D-057 — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
@@ -2623,6 +2631,22 @@ caller that printed only the top error of a `WebSocket`, `Protocol`,
 `Io` or `InitFailed` sees the step that failed, not the cause. The
 session-ending claim is the 0.1.23 harness's; a harness bump that keeps
 a session after one of these shows up as a failing scripted test.
+
+*Amended 2026-11-10 (J-10).* The wait for the session-start hook is part
+of `spawn()`'s start-up as the initialization is. With `on_session_start`
+set, a read that failed, or a message whose handling failed (the hook's
+answer included), reached the caller as the bare `WebSocket`, `Protocol`
+or `Turn` error with no stderr, and a hook that overran the budget as
+`Timeout`, against `WebSocket`'s rustdoc, which promised `InitFailed` for
+a read or send that fails during `spawn()`. Each is now `InitFailed` with
+the stderr tail, the error that caused it as its source, and an overrun
+with none, as the initialization's own timeouts have none. So every
+failure of `spawn()` after the handshake is `InitFailed`. Rejected:
+keeping `Timeout` for an overrun, on the ground that the caller's hook
+rather than the harness is slow there. `spawn()` would then have one more
+variant for a start-up that failed, and the overrun would lose the stderr
+beside it. Unit tests on a stand-in peer cover each failure of
+`agent/session_lifecycle.rs`.
 
 ---
 

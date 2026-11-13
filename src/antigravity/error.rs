@@ -7,11 +7,18 @@ use thiserror::Error;
 // Errors
 // =============================================================================
 
+/// The cause an error carries as its `source()`.
+pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
 /// Errors from the Antigravity harness client.
 ///
-/// Spawn- and init-time variants carry the tail of the harness's stderr —
-/// that is where the harness reports actionable problems (e.g. `no text
-/// model configuration provided`).
+/// The variants for a harness that failed to start or went away
+/// ([`HandshakeFailed`](Self::HandshakeFailed),
+/// [`InitFailed`](Self::InitFailed),
+/// [`ConnectionClosed`](Self::ConnectionClosed) and
+/// [`HarnessExited`](Self::HarnessExited)) carry the tail of the harness's
+/// stderr — that is where the harness reports actionable problems (e.g.
+/// `no text model configuration provided`).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AntigravityError {
@@ -27,15 +34,29 @@ pub enum AntigravityError {
         /// The locations that were searched, in order.
         searched: Vec<String>,
     },
-    /// The stdio handshake with the harness failed.
+    /// The harness could not be started, or the stdio handshake with it
+    /// failed: `spawn()` reports a binary that would not run, and a reply
+    /// that did not arrive in time or could not be decoded, here.
     #[error("harness handshake failed: {message}\nharness stderr:\n{stderr}")]
     HandshakeFailed {
-        /// What went wrong.
+        /// What was being done, or what went wrong when nothing failed
+        /// with an error of its own (no reply in time).
         message: String,
         /// Tail of the harness's stderr.
         stderr: String,
+        /// The error that failed the step, when one did: the I/O error
+        /// starting the binary or exchanging the handshake, or the error
+        /// decoding the harness's reply. Also returned by
+        /// [`source()`](std::error::Error::source), and not repeated in
+        /// this error's `Display`.
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
     },
-    /// The conversation could not be initialized.
+    /// The conversation could not be initialized. After the handshake,
+    /// `spawn()` reports every failure here: connecting to the harness,
+    /// the initialization exchange, and the session-start hook. A harness
+    /// that dies after the handshake, while `spawn()` waits on it, fails it
+    /// with this variant, not [`ConnectionClosed`](Self::ConnectionClosed).
     #[error("conversation initialization failed: {message}\nharness stderr:\n{stderr}")]
     InitFailed {
         /// What went wrong.
@@ -44,13 +65,21 @@ pub enum AntigravityError {
         stderr: String,
         /// The error that failed the step, when one did: the
         /// [`WebSocket`](Self::WebSocket) error of a connect that never
-        /// succeeded, or the error reading the harness's reply. Also
-        /// returned by [`source()`](std::error::Error::source), and not
+        /// succeeded or of a send that failed, the error reading the
+        /// harness's messages, or the error answering the session-start
+        /// hook ([`on_session_start`](super::AgentBuilder::on_session_start)).
+        /// Also returned by [`source()`](std::error::Error::source), and not
         /// repeated in this error's `Display`.
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
     },
-    /// The harness closed the connection unexpectedly (it likely crashed).
+    /// The harness closed the connection unexpectedly (it likely crashed),
+    /// after `spawn()` returned: mid-turn, while
+    /// [`next_trigger_turn`](super::AntigravityAgent::next_trigger_turn)
+    /// waits, or on any call after a turn whose failure ended the session
+    /// ([`TurnFailure::ends_session`]). A trigger's
+    /// [`TriggerContext::send`](super::TriggerContext::send) fails with it,
+    /// with an empty `stderr`, once the agent is gone.
     #[error("harness connection closed: {message}\nharness stderr:\n{stderr}")]
     ConnectionClosed {
         /// What went wrong.
@@ -106,7 +135,8 @@ pub enum AntigravityError {
     },
     /// WebSocket transport error: a read or send on the connection to the
     /// harness failed. A connect, read or send that fails during `spawn()`
-    /// is [`InitFailed`](Self::InitFailed) instead, with this error as its
+    /// (the session-start hook's included) is
+    /// [`InitFailed`](Self::InitFailed) instead, with this error as its
     /// source, beside the harness's `stderr`.
     #[error("websocket error: {message}")]
     WebSocket {
@@ -261,6 +291,20 @@ impl AntigravityError {
         Self::Turn {
             kind,
             message: message.into(),
+        }
+    }
+
+    /// A [`HandshakeFailed`](Self::HandshakeFailed) error, caused by
+    /// `source` when there is one; `message` says what was being done.
+    pub(crate) fn handshake_failed(
+        message: String,
+        stderr: String,
+        source: Option<BoxError>,
+    ) -> Self {
+        Self::HandshakeFailed {
+            message,
+            stderr,
+            source,
         }
     }
 

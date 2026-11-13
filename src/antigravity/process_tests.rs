@@ -714,3 +714,97 @@ async fn test_shutdown_reports_a_failed_graceful_exit_with_the_stderr_tail() {
     let clean = fake_harness("cat >/dev/null; exit 0");
     clean.shutdown().await.expect("a clean exit is Ok");
 }
+
+/// Runs `HarnessProcess::spawn` on `binary`, which must fail.
+#[cfg(unix)]
+async fn failed_handshake(binary: &Path) -> AntigravityError {
+    let wire = WireContext::new(Vec::new());
+    match HarnessProcess::spawn(binary, &InputConfig::default(), false, &wire).await {
+        Ok(_) => panic!("{} completed the handshake", binary.display()),
+        Err(e) => e,
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_failed_handshake_keeps_its_cause_as_the_source() {
+    use std::error::Error as _;
+    let dir = tempfile::tempdir().unwrap();
+    // A file that cannot run, a harness that exits before replying, and one
+    // whose reply is a frame that does not decode (field 2 claims 16 bytes
+    // of the 0 that follow).
+    let unrunnable = dir.path().join("unrunnable/localharness");
+    std::fs::create_dir_all(unrunnable.parent().unwrap()).unwrap();
+    std::fs::write(&unrunnable, b"not a binary").unwrap();
+    let exits = stub_named_interpreter(
+        &dir.path().join("exits"),
+        "localharness",
+        "echo 'stand-in: unknown flag' >&2; exit 2",
+    );
+    let garbled = stub_named_interpreter(
+        &dir.path().join("garbled"),
+        "localharness",
+        r"echo 'stand-in: garbled' >&2; printf '\002\000\000\000\022\020'; exec cat >/dev/null",
+    );
+    for (binary, step, stderr_line) in [
+        (&unrunnable, "failed to spawn harness at", None),
+        (
+            &exits,
+            "stdio handshake I/O failed",
+            Some("stand-in: unknown flag"),
+        ),
+        (
+            &garbled,
+            "decoding the handshake reply failed",
+            Some("stand-in: garbled"),
+        ),
+    ] {
+        let error = failed_handshake(binary).await;
+        let AntigravityError::HandshakeFailed {
+            message, stderr, ..
+        } = &error
+        else {
+            panic!("expected HandshakeFailed: {error:?}");
+        };
+        assert!(message.starts_with(step), "{message}");
+        if let Some(line) = stderr_line {
+            assert!(stderr.contains(line), "{step}: {stderr}");
+        }
+        let source = error.source().expect("the cause is the source");
+        assert!(
+            !error.to_string().contains(&source.to_string()),
+            "Display repeats the source: {error}"
+        );
+        // An I/O step's source is the I/O error itself.
+        let io = source.downcast_ref::<std::io::Error>();
+        assert_eq!(io.is_some(), !step.starts_with("decoding"), "{source:?}");
+        if step.starts_with("failed to spawn") {
+            assert_eq!(
+                io.map(std::io::Error::kind),
+                Some(std::io::ErrorKind::PermissionDenied)
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn test_a_handshake_with_no_reply_fails_at_its_bound_without_a_source() {
+    use std::error::Error as _;
+    let dir = tempfile::tempdir().unwrap();
+    let silent = stub_named_interpreter(dir.path(), "localharness", "exec cat >/dev/null");
+    let started = tokio::time::Instant::now();
+    let error = failed_handshake(&silent).await;
+    let elapsed = started.elapsed();
+    let AntigravityError::HandshakeFailed { message, .. } = &error else {
+        panic!("expected HandshakeFailed: {error:?}");
+    };
+    assert!(message.contains("no handshake reply"), "{message}");
+    assert!(error.source().is_none(), "{error:?}");
+    // The version read and the handshake each get 10 s; the kill waits 1 s.
+    assert!(
+        elapsed >= HANDSHAKE_TIMEOUT
+            && elapsed < DISCOVERY_TIMEOUT + HANDSHAKE_TIMEOUT + KILL_GRACE * 2,
+        "{elapsed:?}"
+    );
+}

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
 
+use super::error::BoxError;
 use super::handshake::{InputConfig, OutputConfig};
 use super::harness_stderr::{StderrRing, drain_stderr, lock_ring};
 use super::session::WireContext;
@@ -419,9 +420,9 @@ impl HarnessProcess {
 
         let mut child = harness_command(binary, &input_config.env, scrub_key_env)
             .spawn()
-            .map_err(|e| AntigravityError::HandshakeFailed {
-                message: format!("failed to spawn harness at {}: {e}", binary.display()),
-                stderr: String::new(),
+            .map_err(|e| {
+                let message = format!("failed to spawn harness at {}", binary.display());
+                AntigravityError::handshake_failed(message, String::new(), Some(e.into()))
             })?;
 
         wire.emit(|| WireEvent::HarnessSpawn {
@@ -465,41 +466,26 @@ impl HarnessProcess {
             stdin.flush().await?;
             read_handshake_frame(&mut stdout).await
         };
-        let payload = match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake).await {
-            Ok(Ok(payload)) => payload,
-            Ok(Err(e)) => {
-                let stderr = process.stderr_tail().await;
-                process.kill().await;
-                return Err(AntigravityError::HandshakeFailed {
-                    message: format!("stdio handshake I/O failed: {e}"),
-                    stderr,
-                });
-            }
-            Err(_) => {
-                let stderr = process.stderr_tail().await;
-                process.kill().await;
-                return Err(AntigravityError::HandshakeFailed {
-                    message: format!("no handshake reply within {HANDSHAKE_TIMEOUT:?}"),
-                    stderr,
-                });
-            }
+        let reply = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake).await;
+        let (message, source): (String, Option<BoxError>) = match reply {
+            Ok(Ok(payload)) => match OutputConfig::decode(&payload) {
+                // Keep stdin open: EOF is the shutdown signal. Stdout is done
+                // after the handshake and may be dropped.
+                Ok(output_config) => {
+                    process.stdin = Some(stdin);
+                    return Ok((process, output_config));
+                }
+                Err(e) => ("decoding the handshake reply failed".into(), Some(e.into())),
+            },
+            Ok(Err(e)) => ("stdio handshake I/O failed".into(), Some(e.into())),
+            Err(_) => (
+                format!("no handshake reply within {HANDSHAKE_TIMEOUT:?}"),
+                None,
+            ),
         };
-        let output_config = match OutputConfig::decode(&payload) {
-            Ok(config) => config,
-            Err(e) => {
-                let stderr = process.stderr_tail().await;
-                process.kill().await;
-                return Err(AntigravityError::HandshakeFailed {
-                    message: format!("invalid OutputConfig: {e}"),
-                    stderr,
-                });
-            }
-        };
-
-        // Keep stdin open: EOF is the shutdown signal. Stdout is done after
-        // the handshake and may be dropped.
-        process.stdin = Some(stdin);
-        Ok((process, output_config))
+        let stderr = process.stderr_tail().await;
+        process.kill().await;
+        Err(AntigravityError::handshake_failed(message, stderr, source))
     }
 
     /// Returns the retained tail of the harness's stderr for diagnostics.
