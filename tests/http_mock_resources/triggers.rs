@@ -246,6 +246,9 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
 /// one its execution timeout cut off says so in `error`, with neither.
 #[tokio::test]
 async fn trigger_run_returns_the_ended_runs_execution() {
+    // Not the harness's import, which strict mode leaves out.
+    use genai_rs::TriggerExecutionStatus;
+
     let stub = Stub::replying(vec![
         Reply::json(
             200,
