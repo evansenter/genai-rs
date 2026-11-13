@@ -22,11 +22,8 @@ pub(super) fn arb_interaction_status() -> impl Strategy<Value = InteractionStatu
         Just(InteractionStatus::RequiresContinuation),
         Just(InteractionStatus::Queued),
         // Unknown variant with preserved data
-        unknown_or(InteractionStatus::Completed, |status_type| {
-            InteractionStatus::Unknown {
-                status_type: status_type.clone(),
-                data: serde_json::Value::String(status_type),
-            }
+        unknown_or(InteractionStatus::Completed, |status_type, data| {
+            InteractionStatus::Unknown { status_type, data }
         }),
     ]
 }

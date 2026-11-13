@@ -10,11 +10,8 @@ pub(super) fn arb_function_calling_mode() -> impl Strategy<Value = FunctionCalli
         Just(FunctionCallingMode::None),
         Just(FunctionCallingMode::Validated),
         // Unknown variant with preserved data
-        unknown_or(FunctionCallingMode::Auto, |mode_type| {
-            FunctionCallingMode::Unknown {
-                mode_type: mode_type.clone(),
-                data: serde_json::Value::String(mode_type),
-            }
+        unknown_or(FunctionCallingMode::Auto, |mode_type, data| {
+            FunctionCallingMode::Unknown { mode_type, data }
         }),
     ]
 }
@@ -26,9 +23,8 @@ pub(super) fn arb_search_type() -> impl Strategy<Value = SearchType> {
         Just(SearchType::ImageSearch),
         Just(SearchType::EnterpriseWebSearch),
         // Unknown variant with preserved data
-        unknown_or(SearchType::WebSearch, |search_type| SearchType::Unknown {
-            search_type: search_type.clone(),
-            data: serde_json::Value::String(search_type),
+        unknown_or(SearchType::WebSearch, |search_type, data| {
+            SearchType::Unknown { search_type, data }
         }),
     ]
 }
@@ -51,7 +47,13 @@ pub(super) fn arb_allowed_tools() -> impl Strategy<Value = AllowedTools> {
 
 pub(crate) fn arb_tool_choice() -> impl Strategy<Value = ToolChoice> {
     prop_oneof![
-        arb_function_calling_mode().prop_map(ToolChoice::Mode),
+        // The bare arm is the union's string: a mode read from a non-string
+        // value reads as `ToolChoice::Unknown` instead, typed by its shape.
+        arb_function_calling_mode()
+            .prop_filter("a bare mode is a string", |mode| {
+                mode.unknown_data().is_none_or(serde_json::Value::is_string)
+            })
+            .prop_map(ToolChoice::Mode),
         arb_allowed_tools().prop_map(|allowed_tools| ToolChoice::AllowedTools {
             allowed_tools,
             extra: serde_json::Map::new(),
@@ -211,9 +213,9 @@ pub(super) fn arb_retrieval_type() -> impl Strategy<Value = RetrievalType> {
         Just(RetrievalType::RagStore),
         Just(RetrievalType::ExaAiSearch),
         Just(RetrievalType::ParallelAiSearch),
-        unknown_or(RetrievalType::VertexAiSearch, |retrieval_type| {
+        unknown_or(RetrievalType::VertexAiSearch, |retrieval_type, data| {
             RetrievalType::Unknown {
-                data: serde_json::Value::String(retrieval_type.clone()),
+                data,
                 retrieval_type,
             }
         }),

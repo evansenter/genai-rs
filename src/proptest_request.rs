@@ -14,11 +14,8 @@ pub(super) fn arb_thinking_level() -> impl Strategy<Value = ThinkingLevel> {
         Just(ThinkingLevel::Medium),
         Just(ThinkingLevel::High),
         // Unknown variant with preserved data
-        unknown_or(ThinkingLevel::Minimal, |level_type| {
-            ThinkingLevel::Unknown {
-                level_type: level_type.clone(),
-                data: serde_json::Value::String(level_type),
-            }
+        unknown_or(ThinkingLevel::Minimal, |level_type, data| {
+            ThinkingLevel::Unknown { level_type, data }
         }),
     ]
 }
@@ -29,10 +26,10 @@ pub(super) fn arb_thinking_summaries() -> impl Strategy<Value = ThinkingSummarie
         Just(ThinkingSummaries::Auto),
         Just(ThinkingSummaries::None),
         // Unknown variant with preserved data
-        unknown_or(ThinkingSummaries::Auto, |summaries_type| {
+        unknown_or(ThinkingSummaries::Auto, |summaries_type, data| {
             ThinkingSummaries::Unknown {
-                summaries_type: summaries_type.clone(),
-                data: serde_json::Value::String(summaries_type),
+                summaries_type,
+                data,
             }
         }),
     ]
@@ -46,9 +43,9 @@ pub(super) fn arb_service_tier() -> impl Strategy<Value = ServiceTier> {
         Just(ServiceTier::Priority),
         Just(ServiceTier::Deferred),
         // Unknown variant with preserved data
-        unknown_or(ServiceTier::Flex, |tier_type| ServiceTier::Unknown {
-            tier_type: tier_type.clone(),
-            data: serde_json::Value::String(tier_type),
+        unknown_or(ServiceTier::Flex, |tier_type, data| ServiceTier::Unknown {
+            tier_type,
+            data,
         }),
     ]
 }
@@ -74,11 +71,8 @@ pub(super) fn arb_image_aspect_ratio() -> impl Strategy<Value = ImageAspectRatio
         Just(ImageAspectRatio::Tall1x4),
         Just(ImageAspectRatio::Wide4x1),
         // Unknown variant with preserved data
-        unknown_or(ImageAspectRatio::Square, |ratio_type| {
-            ImageAspectRatio::Unknown {
-                ratio_type: ratio_type.clone(),
-                data: serde_json::Value::String(ratio_type),
-            }
+        unknown_or(ImageAspectRatio::Square, |ratio_type, data| {
+            ImageAspectRatio::Unknown { ratio_type, data }
         }),
     ]
 }
@@ -90,9 +84,9 @@ pub(super) fn arb_image_size() -> impl Strategy<Value = ImageSize> {
         Just(ImageSize::Hd2k),
         Just(ImageSize::Uhd4k),
         // Unknown variant with preserved data
-        unknown_or(ImageSize::Sd512, |size_type| ImageSize::Unknown {
-            size_type: size_type.clone(),
-            data: serde_json::Value::String(size_type),
+        unknown_or(ImageSize::Sd512, |size_type, data| ImageSize::Unknown {
+            size_type,
+            data,
         }),
     ]
 }
@@ -278,9 +272,8 @@ pub(super) fn arb_video_task() -> impl Strategy<Value = VideoTask> {
         Just(VideoTask::ReferenceToVideo),
         Just(VideoTask::Edit),
         Just(VideoTask::Extend),
-        unknown_or(VideoTask::TextToVideo, |task_type| VideoTask::Unknown {
-            data: serde_json::Value::String(task_type.clone()),
-            task_type,
+        unknown_or(VideoTask::TextToVideo, |task_type, data| {
+            VideoTask::Unknown { data, task_type }
         }),
     ]
 }
@@ -334,9 +327,9 @@ pub(super) fn arb_harm_category() -> impl Strategy<Value = HarmCategory> {
         Just(HarmCategory::ImageHarassment),
         Just(HarmCategory::ImageSexuallyExplicit),
         Just(HarmCategory::Jailbreak),
-        unknown_or(HarmCategory::HateSpeech, |category_type| {
+        unknown_or(HarmCategory::HateSpeech, |category_type, data| {
             HarmCategory::Unknown {
-                data: serde_json::Value::String(category_type.clone()),
+                data,
                 category_type,
             }
         }),
@@ -350,9 +343,9 @@ pub(super) fn arb_safety_threshold() -> impl Strategy<Value = SafetyThreshold> {
         Just(SafetyThreshold::BlockOnlyHigh),
         Just(SafetyThreshold::BlockNone),
         Just(SafetyThreshold::Off),
-        unknown_or(SafetyThreshold::BlockLowAndAbove, |threshold_type| {
+        unknown_or(SafetyThreshold::BlockLowAndAbove, |threshold_type, data| {
             SafetyThreshold::Unknown {
-                data: serde_json::Value::String(threshold_type.clone()),
+                data,
                 threshold_type,
             }
         }),
@@ -363,11 +356,8 @@ pub(super) fn arb_safety_method() -> impl Strategy<Value = SafetyMethod> {
     prop_oneof![
         Just(SafetyMethod::Severity),
         Just(SafetyMethod::Probability),
-        unknown_or(SafetyMethod::Severity, |method_type| {
-            SafetyMethod::Unknown {
-                data: serde_json::Value::String(method_type.clone()),
-                method_type,
-            }
+        unknown_or(SafetyMethod::Severity, |method_type, data| {
+            SafetyMethod::Unknown { data, method_type }
         }),
     ]
 }
@@ -390,9 +380,9 @@ pub(super) fn arb_response_delivery() -> impl Strategy<Value = ResponseDelivery>
     prop_oneof![
         Just(ResponseDelivery::Inline),
         Just(ResponseDelivery::Uri),
-        unknown_or(ResponseDelivery::Inline, |delivery_type| {
+        unknown_or(ResponseDelivery::Inline, |delivery_type, data| {
             ResponseDelivery::Unknown {
-                data: serde_json::Value::String(delivery_type.clone()),
+                data,
                 delivery_type,
             }
         }),
@@ -470,9 +460,9 @@ pub(super) fn arb_visualization() -> impl Strategy<Value = Visualization> {
     prop_oneof![
         Just(Visualization::Off),
         Just(Visualization::Auto),
-        unknown_or(Visualization::Off, |visualization_type| {
+        unknown_or(Visualization::Off, |visualization_type, data| {
             Visualization::Unknown {
-                data: serde_json::Value::String(visualization_type.clone()),
+                data,
                 visualization_type,
             }
         }),

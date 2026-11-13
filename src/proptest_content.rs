@@ -10,9 +10,9 @@ pub(super) fn arb_resolution() -> impl Strategy<Value = Resolution> {
         Just(Resolution::High),
         Just(Resolution::UltraHigh),
         // Unknown variant with arbitrary string value
-        unknown_or(Resolution::Low, |s| Resolution::Unknown {
-            resolution_type: s.clone(),
-            data: serde_json::Value::String(s),
+        unknown_or(Resolution::Low, |s, data| Resolution::Unknown {
+            resolution_type: s,
+            data,
         }),
     ]
 }
@@ -254,10 +254,10 @@ pub(super) fn arb_code_execution_language() -> impl Strategy<Value = CodeExecuti
         Just(CodeExecutionLanguage::Python),
         Just(CodeExecutionLanguage::Bash),
         // Unknown variant with preserved data
-        unknown_or(CodeExecutionLanguage::Python, |language_type| {
+        unknown_or(CodeExecutionLanguage::Python, |language_type, data| {
             CodeExecutionLanguage::Unknown {
-                language_type: language_type.clone(),
-                data: serde_json::Value::String(language_type),
+                language_type,
+                data,
             }
         }),
     ]
@@ -389,12 +389,14 @@ proptest! {
     #[test]
     fn annotation_roundtrip(annotation in arb_annotation()) {
         assert_value_roundtrip(&annotation)?;
+        assert_first_write_keeps(&annotation)?;
     }
 
     /// Test that Content roundtrips stably through JSON.
     #[test]
     fn content_roundtrip(content in arb_content()) {
         assert_value_roundtrip(&content)?;
+        assert_first_write_keeps(&content)?;
     }
 
     /// Test that unknown Annotation types are preserved through a roundtrip.
