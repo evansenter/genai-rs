@@ -353,25 +353,23 @@ fn test_only_the_main_trajectorys_last_backend_failure_names_the_turns() {
     );
     // The last of several failures on the main trajectory counts.
     assert_eq!(
-        failure_after(&[failed.clone(), system_error_step("root", None, 3, 500)]),
+        failure_after(&[failed, system_error_step("root", None, 3, 500)]),
         TurnFailure::ModelBackend { status: 500 }
     );
-    // A step with no index has no place in the trajectory to compare
-    // (PR #560 review): a failure on one is not kept, and a later step
-    // without one does not clear a failure that was.
+    // Proto3 JSON omits a zero, so a step with no index is step 0: a
+    // failure there is kept, and a later step clears it as any does.
     let unindexed_503: StepUpdate = serde_json::from_value(serde_json::json!({
         "trajectoryId": "root", "state": "STATE_ERROR", "source": "SOURCE_SYSTEM",
         "error": {"errorMessage": "Agent execution terminated due to error.", "httpCode": 503}
     }))
     .unwrap();
-    assert_eq!(failure_after(&[unindexed_503]), TurnFailure::Trajectory);
-    let unindexed_model: StepUpdate = serde_json::from_value(serde_json::json!({
-        "trajectoryId": "root", "state": "STATE_ACTIVE", "source": "SOURCE_MODEL"
-    }))
-    .unwrap();
     assert_eq!(
-        failure_after(&[failed, unindexed_model]),
+        failure_after(std::slice::from_ref(&unindexed_503)),
         TurnFailure::ModelBackend { status: 503 }
+    );
+    assert_eq!(
+        failure_after(&[unindexed_503, later_step(1)]),
+        TurnFailure::Trajectory
     );
 }
 
