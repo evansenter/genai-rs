@@ -6,9 +6,12 @@
 //! read through `tests/common/source_scan.rs` (D-068). A `with_*` body that
 //! pushes, inserts, extends or appends onto a collection it reaches through
 //! `self` appends, so it is an `add_*`; an `add_*` body that assigns a whole
-//! field through `self` replaces, so it is a `with_*`. #504's I-10 renamed
-//! two that had slipped in: `AgentBuilder::with_tool_service`, which pushed,
-//! and `CreateFileSearchStoreRequest::with_extra`, which inserted. A method
+//! field through `self` replaces, so it is a `with_*`. Either reaches
+//! `self` directly (`self.tools.push(..)`) or through a name the body binds
+//! to a part of it (`env` in `if let Stdio { env, .. } = &mut
+//! self.transport`). #504's I-10 renamed two that had slipped in:
+//! `AgentBuilder::with_tool_service`, which pushed, and
+//! `CreateFileSearchStoreRequest::with_extra`, which inserted. A method
 //! that follows the convention another way is named in `EXCEPTIONS` with
 //! the reason.
 
@@ -99,23 +102,29 @@ fn setters_follow_the_with_and_add_convention() {
 
 /// What breaks the convention in a setter's body: for `with_*`, a call
 /// that grows a collection reached through `self`; for `add_*`, an
-/// assignment to a field of `self`. `None` when the body keeps it.
+/// assignment to a field of `self`, or through a binding of one. `None`
+/// when the body keeps it.
 fn violation(name: &str, body: &syn::Block) -> Option<String> {
-    #[derive(Default)]
-    struct Scan {
+    struct Scan<'a> {
+        bound: &'a BTreeSet<String>,
         appends: Vec<String>,
         assigns: Vec<String>,
     }
-    impl<'ast> Visit<'ast> for Scan {
+    impl<'ast> Visit<'ast> for Scan<'_> {
         fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
             let method = call.method.to_string();
-            if APPENDS.contains(&method.as_str()) && rooted_at_self(&call.receiver) {
+            if APPENDS.contains(&method.as_str()) && rooted_at_self(&call.receiver, self.bound) {
                 self.appends.push(format!(".{method}(..)"));
             }
             visit::visit_expr_method_call(self, call);
         }
         fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
-            if matches!(&*assign.left, syn::Expr::Field(_)) && rooted_at_self(&assign.left) {
+            let whole = match &*assign.left {
+                syn::Expr::Field(_) => true,
+                syn::Expr::Unary(unary) => matches!(unary.op, syn::UnOp::Deref(_)),
+                _ => false,
+            };
+            if whole && rooted_at_self(&assign.left, self.bound) {
                 self.assigns.push("a field assigned whole".to_string());
             }
             visit::visit_expr_assign(self, assign);
@@ -123,7 +132,12 @@ fn violation(name: &str, body: &syn::Block) -> Option<String> {
         // A nested item has a `self` of its own.
         fn visit_item(&mut self, _: &'ast syn::Item) {}
     }
-    let mut scan = Scan::default();
+    let bound = self_bindings(body);
+    let mut scan = Scan {
+        bound: &bound,
+        appends: Vec::new(),
+        assigns: Vec::new(),
+    };
     scan.visit_block(body);
     if name.starts_with("with_") {
         scan.appends.first().cloned()
@@ -132,17 +146,104 @@ fn violation(name: &str, body: &syn::Block) -> Option<String> {
     }
 }
 
-/// Whether an expression reaches its value through `self`: `self.x`,
-/// `self.x.y`, `self.x.get_or_insert_with(..)`, `&mut self.x`.
-fn rooted_at_self(expr: &syn::Expr) -> bool {
+/// The names a body binds to a part of `self`, so a call or an assignment
+/// through one reaches `self` as `self.x.push(..)` does: a `let`, an
+/// `if let` or `while let`, a `match` arm or a `for` loop whose value is
+/// rooted at `self` (`let v = self.x.get_or_insert_with(Vec::new)`,
+/// `if let Transport::Stdio { env, .. } = &mut self.transport`), and the
+/// parameters of a closure passed to a method called on one
+/// (`self.x.iter_mut().for_each(|v| ..)`), followed through bindings of
+/// bindings. Scopes are not tracked: a name bound to `self` anywhere in the
+/// body counts everywhere in it.
+fn self_bindings(body: &syn::Block) -> BTreeSet<String> {
+    struct Bind<'a> {
+        bound: &'a mut BTreeSet<String>,
+    }
+    impl Bind<'_> {
+        fn bind(&mut self, pat: &syn::Pat, value: &syn::Expr) {
+            if rooted_at_self(value, self.bound) {
+                pattern_names(pat, self.bound);
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for Bind<'_> {
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            if let Some(init) = &local.init {
+                self.bind(&local.pat, &init.expr);
+            }
+            visit::visit_local(self, local);
+        }
+        fn visit_expr_let(&mut self, expr: &'ast syn::ExprLet) {
+            self.bind(&expr.pat, &expr.expr);
+            visit::visit_expr_let(self, expr);
+        }
+        fn visit_expr_match(&mut self, expr: &'ast syn::ExprMatch) {
+            for arm in &expr.arms {
+                self.bind(&arm.pat, &expr.expr);
+            }
+            visit::visit_expr_match(self, expr);
+        }
+        fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
+            self.bind(&expr.pat, &expr.expr);
+            visit::visit_expr_for_loop(self, expr);
+        }
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if rooted_at_self(&call.receiver, self.bound) {
+                for arg in &call.args {
+                    if let syn::Expr::Closure(closure) = arg {
+                        for input in &closure.inputs {
+                            pattern_names(input, self.bound);
+                        }
+                    }
+                }
+            }
+            visit::visit_expr_method_call(self, call);
+        }
+        fn visit_item(&mut self, _: &'ast syn::Item) {}
+    }
+    let mut bound = BTreeSet::new();
+    loop {
+        let before = bound.len();
+        Bind { bound: &mut bound }.visit_block(body);
+        if bound.len() == before {
+            return bound;
+        }
+    }
+}
+
+/// Every name a pattern binds (`env` in `Transport::Stdio { env, .. }`,
+/// `map` in `Value::Object(ref mut map)`).
+fn pattern_names(pat: &syn::Pat, out: &mut BTreeSet<String>) {
+    struct Names<'a>(&'a mut BTreeSet<String>);
+    impl<'ast> Visit<'ast> for Names<'_> {
+        fn visit_pat_ident(&mut self, ident: &'ast syn::PatIdent) {
+            self.0.insert(ident.ident.to_string());
+            visit::visit_pat_ident(self, ident);
+        }
+    }
+    Names(out).visit_pat(pat);
+}
+
+/// Whether an expression reaches its value through `self` or a name bound
+/// to a part of it ([`self_bindings`]): `self.x`, `self.x.y`,
+/// `self.x.get_or_insert_with(..)`, `&mut self.x`, `env` after
+/// `if let Stdio { env, .. } = &mut self.transport`.
+fn rooted_at_self(expr: &syn::Expr, bound: &BTreeSet<String>) -> bool {
     match expr {
-        syn::Expr::Path(path) => path.path.is_ident("self"),
-        syn::Expr::Field(field) => rooted_at_self(&field.base),
-        syn::Expr::MethodCall(call) => rooted_at_self(&call.receiver),
-        syn::Expr::Reference(reference) => rooted_at_self(&reference.expr),
-        syn::Expr::Paren(paren) => rooted_at_self(&paren.expr),
-        syn::Expr::Index(index) => rooted_at_self(&index.expr),
-        syn::Expr::Unary(unary) => rooted_at_self(&unary.expr),
+        syn::Expr::Path(path) => {
+            path.qself.is_none()
+                && path
+                    .path
+                    .get_ident()
+                    .is_some_and(|ident| ident == "self" || bound.contains(&ident.to_string()))
+        }
+        syn::Expr::Field(field) => rooted_at_self(&field.base, bound),
+        syn::Expr::MethodCall(call) => rooted_at_self(&call.receiver, bound),
+        syn::Expr::Reference(reference) => rooted_at_self(&reference.expr, bound),
+        syn::Expr::Paren(paren) => rooted_at_self(&paren.expr, bound),
+        syn::Expr::Index(index) => rooted_at_self(&index.expr, bound),
+        syn::Expr::Unary(unary) => rooted_at_self(&unary.expr, bound),
+        syn::Expr::Try(attempt) => rooted_at_self(&attempt.expr, bound),
         _ => false,
     }
 }
@@ -187,6 +288,71 @@ fn the_scan_detects_what_it_claims_to() {
                 self
             }
         }
+        impl McpServer {
+            // Appends through a binding of a self field, in each form.
+            pub fn with_env(mut self, key: String, value: String) -> Self {
+                if let McpTransport::Stdio { env, .. } = &mut self.transport {
+                    env.insert(key, value);
+                }
+                self
+            }
+            pub fn with_header(mut self, key: String, value: String) -> Self {
+                match &mut self.transport {
+                    McpTransport::Http { headers, .. } => {
+                        headers.insert(key, value);
+                    }
+                    McpTransport::Stdio { .. } => {}
+                }
+                self
+            }
+            pub fn with_tool(mut self, tool: String) -> Self {
+                let tools = self.tools.get_or_insert_with(Vec::new);
+                let all = tools;
+                all.push(tool);
+                self
+            }
+            pub fn with_property(mut self, name: String, schema: Value) -> Self {
+                if let Value::Object(ref mut map) = self.properties {
+                    map.insert(name, schema);
+                }
+                self
+            }
+            pub fn with_arg(mut self, arg: String) -> Self {
+                for list in self.arg_lists.iter_mut() {
+                    list.push(arg.clone());
+                }
+                self.groups.iter_mut().for_each(|group| group.push(arg.clone()));
+                self
+            }
+            // A with_ that binds a self field and replaces it keeps the
+            // convention; so does one that pushes onto a local of its own.
+            pub fn with_timeout(mut self, timeout: u64) -> Self {
+                let config = self.config.get_or_insert_with(Config::default);
+                config.timeout = Some(timeout);
+                let mut local = Vec::new();
+                local.push(timeout);
+                self
+            }
+            // An add_ that replaces through a binding.
+            pub fn add_url(mut self, url: String) -> Self {
+                if let McpTransport::Http { url: slot, .. } = &mut self.transport {
+                    *slot = url;
+                }
+                self
+            }
+            pub fn add_port(mut self, port: u16) -> Self {
+                let config = self.config.get_or_insert_with(Config::default);
+                config.port = port;
+                self
+            }
+            // An add_ that appends through a binding keeps it.
+            pub fn add_env(mut self, key: String, value: String) -> Self {
+                if let McpTransport::Stdio { env, .. } = &mut self.transport {
+                    env.insert(key, value);
+                }
+                self
+            }
+        }
         "#,
     )
     .unwrap();
@@ -208,6 +374,13 @@ fn the_scan_detects_what_it_claims_to() {
             "AgentBuilder::with_tool",
             "AgentBuilder::add_model",
             "CreateFileSearchStoreRequest::with_extra",
+            "McpServer::with_env",
+            "McpServer::with_header",
+            "McpServer::with_tool",
+            "McpServer::with_property",
+            "McpServer::with_arg",
+            "McpServer::add_url",
+            "McpServer::add_port",
         ]
     );
 }
