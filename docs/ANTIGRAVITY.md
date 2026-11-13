@@ -21,7 +21,7 @@ Enable the feature:
 
 ```toml
 [dependencies]
-genai-rs = { version = "0.13", features = ["antigravity"] }
+genai-rs = { version = "0.14", features = ["antigravity"] }
 ```
 
 Install the harness binary (it ships inside the platform-specific wheel):
