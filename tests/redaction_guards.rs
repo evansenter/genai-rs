@@ -5,13 +5,20 @@
 //! - `src/redact.rs` holds the crate's one placeholder and its helpers. A
 //!   string literal anywhere else in the library's non-test code that
 //!   spells a placeholder (`"[REDACTED]"`, or any other that says
-//!   "redacted") fails `the_placeholder_lives_in_redact_rs`: an impl prints
+//!   "redacted"), in an expression, a macro's arguments or an attribute
+//!   (`#[error("..")]`) but not a doc comment, fails
+//!   `the_placeholder_lives_in_redact_rs`: an impl prints
 //!   `redact::REDACTED` or goes through a `redact` helper.
 //! - A type that derives `Debug` over a field the `LOUD_WIRE` printer
 //!   redacts (its `REDACT_FIELDS`, `REDACT_VALUES_BENEATH` and `ENV_FIELD`,
 //!   read from `src/wire/mod.rs` and matched in snake case, by field name
 //!   or `#[serde(rename)]`) fails `no_derived_debug_prints_a_secret_field`,
 //!   unless `NOT_SECRET` names it with the reason its value is not one.
+//!   The wire's `CONTEXT_REDACT_FIELD` (`value`) is not read: the wire
+//!   redacts it only beside `"type": "environment_variable"` or beneath an
+//!   `env`, and a field so named anywhere else is no secret. So a type that
+//!   holds an environment variable's value as a `value` is not found by
+//!   itself; one that derives `Debug` over the `env` holding it is.
 //!
 //! Both read the library's own source through `tests/common/source_scan.rs`
 //! (D-068): `src/` without its test-only files and items. Each scan tests
@@ -66,20 +73,36 @@ fn the_placeholder_lives_in_redact_rs() {
 }
 
 /// Every string literal in `file` that spells a placeholder, as
-/// `path: "literal"`: in expressions, patterns and consts, and in macro
-/// arguments (`format!`, `json!`), but not in attributes, which hold the
-/// doc comments that name the placeholder.
+/// `path: "literal"`: in expressions, patterns and consts, in macro
+/// arguments (`format!`, `json!`) and in attributes (`#[error("..")]`, a
+/// lint's `reason`), but not in doc comments, which name the placeholder.
 fn placeholders(rel: &str, file: &syn::File) -> Vec<String> {
-    /// The string literals in a macro's tokens, plain or raw, paired from
-    /// the left so a closing quote never opens one.
+    /// The string literals in a macro's or an attribute's tokens, plain or
+    /// raw, paired from the left so a closing quote never opens one.
     static QUOTED: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r#""(?:[^"\\]|\\.)*""#).unwrap());
     struct Scan<'a> {
         rel: &'a str,
         hits: Vec<String>,
     }
+    impl Scan<'_> {
+        fn tokens(&mut self, tokens: &str) {
+            for literal in QUOTED.find_iter(tokens) {
+                if literal.as_str().to_ascii_lowercase().contains("redacted") {
+                    self.hits
+                        .push(format!("{}: {}", self.rel, literal.as_str()));
+                }
+            }
+        }
+    }
     impl<'ast> Visit<'ast> for Scan<'_> {
-        fn visit_attribute(&mut self, _: &'ast syn::Attribute) {}
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            match &attr.meta {
+                syn::Meta::NameValue(nv) if nv.path.is_ident("doc") => {}
+                syn::Meta::List(list) => self.tokens(&list.tokens.to_string()),
+                _ => visit::visit_attribute(self, attr),
+            }
+        }
         fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
             let value = literal.value();
             if value.to_ascii_lowercase().contains("redacted") {
@@ -87,13 +110,7 @@ fn placeholders(rel: &str, file: &syn::File) -> Vec<String> {
             }
         }
         fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-            let tokens = mac.tokens.to_string();
-            for literal in QUOTED.find_iter(&tokens) {
-                if literal.as_str().to_ascii_lowercase().contains("redacted") {
-                    self.hits
-                        .push(format!("{}: {}", self.rel, literal.as_str()));
-                }
-            }
+            self.tokens(&mac.tokens.to_string());
             visit::visit_macro(self, mac);
         }
     }
@@ -114,6 +131,14 @@ fn the_placeholder_scan_detects_what_it_claims_to() {
         fn in_a_macro() -> String { format!("key: {}", "REDACTED") }
         fn raw() -> &'static str { r#"[Redacted]"# }
         fn fine() -> &'static str { crate::redact::REDACTED }
+        #[derive(Debug, thiserror::Error)]
+        #[error("harness key: [REDACTED]")]
+        struct InAnAttribute;
+        #[must_use = "a placeholder: <REDACTED>"]
+        fn in_a_name_value() {}
+        #[doc = "Prints [REDACTED]."]
+        #[doc(hidden)]
+        fn documented() {}
         #[cfg(test)]
         mod tests {
             fn test_only() -> &'static str { "[REDACTED]" }
@@ -125,8 +150,15 @@ fn the_placeholder_scan_detects_what_it_claims_to() {
     file.items
         .retain(|item| !source_scan::is_test_gated(source_scan::item_attrs(item)));
     let hits = placeholders("src/x.rs", &file);
-    assert_eq!(hits.len(), 4, "{hits:#?}");
-    for value in ["[REDACTED]", "<redacted>", "REDACTED", "[Redacted]"] {
+    assert_eq!(hits.len(), 6, "{hits:#?}");
+    for value in [
+        "[REDACTED]",
+        "<redacted>",
+        "REDACTED",
+        "[Redacted]",
+        "harness key: [REDACTED]",
+        "a placeholder: <REDACTED>",
+    ] {
         assert!(
             hits.iter().any(|hit| hit.ends_with(&format!("{value:?}"))),
             "{value}: {hits:#?}"
