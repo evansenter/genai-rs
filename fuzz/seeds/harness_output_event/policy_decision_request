@@ -1,0 +1,1 @@
+{"seqNum":"4","policyDecisionRequest":{"requestId":"r1","ruleId":"rule","toolArgs":{"toolName":"run_command","argumentsJson":"{}"},"reason":"why"}}

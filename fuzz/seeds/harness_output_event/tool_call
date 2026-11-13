@@ -1,0 +1,1 @@
+{"seqNum": "1", "toolCall": {"id": "abc", "name": "get_weather", "argumentsJson": "{\"city\":\"SF\"}"}}

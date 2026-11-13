@@ -63,6 +63,49 @@ where
     Ok(())
 }
 
+/// Asserts that the first write keeps the value: what it writes reads back
+/// equal to the value, once that is put through the differences the fuzz
+/// round trip allows ([`crate::__fuzz::Normalize`]). A value written in the
+/// wrong form, such as a non-string unknown written as its `<non-string:
+/// ...>` type (J-11), reads back as a different value whose own writes are
+/// stable, so [`assert_value_roundtrip`] alone does not see it.
+fn assert_first_write_keeps<T>(value: &T) -> Result<(), TestCaseError>
+where
+    T: Clone
+        + std::fmt::Debug
+        + PartialEq
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + crate::__fuzz::Normalize,
+{
+    let json = serde_json::to_value(value).expect("Serialization should succeed");
+    let restored: T = serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+    let mut expected = value.clone();
+    expected.normalize();
+    prop_assert_eq!(expected, restored, "written as {}", json);
+    Ok(())
+}
+
+/// [`assert_first_write_keeps`] for an [`InteractionInput`], where its
+/// value reads back as the same arm. A content list holding an unknown
+/// block reads back as steps instead, as the reader types a list by its
+/// blocks' tags: that is the only arm change allowed.
+fn assert_input_first_write_keeps(input: &InteractionInput) -> Result<(), TestCaseError> {
+    let json = serde_json::to_value(input).expect("Serialization should succeed");
+    let restored: InteractionInput =
+        serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+    if std::mem::discriminant(input) == std::mem::discriminant(&restored) {
+        assert_first_write_keeps(input)
+    } else {
+        prop_assert!(
+            matches!(input, InteractionInput::Content(contents) if contents.iter().any(Content::is_unknown)),
+            "read back as another arm: {}",
+            json
+        );
+        Ok(())
+    }
+}
+
 // =============================================================================
 // Strategy Generators for Arbitrary Types
 // =============================================================================
@@ -178,21 +221,52 @@ fn arb_datetime() -> impl Strategy<Value = DateTime<Utc>> {
 // Their Unknown arms go through `unknown_or`: under `genai_strict_unknown` an
 // unknown value fails to deserialize, so the arm yields a known value instead.
 
-/// The Unknown arm of a string-enum strategy (see above).
+/// The Unknown arm of a string-enum strategy (see above): `unknown` builds
+/// the variant from its type and data, as `wire_enum!` reads them from
+/// [`arb_wire_unknown`]'s values.
 fn unknown_or<T: Clone + std::fmt::Debug + 'static>(
     known: T,
-    unknown: impl Fn(String) -> T + 'static,
+    unknown: impl Fn(String, serde_json::Value) -> T + 'static,
 ) -> BoxedStrategy<T> {
     #[cfg(not(genai_strict_unknown))]
     {
         let _ = known;
-        arb_unknown_type().prop_map(unknown).boxed()
+        arb_wire_unknown()
+            .prop_map(move |(wire, data)| unknown(wire, data))
+            .boxed()
     }
     #[cfg(genai_strict_unknown)]
     {
         let _ = unknown;
         Just(known).boxed()
     }
+}
+
+/// An unrecognized string-enum value as `wire_enum!` reads it, `(type,
+/// data)`: a string the crate does not know, typed as itself, or a value
+/// that is not a string at all (J-11), typed `<non-string: ...>` with its
+/// JSON as the data, which `Serialize` writes back.
+#[cfg(not(genai_strict_unknown))]
+fn arb_wire_unknown() -> impl Strategy<Value = (String, serde_json::Value)> {
+    prop_oneof![
+        3 => arb_unknown_type().prop_map(|wire| (wire.clone(), serde_json::Value::String(wire))),
+        1 => arb_non_string_unknown()
+            .prop_map(|data| (crate::wire_enum::non_string_descriptor(&data), data)),
+    ]
+}
+
+/// A JSON value that is not a string, where a string enum sits: a number, a
+/// bool, a list or an object. Never null, which an `Option` field reads as
+/// absent.
+#[cfg(not(genai_strict_unknown))]
+fn arb_non_string_unknown() -> impl Strategy<Value = serde_json::Value> {
+    prop_oneof![
+        any::<i64>().prop_map(serde_json::Value::from),
+        any::<bool>().prop_map(serde_json::Value::Bool),
+        prop::collection::vec(any::<i64>().prop_map(serde_json::Value::from), 0..3)
+            .prop_map(serde_json::Value::Array),
+        arb_unknown_object(),
+    ]
 }
 
 // One file per feature, beside this one (`src/proptest_<feature>.rs`); the

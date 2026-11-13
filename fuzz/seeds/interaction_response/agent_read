@@ -1,0 +1,1 @@
+{"id":"i2","status":"completed","agent":"antigravity","agent_config":{"type":"antigravity","model":"m","max_total_tokens":"50000"},"environment":{"type":"remote","environment_id":"e1","sources":[{"type":"inline","target":"/a","content":"x"}],"network":{"allowlist":[{"mode":"disabled"}]},"env":[{"A":{"value":"v"}}]},"environment_id":"e1","steps":[]}

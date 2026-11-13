@@ -7,3 +7,4 @@
 cc f68b3f2212ee1df5b2e0b588761e3c897befcde41321dfeeb83774959997d2bf # shrinks to payload = Contents([Video { data: None, uri: None, mime_type: None, resolution: Some(Unknown { resolution_type: "zz_0", data: String("zz_0") }), processing: None, name: None }])
 cc 7b13b8edfc956b9576814cac99de09f5ec29ce0ec9279badf51cbe3e14ed4706 # shrinks to delta = CodeExecutionCall { language: Some(Unknown { language_type: "zz_a", data: String("zz_a") }), code: None, signature: None }
 cc 77c3534386e297bbcbd1557ffb41d2126207e3c0ff5f85c4fb716d0c14bbdbb6 # shrinks to step = CodeExecutionCall { id: "a", language: Unknown { language_type: "zz_a", data: String("zz_a") }, code: "", signature: None }
+cc 68adcc0093804ad486d6a758848d6cc100ea55f25bbb2dd5a03efe26a9726bac # shrinks to step = CodeExecutionResult { call_id: "a", result: Contents([Unknown { content_type: "zz_0", data: Object {} }]), is_error: false, signature: None, extra: {} }

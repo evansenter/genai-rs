@@ -124,9 +124,10 @@ pub struct Trigger {
     /// prompt. [`CreateTriggerRequest`]'s send side stays strict.
     ///
     /// Interaction fields this crate does not model are kept in
-    /// [`InteractionRequest::extra`] and sent back on reuse. One roundtrip
-    /// asymmetry remains: a bare `[Content]` input re-serializes as a
-    /// `user_input` step.
+    /// [`InteractionRequest::extra`] and sent back on reuse. Two roundtrip
+    /// asymmetries remain: a bare `[Content]` input re-serializes as a
+    /// `user_input` step, and a single content or step object as a
+    /// one-element array (see [`InteractionInput`]).
     ///
     /// The server normalizes what it stores: a text input
     /// comes back as one `user_input` step, and the echo carries

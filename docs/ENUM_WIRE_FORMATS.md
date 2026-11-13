@@ -197,8 +197,8 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 | `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. `enabled`/`disabled` observed live 2026-07 |
 | `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only. Verified live 2026-07 (the validation error lists exactly these) |
 | `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | `inline` verified live 2026-07 |
-| `NetworkConfig` | string or object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit to allow all traffic. Both forms verified live 2026-07. `{"allowlist": "disabled"}` (`AllowlistDisabled`, the bindings' `Disabled` arm) is accepted too, echoed by a GET as `{"allowlist": [{"mode": "disabled"}]}`, which reads as `AllowlistDisabled` as well, and blocks egress like `"disabled"` (an agent's `curl` got the egress proxy's 403 under both, 200 with no network config; live 2026-11-05). `is_disabled()` is true for both |
-| `EnvironmentSpec` | string or object | `"env-123"` / `{"type": "remote", "sources": [...]}` | Both forms verified live 2026-07 on requests |
+| `NetworkConfig` | string or object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit to allow all traffic. Both forms verified live 2026-07. `{"allowlist": "disabled"}` (`AllowlistDisabled`, the bindings' `Disabled` arm) is accepted too, echoed by a GET as `{"allowlist": [{"mode": "disabled"}]}`, which reads as `AllowlistDisabled` as well, and blocks egress like `"disabled"` (an agent's `curl` got the egress proxy's 403 under both, 200 with no network config; live 2026-11-05). `is_disabled()` is true for both. With another key or entry beside it, the echo reads as `Allowlist`, its domain-less entry written back without a domain, as read |
+| `EnvironmentSpec` | string or object | `"env-123"` / `{"type": "remote", "sources": [...]}` | Both forms verified live 2026-07 on requests. An object with no `type` (or a null one) reads as remote; any other `type`, a non-string one included (`<non-string: 5>`), is kept whole as `Unknown` |
 | `ResponseFormat` | tagged by `"type"`, or a raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list. Verified live 2026-07; see [ResponseFormat](#responseformat) |
 | `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | The validation error lists exactly these (2026-07), but `delivery` is rejected for audio and image |
 | `VideoTask` | snake_case | `"text_to_video"`, ..., `"extend"` | Verified live 2026-07 via the validation error |
@@ -241,9 +241,13 @@ The two array forms are not equivalent. Probed live 2026-08-16
 | *empty* content | 400 `Missing input.` | 400 `Request has empty input.` |
 
 The wrap applies only to `InteractionRequest::input`.
-`InteractionResponse::input` re-serializes in the shape the server sent. A
-request's `Content` input therefore deserializes back as
-`Steps(vec![Step::user_input(..)])`, since the two are identical on the wire.
+`InteractionResponse::input` re-serializes in the shape the server sent,
+with one normalization: a single object (the spec's bare `Content` arm, or a
+single step, which the crate also reads) reads as a one-element list and is
+written back as a one-element array. The value is kept; only the array
+around it is added (D-NEXT-J7-a). A request's `Content` input deserializes
+back as `Steps(vec![Step::user_input(..)])`, since the two are identical on
+the wire.
 
 Content after history, `[...history, {"type": "user_input", "content":
 [...]}]`, is accepted, and the model answers from both (live 2026-11-06,
@@ -860,12 +864,15 @@ one entry for a single voice, one per `speaker` for multi-speaker TTS.
 | `{"speakers": [...]}` | `400 ... Expected an array, got object.` | accepted (mapped to `structured_speech_config`) |
 | bare `{voice, language}` | `400 ... Expected an array, got object.` | `400 Unknown parameter 'voice' at 'generation_config.structured_speech_config'` |
 
-The crate always **sends the list**. On deserialize it accepts all three
+The crate **sends the list**. On deserialize it accepts all three
 forms and normalizes them to a list, since a `GenerationConfig` nested in a
-`Trigger` may have been written by another SDK. For maintainers: the
-untagged `{"speakers": [...]}` arm must be tried before the single-object
-arm. Every `SpeechConfig` field is optional, so the single arm would match
-it and silently drop the speakers.
+`Trigger` may have been written by another SDK. The keys a
+`{"speakers": [...]}` form carries beside the list (none today) are kept in
+`GenerationConfig::speech_config_extra`, and while it holds one the config
+is written in that form, which the API accepts, so they go back out
+(D-NEXT-J7-b). For maintainers: the untagged `{"speakers": [...]}` arm must
+be tried before the single-object arm. Every `SpeechConfig` field is
+optional, so the single arm would match it and silently drop the speakers.
 
 ### Audio response (TTS output)
 

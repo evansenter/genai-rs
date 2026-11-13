@@ -153,6 +153,12 @@ impl TurnContent {
 /// back, and re-serializing server data into a shape the server did not
 /// send would work against the Evergreen roundtrip principle.
 ///
+/// One shape is normalized on the way in: a single object, the spec's bare
+/// `Content` arm (or a single step, which is read too), deserializes as a
+/// one-element [`Content`](Self::Content) or [`Steps`](Self::Steps), so it
+/// is written back as a one-element array. The value survives; only the
+/// array around it is new (D-NEXT-J7-a).
+///
 /// # Example
 ///
 /// ```
@@ -289,7 +295,8 @@ pub(crate) fn input_from_value(value: serde_json::Value) -> Result<InteractionIn
             }
         }
         other @ serde_json::Value::Object(_) => {
-            // A single content or step object.
+            // A single content or step object, read as a one-element list
+            // and so written back as one (D-NEXT-J7-a).
             let is_content = other
                 .get("type")
                 .and_then(|t| t.as_str())

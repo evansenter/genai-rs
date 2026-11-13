@@ -1,0 +1,1 @@
+{"status":"completed","input":{"type":"text","text":"hi"},"generation_config":{"speech_config":{"speakers":[{"voice":"Kore"}],"multi_speaker_mode":"x"},"temperature":1e39},"environment":{"type":5}}

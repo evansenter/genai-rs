@@ -693,12 +693,14 @@ proptest! {
     #[test]
     fn step_roundtrip(step in arb_step()) {
         assert_value_roundtrip(&step)?;
+        assert_first_write_keeps(&step)?;
     }
 
     /// Test that StepDelta roundtrips stably through JSON.
     #[test]
     fn step_delta_roundtrip(delta in arb_step_delta()) {
         assert_value_roundtrip(&delta)?;
+        assert_first_write_keeps(&delta)?;
     }
 
     /// Test that unknown StepDelta types are preserved through a roundtrip
@@ -884,4 +886,25 @@ fn recorded_seed_code_execution_step_with_unknown_language_roundtrips() {
         extra: Default::default(),
     };
     assert_value_roundtrip(&step).unwrap();
+}
+
+/// Seed `68adcc00` (`step_roundtrip`, once it checked the first write too):
+/// a code execution result whose content block is an unknown with no `type`
+/// in its data. The write puts the type in, as for every unknown block; the
+/// fuzz round trip's `Normalize` did not look inside this result.
+#[cfg(not(genai_strict_unknown))]
+#[test]
+fn recorded_seed_code_execution_result_with_unknown_content_keeps_its_value() {
+    let step = Step::CodeExecutionResult {
+        call_id: "a".to_string(),
+        result: CodeExecutionOutput::Contents(vec![Content::Unknown {
+            content_type: "zz_0".to_string(),
+            data: serde_json::json!({}),
+        }]),
+        is_error: false,
+        signature: None,
+        extra: Default::default(),
+    };
+    assert_value_roundtrip(&step).unwrap();
+    assert_first_write_keeps(&step).unwrap();
 }

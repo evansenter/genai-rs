@@ -14,11 +14,8 @@ pub(super) fn arb_thinking_level() -> impl Strategy<Value = ThinkingLevel> {
         Just(ThinkingLevel::Medium),
         Just(ThinkingLevel::High),
         // Unknown variant with preserved data
-        unknown_or(ThinkingLevel::Minimal, |level_type| {
-            ThinkingLevel::Unknown {
-                level_type: level_type.clone(),
-                data: serde_json::Value::String(level_type),
-            }
+        unknown_or(ThinkingLevel::Minimal, |level_type, data| {
+            ThinkingLevel::Unknown { level_type, data }
         }),
     ]
 }
@@ -29,10 +26,10 @@ pub(super) fn arb_thinking_summaries() -> impl Strategy<Value = ThinkingSummarie
         Just(ThinkingSummaries::Auto),
         Just(ThinkingSummaries::None),
         // Unknown variant with preserved data
-        unknown_or(ThinkingSummaries::Auto, |summaries_type| {
+        unknown_or(ThinkingSummaries::Auto, |summaries_type, data| {
             ThinkingSummaries::Unknown {
-                summaries_type: summaries_type.clone(),
-                data: serde_json::Value::String(summaries_type),
+                summaries_type,
+                data,
             }
         }),
     ]
@@ -46,9 +43,9 @@ pub(super) fn arb_service_tier() -> impl Strategy<Value = ServiceTier> {
         Just(ServiceTier::Priority),
         Just(ServiceTier::Deferred),
         // Unknown variant with preserved data
-        unknown_or(ServiceTier::Flex, |tier_type| ServiceTier::Unknown {
-            tier_type: tier_type.clone(),
-            data: serde_json::Value::String(tier_type),
+        unknown_or(ServiceTier::Flex, |tier_type, data| ServiceTier::Unknown {
+            tier_type,
+            data,
         }),
     ]
 }
@@ -74,11 +71,8 @@ pub(super) fn arb_image_aspect_ratio() -> impl Strategy<Value = ImageAspectRatio
         Just(ImageAspectRatio::Tall1x4),
         Just(ImageAspectRatio::Wide4x1),
         // Unknown variant with preserved data
-        unknown_or(ImageAspectRatio::Square, |ratio_type| {
-            ImageAspectRatio::Unknown {
-                ratio_type: ratio_type.clone(),
-                data: serde_json::Value::String(ratio_type),
-            }
+        unknown_or(ImageAspectRatio::Square, |ratio_type, data| {
+            ImageAspectRatio::Unknown { ratio_type, data }
         }),
     ]
 }
@@ -90,9 +84,9 @@ pub(super) fn arb_image_size() -> impl Strategy<Value = ImageSize> {
         Just(ImageSize::Hd2k),
         Just(ImageSize::Uhd4k),
         // Unknown variant with preserved data
-        unknown_or(ImageSize::Sd512, |size_type| ImageSize::Unknown {
-            size_type: size_type.clone(),
-            data: serde_json::Value::String(size_type),
+        unknown_or(ImageSize::Sd512, |size_type, data| ImageSize::Unknown {
+            size_type,
+            data,
         }),
     ]
 }
@@ -258,6 +252,10 @@ pub(crate) fn arb_generation_config() -> impl Strategy<Value = GenerationConfig>
                 thinking_summaries,
                 tool_choice,
                 speech_config,
+                // The `{"speakers": [...]}` form's keys are not the crate's,
+                // and the request oracle samples this strategy; they get a
+                // property of their own.
+                speech_config_extra: serde_json::Map::new(),
                 image_config,
                 video_config,
                 transcription_config,
@@ -274,9 +272,8 @@ pub(super) fn arb_video_task() -> impl Strategy<Value = VideoTask> {
         Just(VideoTask::ReferenceToVideo),
         Just(VideoTask::Edit),
         Just(VideoTask::Extend),
-        unknown_or(VideoTask::TextToVideo, |task_type| VideoTask::Unknown {
-            data: serde_json::Value::String(task_type.clone()),
-            task_type,
+        unknown_or(VideoTask::TextToVideo, |task_type, data| {
+            VideoTask::Unknown { data, task_type }
         }),
     ]
 }
@@ -330,9 +327,9 @@ pub(super) fn arb_harm_category() -> impl Strategy<Value = HarmCategory> {
         Just(HarmCategory::ImageHarassment),
         Just(HarmCategory::ImageSexuallyExplicit),
         Just(HarmCategory::Jailbreak),
-        unknown_or(HarmCategory::HateSpeech, |category_type| {
+        unknown_or(HarmCategory::HateSpeech, |category_type, data| {
             HarmCategory::Unknown {
-                data: serde_json::Value::String(category_type.clone()),
+                data,
                 category_type,
             }
         }),
@@ -346,9 +343,9 @@ pub(super) fn arb_safety_threshold() -> impl Strategy<Value = SafetyThreshold> {
         Just(SafetyThreshold::BlockOnlyHigh),
         Just(SafetyThreshold::BlockNone),
         Just(SafetyThreshold::Off),
-        unknown_or(SafetyThreshold::BlockLowAndAbove, |threshold_type| {
+        unknown_or(SafetyThreshold::BlockLowAndAbove, |threshold_type, data| {
             SafetyThreshold::Unknown {
-                data: serde_json::Value::String(threshold_type.clone()),
+                data,
                 threshold_type,
             }
         }),
@@ -359,11 +356,8 @@ pub(super) fn arb_safety_method() -> impl Strategy<Value = SafetyMethod> {
     prop_oneof![
         Just(SafetyMethod::Severity),
         Just(SafetyMethod::Probability),
-        unknown_or(SafetyMethod::Severity, |method_type| {
-            SafetyMethod::Unknown {
-                data: serde_json::Value::String(method_type.clone()),
-                method_type,
-            }
+        unknown_or(SafetyMethod::Severity, |method_type, data| {
+            SafetyMethod::Unknown { data, method_type }
         }),
     ]
 }
@@ -386,9 +380,9 @@ pub(super) fn arb_response_delivery() -> impl Strategy<Value = ResponseDelivery>
     prop_oneof![
         Just(ResponseDelivery::Inline),
         Just(ResponseDelivery::Uri),
-        unknown_or(ResponseDelivery::Inline, |delivery_type| {
+        unknown_or(ResponseDelivery::Inline, |delivery_type, data| {
             ResponseDelivery::Unknown {
-                data: serde_json::Value::String(delivery_type.clone()),
+                data,
                 delivery_type,
             }
         }),
@@ -466,9 +460,9 @@ pub(super) fn arb_visualization() -> impl Strategy<Value = Visualization> {
     prop_oneof![
         Just(Visualization::Off),
         Just(Visualization::Auto),
-        unknown_or(Visualization::Off, |visualization_type| {
+        unknown_or(Visualization::Off, |visualization_type, data| {
             Visualization::Unknown {
-                data: serde_json::Value::String(visualization_type.clone()),
+                data,
                 visualization_type,
             }
         }),
@@ -524,10 +518,12 @@ proptest! {
         prop_assert_eq!(config, restored);
     }
 
-    /// Test that TurnContent roundtrips stably through JSON.
+    /// Test that TurnContent roundtrips through JSON: stably, and to the
+    /// value it was written from.
     #[test]
     fn turn_content_roundtrip(content in arb_turn_content()) {
         assert_value_roundtrip(&content)?;
+        assert_first_write_keeps(&content)?;
     }
 
     /// Test that AgentConfig roundtrips correctly through JSON.
@@ -538,11 +534,48 @@ proptest! {
         prop_assert_eq!(config, restored);
     }
 
-    /// Test that GenerationConfig roundtrips stably through JSON.
-    /// Uses Value comparison since GenerationConfig doesn't derive PartialEq (contains floats).
+    /// Test that GenerationConfig roundtrips through JSON: stably, and to
+    /// the value it was written from (its non-string unknowns included).
     #[test]
     fn generation_config_roundtrip(config in arb_generation_config()) {
         assert_value_roundtrip(&config)?;
+        let json = serde_json::to_value(&config).expect("Serialization should succeed");
+        let restored: GenerationConfig =
+            serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+        // An unknown `tool_choice` reads back typed by its shape, which the
+        // strategy does not mirror; its data must match.
+        let mut expected = config;
+        if let (Some(ToolChoice::Unknown { data: sent, .. }), Some(ToolChoice::Unknown { data: read, .. })) =
+            (&expected.tool_choice, &restored.tool_choice)
+        {
+            prop_assert_eq!(sent, read);
+            expected.tool_choice.clone_from(&restored.tool_choice);
+        }
+        prop_assert_eq!(expected, restored, "written as {}", json);
+    }
+
+    /// A `speech_config` read in its `{"speakers": [...]}` form with keys
+    /// beside the list is written back in that form, with them (D-001).
+    #[test]
+    fn generation_config_speakers_form_roundtrip(
+        mut config in arb_generation_config(),
+        speakers in proptest::collection::vec(arb_speech_config(), 0..3),
+        beside in arb_unknown_object(),
+    ) {
+        config.speech_config = Some(speakers);
+        config.speech_config_extra = beside
+            .as_object()
+            .expect("an object")
+            .iter()
+            .filter(|(key, _)| key.as_str() != "speakers")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let json = serde_json::to_value(&config).expect("Serialization should succeed");
+        let restored: GenerationConfig =
+            serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+        prop_assert_eq!(&restored.speech_config_extra, &config.speech_config_extra);
+        prop_assert_eq!(&restored.speech_config, &config.speech_config);
+        prop_assert_eq!(serde_json::to_value(&restored).expect("re-serializes"), json);
     }
 
     /// Test that VideoTask roundtrips correctly through JSON.
@@ -602,10 +635,12 @@ proptest! {
         prop_assert_eq!(spec, restored);
     }
 
-    /// Test that InteractionInput roundtrips stably through JSON.
+    /// Test that InteractionInput roundtrips through JSON: stably, and to
+    /// the value it was written from where it reads back as the same arm.
     #[test]
     fn interaction_input_roundtrip(input in arb_interaction_input()) {
         assert_value_roundtrip(&input)?;
+        assert_input_first_write_keeps(&input)?;
 
         // Text input must stay Text (arrays/objects never look like strings)
         if matches!(input, InteractionInput::Text(_)) {

@@ -117,7 +117,11 @@ impl AntigravityAgent {
                     return;
                 }
             };
-            if matches!(event.payload, Some(OutputPayload::SessionEndResponse(_))) {
+            if event
+                .payload
+                .as_ref()
+                .is_some_and(OutputPayload::is_session_end_response)
+            {
                 return;
             }
             match tokio::time::timeout_at(deadline, self.process_event(event, &mut state)).await {

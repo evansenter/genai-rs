@@ -1,0 +1,1 @@
+{"name":"triggers/t1","cron_schedule":"0 * * * *","time_zone":"UTC","interaction":{"model":"m","input":[{"type":"user_input","content":[{"type":"text","text":"hi"}]}],"store":true,"object":"interaction"},"status":"active","max_consecutive_failures":5,"create_time":"2026-11-05T09:46:00.085265+00:00"}
