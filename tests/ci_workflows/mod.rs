@@ -20,9 +20,9 @@
 //! runs before it, the release gate, every live nextest step, the scripted
 //! harness step, the sweep's two) are read by `escapes`: no `if:` but the
 //! one a caller allows, no `continue-on-error` or `needs:`, on the step or
-//! its job, no other shell, and no shell-level mask (`shell_masks`: `||
-//! true`, `; true`, `set +e`, `exit 0` and the like; a script of more than
-//! one line starts with `set -euo pipefail`, and every step that pipes
+//! its job, no other shell, and no shell-level mask (`shell_masks`:
+//! `|| true`, `; true`, `set +e`, `exit 0` and the like; a script of more
+//! than one line starts with `set -euo pipefail`, and every step that pipes
 //! nextest does).
 //!
 //! The workflows are YAML that only runs in CI, so a regression in how they
@@ -531,15 +531,17 @@ fn shell_masks(step: &str) -> Vec<String> {
                 .split(|c: char| c.is_whitespace() || c == ';' || c == ')')
                 .next()
                 .unwrap_or("");
+            let kept = rc_exits || (rc_listed && failed_exits);
             let why = match word {
                 "true" | ":" => Some("which passes a failing command"),
-                "echo" | "printf" => Some("a handler that only prints, which passes a failing command"),
+                "echo" | "printf" => Some("a handler that only prints, so the failure passes"),
                 "exit" | "[" | "[[" => None,
-                _ if handler.starts_with("rc=$?") => (!(rc_exits || (rc_listed && failed_exits)))
-                    .then_some("which keeps the status, but the script never exits with it (`exit \"$rc\"`)"),
-                _ if handler.starts_with("failed+=(") => (!failed_exits).then_some(
-                    "which lists the failure, but no non-empty list exits 1",
-                ),
+                _ if handler.starts_with("rc=$?") => {
+                    (!kept).then_some("which keeps the status, but the script never exits with it")
+                }
+                _ if handler.starts_with("failed+=(") => {
+                    (!failed_exits).then_some("but no non-empty list of failures exits 1")
+                }
                 _ => Some("a handler the guard does not know to fail the step"),
             };
             if let Some(why) = why {

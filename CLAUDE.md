@@ -388,8 +388,8 @@ wheel's protos with `python3`).
   checks both, along with fail-fast, beta, the Windows PR leg and the
   cross-platform steps, the macOS PR job, the skip-marker budget (whose
   over-budget branch must fail its step, each budget pinned with its
-  reason), the coverage floor (its one command) and its library-only
-  pattern, the steps the flakiness report counts (no offline test of the
+  reason), the coverage floor (one command, nothing else in its step) and
+  its library-only pattern, the steps the flakiness report counts (no offline test of the
   retry helper runs in them), that no `if:` (but the live steps' owner
   gate), `continue-on-error`, `needs:` or shell-level mask (`|| true`,
   `; true`, `set +e`, `exit 0`; `set -euo pipefail` first in a longer

@@ -567,10 +567,10 @@ library file; that the floor step runs `cargo llvm-cov report --workspace
 --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
 nothing else; and that nothing the workflow guards know of skips it or
 passes its failure: an `if:`, `continue-on-error` or `needs:` on the step
-or its job, a shell other than bash, or a shell-level mask such as `||
-true`, `; true`, `set +e` or `exit 0`. The coverage runs before it are held
-to the same, so a failing test fails the job rather than leaving a figure
-from a partial run.
+or its job, a shell other than bash, or a shell-level mask such as
+`|| true`, `; true`, `set +e` or `exit 0`. The coverage runs before it are
+held to the same, so a failing test fails the job rather than leaving a
+figure from a partial run.
 
 ## Coverage oracle
 
