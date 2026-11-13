@@ -669,6 +669,13 @@ impl AntigravityAgent {
                 tracing::warn!("Failed to send halt request while {why}: {e}");
                 return false;
             }
+            Err(_) if deadline < budget => {
+                tracing::warn!(
+                    "The harness did not take the halt request before the turn's deadline \
+                     while {why}."
+                );
+                return false;
+            }
             Err(_) => {
                 tracing::warn!(
                     "The harness did not take the halt request within {HALT_DRAIN_BUDGET:?} \

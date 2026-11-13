@@ -338,35 +338,51 @@ async fn test_a_turn_timeout_too_large_for_the_clock_runs_without_a_deadline() {
     stalled.finish().await;
 }
 
-#[tokio::test]
-async fn test_halting_an_earlier_turn_counts_against_the_turn_deadline() {
+#[test]
+fn test_halting_an_earlier_turn_counts_against_the_turn_deadline() {
     // J-12: the halt-and-drain before a turn ran on its own five-second
     // budget ahead of the deadline. Now a deadline that comes first cuts it
     // short, and the turn's message is not sent past it.
     let turn_timeout = Duration::from_secs(3);
-    let mut stalled =
-        Stalled::spawn(AntigravityAgent::builder().with_turn_timeout(turn_timeout)).await;
-    let agent = &mut stalled.agent;
-    // An earlier turn never ended, and the harness does not take the halt.
-    agent.turn_unfinished = true;
-    let releaser = hold_the_sink(agent, Duration::from_secs(20)).await;
-    let started = tokio::time::Instant::now();
-    let result = tokio::time::timeout(GUARD, agent.chat("hi"))
-        .await
-        .expect("chat gives up rather than hanging");
-    let elapsed = started.elapsed();
-    assert!(timed_out_at(&result, turn_timeout), "{result:?}");
-    let Err(AntigravityError::Timeout { operation, .. }) = &result else {
-        unreachable!()
-    };
-    assert!(
-        operation.contains("before the message was sent"),
-        "{operation}"
-    );
-    assert!(
-        elapsed >= turn_timeout && elapsed < turn_timeout + Duration::from_secs(1),
-        "{elapsed:?}"
-    );
-    releaser.await.unwrap();
-    stalled.finish().await;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let logged = crate::test_subscriber::capture_messages(|| {
+        runtime.block_on(async {
+            let mut stalled =
+                Stalled::spawn(AntigravityAgent::builder().with_turn_timeout(turn_timeout)).await;
+            let agent = &mut stalled.agent;
+            // An earlier turn never ended, and the harness does not take
+            // the halt.
+            agent.turn_unfinished = true;
+            let releaser = hold_the_sink(agent, Duration::from_secs(20)).await;
+            let started = tokio::time::Instant::now();
+            let result = tokio::time::timeout(GUARD, agent.chat("hi"))
+                .await
+                .expect("chat gives up rather than hanging");
+            let elapsed = started.elapsed();
+            assert!(timed_out_at(&result, turn_timeout), "{result:?}");
+            let Err(AntigravityError::Timeout { operation, .. }) = &result else {
+                unreachable!()
+            };
+            assert!(
+                operation.contains("before the message was sent"),
+                "{operation}"
+            );
+            assert!(
+                elapsed >= turn_timeout && elapsed < turn_timeout + Duration::from_secs(1),
+                "{elapsed:?}"
+            );
+            releaser.await.unwrap();
+            stalled.finish().await;
+        });
+    });
+    // The warning names the bound that ran out: the turn's deadline, not
+    // the drain's own five seconds.
+    let halt = logged
+        .iter()
+        .find(|m| m.contains("did not take the halt request"))
+        .unwrap_or_else(|| panic!("no halt warning: {logged:?}"));
+    assert!(halt.contains("the turn's deadline"), "{halt}");
 }
