@@ -497,8 +497,9 @@ fn live_execution_list_parses() {
 
 #[test]
 fn run_response_is_an_empty_execution() {
-    // `POST .../executions` answers `{}` (live 2026-11-01); `run` must
-    // still return Ok, with every field unset.
+    // `POST .../executions` answered `{}` (live 2026-11-01), and since
+    // 2026-11-09 answers with the ended run's execution; an empty answer
+    // must still parse, with every field unset.
     let execution: TriggerExecution = serde_json::from_str("{}").unwrap();
     assert_eq!(execution, TriggerExecution::default());
 }

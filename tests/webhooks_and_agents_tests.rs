@@ -1318,47 +1318,46 @@ async fn test_trigger_lifecycle() {
         assert_eq!(renamed.display_name.as_deref(), Some(renamed_to.as_str()));
         assert_eq!(renamed.status, Some(TriggerStatus::Paused));
         // Run now, while paused: a manual run doesn't need an active
-        // schedule. The API answers `{}` (live 2026-11-01), so the firing is
-        // found through the executions listing.
-        let run = client.triggers().run(&trigger_id).await.expect("run");
-        println!("run returned: {run:?}");
-        let mut execution = None;
-        for _ in 0..36 {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let executions: Vec<genai_rs::TriggerExecution> = client
-                .triggers()
-                .list_executions(&trigger_id)
-                .items()
-                .try_collect()
-                .await
-                .expect("list_executions");
-            if let Some(e) = executions.into_iter().next() {
-                if let Some(id) = &e.interaction_id {
-                    *fired.lock().unwrap() = Some(id.clone());
-                }
-                if e.status != Some(TriggerExecutionStatus::InProgress) {
-                    execution = Some(e);
-                    break;
-                }
-            }
+        // schedule. The API holds the request until the run ends and answers
+        // with its execution (live 2026-11-13; it answered `{}` on
+        // 2026-11-01), which the executions listing then lists.
+        let execution = client.triggers().run(&trigger_id).await.expect("run");
+        println!("run returned: {execution:?}");
+        if let Some(id) = &execution.interaction_id {
+            *fired.lock().unwrap() = Some(id.clone());
         }
-        let execution = execution.expect("the run did not finish within 180s");
-        println!("Execution: {execution:?}");
         assert_eq!(execution.trigger_id.as_deref(), Some(trigger_id.as_str()));
-        assert!(execution.id.is_some() && execution.start_time.is_some());
+        let execution_id = execution.id.clone().expect("the run's execution has an id");
+        assert!(execution.start_time.is_some() && execution.end_time.is_some());
         assert!(
-            execution.status.as_ref().is_some_and(|s| !s.is_unknown()),
-            "unrecognized execution status: {:?}",
+            execution
+                .status
+                .as_ref()
+                .is_some_and(|s| !s.is_unknown() && *s != TriggerExecutionStatus::InProgress),
+            "run answered before the run ended, or with an unrecognized status: {:?}",
             execution.status
         );
         if execution.status == Some(TriggerExecutionStatus::Completed) {
             assert!(execution.interaction_id.is_some());
+            assert!(execution.environment_id.is_some());
         }
         assert!(
             execution.extra.is_empty(),
             "unmodeled: {:?}",
             execution.extra
         );
+        let executions: Vec<genai_rs::TriggerExecution> = client
+            .triggers()
+            .list_executions(&trigger_id)
+            .items()
+            .try_collect()
+            .await
+            .expect("list_executions");
+        let listed = executions
+            .iter()
+            .find(|e| e.id.as_deref() == Some(execution_id.as_str()))
+            .unwrap_or_else(|| panic!("the run's execution is not listed: {executions:?}"));
+        assert_eq!(listed, &execution, "the listing and the run disagree");
 
         let resumed = client
             .triggers()
@@ -1418,16 +1417,45 @@ async fn test_trigger_lifecycle() {
     let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
 
     // Best effort: the run stores an interaction and creates an environment.
-    let fired = fired
+    // The executions listing names both too, so a run whose answer was lost,
+    // or that answered without its execution (`{}`, as on 2026-11-01), is
+    // cleaned up as well; one still in progress is waited for, up to 180 s.
+    let mut fired: std::collections::BTreeSet<String> = fired
         .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(id) = fired {
-        let _ = client.interactions().delete(&id).await;
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .into_iter()
+        .collect();
+    let mut environments = std::collections::BTreeSet::new();
+    for _ in 0..36 {
+        let Ok(executions) = client
+            .triggers()
+            .list_executions(&trigger_id)
+            .items()
+            .try_collect::<Vec<genai_rs::TriggerExecution>>()
+            .await
+        else {
+            break;
+        };
+        fired.extend(executions.iter().filter_map(|e| e.interaction_id.clone()));
+        environments.extend(executions.iter().filter_map(|e| e.environment_id.clone()));
+        if !executions
+            .iter()
+            .any(|e| e.status == Some(TriggerExecutionStatus::InProgress))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    for id in &fired {
+        let _ = client.interactions().delete(id).await;
     }
     if let Ok(trigger) = client.triggers().get(&trigger_id).await
         && let Some(env) = trigger.environment_id
     {
-        let _ = client.environments().delete(&env).await;
+        environments.insert(env);
+    }
+    for env in &environments {
+        let _ = client.environments().delete(env).await;
     }
     let trigger_deleted = client.triggers().delete(&trigger_id).await;
     let agent_deleted = client.agents().delete(&agent_id).await;

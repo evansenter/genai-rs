@@ -1002,6 +1002,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pageToken`, the camelCase pair the Files API and google-genai's bindings
   use (#541); they sent `page_size` and `page_token`, which the API also
   accepts, so paging behaves as before.
+- `Triggers::run` returns the run's `TriggerExecution`, filled in, once the
+  run has ended (#549). The API used to answer `{}` at once, and the docs
+  said the execution was empty and had to be found with `list_executions`;
+  it now holds the request until the run ends, up to the trigger's
+  `execution_timeout_seconds` (at most 600), and answers with the
+  execution, whose `status` says how the run ended (verified live
+  2026-11-13). The signature is unchanged. A client timeout shorter than
+  the run ends the call with an error while the run goes on, and
+  `list_executions` still lists it.
 
 ### Fixed
 
