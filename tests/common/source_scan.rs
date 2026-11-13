@@ -156,3 +156,34 @@ fn type_name(ty: &syn::Type) -> Option<String> {
         _ => None,
     }
 }
+
+/// Every file directly in `dir`, or at any depth when `deep`, whose
+/// extension is one of `extensions`, in path order. Fails as
+/// [`rust_files`] does on a scan root that does not exist or a directory
+/// that cannot be read.
+pub fn files_with_extensions(dir: &Path, extensions: &[&str], deep: bool) -> Vec<PathBuf> {
+    fn walk(dir: &Path, extensions: &[&str], deep: bool, out: &mut Vec<PathBuf>) {
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|e| panic!("could not read an entry of {}: {e}", dir.display()))
+                .path();
+            if path.is_dir() {
+                if deep {
+                    walk(&path, extensions, deep, out);
+                }
+            } else if path
+                .extension()
+                .is_some_and(|ext| extensions.iter().any(|want| ext == *want))
+            {
+                out.push(path);
+            }
+        }
+    }
+    assert!(dir.is_dir(), "scan root {} does not exist", dir.display());
+    let mut out = Vec::new();
+    walk(dir, extensions, deep, &mut out);
+    out.sort();
+    out
+}

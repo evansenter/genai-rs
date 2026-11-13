@@ -1057,10 +1057,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recipe, now on `InteractionRequest` alone, bounds its attempts and waits
   with jitter or for the server's `Retry-After`, capped, as
   `docs/RELIABILITY.md` does. The background poll in
-  `docs/AGENTS_AND_BACKGROUND.md` ended on the first transient error and
-  checked its deadline only between requests; it now polls through a
-  retryable error, honoring `Retry-After`, and bounds each request by the
-  time left. Copy the change into a loop built from either.
+  `docs/AGENTS_AND_BACKGROUND.md`, and `examples/deep_research.rs`, which
+  runs it, ended on the first transient error and checked the deadline
+  only between requests; both now poll through a retryable error, honoring
+  `Retry-After`, and bound each request by the time left. Copy the change
+  into a loop built from any of them.
 - Docs that said more than holds: `with_labels` said labels are echoed on
   the response, but only a stored interaction read back with
   `interactions().get` carries them; the retry predicate in

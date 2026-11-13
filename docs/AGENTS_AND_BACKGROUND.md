@@ -60,7 +60,8 @@ let interaction_id = response.id.expect("stored interaction has an id");
 
 Runs take minutes, and the duration varies widely with the question. Get the
 result through [webhooks](#webhooks) or [polling](#polling), not a long
-request timeout. `examples/deep_research.rs` is runnable.
+request timeout. `examples/deep_research.rs` runs the [polling](#polling)
+loop below, and cancels the run when its budget runs out.
 
 ## Custom agents (`/v1beta/agents`)
 
@@ -491,7 +492,9 @@ async fn poll_until_done(
 }
 ```
 
-The crate's own `wait_until_active` polls a file or document the same way
+`examples/deep_research.rs` runs this loop, returning `None` rather than
+an error at the deadline so it can cancel the run. The crate's own
+`wait_until_active` polls a file or document the same way
 ([Reliability](RELIABILITY.md#waiting-for-a-file-or-document)).
 
 | Status | Meaning |

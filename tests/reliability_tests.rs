@@ -3,8 +3,9 @@
 //! after its terminal event, and `Retry-After` and the retryable statuses in
 //! a poll. See `docs/RELIABILITY.md`; one test checks that its backon recipe
 //! matches `examples/retry_with_backoff.rs`, and another that every retry
-//! or poll loop the docs show bounds its attempts, sleeps between them and
-//! honors `Retry-After`.
+//! or poll loop the docs and examples show bounds its attempts, sleeps
+//! between them, honors `Retry-After` without overflow, caps its delay and,
+//! bounded by a count, adds jitter.
 //!
 //! The paused-clock tests do real localhost I/O. Tokio advances a paused
 //! clock to the next timer whenever the runtime is idle, even while I/O is
@@ -27,6 +28,8 @@
 )]
 
 mod common;
+#[path = "common/source_scan.rs"]
+mod source_scan;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -1020,108 +1023,488 @@ fn doc_blocks(path: &str, text: &str) -> Vec<DocBlock> {
     blocks
 }
 
-/// What a retry or poll loop in `block` lacks, if it calls
-/// `is_retryable()` in a loop: a bound on its attempts, a sleep between
-/// them, and a read of the server's `retry_after()`. The bound is in the
-/// loop itself: an attempt count compared with a maximum and incremented,
-/// or a comparison with the deadline (a deadline declared above the loop,
-/// or named in a string, is none). Comments, string literals and
-/// doctest-hidden lines (`# ...`) don't count. `None` when the block has no
-/// such loop.
-fn retry_loop_problems(block: &DocBlock) -> Option<Vec<&'static str>> {
-    let code: Vec<String> = block
-        .lines
-        .iter()
-        .map(|line| line.split("//").next().unwrap_or_default().trim())
-        .filter(|line| !(line.starts_with("# ") || *line == "#"))
-        .map(|line| {
-            // Each string literal's text blanked, its quotes kept.
-            let mut out = String::new();
-            for (k, piece) in line.split('"').enumerate() {
-                if k > 0 {
-                    out.push('"');
+/// A block's code, one entry per line: comments dropped, each string
+/// literal's text blanked (its quotes kept), and doctest-hidden lines
+/// (`# ...`) left empty. A string or a block comment may span lines; a
+/// char literal's quote (`'"'`) opens no string.
+fn code_lines(lines: &[String]) -> Vec<String> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum In {
+        Code,
+        Str,
+        Raw(usize),
+        Comment(usize),
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut state = In::Code;
+    let mut out = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if state == In::Code && (trimmed.starts_with("# ") || trimmed == "#") {
+            out.push(String::new());
+            continue;
+        }
+        let chars: Vec<char> = line.chars().collect();
+        let at = |k: usize| chars.get(k).copied();
+        let mut code = String::new();
+        let mut k = 0;
+        while k < chars.len() {
+            let c = chars[k];
+            match state {
+                In::Comment(depth) if c == '*' && at(k + 1) == Some('/') => {
+                    state = if depth == 1 {
+                        In::Code
+                    } else {
+                        In::Comment(depth - 1)
+                    };
+                    k += 2;
                 }
-                if k % 2 == 0 {
-                    out.push_str(piece);
+                In::Comment(depth) if c == '/' && at(k + 1) == Some('*') => {
+                    state = In::Comment(depth + 1);
+                    k += 2;
+                }
+                In::Str if c == '\\' => k += 2,
+                In::Str if c == '"' => {
+                    code.push('"');
+                    state = In::Code;
+                    k += 1;
+                }
+                In::Raw(hashes) if c == '"' && (1..=hashes).all(|h| at(k + h) == Some('#')) => {
+                    code.push('"');
+                    state = In::Code;
+                    k += 1 + hashes;
+                }
+                In::Comment(_) | In::Str | In::Raw(_) => k += 1,
+                In::Code => {
+                    let starts_word = k == 0 || !ident(chars[k - 1]);
+                    let hashes = chars[k + 1..].iter().take_while(|h| **h == '#').count();
+                    if c == '/' && at(k + 1) == Some('/') {
+                        break;
+                    } else if c == '/' && at(k + 1) == Some('*') {
+                        state = In::Comment(1);
+                        k += 2;
+                    } else if c == '"' {
+                        code.push('"');
+                        state = In::Str;
+                        k += 1;
+                    } else if c == 'r' && starts_word && at(k + 1 + hashes) == Some('"') {
+                        code.push('"');
+                        state = In::Raw(hashes);
+                        k += 2 + hashes;
+                    } else if c == '\'' && at(k + 1) == Some('\\') {
+                        // `'\n'`, `'\''`, `'\u{7b}'`: to the closing quote.
+                        let close = (k + 3..chars.len()).find(|&j| chars[j] == '\'');
+                        code.push_str("' '");
+                        k = close.map_or(chars.len(), |j| j + 1);
+                    } else if c == '\'' && at(k + 2) == Some('\'') {
+                        code.push_str("' '");
+                        k += 3;
+                    } else {
+                        code.push(c);
+                        k += 1;
+                    }
                 }
             }
-            out
-        })
-        .collect();
-    let retries = code.iter().position(|line| line.contains("is_retryable"))?;
-    let opens = code[..retries].iter().position(|line| {
-        line.contains("loop {") || line.starts_with("while ") || line.starts_with("for ")
-    })?;
-    let body = &code[opens..];
-    let mut problems = Vec::new();
-    let compares = |line: &str| {
-        [">=", "<=", " > ", " < "]
-            .iter()
-            .any(|op| line.contains(op))
-    };
-    // `for attempt in 0..MAX`, or a count checked and incremented.
-    let ranged = body[0].starts_with("for ") && body[0].contains("..");
-    let counted = ranged
-        || (body
-            .iter()
-            .any(|line| line.contains("attempt") && line.contains(" < "))
-            && body
-                .iter()
-                .any(|line| line.contains("attempt") && line.contains("+= ")));
-    let timed = body
-        .iter()
-        .any(|line| line.contains("deadline") && compares(line));
-    if !(counted || timed) {
-        problems.push("does not bound its attempts by a count or a deadline");
+        }
+        out.push(code);
     }
-    if !code.iter().any(|line| line.contains("sleep(")) {
-        problems.push("does not sleep between attempts");
-    }
-    if !code.iter().any(|line| line.contains("retry_after()")) {
-        problems.push("ignores the server's retry_after()");
-    }
-    Some(problems)
+    out
 }
 
-/// Every Markdown file at the top level and under `docs/`, and every `.rs`
-/// file under the library crates' sources: repository-relative path and
-/// text.
-fn doc_sources() -> Vec<(String, String)> {
-    fn walk(root: &std::path::Path, dir: &str, deep: bool, out: &mut Vec<(String, String)>) {
-        for entry in std::fs::read_dir(root.join(dir)).unwrap() {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            let relative = if dir.is_empty() {
-                name
-            } else {
-                format!("{dir}/{name}")
-            };
-            if path.is_dir() {
-                if deep {
-                    walk(root, &relative, deep, out);
+/// Where a loop opens on `line`: the byte offset of its `loop`, `while` or
+/// `for`.
+fn loop_keyword(line: &str) -> Option<usize> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("while ") || trimmed.starts_with("for ") {
+        return Some(line.len() - trimmed.len());
+    }
+    // `loop {` alone, after `let x =` or `=>`, or after a label.
+    line.match_indices("loop {").map(|(at, _)| at).find(|&at| {
+        line[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+    })
+}
+
+/// The line that closes the loop whose keyword is at byte `at` of
+/// `code[start]`: where the braces that open after it, outside
+/// parentheses, balance again. `None` when no brace opens it (not Rust)
+/// or the block ends first.
+fn loop_end(code: &[String], start: usize, at: usize) -> Option<usize> {
+    let (mut braces, mut parens) = (0usize, 0usize);
+    for (k, line) in code.iter().enumerate().skip(start) {
+        let text = if k == start { &line[at..] } else { line };
+        for c in text.chars() {
+            match c {
+                '(' | '[' => parens += 1,
+                ')' | ']' => parens = parens.saturating_sub(1),
+                '{' if braces > 0 || parens == 0 => braces += 1,
+                '}' if braces > 0 => {
+                    braces -= 1;
+                    if braces == 0 {
+                        return Some(k);
+                    }
                 }
-            } else if relative.ends_with(".md") || (deep && relative.ends_with(".rs")) {
-                out.push((relative, std::fs::read_to_string(&path).unwrap()));
+                _ => {}
             }
         }
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut found = Vec::new();
-    walk(root, "", false, &mut found);
-    for dir in ["docs", "src", "genai-rs-macros/src"] {
-        walk(root, dir, true, &mut found);
+    None
+}
+
+/// `code[k]` from byte `at` on, with the lines after it joined while the
+/// statement goes on (the text so far ends in none of `;`, `,`, `{`, `}`),
+/// at most four.
+fn statement_from(code: &[String], k: usize, at: usize) -> String {
+    let mut text = code[k][at..].trim_end().to_string();
+    for next in code.iter().skip(k + 1).take(4) {
+        if text.ends_with([';', ',', '{', '}']) {
+            break;
+        }
+        text.push(' ');
+        text.push_str(next.trim());
     }
+    text
+}
+
+/// Whether the `.get(` at byte `at` of `code[k]` is awaited before its
+/// statement ends: a status request, not a map lookup.
+fn awaited(code: &[String], k: usize, at: usize) -> bool {
+    let text = statement_from(code, k, at);
+    let end = text.find([';', '{', '}']).unwrap_or(text.len());
+    text[..end].contains(".await")
+}
+
+/// The identifiers in `text`, method and type names included.
+fn identifiers(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| word.starts_with(|c: char| c.is_alphabetic() || c == '_'))
+}
+
+/// Every assignment in `code`, as `(name, right side)`: `let [mut] name[:
+/// T] = rhs`, `name = rhs` (after a match arm's `=>` too) and `name op=
+/// rhs`, recorded as `name op rhs`. The right side runs to the end of its
+/// statement.
+fn assignments(code: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (k, line) in code.iter().enumerate() {
+        let from = line.rfind("=> ").map_or(0, |at| at + 3);
+        let statement = line[from..].trim_start();
+        let statement = statement.strip_prefix("let ").map_or(statement, |rest| {
+            rest.trim_start_matches("mut ").trim_start()
+        });
+        let name: String = statement
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !name.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+            continue;
+        }
+        let rest = statement[name.len()..].trim_start();
+        let (op, rhs) = if let Some(rhs) = rest.strip_prefix("= ") {
+            ("", rhs)
+        } else if let Some((op, rhs)) = ["+=", "-=", "*=", "/=", "<<="]
+            .iter()
+            .find_map(|op| Some((op.trim_end_matches('='), rest.strip_prefix(op)?)))
+        {
+            (op, rhs)
+        } else if rest.starts_with(':') && !rest.starts_with("::") {
+            match rest.split_once(" = ") {
+                Some((_, rhs)) => ("", rhs),
+                None => continue,
+            }
+        } else {
+            continue;
+        };
+        let at = line.len() - rhs.len();
+        let rhs = statement_from(code, k, at);
+        let rhs = rhs.trim_end_matches([';', ',']).trim();
+        out.push(if op.is_empty() {
+            (name, rhs.to_string())
+        } else {
+            (name.clone(), format!("{name} {op} {rhs}"))
+        });
+    }
+    out
+}
+
+/// Whether `expr`, the time a loop sleeps, has a ceiling: a `.min(` on it,
+/// or on each value it is built from. A delay that grows (`*`, `<<`,
+/// `.pow(`) has none, nor has the server's `retry_after()` unless the loop
+/// compares its wait with a deadline (`timed`).
+fn capped(expr: &str, assigned: &[(String, String)], timed: bool, seen: &mut Vec<String>) -> bool {
+    if expr.contains(".min(") {
+        return true;
+    }
+    if [" * ", "<<", ".pow(", "_mul("]
+        .iter()
+        .any(|growth| expr.contains(growth))
+        || (!timed && expr.contains("retry_after"))
+    {
+        return false;
+    }
+    identifiers(expr).all(|name| {
+        if seen.iter().any(|s| s == name) {
+            return true;
+        }
+        seen.push(name.to_string());
+        assigned
+            .iter()
+            .filter(|(n, _)| n == name)
+            .all(|(_, rhs)| capped(rhs, assigned, timed, seen))
+    })
+}
+
+/// The names that hold a value built from `retry_after()` with no `.min(`
+/// on the way: a server's `Retry-After` can be as large as `u64::MAX`
+/// seconds.
+fn uncapped_retry_after(assigned: &[(String, String)]) -> Vec<&str> {
+    let mut held: Vec<&str> = Vec::new();
+    loop {
+        let before = held.len();
+        for (name, rhs) in assigned {
+            if !held.contains(&name.as_str())
+                && !rhs.contains(".min(")
+                && (rhs.contains("retry_after") || identifiers(rhs).any(|id| held.contains(&id)))
+            {
+                held.push(name);
+            }
+        }
+        if held.len() == before {
+            return held;
+        }
+    }
+}
+
+/// Whether `line` adds `name` to something, or something to it, with `+`
+/// (which panics on overflow, for an `Instant` and a `Duration` alike).
+fn adds(line: &str, name: &str) -> bool {
+    line.match_indices(name).any(|(at, _)| {
+        let before = &line[..at];
+        let after = &line[at + name.len()..];
+        let whole = !before.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.')
+            && !after.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+        let before = before.trim_end();
+        whole
+            && (before.ends_with('+')
+                || before.ends_with("+=")
+                || after.trim_start().starts_with('+'))
+    })
+}
+
+const UNBOUNDED: &str = "does not bound its attempts by a count or a deadline";
+const NO_SLEEP: &str = "does not sleep between attempts";
+const DEAF: &str = "ignores the server's retry_after()";
+const GIVES_UP: &str = "ends on the first transient error: it never checks is_retryable()";
+const STALLS: &str = "does not bound each request by the time left (timeout(left, ..))";
+const UNCAPPED: &str = "does not cap its delay with .min()";
+const OVERFLOWS: &str =
+    "adds an uncapped retry_after() with +, which panics on a Retry-After too large to add";
+const NO_JITTER: &str = "has no jitter, so clients that failed together retry together";
+
+/// One retry or poll loop in a block: its first line (and that line's
+/// index in the block), and what it lacks.
+#[derive(Debug)]
+struct RetryLoop {
+    line: usize,
+    head: String,
+    problems: Vec<&'static str>,
+}
+
+/// The retry and poll loops in `block`, and what each lacks.
+///
+/// A retry or poll loop is one that calls `is_retryable()`, `sleep(` or
+/// an awaited `.get(` (a status request) itself, not in a loop nested in
+/// it; a `for` over a collection counts only through `is_retryable()`.
+/// Each must:
+///
+/// - bound its attempts in the loop itself: an attempt count compared with
+///   a maximum and incremented, or a comparison with a deadline or an
+///   `elapsed()` (a deadline only declared above the loop, or named in a
+///   string, is none);
+/// - sleep between attempts;
+/// - when it sends requests, read the server's `retry_after()`, and retry
+///   what `is_retryable()` says to rather than end on the first transient
+///   error, as a `?` on the request does;
+/// - when a deadline bounds a poll, bound each request by the time left
+///   (`timeout(`);
+/// - cap the delay it sleeps: growth or a `retry_after()` reaches the sleep
+///   through a `.min(`, except that a deadline loop may wait as long as the
+///   server asks, since it compares the wait with the time left;
+/// - never add an uncapped `retry_after()` with `+`;
+/// - when a count bounds it, add jitter.
+///
+/// Comments, string literals and doctest-hidden lines (`# ...`) don't
+/// count.
+fn retry_loops(block: &DocBlock) -> Vec<RetryLoop> {
+    #[derive(Clone, Copy, Default)]
+    struct Calls {
+        retries: bool,
+        sleeps: bool,
+        polls: bool,
+    }
+    let code = code_lines(&block.lines);
+    let loops: Vec<(usize, usize, usize)> = code
+        .iter()
+        .enumerate()
+        .filter_map(|(k, line)| {
+            let at = loop_keyword(line)?;
+            Some((k, at, loop_end(&code, k, at)?))
+        })
+        .collect();
+    let mut calls = vec![Calls::default(); loops.len()];
+    for (k, line) in code.iter().enumerate() {
+        let found = Calls {
+            retries: line.contains("is_retryable"),
+            sleeps: line.contains("sleep("),
+            polls: line
+                .match_indices(".get(")
+                .any(|(at, _)| awaited(&code, k, at)),
+        };
+        let innermost = loops
+            .iter()
+            .enumerate()
+            .filter(|(_, (start, _, end))| (*start..=*end).contains(&k))
+            .max_by_key(|(_, (start, ..))| *start);
+        if let Some((n, _)) = innermost {
+            calls[n].retries |= found.retries;
+            calls[n].sleeps |= found.sleeps;
+            calls[n].polls |= found.polls;
+        }
+    }
+    let assigned = assignments(&code);
+    let held = uncapped_retry_after(&assigned);
+    loops
+        .iter()
+        .zip(calls)
+        .filter_map(|(&(start, at, end), calls)| {
+            let head = code[start][at..].trim();
+            let ranged = head.starts_with("for ") && head.contains("..");
+            let over_items = head.starts_with("for ") && !ranged;
+            if !(calls.retries || !over_items && (calls.sleeps || calls.polls)) {
+                return None;
+            }
+            let body = &code[start..=end];
+            let has = |text: &str| body.iter().any(|line| line.contains(text));
+            let compares = |line: &str| {
+                [">=", "<=", " > ", " < "]
+                    .iter()
+                    .any(|op| line.contains(op))
+            };
+            let counted = ranged
+                || (body
+                    .iter()
+                    .any(|line| line.contains("attempt") && line.contains(" < "))
+                    && body
+                        .iter()
+                        .any(|line| line.contains("attempt") && line.contains("+= ")));
+            let timed = body.iter().any(|line| {
+                (line.contains("deadline") || line.contains("elapsed()")) && compares(line)
+            });
+            let requests = has("is_retryable") || calls.polls;
+            let sleeps: Vec<String> = body
+                .iter()
+                .enumerate()
+                .flat_map(|(k, line)| {
+                    line.match_indices("sleep(")
+                        .map(move |(at, _)| statement_from(body, k, at + "sleep(".len()))
+                })
+                .collect();
+            let mut problems = Vec::new();
+            if !(counted || timed) {
+                problems.push(UNBOUNDED);
+            }
+            if sleeps.is_empty() {
+                problems.push(NO_SLEEP);
+            }
+            if requests && !has("retry_after()") {
+                problems.push(DEAF);
+            }
+            if calls.polls && !has("is_retryable") {
+                problems.push(GIVES_UP);
+            }
+            if calls.polls && timed && !has("timeout(") {
+                problems.push(STALLS);
+            }
+            if !sleeps
+                .iter()
+                .all(|wait| capped(wait, &assigned, timed, &mut Vec::new()))
+            {
+                problems.push(UNCAPPED);
+            }
+            if body
+                .iter()
+                .any(|line| held.iter().any(|name| adds(line, name)))
+            {
+                problems.push(OVERFLOWS);
+            }
+            if counted
+                && !body.iter().any(|line| {
+                    let line = line.to_lowercase();
+                    line.contains("rand") || line.contains("jitter")
+                })
+            {
+                problems.push(NO_JITTER);
+            }
+            Some(RetryLoop {
+                line: start,
+                head: block.lines[start].trim().to_string(),
+                problems,
+            })
+        })
+        .collect()
+}
+
+/// Every Markdown file at the top level, and every Markdown and `.rs` file
+/// under `docs/`, `examples/` and the library crates' sources:
+/// repository-relative path and text.
+fn doc_sources() -> Vec<(String, String)> {
+    let root = source_scan::root();
+    let mut paths = source_scan::files_with_extensions(&root, &["md"], false);
+    for dir in ["docs", "examples", "src", "genai-rs-macros/src"] {
+        paths.extend(source_scan::files_with_extensions(
+            &root.join(dir),
+            &["md", "rs"],
+            true,
+        ));
+    }
+    let mut found: Vec<(String, String)> = paths
+        .iter()
+        .map(|path| {
+            (
+                source_scan::repo_relative(path),
+                std::fs::read_to_string(path).unwrap(),
+            )
+        })
+        .collect();
     found.sort();
     found
 }
 
-/// A retry or poll loop shown in the docs bounds its attempts, sleeps
-/// between them and honors the server's `Retry-After`, as
-/// `docs/RELIABILITY.md`'s recipe does: `InteractionRequest`'s rustdoc loop
-/// once retried at full speed with no bound, `Client::execute`'s ignored
-/// `retry_after`, and the background poll in `AGENTS_AND_BACKGROUND.md`
-/// ended on the first transient error. The poll bounds each status request
-/// by the time left, too.
+/// The code blocks of one source: an example's whole file, which is code;
+/// otherwise its fenced blocks ([`doc_blocks`]).
+fn scanned_blocks(path: &str, text: &str) -> Vec<DocBlock> {
+    if path.starts_with("examples/") && path.ends_with(".rs") {
+        vec![DocBlock {
+            at: format!("{path}:1"),
+            lines: text.lines().map(str::to_string).collect(),
+        }]
+    } else {
+        doc_blocks(path, text)
+    }
+}
+
+/// A retry or poll loop shown in the docs or an example bounds its
+/// attempts, sleeps between them, honors the server's `Retry-After`
+/// without overflow, caps its delay and, bounded by a count, adds jitter
+/// ([`retry_loops`]), as `docs/RELIABILITY.md`'s recipe does:
+/// `InteractionRequest`'s rustdoc loop once retried at full speed with no
+/// bound, `Client::execute`'s ignored `retry_after`, the background poll in
+/// `AGENTS_AND_BACKGROUND.md` ended on the first transient error, and
+/// `examples/deep_research.rs`, the poll's runnable form, did after the
+/// doc was fixed. The poll bounds each status request by the time left,
+/// too.
 #[test]
 fn every_retry_loop_in_the_docs_is_bounded_and_waits() {
     let mut loops = Vec::new();
@@ -1130,114 +1513,274 @@ fn every_retry_loop_in_the_docs_is_bounded_and_waits() {
         if path == "CHANGELOG.md" {
             continue;
         }
-        for block in doc_blocks(&path, &text) {
-            if let Some(lacks) = retry_loop_problems(&block) {
-                for lack in lacks {
-                    problems.push(format!("{}: the loop {lack}", block.at));
+        for block in scanned_blocks(&path, &text) {
+            let found = retry_loops(&block);
+            for each in &found {
+                for lack in &each.problems {
+                    problems.push(format!(
+                        "{} (its line {}): the loop `{}` {lack}",
+                        block.at,
+                        each.line + 1,
+                        each.head
+                    ));
                 }
+            }
+            if !found.is_empty() {
                 loops.push(block);
             }
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
     let at: Vec<&str> = loops.iter().map(|block| block.at.as_str()).collect();
-    for expected in ["src/request/mod.rs:", "docs/AGENTS_AND_BACKGROUND.md:"] {
+    for expected in [
+        "src/request/mod.rs:",
+        "docs/AGENTS_AND_BACKGROUND.md:",
+        "examples/deep_research.rs:",
+    ] {
         assert!(
             at.iter().any(|at| at.starts_with(expected)),
             "no retry loop found in {expected} {at:?}"
         );
     }
-    let poll = loops
-        .iter()
-        .find(|block| block.at.starts_with("docs/AGENTS_AND_BACKGROUND.md:"))
-        .unwrap();
-    let has = |text: &str| poll.lines.iter().any(|line| line.trim() == text);
-    assert!(
-        has("let left = deadline.saturating_duration_since(Instant::now());")
-            && poll
-                .lines
-                .iter()
-                .any(|line| line.contains("timeout(left, client.interactions().get(id))")),
-        "the poll bounds each status request by the time left:\n{}",
-        poll.lines.join("\n")
-    );
+    for source in [
+        "docs/AGENTS_AND_BACKGROUND.md:",
+        "examples/deep_research.rs:",
+    ] {
+        let poll = loops
+            .iter()
+            .find(|block| block.at.starts_with(source))
+            .unwrap();
+        let has = |text: &str| poll.lines.iter().any(|line| line.trim() == text);
+        assert!(
+            has("let left = deadline.saturating_duration_since(Instant::now());")
+                && poll
+                    .lines
+                    .iter()
+                    .any(|line| line.contains("timeout(left, client.interactions().get(id))")),
+            "{source} the poll bounds each status request by the time left:\n{}",
+            poll.lines.join("\n")
+        );
+    }
+}
+
+fn block(text: &str) -> DocBlock {
+    DocBlock {
+        at: "x".into(),
+        lines: text.lines().map(str::to_string).collect(),
+    }
+}
+
+/// The problems of the one retry or poll loop in `text`.
+fn problems(text: &str) -> Vec<&'static str> {
+    let found = retry_loops(&block(text));
+    assert_eq!(found.len(), 1, "{found:?}");
+    found.into_iter().next().unwrap().problems
 }
 
 /// The check flags each defect the old recipes had, and passes a loop
 /// that has none.
 #[test]
 fn the_retry_loop_check_finds_each_defect() {
-    let block = |text: &str| DocBlock {
-        at: "x".into(),
-        lines: text.lines().map(str::to_string).collect(),
-    };
-    let unbounded = block(
-        "let response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() => continue,\n        Err(e) => return Err(e.into()),\n    }\n};",
-    );
-    assert_eq!(
-        retry_loop_problems(&unbounded).unwrap(),
-        [
-            "does not bound its attempts by a count or a deadline",
-            "does not sleep between attempts",
-            "ignores the server's retry_after()"
-        ]
-    );
-    let deaf = block(
-        "let mut attempts = 0;\nlet response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() && attempts < 3 => {\n            attempts += 1;\n            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempts))).await;\n        }\n        Err(e) => return Err(e.into()),\n    }\n};",
-    );
-    assert_eq!(
-        retry_loop_problems(&deaf).unwrap(),
-        ["ignores the server's retry_after()"]
-    );
-    // A sleep or a retry_after only in a comment or a hidden line is none.
-    let hidden = block(
-        "loop {\n    // tokio::time::sleep(e.retry_after()) here\n    # tokio::time::sleep(d).await;\n    if attempt < MAX && e.is_retryable() {}\n    attempt += 1;\n}",
-    );
-    assert_eq!(
-        retry_loop_problems(&hidden).unwrap(),
-        [
-            "does not sleep between attempts",
-            "ignores the server's retry_after()"
-        ]
-    );
-    let sound = block(
-        "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n    attempt += 1;\n}",
-    );
-    assert_eq!(retry_loop_problems(&sound).unwrap(), Vec::<&str>::new());
-    let ranged = block(
-        "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n}",
-    );
-    assert_eq!(retry_loop_problems(&ranged).unwrap(), Vec::<&str>::new());
+    let unbounded = "let response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() => continue,\n        Err(e) => return Err(e.into()),\n    }\n};";
+    assert_eq!(problems(unbounded), [UNBOUNDED, NO_SLEEP, DEAF]);
+    let deaf = "let mut attempts = 0;\nlet response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() && attempts < 3 => {\n            attempts += 1;\n            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempts))).await;\n        }\n        Err(e) => return Err(e.into()),\n    }\n};";
+    assert_eq!(problems(deaf), [DEAF, UNCAPPED, NO_JITTER]);
+    // A sleep or a retry_after only in a comment, a string or a hidden
+    // line is none.
+    let hidden = "loop {\n    // tokio::time::sleep(e.retry_after()) here\n    /* sleep(e.retry_after()) */ let s = \"sleep(e.retry_after())\";\n    # tokio::time::sleep(d).await;\n    if attempt < MAX && e.is_retryable() {}\n    attempt += 1;\n}";
+    assert_eq!(problems(hidden), [NO_SLEEP, DEAF, NO_JITTER]);
+    let sound = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let jitter = step.mul_f64(random());\n        tokio::time::sleep(e.retry_after().unwrap_or(step + jitter).min(MAX_DELAY)).await;\n    }\n    attempt += 1;\n}";
+    assert_eq!(problems(sound), Vec::<&str>::new());
+    let ranged = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let delay = e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY);\n        tokio::time::sleep(delay).await;\n    }\n}";
+    assert_eq!(problems(ranged), Vec::<&str>::new());
     // A count that is checked but never incremented bounds nothing.
-    let stuck = block(
-        "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n}",
-    );
-    assert_eq!(
-        retry_loop_problems(&stuck).unwrap(),
-        ["does not bound its attempts by a count or a deadline"]
-    );
+    let stuck = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step).min(MAX_DELAY)).await;\n    }\n}";
+    assert_eq!(problems(stuck), [UNBOUNDED]);
+    // A count without jitter, and a server's wait taken whole.
+    let herd = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n}";
+    assert_eq!(problems(herd), [UNCAPPED, NO_JITTER]);
     // A poll bounded by its deadline compares with it inside the loop; a
     // deadline only declared above the loop, or named in an error
-    // message, bounds nothing.
+    // message, bounds nothing. A deadline loop may wait as long as the
+    // server asks, but not add that wait to a time.
     let poll = |check: &str| {
-        block(&format!(
+        format!(
             "async fn poll(deadline: Duration) {{\n    let deadline = Instant::now() + deadline;\n    loop {{\n        let left = Duration::from_secs(3600);\n        match timeout(left, get()).await {{\n            Err(_) => return Err(\"polling deadline exceeded\".into()),\n            Ok(Err(e)) if e.is_retryable() => wait = e.retry_after().unwrap_or(delay),\n            _ => {{}}\n        }}\n{check}        sleep(wait).await;\n    }}\n}}"
-        ))
+        )
     };
+    assert_eq!(problems(&poll("")), [UNBOUNDED, UNCAPPED]);
     assert_eq!(
-        retry_loop_problems(&poll("")).unwrap(),
-        ["does not bound its attempts by a count or a deadline"]
-    );
-    assert_eq!(
-        retry_loop_problems(&poll(
+        problems(&poll(
             "        if wait >= deadline.saturating_duration_since(Instant::now()) {\n            return Err(e);\n        }\n"
-        ))
-        .unwrap(),
+        )),
         Vec::<&str>::new()
     );
-    // is_retryable() outside a loop is not a retry loop.
-    assert!(
-        retry_loop_problems(&block("fn f(e: &GenaiError) -> bool { e.is_retryable() }")).is_none()
+    assert_eq!(
+        problems(&poll(
+            "        if Instant::now() + wait >= deadline {\n            return Err(e);\n        }\n"
+        )),
+        [OVERFLOWS]
+    );
+    assert_eq!(
+        problems(&poll(
+            "        if start.elapsed() + wait > max_wait {\n            return Err(e);\n        }\n"
+        )),
+        [OVERFLOWS]
+    );
+    // A poll that sends its status request with `?` ends on the first
+    // transient error, and one bounded by a deadline needs each request
+    // bounded too.
+    let hasty = "loop {\n    let response = client\n        .interactions()\n        .get(&id)\n        .await?;\n    if start.elapsed() > max_wait {\n        return Ok(None);\n    }\n    sleep(Duration::from_secs(5)).await;\n}";
+    assert_eq!(problems(hasty), [DEAF, GIVES_UP, STALLS]);
+    // Not retry loops: is_retryable() outside a loop, a map lookup in a
+    // loop, a loop nested in one (the inner loop is), and a `for` over a
+    // collection that paces itself.
+    for text in [
+        "fn f(e: &GenaiError) -> bool { e.is_retryable() }",
+        "loop {\n    if let Some(v) = cache.get(&key) {\n        break v;\n    }\n}",
+        "for item in items {\n    client.send(item).await?;\n    sleep(PACE).await;\n}",
+    ] {
+        assert!(retry_loops(&block(text)).is_empty(), "{text}");
+    }
+    let nested = "for id in ids {\n    let mut attempt = 0;\n    while attempt < MAX {\n        attempt += 1;\n        sleep(e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY)).await;\n        if e.is_retryable() {}\n    }\n}";
+    let found = retry_loops(&block(nested));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].head, "while attempt < MAX {");
+}
+
+/// The source of a recipe the check reads: the fenced block of `path`
+/// that holds `marker`.
+fn recipe(path: &str, marker: &str) -> DocBlock {
+    let text = std::fs::read_to_string(source_scan::root().join(path)).unwrap();
+    doc_blocks(path, &text)
+        .into_iter()
+        .find(|block| block.lines.iter().any(|line| line.contains(marker)))
+        .unwrap_or_else(|| panic!("{path} has no block with {marker}"))
+}
+
+/// `block` with each `(from, to)` replaced, every `from` required, so a
+/// recipe that changes cannot make the mutation a no-op.
+fn mutated(block: &DocBlock, edits: &[(&str, &str)]) -> DocBlock {
+    let mut text = block.lines.join("\n");
+    for (from, to) in edits {
+        assert!(text.contains(from), "{}: no {from:?} to mutate", block.at);
+        text = text.replace(from, to);
+    }
+    DocBlock {
+        at: block.at.clone(),
+        lines: text.lines().map(str::to_string).collect(),
+    }
+}
+
+/// Each defect found in a shipped recipe fails the check against the real
+/// text: the request recipe without its cap or its jitter, the poll that
+/// adds a `Retry-After` to an `Instant`, and the poll
+/// `examples/deep_research.rs` had, which ended on the first transient
+/// error and never bounded a request by the time left.
+#[test]
+fn the_retry_loop_check_fails_each_broken_recipe() {
+    let only = |block: &DocBlock| {
+        let found = retry_loops(block);
+        assert_eq!(found.len(), 1, "{}: {found:?}", block.at);
+        found.into_iter().next().unwrap().problems
+    };
+    let request = recipe("src/request/mod.rs", "is_retryable");
+    assert_eq!(only(&request), Vec::<&str>::new());
+    let uncapped = mutated(&request, &[(".min(MAX_DELAY)", "")]);
+    assert_eq!(only(&uncapped), [UNCAPPED]);
+    let herd = mutated(
+        &request,
+        &[
+            (
+                "let backoff = step + step.mul_f64(random);",
+                "let backoff = step;",
+            ),
+            (
+                "let random = RandomState::new().hash_one(attempt) as f64 / u64::MAX as f64;",
+                "",
+            ),
+        ],
+    );
+    assert_eq!(only(&herd), [NO_JITTER]);
+
+    let poll = recipe("docs/AGENTS_AND_BACKGROUND.md", "is_retryable");
+    assert_eq!(only(&poll), Vec::<&str>::new());
+    let overflowing = mutated(
+        &poll,
+        &[(
+            "if wait >= deadline.saturating_duration_since(Instant::now()) {",
+            "if Instant::now() + wait >= deadline {",
+        )],
+    );
+    assert_eq!(only(&overflowing), [OVERFLOWS]);
+    let growing = mutated(
+        &poll,
+        &[(
+            "delay = (delay * 2).min(Duration::from_secs(10));",
+            "delay = delay * 2;",
+        )],
+    );
+    assert_eq!(only(&growing), [UNCAPPED]);
+
+    assert_eq!(
+        only(&block(OLD_DEEP_RESEARCH_POLL)),
+        [DEAF, GIVES_UP, STALLS]
+    );
+}
+
+/// `examples/deep_research.rs`'s poll before it took the doc's.
+const OLD_DEEP_RESEARCH_POLL: &str = r#"
+async fn poll(
+    client: &Client,
+    mut response: InteractionResponse,
+    max_wait: Duration,
+) -> Result<Option<InteractionResponse>, Box<dyn Error>> {
+    let id = response.id.clone().ok_or("interaction has no ID")?;
+    let start = Instant::now();
+    let mut delay = Duration::from_secs(2);
+    loop {
+        match response.status {
+            InteractionStatus::Completed => return Ok(Some(response)),
+            InteractionStatus::Failed | InteractionStatus::Cancelled => {
+                return Err(format!("research ended with status {:?}", response.status).into());
+            }
+            _ => {}
+        }
+        if start.elapsed() + delay > max_wait {
+            return Ok(None);
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(MAX_POLL_DELAY);
+        response = client.interactions().get(&id).await?;
+        println!("  {:>4}s  {:?}", start.elapsed().as_secs(), response.status);
+    }
+}
+"#;
+
+/// What the check reads of a line: no comment, nested or not, no string's
+/// text, raw, char-quoted or spanning lines, and no hidden line.
+#[test]
+fn code_lines_drops_comments_and_blanks_strings() {
+    let lines: Vec<String> = [
+        "let a = \"x // y\"; // gone",
+        "let b = '\"'; let c = '\\''; let d = r#\"q \" sleep(\"#;",
+        "/* a /* nested */ comment",
+        "still */ let e = \"multi",
+        "line\"; fn f<'a>(x: &'a str) {}",
+        "# hidden(sleep(d));",
+    ]
+    .map(str::to_string)
+    .to_vec();
+    assert_eq!(
+        code_lines(&lines),
+        [
+            "let a = \"\"; ",
+            "let b = ' '; let c = ' '; let d = \"\";",
+            "",
+            " let e = \"",
+            "\"; fn f<'a>(x: &'a str) {}",
+            "",
+        ]
     );
 }
 
