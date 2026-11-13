@@ -1417,16 +1417,45 @@ async fn test_trigger_lifecycle() {
     let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
 
     // Best effort: the run stores an interaction and creates an environment.
-    let fired = fired
+    // The executions listing names both too, so a run whose answer was lost,
+    // or that answered without its execution (`{}`, as on 2026-11-01), is
+    // cleaned up as well; one still in progress is waited for, up to 180 s.
+    let mut fired: std::collections::BTreeSet<String> = fired
         .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(id) = fired {
-        let _ = client.interactions().delete(&id).await;
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .into_iter()
+        .collect();
+    let mut environments = std::collections::BTreeSet::new();
+    for _ in 0..36 {
+        let Ok(executions) = client
+            .triggers()
+            .list_executions(&trigger_id)
+            .items()
+            .try_collect::<Vec<genai_rs::TriggerExecution>>()
+            .await
+        else {
+            break;
+        };
+        fired.extend(executions.iter().filter_map(|e| e.interaction_id.clone()));
+        environments.extend(executions.iter().filter_map(|e| e.environment_id.clone()));
+        if !executions
+            .iter()
+            .any(|e| e.status == Some(TriggerExecutionStatus::InProgress))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    for id in &fired {
+        let _ = client.interactions().delete(id).await;
     }
     if let Ok(trigger) = client.triggers().get(&trigger_id).await
         && let Some(env) = trigger.environment_id
     {
-        let _ = client.environments().delete(&env).await;
+        environments.insert(env);
+    }
+    for env in &environments {
+        let _ = client.environments().delete(env).await;
     }
     let trigger_deleted = client.triggers().delete(&trigger_id).await;
     let agent_deleted = client.agents().delete(&agent_id).await;
