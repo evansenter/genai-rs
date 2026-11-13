@@ -1860,6 +1860,12 @@ sees what was being done, not why; walk the chain for that. The connect
 failure `spawn()` reports as `InitFailed` keeps this error as its source
 (D-062).
 
+**Amended 2026-11-10 (#554).** The precedent the decision cited follows
+it: `GenaiError::ClientBuild`'s `Display` is `Failed to build HTTP
+client` alone, and a `StreamInterrupted` cut off by the transport says
+`the connection failed mid-body` and leaves the `reqwest::Error`'s text to
+`source()`. Neither variant's shape changes.
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)

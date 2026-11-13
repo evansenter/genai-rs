@@ -114,9 +114,13 @@ pub enum GenaiError {
     /// A failure before the response headers arrive (connect, TLS, the
     /// read timeout while the model thinks) is [`Http`](Self::Http): no
     /// stream had started.
+    ///
+    /// `Display` says what ended the body, not the transport error's text:
+    /// that is the [`source`](std::error::Error::source), so a reporter
+    /// that walks the chain prints it once.
     #[error("Stream interrupted: {message}")]
     StreamInterrupted {
-        /// What ended the body.
+        /// What ended the body, without the transport error's text.
         message: String,
         /// The transport error, when the transport reported one.
         #[source]
@@ -169,8 +173,9 @@ pub enum GenaiError {
     ///
     /// This typically only occurs in exceptional circumstances such as
     /// TLS backend initialization failures. The reqwest error is the
-    /// [`source`](std::error::Error::source).
-    #[error("Failed to build HTTP client: {0}")]
+    /// [`source`](std::error::Error::source), and `Display` does not repeat
+    /// its text, so a reporter that walks the chain prints it once.
+    #[error("Failed to build HTTP client")]
     ClientBuild(#[source] reqwest::Error),
 }
 
@@ -577,12 +582,15 @@ mod tests {
     }
 
     #[test]
-    fn test_genai_error_client_build_display() {
+    fn test_genai_error_client_build_display_leaves_the_source_to_the_chain() {
+        use std::error::Error as _;
         let error = GenaiError::ClientBuild(client_build_error());
-        let display = format!("{error}");
+        let source = error.source().expect("ClientBuild keeps the reqwest error");
+        let display = error.to_string();
+        assert_eq!(display, "Failed to build HTTP client");
         assert!(
-            display.starts_with("Failed to build HTTP client: "),
-            "{display}"
+            !display.contains(&source.to_string()),
+            "{display} repeats its source"
         );
     }
 

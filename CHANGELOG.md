@@ -569,7 +569,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MalformedResponse` for a cut-off stream. Match
   `StreamInterrupted { source: Some(e), .. } if e.is_timeout()` where you
   matched `Http(e) if e.is_timeout()` for a stream stalled by
-  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`. A
+  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`; its
+  `message` and `Display` say what ended the body and leave the transport
+  error's text to `source()` (#554), so walk the chain for it. A
   retry loop built on `is_retryable()` now also retries a clean early close.
   Discard the partial output first, because a foreground retry is a new
   generation.
@@ -785,9 +787,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already made that fails unexpectedly. Migration: match the new variants
   where you told these cases apart by `Internal`'s message.
 - **Breaking: `GenaiError::ClientBuild` holds the `reqwest::Error` instead
-  of its message**, and returns it from `source()` (#490). Migration:
-  `ClientBuild(e)` binds a `reqwest::Error`; `e.to_string()` gives the old
-  string.
+  of its message**, and returns it from `source()` (#490). Its `Display` is
+  `Failed to build HTTP client` alone, leaving the reqwest error's text to
+  the chain, so a reporter that walks `source()` prints it once (#554).
+  Migration: `ClientBuild(e)` binds a `reqwest::Error`; `e.to_string()`
+  gives the old string.
 - **Breaking: four types are renamed to the pattern the others follow,
   and `VideoProcessingBuilder`'s setters take the `with_` prefix** (#490,
   D-028). A list page is `<Resource>ListResponse` and a create body is
