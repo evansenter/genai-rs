@@ -67,6 +67,9 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             speaker: Some("Joe".into()),
             extra: Default::default(),
         }]),
+        // The keys beside a `{"speakers": [...]}` form read back, which no
+        // binding class names.
+        speech_config_extra: Default::default(),
         // The caller's keys, not the crate's (see `cases`).
         extra: serde_json::Map::new(),
         image_config: Some(ImageConfig {

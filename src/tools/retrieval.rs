@@ -193,8 +193,12 @@ impl RagResource {
 #[serde(default)]
 pub struct HybridSearchConfig {
     /// Alpha value controlling the weight between dense and sparse vector
-    /// search results.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// search results. Read rounded to the nearest `f32`; a value beyond its
+    /// range is dropped with a `warn!`.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_f32_in_range"
+    )]
     pub alpha: Option<f32>,
 }
 

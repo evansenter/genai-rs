@@ -524,3 +524,154 @@ fn test_generation_config_has_no_top_k() {
     let value = serde_json::to_value(&config).unwrap();
     assert!(value.get("top_k").is_none());
 }
+
+// =========================================================================
+// Wire form: the speakers form's keys, and f32 range (D-001)
+// =========================================================================
+
+/// The `{"speakers": [...]}` form of `speech_config` keeps the keys beside
+/// the list and is written back in that form; without them, it is written
+/// as the list.
+#[test]
+fn speakers_form_keeps_the_keys_beside_the_list() {
+    for speech_config in [
+        serde_json::json!({"speakers": [{"voice": "Kore"}], "multi_speaker_mode": "x"}),
+        serde_json::json!({"speakers": [{"voice": "Kore"}], "voice": "Puck", "future": 1}),
+        serde_json::json!({"speakers": [], "future": [1, 2]}),
+    ] {
+        let wire = serde_json::json!({"speech_config": speech_config, "seed": 3});
+        let config: GenerationConfig = serde_json::from_value(wire.clone()).unwrap();
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+        let mut beside = speech_config.as_object().unwrap().clone();
+        let speakers = beside.remove("speakers").unwrap();
+        assert_eq!(config.speech_config_extra, beside);
+        assert_eq!(
+            serde_json::to_value(&config.speech_config).unwrap(),
+            speakers
+        );
+        let written = serde_json::to_value(&config).unwrap();
+        assert_eq!(written, wire);
+        let again: GenerationConfig = serde_json::from_value(written).unwrap();
+        assert_eq!(again, config);
+    }
+    // Through a stored interaction read back.
+    let wire = serde_json::json!({
+        "id": "i1",
+        "status": "completed",
+        "generation_config": {
+            "speech_config": {"speakers": [{"voice": "Kore"}], "multi_speaker_mode": "x"}
+        }
+    });
+    let response: crate::InteractionResponse = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&response).unwrap()["generation_config"],
+        wire["generation_config"]
+    );
+}
+
+#[test]
+fn speech_config_is_sent_as_the_list_without_keys_beside_it() {
+    let config: GenerationConfig = serde_json::from_value(serde_json::json!({
+        "speech_config": {"speakers": [{"voice": "Kore"}]}
+    }))
+    .unwrap();
+    assert!(config.speech_config_extra.is_empty());
+    assert_eq!(
+        serde_json::to_value(&config).unwrap(),
+        serde_json::json!({"speech_config": [{"voice": "Kore"}]})
+    );
+    // Keys set without a `speech_config` are not written, and a `speakers`
+    // key among them never is.
+    let config = GenerationConfig {
+        speech_config_extra: serde_json::Map::from_iter([
+            ("future".to_string(), serde_json::json!(1)),
+            ("speakers".to_string(), serde_json::json!("not the list")),
+        ]),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&config).unwrap(),
+        serde_json::json!({})
+    );
+    let config = GenerationConfig {
+        speech_config: Some(vec![SpeechConfig::with_voice("Kore")]),
+        ..config
+    };
+    assert_eq!(
+        serde_json::to_value(&config).unwrap(),
+        serde_json::json!({"speech_config": {"speakers": [{"voice": "Kore"}], "future": 1}})
+    );
+}
+
+/// Every field keeps its key and position on the way out, as the derived
+/// serializer wrote it: modeled fields in declaration order, then `extra`.
+#[test]
+fn generation_config_writes_every_field_under_its_key() {
+    let wire = serde_json::json!({
+        "temperature": 0.5,
+        "max_output_tokens": 100,
+        "top_p": 0.25,
+        "thinking_level": "high",
+        "seed": 7,
+        "stop_sequences": ["STOP"],
+        "thinking_summaries": "auto",
+        "tool_choice": "any",
+        "speech_config": [{"voice": "Kore"}],
+        "image_config": {"aspect_ratio": "1:1"},
+        "video_config": {"task": "text_to_video"},
+        "transcription_config": {"language_codes": ["en-US"]},
+        "future_field": {"a": 1}
+    });
+    let config: GenerationConfig = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(config.extra.len(), 1);
+    assert_eq!(serde_json::to_value(&config).unwrap(), wire);
+    assert_eq!(
+        serde_json::to_string(&GenerationConfig {
+            seed: Some(1),
+            temperature: Some(0.5),
+            extra: serde_json::Map::from_iter([("a".to_string(), serde_json::json!(1))]),
+            ..Default::default()
+        })
+        .unwrap(),
+        r#"{"temperature":0.5,"seed":1,"a":1}"#
+    );
+}
+
+/// An `f32` field whose number is beyond `f32`'s range would read as an
+/// infinity, be written as `null` and read back as `None`; it is dropped on
+/// the first read instead, so the config is stable from then on. The same
+/// for the retrieval tool's hybrid-search `alpha`.
+#[test]
+fn f32_fields_beyond_range_are_dropped_on_read() {
+    for wire in [
+        serde_json::json!({"temperature": 1e39, "seed": 1}),
+        serde_json::json!({"top_p": -1e39, "seed": 1}),
+    ] {
+        let config: GenerationConfig = serde_json::from_value(wire).unwrap();
+        assert_eq!(config.temperature, None);
+        assert_eq!(config.top_p, None);
+        let written = serde_json::to_value(&config).unwrap();
+        assert_eq!(written, serde_json::json!({"seed": 1}));
+    }
+    // In range, the value reads rounded to an f32, the largest included.
+    let config: GenerationConfig = serde_json::from_value(serde_json::json!({
+        "temperature": 3.4028235e38, "top_p": 0.123456789
+    }))
+    .unwrap();
+    assert_eq!(config.temperature, Some(f32::MAX));
+    assert_eq!(config.top_p, Some(0.123_456_79));
+
+    let tool = serde_json::json!({
+        "type": "retrieval",
+        "retrieval_types": ["rag_store"],
+        "rag_store_config": {"rag_retrieval_config": {"hybrid_search": {"alpha": 1e39}}}
+    });
+    let tool: crate::Tool = serde_json::from_value(tool).unwrap();
+    let written = serde_json::to_value(&tool).unwrap();
+    assert_eq!(
+        written["rag_store_config"]["rag_retrieval_config"]["hybrid_search"],
+        serde_json::json!({})
+    );
+    let again: crate::Tool = serde_json::from_value(written.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&again).unwrap(), written);
+}

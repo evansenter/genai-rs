@@ -258,6 +258,10 @@ pub(crate) fn arb_generation_config() -> impl Strategy<Value = GenerationConfig>
                 thinking_summaries,
                 tool_choice,
                 speech_config,
+                // The `{"speakers": [...]}` form's keys are not the crate's,
+                // and the request oracle samples this strategy; they get a
+                // property of their own.
+                speech_config_extra: serde_json::Map::new(),
                 image_config,
                 video_config,
                 transcription_config,
@@ -538,11 +542,48 @@ proptest! {
         prop_assert_eq!(config, restored);
     }
 
-    /// Test that GenerationConfig roundtrips stably through JSON.
-    /// Uses Value comparison since GenerationConfig doesn't derive PartialEq (contains floats).
+    /// Test that GenerationConfig roundtrips through JSON: stably, and to
+    /// the value it was written from (its non-string unknowns included).
     #[test]
     fn generation_config_roundtrip(config in arb_generation_config()) {
         assert_value_roundtrip(&config)?;
+        let json = serde_json::to_value(&config).expect("Serialization should succeed");
+        let restored: GenerationConfig =
+            serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+        // An unknown `tool_choice` reads back typed by its shape, which the
+        // strategy does not mirror; its data must match.
+        let mut expected = config;
+        if let (Some(ToolChoice::Unknown { data: sent, .. }), Some(ToolChoice::Unknown { data: read, .. })) =
+            (&expected.tool_choice, &restored.tool_choice)
+        {
+            prop_assert_eq!(sent, read);
+            expected.tool_choice.clone_from(&restored.tool_choice);
+        }
+        prop_assert_eq!(expected, restored, "written as {}", json);
+    }
+
+    /// A `speech_config` read in its `{"speakers": [...]}` form with keys
+    /// beside the list is written back in that form, with them (D-001).
+    #[test]
+    fn generation_config_speakers_form_roundtrip(
+        mut config in arb_generation_config(),
+        speakers in proptest::collection::vec(arb_speech_config(), 0..3),
+        beside in arb_unknown_object(),
+    ) {
+        config.speech_config = Some(speakers);
+        config.speech_config_extra = beside
+            .as_object()
+            .expect("an object")
+            .iter()
+            .filter(|(key, _)| key.as_str() != "speakers")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let json = serde_json::to_value(&config).expect("Serialization should succeed");
+        let restored: GenerationConfig =
+            serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+        prop_assert_eq!(&restored.speech_config_extra, &config.speech_config_extra);
+        prop_assert_eq!(&restored.speech_config, &config.speech_config);
+        prop_assert_eq!(serde_json::to_value(&restored).expect("re-serializes"), json);
     }
 
     /// Test that VideoTask roundtrips correctly through JSON.
