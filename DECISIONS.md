@@ -2984,3 +2984,8 @@ followed, and a `.min(` inside a closure on the chain
 (`.map(|a| a.min(MAX))`) reads as no cap; such a recipe is rewritten with
 the `.min(` on the chain. A comparison with the time left that bounds
 nothing still counts.
+
+With these checks `tests/reliability_tests.rs` went over D-014's 2,000-line
+bar, so the recipe checks, the backon one and this guard, moved unchanged
+to `tests/reliability_tests/retry_recipes.rs`, a module of the same test
+binary (D-011).
