@@ -1198,30 +1198,41 @@ and this release follows 0.12.0 directly.
   `Err(AntigravityError::Turn { kind, .. })` where you looked for a failed
   delegated turn in an `Ok` response's `errors()`; `kind.ends_session()`
   says whether to spawn a new agent.
+- **Breaking: an `EnvironmentSpec` whose `type` is neither a string nor
+  null reads as `EnvironmentSpec::Unknown`, not `Remote`.** On an
+  interaction, an agent's `base_environment` or a trigger, it read as a
+  remote environment and was written back as `"type": "remote"`; it is now
+  `Unknown`, typed `<non-string: ...>`, and written back as it came
+  (D-001). Its `Debug` prints that JSON through the wire's redaction, so an
+  `env` value prints as `[REDACTED]`, as a remote one's does. A null `type`
+  still reads as remote. Migration: match `EnvironmentSpec::Unknown` (its
+  `unknown_data()` holds the JSON) where you relied on such an environment
+  reading as `Remote`.
+- **Breaking: Antigravity's `OutputEvent` reads a `sessionEndResponse`
+  that is not a bool as `OutputPayload::Unknown`, not
+  `SessionEndResponse(false)`.** The value is kept as it came, and it still
+  ends the session. Migration: match `OutputPayload::Unknown` where you
+  matched `SessionEndResponse(false)` for such a value.
+- **Breaking: an `f32` field read from a number beyond `f32`'s range is
+  `None`, not an infinity.** `temperature`, `top_p` and the retrieval
+  tool's `alpha` held an infinity, written back as `null`; the value is now
+  dropped on read with a `warn!` (D-071). Migration: where a config read
+  from the wire had `Some(f32::INFINITY)` or `Some(f32::NEG_INFINITY)` in
+  one of these fields, expect `None`; a `None` there may be a value that
+  was out of range rather than one never set.
 - Values the API or the harness sent that a round trip lost or rewrote
-  (D-001): an `EnvironmentSpec` whose `type` is not a string (on an
-  interaction, an agent's `base_environment` or a trigger) read as a remote
-  environment and was written back as `"type": "remote"`; it is now
-  `EnvironmentSpec::Unknown`, typed `<non-string: ...>`, and written back
-  as it came (its `Debug` prints that JSON through the wire's redaction,
-  so an `env` value prints as `[REDACTED]`, as a remote one's does). A
-  domain-less allowlist
-  entry, the disabled echo's `{"mode": "disabled"}` beside another entry
-  or key, was written back with a `"domain": ""` it never had; an empty
-  `domain` is no longer written, so one read as `""` is written back
-  without it. `ThinkingSummaries::to_agent_config_value`, and so a
-  `DeepResearchConfig` built from a value read from the wire, wrote a
+  (D-001), besides the three Breaking entries above. A domain-less
+  allowlist entry, the disabled echo's `{"mode": "disabled"}` beside
+  another entry or key, was written back with a `"domain": ""` it never
+  had; an empty `domain` is no longer written, so one read as `""` is
+  written back without it. `ThinkingSummaries::to_agent_config_value`, and
+  so a `DeepResearchConfig` built from a value read from the wire, wrote a
   non-string unknown as its `<non-string: ...>` type rather than the JSON
   it came as, and a voice listing filtered by a listed voice's non-string
   `type` or `pitch` sent that type as its query value. Antigravity's
-  `OutputEvent` dropped a `usageUpdate` that is not an object (it is kept
-  in `extra`) and read a `sessionEndResponse` that is not a bool as
-  `false` (it is kept as `OutputPayload::Unknown`, and still ends the
-  session). An `f32` field (`temperature`, `top_p`, the retrieval tool's
-  `alpha`) read from a number beyond `f32`'s range held an infinity,
-  written as `null`; it is dropped on read with a `warn!` (D-071).
-  `InteractionInput`'s docs said a response's input is written back in the
-  shape it came in; a single input object is written back as a
+  `OutputEvent` dropped a `usageUpdate` that is not an object; it is kept
+  in `extra`. `InteractionInput`'s docs said a response's input is written
+  back in the shape it came in; a single input object is written back as a
   one-element array, and they now say so.
 - `Debug` no longer prints the secrets a value holds. `ExaAiSearchConfig`
   and `ParallelAiSearchConfig` printed their `api_key` (and one nested in

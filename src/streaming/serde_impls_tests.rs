@@ -87,7 +87,7 @@ fn test_auto_function_stream_chunk_serialization_roundtrip() {
 
 /// A delta's `extra`, the `step.delta` event's unread keys, is written
 /// beside `data` and read back; an empty one is not written, and a map
-/// without one (0.13.0's) reads back with an empty one.
+/// without one (0.12.0's) reads back with an empty one.
 #[test]
 fn a_delta_chunk_keeps_its_extra() {
     let mut extra = serde_json::Map::new();
