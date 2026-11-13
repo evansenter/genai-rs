@@ -450,3 +450,37 @@ fn regression_harness_default_scalar_written_back() {
         br#"{"stepUpdate":{"cascadeId":"c","customTool":{"toolCall":{"arguments":{"fields":[{"name":"city","value":{"stringValue":"Zurich"}}]},"raugmentsJson":"{\"city\":\"Zurich\"}","id":"call_58372","name":"antigravity_test_weather"},"toolResponse":{"ie":"antigravity_test_weather","responseJson":"{\"result\":\"ok\"}"}},"source":"SOURCE_MODEL","state":"STATE_DONE","stepIndex":1,"target":"TARGET_ENVIRMNMENT","text":"Weather check","textDelta":"","thinking":"","thinkingDelta":"","trajectoryId":"t"},"seqNum":"9"}"#,
     );
 }
+
+/// The normalizers apply what each type documents and nothing more: an
+/// environment read as remote from a `type` other than a missing or null
+/// one keeps that `type`, so a reader that rewrote it is still caught.
+#[test]
+fn normalizers_apply_only_the_documented_changes() {
+    use crate::{NetworkConfig, RemoteEnvironment};
+    use serde_json::json;
+    let remote = EnvironmentSpec::Remote(RemoteEnvironment::new());
+    for (input, expected) in [
+        (json!({}), json!({"type": "remote"})),
+        (json!({"type": null}), json!({"type": "remote"})),
+        (json!({"type": 5}), json!({"type": 5})),
+        (json!({"type": "remote"}), json!({"type": "remote"})),
+    ] {
+        assert_eq!(wire::environment_spec(&remote, &input), expected, "{input}");
+    }
+    let env_list = json!({"type": "remote", "env": [{"A": {"value": "1"}}, {"A": {"value": "2"}}]});
+    assert_eq!(
+        wire::environment_spec(&remote, &env_list),
+        json!({"type": "remote", "env": {"A": {"value": "2"}}})
+    );
+    let entries = json!({"allowlist": [{"domain": ""}, {"domain": "x"}, {"mode": "m"}]});
+    assert_eq!(
+        wire::network_config(&NetworkConfig::allowlist(vec![]), &entries),
+        json!({"allowlist": [{}, {"domain": "x"}, {"mode": "m"}]})
+    );
+    // An unknown spec and an id are written as they were read.
+    let unknown: EnvironmentSpec = serde_json::from_value(json!({"type": 5})).unwrap();
+    assert_eq!(
+        wire::environment_spec(&unknown, &json!({"type": 5})),
+        json!({"type": 5})
+    );
+}

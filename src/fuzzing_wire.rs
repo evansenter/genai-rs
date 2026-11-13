@@ -118,7 +118,11 @@ pub(super) fn environment_spec(spec: &EnvironmentSpec, input: &Value) -> Value {
 /// request sends, and its `network` is [`network_config`].
 fn remote_environment(environment: &RemoteEnvironment, input: &Value) -> Value {
     let mut object = input.as_object().cloned().unwrap_or_default();
-    object.insert("type".into(), "remote".into());
+    // Only these read as remote; any other `type` must be written back as
+    // it came, which is what the comparison then checks.
+    if object.get("type").is_none_or(serde_json::Value::is_null) {
+        object.insert("type".into(), "remote".into());
+    }
     // An `env` it could not read is kept in `extra`, as it came.
     if !environment.extra.contains_key("env")
         && let Some(Value::Array(items)) = object.get("env")
