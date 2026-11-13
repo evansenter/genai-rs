@@ -2496,6 +2496,37 @@ flags it: the watch sees the spec change, not behavior, so a later probe
 has to. The spec also wraps webhook update's and trigger update's bodies;
 those wrappers were not probed.
 
+**Amended 2026-11-10 (J-1).** The first bullet claimed more than the
+snapshot kept. It held each query parameter's name and required flag and
+each request body, not "parameters": a served v1beta with a required
+header added to webhook create, the voices `gender` parameter retyped from
+an array of strings to a string enum, and webhook get's response pointed
+at `Agent` reduced to the committed bytes (#504's 2026-11-09 grade), so
+the watch would have stayed green. `snapshot_openapi.py` now keeps, for
+each operation, its query and header parameters (and a cookie one, should
+the spec give one), each with its required flag, its schema and any other
+non-prose key (`style`, `explode`), and its responses by status, each with
+its schema by content type and its headers; a path parameter is in the
+endpoint's path. Both snapshots were refreshed with it, so the watch now
+flags a served spec whose parameters, parameter schemas, request bodies or
+responses change, and `test_snapshot_openapi.sh` pins each of the three
+mutations above. The query test also holds the spec's header parameters
+to what the verbs send (`spec_header_findings` in
+`tests/request_wire_oracle/spec_query.rs`): a header a request to its
+endpoint goes without, or one sent with a value the spec's `const` or
+`enum` does not allow, is a finding until `SPEC_HEADERS` gives the reason
+for that copy. The four the spec gives today, all on the environment-file
+upload's start request, are sent as it fixes them, so the list is empty.
+What is still only watched, not diffed against the crate: a query
+parameter's schema (the bindings record names only), a response's schema
+reference against the type the verb returns (the response oracle maps
+crate types to spec schemas, not to operations), and a request body
+against the binding class the crate sends (D-040). The two update
+wrappers were probed on 2026-11-13: both are a `400 Unknown parameter`,
+with or without `id` and `update_mask`, and the flat bodies the crate
+sends apply (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query
+parameters"), so the crate is unchanged (D-005).
+
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
 **Context.** #504's 2026-11-08 grade found three holes in the request side

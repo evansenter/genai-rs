@@ -29,7 +29,7 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable; found 2026-11-01. It does not always agree with the bindings where both speak. Each lists query parameters the other lacks (five, under [Spec-only query parameters](#spec-only-query-parameters-live-2026-11-09)), and the spec wraps three request bodies the bindings send flat: webhook create (`{webhook: ...}`), webhook update and trigger update. The webhook create endpoint rejects the wrapper and takes the flat body (2026-11-09); the two updates' wrappers were not probed. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`. The copies fetched that day differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. The committed snapshots were fetched on 2026-11-09, their schemas and endpoints unchanged from the 2026-11-07 copies, and each also keeps every operation's query parameters (with whether each is required) and request body. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves and compares it with the snapshot, parameters and bodies included, and opens an `api-sweep` issue when one drifts or stops serving; on 2026-11-08 both matched. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable; found 2026-11-01. It does not always agree with the bindings where both speak. Each lists query parameters the other lacks (five, under [Spec-only query parameters](#spec-only-query-parameters-live-2026-11-09)), and the spec wraps three request bodies the bindings send flat: webhook create (`{webhook: ...}`), webhook update (`{webhook, update_mask, id}`) and trigger update (`{trigger, update_mask, id}`). Each endpoint rejects its wrapper and takes the flat body: webhook create on 2026-11-09, the two updates on 2026-11-13. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`. The copies fetched that day differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. The committed snapshots were fetched on 2026-11-13, their schemas, endpoints, query parameter names and request bodies unchanged from the 2026-11-09 copies. Besides the schemas and endpoints, each keeps every operation's query and header parameters (each with whether it is required, its schema and its other non-prose keys), its request body, and its responses by status (each with its schema by content type and its headers); path parameters are in the endpoint's path. The served v1beta gives four header parameters, all on the environment-file upload's start request, which the crate sends. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves the same way and compares it with the snapshot, so a parameter added, removed, made required or retyped, a header parameter, a request body or a response schema that changes is a drift: it opens an `api-sweep` issue when one drifts or stops serving. Of these, the coverage oracle diffs only query parameter names and required flags (against the bindings) and header parameters (against what the verbs send) offline; a parameter's schema, a response's schema reference and a request body are watched, not checked against the crate (D-060). On 2026-11-13 both URLs served what the snapshots hold. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
@@ -53,8 +53,10 @@ most of it against rank 1b: `src/coverage_oracle/` and
 `tests/request_wire_oracle.rs` check, offline against the committed
 snapshot, every request key and every query key against the bindings,
 every response field for an empty `extra` against the bindings and both
-specs (v1beta and v1), and the specs' query parameters against the
-bindings' and what the verbs send (since 2026-11-09); every binding class
+specs (v1beta and v1), the specs' query parameters against the
+bindings' and what the verbs send (since 2026-11-09), and the specs'
+header parameters against what the verbs send (since 2026-11-13); every
+binding class
 and spec schema must be reached by those checks or listed with a reason;
 and `tests/ci_coverage.rs` maps every endpoint to the handle verbs that
 call it and requires a live test per handle verb. The spec's request
@@ -508,7 +510,10 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
 The spec gives three endpoints a query parameter the bindings lack, and the
 bindings give two one the spec lacks. `tests/request_wire_oracle.rs` lists
 each difference in `SPEC_QUERY` with its reason (`spec_query.rs`), along
-with the parameters the spec marks required, each spec copy on its own. Probed on 2026-11-09, with the
+with the parameters the spec marks required, each spec copy on its own;
+`SPEC_HEADERS` does the same for a spec header parameter the verbs do not
+send as given, and is empty: the four the spec gives, on the
+environment-file upload, are sent. Probed on 2026-11-09, with the
 test resources deleted afterwards. These endpoints take an unknown query
 key without complaint (`bogus_param=1` on a webhook or agent create), so
 being accepted shows nothing; what each did is below. None is modeled: an
@@ -523,6 +528,17 @@ option that changes nothing would claim a feature the API does not have
 - **The `{webhook: ...}` wrapper** the spec gives webhook create's body:
   `400 Unknown parameter 'webhook'.` The flat body the bindings send
   (`uri`, `subscribed_events`, `name`) is the one the endpoint takes.
+- **The update wrappers** (probed 2026-11-13): the spec gives webhook
+  update's body as `UpdateWebhookRequest {webhook, update_mask, id}` and
+  trigger update's as `UpdateTriggerRequest {trigger, update_mask, id}`.
+  Each endpoint rejects its wrapper: `{webhook: {name}, update_mask:
+  "name"}` and `{webhook: {state}}` are `400 Unknown parameter 'webhook'.`,
+  `{trigger: {display_name}, update_mask: "display_name"}` and `{trigger:
+  {status}}` are `400 Unknown parameter 'trigger'.`, and with `id` added
+  each is `400 Unknown parameter 'id'.` Nothing changed: a read afterwards
+  showed the old name and state. The flat bodies the bindings define and
+  the crate sends (`{name}`, `{state}`, `{display_name}`, `{status}`)
+  each answered 200 with the field applied.
 - **`parent` on agent create** (the spec: required,
   `projects/{project}/locations/{location}`): ignored. A create with
   `projects/foo/locations/bar`, with `bogus`, with an empty value or with

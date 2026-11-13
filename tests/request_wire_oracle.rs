@@ -21,7 +21,8 @@
 //! the API dropped, and a parameter a new release adds all fail it, and so
 //! does a request to a path no endpoint takes. Each spec copy's parameters
 //! are diffed against the bindings' and what the verbs send (`spec_query`),
-//! each difference listed with its reason. A key written into a URL
+//! each difference listed with its reason, and so are its header
+//! parameters against the headers the verbs send. A key written into a URL
 //! string, or a separator for one, rather than added through `with_query`
 //! fails `query_keys_are_added_only_through_with_query` (`query_literals`),
 //! since the verb may never be called with it set here.
@@ -1310,12 +1311,16 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         .await
         .expect("file_search_stores.force_delete");
 
-    let requests: Vec<(String, String)> = stub
+    let sent: Vec<spec_query::Sent> = stub
         .requests()
         .into_iter()
         // The session URL an upload's start request returned: not an endpoint.
         .filter(|r| !r.target.starts_with("/upload-session/"))
-        .map(|r| (r.method, r.target))
+        .map(|r| (r.method, r.target, r.headers))
+        .collect();
+    let requests: Vec<(String, String)> = sent
+        .iter()
+        .map(|(method, target, _)| (method.clone(), target.clone()))
         .collect();
     assert!(
         requests
@@ -1341,6 +1346,16 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         "query parameters where the OpenAPI specs differ from the bindings and the \
          crate:\n  {}",
         differences.join("\n  ")
+    );
+    let headers = spec_query::spec_header_findings(
+        &spec_query::spec_header_copies(),
+        &sent,
+        spec_query::SPEC_HEADERS,
+    );
+    assert!(
+        headers.is_empty(),
+        "header parameters of the OpenAPI specs the verbs do not send as given:\n  {}",
+        headers.join("\n  ")
     );
 }
 

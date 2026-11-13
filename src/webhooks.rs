@@ -243,7 +243,10 @@ impl Webhook {
 ///
 /// Only the set fields are sent, and the server applies exactly those.
 /// [`with_update_mask`](Self::with_update_mask) adds an `update_mask` query
-/// parameter naming the fields to apply.
+/// parameter naming the fields to apply. The body is flat, as the bindings
+/// define it: the OpenAPI spec's wrapped form (`{webhook, update_mask, id}`)
+/// is a `400 Unknown parameter` (under "Spec-only query parameters" in
+/// `docs/INTERACTIONS_API_GAP.md`).
 ///
 /// # Example
 ///
