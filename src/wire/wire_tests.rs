@@ -423,6 +423,35 @@ fn test_redact_fields_an_env_held_as_text() {
 }
 
 #[test]
+fn test_redact_fields_leaves_a_schemas_property_names_alone() {
+    // A property named like a secret field holds a schema (PR #560 review):
+    // its `type` and `description` print, at any depth. A secret sent as a
+    // value under such a name (a function call's arguments) is still
+    // redacted, and so is a schema's own secret field.
+    let mut value = serde_json::json!({
+        "parameters": {"type": "object", "properties": {
+            "env": {"type": "string", "description": "Target env"},
+            "api_key": {"type": "string", "description": "Key to use"},
+            "nested": {"type": "object", "properties": {
+                "token": {"type": "string", "description": "A token"}
+            }}
+        }},
+        "arguments": {"api_key": "secret-1", "env": "secret-2"},
+        "schema": {"properties": {"a": {"default": {"token": "secret-3"}}}},
+    });
+    redact_secrets(&mut value);
+    let properties = &value["parameters"]["properties"];
+    assert_eq!(properties["env"]["description"], "Target env");
+    assert_eq!(properties["api_key"]["type"], "string");
+    assert_eq!(
+        properties["nested"]["properties"]["token"]["description"],
+        "A token"
+    );
+    let text = value.to_string();
+    assert!(!text.contains("secret-"), "leaked: {text}");
+}
+
+#[test]
 fn test_redact_map_secrets_reads_the_maps_own_keys() {
     let mut map = serde_json::Map::new();
     map.insert("api_key".into(), serde_json::json!("secret-1"));

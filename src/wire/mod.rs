@@ -368,6 +368,13 @@ const REDACT_VALUES_BENEATH: &[&str] = &["headers", "transform", "httpHeaders"];
 /// Antigravity MCP stdio server's `env`, where each value is a string.
 const ENV_FIELD: &str = "env";
 
+/// A JSON Schema's map of property names to their schemas (a function
+/// declaration's `parameters`, a response format): its keys name
+/// properties, not fields, so a property called `env` or `api_key` holds a
+/// schema, never a secret. Its values are walked as schemas; its keys are
+/// not read as field names.
+const SCHEMA_PROPERTIES: &str = "properties";
+
 /// Maximum length before truncation (keep roughly the first 100 bytes,
 /// never splitting a UTF-8 character).
 const TRUNCATE_THRESHOLD: usize = 100;
@@ -399,7 +406,8 @@ pub(crate) fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
 /// Walks the JSON tree, truncates `"data"` and `"signature"` fields that
 /// contain strings longer than 100 bytes, and replaces secret fields (see
 /// [`REDACT_FIELDS`], [`REDACT_VALUES_BENEATH`], [`ENV_FIELD`] and
-/// [`CONTEXT_REDACT_FIELD`]) with [`REDACTED`] regardless of length. Text
+/// [`CONTEXT_REDACT_FIELD`]; not the property names of a schema's
+/// [`SCHEMA_PROPERTIES`]) with [`REDACTED`] regardless of length. Text
 /// content and other fields are preserved in full.
 fn truncate_long_fields(value: &mut serde_json::Value) {
     redact_walk(value, false, true);
@@ -464,6 +472,12 @@ fn redact_entries(
             }
         } else if key == ENV_FIELD {
             redact_env(val, truncate);
+        } else if key == SCHEMA_PROPERTIES
+            && let serde_json::Value::Object(properties) = val
+        {
+            for schema in properties.values_mut() {
+                redact_walk(schema, in_env, truncate);
+            }
         } else if TRUNCATE_FIELDS.contains(&key) {
             match val {
                 serde_json::Value::String(s) => {

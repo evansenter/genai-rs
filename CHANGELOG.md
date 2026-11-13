@@ -1132,7 +1132,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same list as an Interactions API body, which also redacts a `token`,
   `secret` or `api_key` key the harness's own list did not; and a string
   directly under any `env` (an MCP server's variable, or an environment
-  `env` the crate could not read) prints as `[REDACTED]`.
+  `env` the crate could not read) prints as `[REDACTED]`. A JSON Schema's
+  property names are not read as fields, so a function parameter named
+  `env` or `api_key` keeps its schema in the output.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed

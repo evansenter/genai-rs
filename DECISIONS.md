@@ -2810,7 +2810,10 @@ not the turn's, did the same. For the same reason the `AgentEvent::Error`
 of a 5xx step stays `Transient`: the step arrives before the harness has
 retried or given up, and only its text tells the two apart. Rejected:
 reading that text ("Encountered retryable error from model provider").
-The unit tests feed each sequence; `test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`
+A step without a step index neither records a failure nor clears one,
+since its place in the trajectory is unknown (PR #560 review; 0.1.23
+always sends one). The unit tests feed each sequence;
+`test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`
 runs the harness's.
 
 *Amended 2026-11-10 (#504, J-10).* The wait for the session-start hook is part
@@ -2907,6 +2910,11 @@ the values of an `env`, `headers` or `httpHeaders` map), is now the
 wire's walk: `apiKey` joined its `REDACT_FIELDS`, `httpHeaders` its
 `REDACT_VALUES_BENEATH`, and a string directly under an `env` (an MCP
 stdio server's variables) is redacted beside an `env` entry's `value`.
+The keys of a JSON Schema's `properties` map are property names, not
+fields, so the walk reads only their values (PR #560 review): a function
+parameter named `env` or `api_key` printed its own `type` and
+`description` as `[REDACTED]`. A value sent under such a name, a call's
+arguments, is still redacted.
 So the copy of a sent message the session hands its inspectors goes
 through the same list as an Interactions API body, and `LOUD_WIRE`, the
 `TracingForwarder` and `WireEvent`'s `Debug` redact the harness's own keys

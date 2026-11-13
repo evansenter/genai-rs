@@ -125,8 +125,11 @@ frame.
   an `env` map, and a string directly in an `env` (an MCP server's
   variables); and every header value under `headers` (MCP servers),
   `transform` (environment allowlist entries) or `httpHeaders` (a harness
-  model endpoint), keeping the header and variable names. The `wire`
-  tracing target redacts the same fields, in harness messages too.
+  model endpoint), keeping the header and variable names. A JSON Schema's
+  property names (the keys of a `properties` map, such as a function
+  declaration's `env` or `api_key` parameter) are not read as fields, so
+  the schema under one prints. The `wire` tracing target redacts the same
+  fields, in harness messages too.
 - **Uploads** print as `>>> UPLOAD "video.mp4" (video/mp4, 150.25 MB)`.
 
 ### Wire Inspection API

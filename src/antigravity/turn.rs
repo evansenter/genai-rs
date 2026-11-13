@@ -615,7 +615,9 @@ impl TurnState {
     /// delegation, 0.1.23 can follow a 503 with no retries left with a
     /// done system step (its message to the model that the subagent went
     /// idle) before it goes idle. A subagent's failure is not kept: its
-    /// error is not the turn's. Every error that does not fail the turn
+    /// error is not the turn's. Nor is a step without a step index kept,
+    /// or let clear one, since where it falls in the trajectory is unknown
+    /// (0.1.23 always sends one). Every error that does not fail the turn
     /// surfaces once, as an [`AgentEvent::Error`], and in the response's
     /// `errors()`.
     fn record_step_errors(
@@ -624,13 +626,12 @@ impl TurnState {
         step_key: &(String, u32),
         is_main: bool,
     ) -> Result<(), AntigravityError> {
-        let index = step.step_index.unwrap_or_default();
+        let index = step.step_index;
         let is_error = step.state == Some(StepState::Error) || step.error.is_some();
         if is_main
             && (is_error || step.source == Some(StepSource::Model))
-            && self
-                .backend_status
-                .is_some_and(|(failed_at, _)| index > failed_at)
+            && let (Some(index), Some((failed_at, _))) = (index, self.backend_status)
+            && index > failed_at
         {
             self.backend_status = None;
         }
@@ -651,7 +652,7 @@ impl TurnState {
             }
             // Any other status the harness may retry; if the turn then
             // fails before the trajectory goes on, this is why.
-            if is_main {
+            if is_main && let Some(index) = index {
                 self.backend_status = Some((index, status));
             }
         }
