@@ -115,7 +115,7 @@ jobs:
       - name: Run harness integration tests
         if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         run: |
-          set -eo pipefail
+          set -euo pipefail
           # Fail on an empty key: these tests self-skip without one. Whitespace
           # is stripped to match the tests' `!key.trim().is_empty()` gate.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
@@ -240,7 +240,7 @@ jobs:
       - uses: ./.github/actions/setup-mold
       - name: Run integration tests (${{ matrix.group }})
         run: |
-          set -eo pipefail
+          set -euo pipefail
           # Fail on an empty key: every test here self-skips without one.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this job would pass having verified nothing"
@@ -648,7 +648,8 @@ jobs:
   # The macOS legs above run on main pushes and the schedule only, so a PR
   # that breaks process_tree.rs's libproc lookup would first fail on main.
   # This job runs those tests on macOS for a PR that changes the process
-  # code (src/antigravity/process*.rs) or this workflow, and passes without
+  # code (src/antigravity/process*.rs), what it builds with (Cargo.toml,
+  # Cargo.lock, a rust-toolchain file) or this workflow, and passes without
   # building otherwise. Not a required check: it does not run on pushes.
   process-tree-macos:
     name: Process Tree (macOS)
@@ -673,8 +674,8 @@ jobs:
           changed=false
           while IFS= read -r path; do
             case "$path" in
-              src/antigravity/process*.rs|.github/workflows/rust.yml)
-                echo "Process code changed: $path"
+              src/antigravity/process*.rs|Cargo.toml|Cargo.lock|rust-toolchain*|.github/workflows/rust.yml)
+                echo "Process code or its build changed: $path"
                 changed=true
                 ;;
             esac
@@ -749,9 +750,11 @@ jobs:
       # After the summary, so a drop below the floor is shown before it
       # fails the job. The floor sits just under the library's line
       # coverage measured when it was set (D-058): raise it as coverage
-      # grows, and lower it only with the reason in the commit. No `if:` and
-      # no `continue-on-error`, here or on the job: tests/ci_workflows/
-      # rejects both, so a drop always fails the job.
+      # grows, and lower it only with the reason in the commit. This one
+      # command and nothing else, with no `if:`, `continue-on-error`,
+      # `needs:` or `defaults:` here, on the job or on the workflow:
+      # tests/ci_workflows/ rejects each, and the shell-level masks it knows
+      # (`|| true`, `; true`, `set +e`, `exit "0"`), so a drop fails the job.
       - name: Enforce the coverage floor
         run: cargo llvm-cov report --workspace --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines 93
       # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,

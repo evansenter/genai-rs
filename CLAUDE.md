@@ -368,7 +368,8 @@ wheel's protos with `python3`).
   path that Linux's test-antigravity cannot reach, on each macOS leg;
   trybuild's `ui_tests` are skipped on beta), process-tree-macos (PRs
   only, on macos-latest: those `process_tree` tests, when the PR changes
-  `src/antigravity/process*.rs` or `rust.yml`, and nothing otherwise),
+  `src/antigravity/process*.rs`, `Cargo.toml`, `Cargo.lock`, a
+  `rust-toolchain*` file or `rust.yml`, and nothing otherwise),
   coverage, build-metrics, main-push-status, scheduled-run-status. The
   coverage job measures the `antigravity` feature too, with its scripted
   suite, counts library files only (no test-only file; an inline
@@ -386,13 +387,19 @@ wheel's protos with `python3`).
   red push to main one of its own (`main-push-status`); `tests/ci_workflows/`
   checks both, along with fail-fast, beta, the Windows PR leg and the
   cross-platform steps, the macOS PR job, the skip-marker budget (whose
-  over-budget branch must fail its step), the coverage floor (with no
-  `if:` or `continue-on-error`, on its step or its job) and its
-  library-only pattern, the steps the flakiness report counts (no offline
-  test of the retry helper runs in them), and
-  release's push-run gate, which lets only the jobs a push skips by
-  design be skipped and wants all six Cross Platform legs, and
-  `api-surface-sweep`'s spec-watch and issue-pointer steps.
+  over-budget branch must fail its step, each budget pinned with its
+  reason), the coverage floor (one command, nothing else in its step) and
+  its library-only pattern, the steps the flakiness report counts (no
+  offline test of the retry helper runs in them), that no `if:` or `needs:`
+  (but the live steps' owner gate and `needs: check`), `continue-on-error`,
+  `defaults:`, other shell or shell-level mask it knows (`|| true`,
+  `; true`, `set +e`, an `exit` whose status may be 0; `set -euo pipefail`
+  first in a longer script, and wherever nextest is piped) lets the floor, a
+  coverage run, the release gate, a live nextest step or the scripted
+  harness step pass a failure (D-058 lists what it reads), and release's
+  push-run gate, which lets only the jobs a push skips by design be skipped
+  and wants all six Cross Platform legs, and `api-surface-sweep`'s
+  spec-watch and issue-pointer steps.
   `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the

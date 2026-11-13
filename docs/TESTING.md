@@ -519,8 +519,14 @@ Every live nextest step keeps passing-test output
 job per binary, and the Antigravity harness step in `test-antigravity` and
 in `release.yml`. Any marker gives a warning; more than 3 fails the step
 (10 for `release.yml`'s whole-workspace run). `tests/ci_workflows/` checks
-that every live step does this, and the flakiness report adds the markers
-up across the week.
+that every live step does this, with each budget pinned there with its
+reason (`SKIP_BUDGETS`), so raising one to quiet a noisy run fails there
+first, as does a budget written as anything but a bare number. It also
+checks that each live step starts with `set -euo pipefail`, so
+`nextest | tee` keeps nextest's status, and that no shell-level mask it
+knows, `continue-on-error`, `if:` but the fork and owner gate or `needs:`
+but `needs: check` lets its failure pass. The flakiness report adds the
+markers up across the week.
 
 A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
@@ -559,8 +565,16 @@ value measured when it was last raised (D-058): raise it in `rust.yml` as
 coverage grows, and lower it only with the reason in the commit.
 `tests/ci_workflows/coverage.rs` checks the job keeps all of this: that
 the pattern matches every module only a test build compiles and no
-library file, and that nothing (an `if:` or `continue-on-error`, on the
-step or the job) can skip the floor or ignore its failure.
+library file; that the floor step runs `cargo llvm-cov report --workspace
+--ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
+nothing else; and that nothing the workflow guards know of skips it or
+passes its failure: an `if:`, `continue-on-error` or `needs:` on the step
+or its job, a `defaults:` on the job or the workflow, a shell other than
+bash, or a shell-level mask such as `|| true`, `; true`, `set +e` or an
+`exit` whose status may be 0 (`exit 0`, `exit "0"`). The coverage runs
+before it are held to the same. The guards read the workflow as text,
+against the forms D-058 lists: they catch the ways a step is known to be
+weakened, not every way a script can compute its status.
 
 ## Coverage oracle
 

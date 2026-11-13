@@ -39,7 +39,7 @@ jobs:
         run: pip install google-antigravity==0.1.23
       - name: Run harness integration tests
         run: |
-          set -eo pipefail
+          set -euo pipefail
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip"
             exit 1
@@ -65,7 +65,7 @@ jobs:
         run: cargo test --workspace --all-features --doc
       - name: Run integration tests
         run: |
-          set -eo pipefail
+          set -euo pipefail
           # Fail on an empty key: every integration test self-skips without one,
           # and this run gates a publish.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then

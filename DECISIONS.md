@@ -2372,6 +2372,72 @@ PR ran.
   job; `rust.yml` is in the filter so that a change to the job runs it.
   It is not a required check, and on a push it is skipped by design.
 
+**Amended 2026-11-10 (J-4, J-14).** The #504 grade of 2026-11-09 found
+that "nothing skips the floor or ignores its failure" did not hold: the
+guard read the YAML keys alone, and seven edits passed all 60 ci_coverage
+tests: `--fail-under-lines 93 || true` (M3), `|| true` on the release gate
+(R1) and on the required scripted harness step (M9), `set -e` without
+`pipefail` in the live integration and harness steps (M4b, M4c), where
+`nextest | tee` has tee's status, `continue-on-error: true` on a live
+integration step (M8), and a skip budget of 300 (M5). Each now fails one.
+- `failure_escapes` also rejects a job-level `needs:` (a job is skipped
+  with one it needs), a `defaults:` on the job or the workflow (a shell
+  template such as `true {0}` runs no script at all), a step `shell:`
+  other than `bash`, `BASH_ENV`, `SHELLOPTS` or `BASHOPTS` anywhere in the
+  workflow, and the shell-level masks it knows in the step's script
+  (`tests/ci_workflows/shell.rs`). A one-line script is one command, with
+  no shell operator; a longer one starts with `set -euo pipefail`. The
+  only `||` handlers allowed are `rc=$?` when the script ends with
+  `exit "$rc"` (or lists a failure from it), a failure-list entry when it
+  ends by exiting 1 on a non-empty list, and `exit`; `|| true`, `|| :`,
+  `|| echo` and `|| [ .. ]` are among those rejected. Every `exit` has a
+  literal status from 1 to 255, but `exit "$rc"` as the last line and a
+  bare `exit` after `||`, so `exit 0`, `exit "0"`, `exit 00` and
+  `exit $((0))` fail. `rc`, `failed` and `skips` are set only in the
+  forms the steps use, `rc` is not read after `rc=0` with no capture
+  since, and the failure list is not emptied once filled. Also rejected:
+  a `true` or `:` command (`; true`), `set +e`, `set +o pipefail` or a
+  `shopt` of either, a `trap`, a background `&`, a `!`, a `&&` list, a
+  command as an `if` or loop condition, a condition that reads no
+  variable, a command substitution anywhere but the value of a plain
+  assignment, an `exec`, `eval`, `source` or `bash -c`, a function, and
+  arithmetic (`let`, `(( ))`). The one `|| true` allowed is
+  `$(grep -c .. || true)`, a count whose exit status 1 means zero.
+- The floor step runs `cargo llvm-cov report --workspace
+  --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
+  nothing else, and the coverage runs before it are held to the same
+  escapes, so a failing test fails the job rather than leaving a figure.
+- Every live nextest step (rust.yml's integration groups and harness step,
+  release.yml's two) is held to them too. The only `if:` allowed, on the
+  step or its job, is the fork and owner gate, and the only `needs:` is
+  `needs: check`. The four steps now start with `set -euo pipefail`, which
+  every step that pipes nextest, in any workflow, must.
+- Each skip budget is pinned with its reason (`SKIP_BUDGETS` in
+  `tests/ci_workflows/mod.rs`): 3 for each integration binary and both
+  harness steps, 10 for `release.yml`'s whole-workspace run. A budget
+  raised, one not written as a bare number (`-gt "300"`), a live step
+  without a pin, or a pin without a step fails, as does a count of the
+  markers made twice or read from a log other than the one the step's
+  nextest run tees.
+- The scripted harness step in `test-antigravity`, part of the required
+  Test Suite (antigravity) check, runs with the key blanked and has no
+  escape.
+- `process-tree-macos` also runs its tests when a PR changes `Cargo.toml`,
+  `Cargo.lock` or a `rust-toolchain*` file: a dependency (`libc`,
+  `tokio`) or toolchain change can break the libproc path as surely as
+  the code can, and it was first seen on main's push run.
+
+The guard reads the workflow as text, against the forms it names. It
+catches the ways a step is known, or likely, to be weakened, not every
+way a script can compute its status: a condition that reads a variable
+but never holds, a loop over an empty list, a status variable set by a
+command it does not read, or an environment variable that changes how
+bash runs, set by a name built at run time, could still pass a failure.
+A review of the first version found spellings it let through, among
+them `|| exit "0"`, `|| [ -s log ]`, an `rc=0` before `exit "$rc"`, a
+workflow-level `defaults:`, `shopt -u -o pipefail`, `bash -c` and a budget
+written `-gt "300"`; each is now a case in the mutation tests.
+
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
 **Context.** #504's final grade put Docs at A-: five contradictions and

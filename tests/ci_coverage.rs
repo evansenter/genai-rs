@@ -21,9 +21,11 @@
 //! report sees them, trybuild's `ui_tests` stay off beta, every scheduled
 //! workflow and every push to main escalates its failures, a PR runs the
 //! Windows leg, the flakiness report reads every retry it claims to count,
-//! and Code Coverage writes its summary on every run. Two docs facts are
-//! guarded in `tests/doc_guards/`: `docs/TESTING.md`'s test-kind table
-//! places every test file under its kind, and every guide is doctested.
+//! Code Coverage writes its summary on every run, and no shell-level mask
+//! or YAML key the guards know lets a guarded step's failure pass. Two
+//! docs facts are guarded in `tests/doc_guards/`: `docs/TESTING.md`'s
+//! test-kind table places every test file under its kind, and every guide
+//! is doctested.
 
 #![allow(
     clippy::unwrap_used,
@@ -99,79 +101,19 @@ fn test_sources_in(dir: &std::path::Path) -> Vec<(String, Vec<PathBuf>)> {
 }
 
 /// `root` and every file module it declares, recursively, as rustc
-/// resolves them: `mod name;` (any visibility) loads a `#[path = "..."]`
-/// attribute's file, relative to the declaring file's directory, or else
-/// `name.rs` or `name/mod.rs` in the declaring file's directory when that
-/// file is a crate root, a `mod.rs` or loaded by `#[path]`, and in its
-/// `<stem>/` subdirectory otherwise. Inline modules (`mod name { ... }`)
-/// are part of their file already. A declared module whose file is missing
-/// fails, rather than leaving a binary's tests out.
+/// resolves them (`source_scan::module_files`, which the coverage guard's
+/// walk of the library shares), each once, its path spelt as a walk of the
+/// directory spells it (a `#[path]`'s `..` resolved). A declared module
+/// whose file is missing fails, rather than leaving a binary's tests out.
 fn module_files(root: &std::path::Path) -> Vec<PathBuf> {
-    // Each file, and whether its nested modules resolve beside it.
-    let mut files = vec![(root.to_path_buf(), true)];
-    let mut next = 0;
-    while next < files.len() {
-        let (file, owns_dir) = files[next].clone();
-        next += 1;
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
-        let dir = file.parent().expect("a file has a directory").to_path_buf();
-        let owns_dir = owns_dir || file.file_name().is_some_and(|name| name == "mod.rs");
-        let own_dir = if owns_dir {
-            dir.clone()
-        } else {
-            dir.join(file.file_stem().expect("a file has a stem"))
-        };
-        // Declarations at the start of a line only: an indented `mod x;`
-        // is in an inline module or, as in the scans that test themselves,
-        // a string literal.
-        let mut path_attr: Option<String> = None;
-        for line in text.lines().map(str::trim_end) {
-            // Attributes before the declaration, on its line or the ones
-            // above; `#[path]` is the one that matters.
-            let mut rest = line;
-            while let Some(attr) = rest.strip_prefix("#[") {
-                let Some(end) = attr.find(']') else { break };
-                if let Some(path) = attr[..end].strip_prefix("path = \"") {
-                    path_attr = path.strip_suffix('"').map(str::to_string);
-                }
-                rest = attr[end + 1..].trim_start();
-            }
-            if rest.is_empty() && rest.len() != line.len() {
-                continue;
-            }
-            let declared = ["mod ", "pub mod ", "pub(crate) mod ", "pub(super) mod "]
-                .iter()
-                .find_map(|prefix| rest.strip_prefix(prefix))
-                .and_then(|rest| rest.strip_suffix(';'))
-                .filter(|name| name.chars().all(|c| c.is_alphanumeric() || c == '_'));
-            let attr = path_attr.take();
-            let Some(name) = declared else {
-                continue;
-            };
-            let (found, by_path) = match attr {
-                Some(path) => (dir.join(path), true),
-                None => {
-                    let flat = own_dir.join(format!("{name}.rs"));
-                    if flat.exists() {
-                        (flat, false)
-                    } else {
-                        (own_dir.join(name).join("mod.rs"), false)
-                    }
-                }
-            };
-            assert!(
-                found.exists(),
-                "{} declares `mod {name};`, but {} does not exist",
-                file.display(),
-                found.display()
-            );
-            if !files.iter().any(|(known, _)| *known == found) {
-                files.push((found, by_path));
-            }
+    let mut files: Vec<PathBuf> = Vec::new();
+    for module in source_scan::module_files(root) {
+        let path = source_scan::lexically_normal(&module.path);
+        if !files.contains(&path) {
+            files.push(path);
         }
     }
-    files.into_iter().map(|(file, _)| file).collect()
+    files
 }
 
 /// Binaries named in the matrix's `tests: "…"` lines.
@@ -293,6 +235,24 @@ fn a_live_test_in_a_submodule_makes_its_binary_live() {
             "wired/deeper.rs"
         ]
     );
+}
+
+/// A `#[path]` with a `..` in it names the file it reaches, once, so the
+/// orphan check below compares it with the walk of the directory.
+#[test]
+fn a_path_with_a_parent_component_names_the_file_once() {
+    let dir = std::env::temp_dir().join(format!("ci_coverage_dotdot_{}", std::process::id()));
+    let nested = dir.join("tests");
+    std::fs::create_dir_all(nested.join("sub")).unwrap();
+    std::fs::write(
+        nested.join("bin.rs"),
+        "mod shared;\n#[path = \"sub/../shared.rs\"]\nmod again;\n",
+    )
+    .unwrap();
+    std::fs::write(nested.join("shared.rs"), "// shared\n").unwrap();
+    let files = module_files(&nested.join("bin.rs"));
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(files, [nested.join("bin.rs"), nested.join("shared.rs")]);
 }
 
 /// Every module file under `tests/` is compiled into some test binary, so

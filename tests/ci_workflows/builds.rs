@@ -7,7 +7,8 @@
 //! the Windows doctests run even after a failing unit test, the antigravity
 //! feature compiles off Linux, its process-tree tests run on macOS (whose
 //! libproc path no other job reaches) on every macOS leg and on a PR that
-//! changes the process code, clippy lints the Windows-only code on the leg
+//! changes the process code or what it builds with, clippy lints the
+//! Windows-only code on the leg
 //! a PR runs, and clippy lints every target without default features, in
 //! CI and in `make clippy`.
 
@@ -352,18 +353,27 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
 const PR_PROCESS_TREE_TESTS: &str =
     "cargo nextest run --features antigravity --lib -E 'test(/process_tree/)'";
 
-/// The `case` arm the PR job's change check must have: every
+/// The `case` arms the PR job's change check must have: every
 /// `src/antigravity/process*.rs` file, `process_tree.rs` and the tests
-/// beside them included.
-const PROCESS_CODE: &str = "src/antigravity/process*.rs";
+/// beside them included; what the libproc path builds with, the
+/// dependencies (`libc`, `tokio`) and the toolchain, which can break it as
+/// surely as the code can; and `rust.yml`, so that a change to the job runs
+/// it.
+const PROCESS_TREE_INPUTS: [&str; 5] = [
+    "src/antigravity/process*.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain*",
+    ".github/workflows/rust.yml",
+];
 
 /// Problems with the job that runs the process-tree tests on macOS for a
 /// PR, empty when it holds. The Cross Platform macOS legs run on main
 /// pushes and the schedule only, so a PR that broke the libproc lookup
 /// would first fail on main. One job runs on every PR, on macos-latest; a
-/// step with `id: paths` sets `changed` to `true` when the PR touches
-/// [`PROCESS_CODE`] (and when it cannot tell, rather than skip), and the
-/// tests run when it is `true`.
+/// step with `id: paths` sets `changed` to `true` when the PR touches one
+/// of [`PROCESS_TREE_INPUTS`] (and when it cannot tell, rather than skip),
+/// and the tests run when it is `true`.
 fn process_tree_pr_problems(workflow: &str) -> Vec<String> {
     let found: Vec<(String, String)> = jobs(workflow)
         .into_iter()
@@ -401,13 +411,15 @@ fn process_tree_pr_problems(workflow: &str) -> Vec<String> {
     {
         Some(check) => {
             let script: Vec<&str> = check.lines().map(str::trim).collect();
-            if !script.iter().any(|line| {
-                line.split('|')
-                    .any(|arm| arm.trim_end_matches(')') == PROCESS_CODE)
-            }) {
-                problems.push(format!(
-                    "{id}'s change check has no `case` arm for `{PROCESS_CODE}`"
-                ));
+            for input in PROCESS_TREE_INPUTS {
+                if !script.iter().any(|line| {
+                    line.split('|')
+                        .any(|arm| arm.trim_end_matches(')') == input)
+                }) {
+                    problems.push(format!(
+                        "{id}'s change check has no `case` arm for `{input}`"
+                    ));
+                }
             }
             for (needle, why) in [
                 (
@@ -469,11 +481,16 @@ fn the_process_tree_pr_check_catches_what_it_claims_to() {
             "    name: Process Tree (macOS)\n    if: github.event_name == 'pull_request'\n",
             "    name: Process Tree (macOS)\n    if: github.event_name == 'push'\n",
         ),
-        // A filter that misses process_tree.rs, or one that never tests.
+        // A filter that misses process_tree.rs, the dependencies, the
+        // toolchain or the job itself, or one that never tests.
         workflow.replace(
             "              src/antigravity/process*.rs|",
             "              src/antigravity/process.rs|",
         ),
+        workflow.replace("|Cargo.toml|Cargo.lock|", "|Cargo.lock|"),
+        workflow.replace("|Cargo.toml|Cargo.lock|", "|Cargo.toml|"),
+        workflow.replace("|rust-toolchain*|", "|rust-toolchain.toml|"),
+        workflow.replace("|.github/workflows/rust.yml)\n", ")\n"),
         workflow.replace(
             "            echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n",
             "            echo \"changed=false\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n",

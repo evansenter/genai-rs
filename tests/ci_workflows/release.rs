@@ -6,52 +6,66 @@ use super::builds::event_matrix;
 use super::flakiness::display_names;
 use super::{command_lines, failure_escapes, jobs, read, root, steps};
 
+/// Problems with release.yml's push-run gate, empty when it holds.
 /// release.yml validates on Ubuntu only, so the tagged commit's push run of
 /// rust.yml on main, which runs the Cross Platform legs and the rest, must
 /// be green on every job before anything publishes: `validate` runs
 /// `check_release_push_run.sh` on the tagged commit, with the token able
-/// to read Actions, and `publish` needs `validate`.
-#[test]
-fn a_release_publishes_only_a_commit_green_on_its_main_push_run() {
-    let release = read(&root().join(".github/workflows/release.yml"));
-    let all = jobs(&release);
+/// to read Actions, with nothing the guards know to skip the step or pass
+/// its failure ([`failure_escapes`]), and `publish` needs `validate`.
+fn push_run_gate_problems(release: &str) -> Vec<String> {
+    let all = jobs(release);
     let job = |id: &str| {
         all.iter()
             .find(|(job, _)| job == id)
             .map(|(_, body)| body.clone())
-            .unwrap_or_else(|| panic!("release.yml has no {id} job"))
     };
-    let validate = job("validate");
-    let check = steps(&validate)
+    let (Some(validate), Some(publish)) = (job("validate"), job("publish")) else {
+        return vec!["release.yml has no validate job, or no publish job".into()];
+    };
+    let Some(check) = steps(&validate)
         .into_iter()
         .find(|step| command_lines(step).any(|line| line.contains("check_release_push_run.sh")))
-        .expect("validate runs .github/scripts/check_release_push_run.sh");
+    else {
+        return vec!["validate never runs .github/scripts/check_release_push_run.sh".into()];
+    };
+    let mut problems = Vec::new();
     let call = command_lines(&check)
         .find(|line| line.contains("check_release_push_run.sh"))
         .unwrap_or_default()
         .to_owned();
+    if !(call.contains("\"$GITHUB_SHA\"") || call.contains("${{ github.sha }}")) {
+        problems.push(format!("the check reads the tagged commit's run: {call}"));
+    }
+    if !(check.contains("GH_TOKEN: ${{ github.token }}")
+        || check.contains("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"))
+    {
+        problems.push(format!(
+            "the check's gh calls need the job's token:\n{check}"
+        ));
+    }
+    for escape in failure_escapes(release, &validate, &check) {
+        problems.push(format!(
+            "the check runs on every release and its failure stops it, but it has {escape}"
+        ));
+    }
+    if !validate.contains("      actions: read") {
+        problems.push("validate's token must read Actions for `gh run`".into());
+    }
+    if !command_lines(&publish).any(|line| line == "needs: validate") {
+        problems.push("publish waits for validate (`needs: validate`)".into());
+    }
+    problems
+}
+
+#[test]
+fn a_release_publishes_only_a_commit_green_on_its_main_push_run() {
+    let release = read(&root().join(".github/workflows/release.yml"));
+    let problems = push_run_gate_problems(&release);
     assert!(
-        call.contains("\"$GITHUB_SHA\"") || call.contains("${{ github.sha }}"),
-        "the check reads the tagged commit's run: {call}"
-    );
-    assert!(
-        check.contains("GH_TOKEN: ${{ github.token }}")
-            || check.contains("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"),
-        "the check's gh calls need the job's token:\n{check}"
-    );
-    let escapes = failure_escapes(&validate, &check);
-    assert!(
-        escapes.is_empty(),
-        "the check runs on every release and its failure stops it, but it has \
-         {escapes:?}:\n{check}"
-    );
-    assert!(
-        validate.contains("      actions: read"),
-        "validate's token must read Actions for `gh run`:\n{validate}"
-    );
-    assert!(
-        command_lines(&job("publish")).any(|line| line == "needs: validate"),
-        "publish waits for validate"
+        problems.is_empty(),
+        "release.yml's push-run gate:\n  {}",
+        problems.join("\n  ")
     );
     assert!(
         root()
@@ -59,6 +73,57 @@ fn a_release_publishes_only_a_commit_green_on_its_main_push_run() {
             .exists(),
         "the check has its harness"
     );
+}
+
+#[test]
+fn the_push_run_gate_check_catches_what_it_claims_to() {
+    let release = read(&root().join(".github/workflows/release.yml"));
+    let gate = "        run: .github/scripts/check_release_push_run.sh \"$GITHUB_SHA\"\n";
+    let broken = [
+        // R1: the gate's failure masked in the shell, in each spelling.
+        release.replace(gate, &gate.replace("\"\n", "\" || true\n")),
+        release.replace(gate, &gate.replace("\"\n", "\"; true\n")),
+        release.replace(gate, &gate.replace("\"\n", "\" || exit 0\n")),
+        release.replace(gate, &gate.replace("\"\n", "\" || exit \"0\"\n")),
+        release.replace(gate, &gate.replace("\"\n", "\" || [ 1 ]\n")),
+        release.replace(
+            gate,
+            "        run: |\n          set +e\n          .github/scripts/check_release_push_run.sh \"$GITHUB_SHA\"\n",
+        ),
+        // ... ignored, or skipped, by the step or by its job.
+        release.replace(gate, &format!("        continue-on-error: true\n{gate}")),
+        release.replace(
+            gate,
+            &format!("        if: github.event_name == 'workflow_dispatch'\n{gate}"),
+        ),
+        release.replace(
+            "    name: Validate Release\n",
+            "    name: Validate Release\n    continue-on-error: true\n",
+        ),
+        // ... run on another commit, without a token, or not waited for.
+        release.replace(
+            "check_release_push_run.sh \"$GITHUB_SHA\"",
+            "check_release_push_run.sh main",
+        ),
+        release.replace("          GH_TOKEN: ${{ github.token }}\n", ""),
+        release.replace("    needs: validate\n", ""),
+        // ... or run, with every step, by a shell that never runs a script.
+        release.replace(
+            "\njobs:\n",
+            "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
+        release.replace(
+            "  CARGO_TERM_COLOR: always\n",
+            "  CARGO_TERM_COLOR: always\n  BASH_ENV: .github/mask.sh\n",
+        ),
+    ];
+    for (i, text) in broken.iter().enumerate() {
+        assert_ne!(text, &release, "mutation {i} did not apply");
+        assert!(
+            !push_run_gate_problems(text).is_empty(),
+            "mutation {i} went unnoticed"
+        );
+    }
 }
 
 /// A `NAME='...'` or `NAME=...` assignment's value in a shell script.
