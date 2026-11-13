@@ -609,9 +609,11 @@ impl AgentBuilder {
     ///   attempts), the initialization exchange, or the session-start hook
     ///   (30 s each), a harness that closes the connection or sends what
     ///   this client cannot read included. The error that caused it, when
-    ///   one did (an [`AntigravityError::WebSocket`] or
-    ///   [`AntigravityError::Protocol`] error, or the session-start hook's
-    ///   failed answer), is its [`source()`](std::error::Error::source).
+    ///   one did, is its [`source()`](std::error::Error::source): an
+    ///   [`AntigravityError::WebSocket`] or [`AntigravityError::Protocol`]
+    ///   error, the session-start hook's failed answer, or the
+    ///   [`AntigravityError::Turn`] error of a harness message that fails a
+    ///   turn (a cancelled trajectory, say) before the hook is called.
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
         let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
         self.validate(&dispatcher)?;

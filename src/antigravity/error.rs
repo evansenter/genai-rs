@@ -66,17 +66,24 @@ pub enum AntigravityError {
         /// The error that failed the step, when one did: the
         /// [`WebSocket`](Self::WebSocket) error of a connect that never
         /// succeeded or of a send that failed, the error reading the
-        /// harness's messages, or the error answering the session-start
-        /// hook ([`on_session_start`](super::AgentBuilder::on_session_start)).
-        /// Also returned by [`source()`](std::error::Error::source), and not
-        /// repeated in this error's `Display`.
+        /// harness's messages, or, while `spawn()` waits for the
+        /// session-start hook
+        /// ([`on_session_start`](super::AgentBuilder::on_session_start)),
+        /// the error handling a harness message: the hook's answer that
+        /// failed to send, or the [`Turn`](Self::Turn) error of a message
+        /// that fails a turn (a cancelled trajectory, say). Also returned
+        /// by [`source()`](std::error::Error::source), and not repeated in
+        /// this error's `Display`.
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
     },
     /// The harness closed the connection unexpectedly (it likely crashed),
     /// after `spawn()` returned: mid-turn, while
     /// [`next_trigger_turn`](super::AntigravityAgent::next_trigger_turn)
-    /// waits, or on any call after a turn whose failure ended the session
+    /// waits, or, without sending, on a call that starts or waits for a
+    /// turn ([`chat`](super::AntigravityAgent::chat),
+    /// [`send_streaming`](super::AntigravityAgent::send_streaming),
+    /// `next_trigger_turn`) after a turn whose failure ended the session
     /// ([`TurnFailure::ends_session`]). A trigger's
     /// [`TriggerContext::send`](super::TriggerContext::send) fails with it,
     /// with an empty `stderr`, once the agent is gone.
@@ -122,8 +129,9 @@ pub enum AntigravityError {
     ///
     /// When it cannot ([`TurnFailure::ModelBackend`] and
     /// [`TurnFailure::Trajectory`], on harness 0.1.23), the harness ends
-    /// its run and closes its WebSocket, and the agent's next call fails
-    /// with [`ConnectionClosed`](Self::ConnectionClosed) without sending.
+    /// its run and closes its WebSocket, and the agent's next turn (a
+    /// `chat`, `send_streaming` or `next_trigger_turn`) fails with
+    /// [`ConnectionClosed`](Self::ConnectionClosed) without sending.
     /// Spawn a new agent after one.
     #[error("agent turn failed ({kind}): {message}")]
     Turn {
@@ -217,11 +225,12 @@ pub enum TurnFailure {
 
 impl TurnFailure {
     /// Whether the harness ended the session with the turn, so the agent's
-    /// next call fails with
-    /// [`ConnectionClosed`](AntigravityError::ConnectionClosed), without
-    /// sending, and a new agent must be spawned. True for [`ModelBackend`](Self::ModelBackend)
-    /// and [`Trajectory`](Self::Trajectory), whose errors end the harness's
-    /// run on harness 0.1.23.
+    /// next turn (a `chat`, `send_streaming` or `next_trigger_turn`) fails
+    /// with [`ConnectionClosed`](AntigravityError::ConnectionClosed),
+    /// without sending, and a new agent must be spawned. True for
+    /// [`ModelBackend`](Self::ModelBackend) and
+    /// [`Trajectory`](Self::Trajectory), whose errors end the harness's run
+    /// on harness 0.1.23.
     #[must_use]
     pub const fn ends_session(&self) -> bool {
         matches!(self, Self::ModelBackend { .. } | Self::Trajectory)

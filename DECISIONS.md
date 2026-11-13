@@ -2659,7 +2659,11 @@ keeping `Timeout` for an overrun, on the ground that the caller's hook
 rather than the harness is slow there. `spawn()` would then have one more
 variant for a start-up that failed, and the overrun would lose the stderr
 beside it. Unit tests on a stand-in peer cover each failure of
-`agent/session_lifecycle.rs`.
+`agent/session_lifecycle.rs`. The "every later call" refused after a
+session-ending failure, above, is each call that starts or waits for a
+turn (`chat`, `send_streaming`, `next_trigger_turn`), as
+`ConnectionClosed`'s rustdoc now names them; `cancel()` and `shutdown()`
+do not check.
 
 ---
 

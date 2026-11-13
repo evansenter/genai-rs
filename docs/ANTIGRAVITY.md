@@ -1412,10 +1412,11 @@ variants, never on message text. Key variants:
   succeeded, say), as its source.
 - `ConnectionClosed`: the harness closed the connection after `spawn()`
   returned. A harness that dies mid-turn, or while `next_trigger_turn`
-  waits, fails the call with it and the tail of its `stderr`; so does every
-  call after a turn whose failure ended the session (below), without
-  sending. A trigger's `TriggerContext::send` gets it, with an empty
-  `stderr`, once the agent is shut down or dropped.
+  waits, fails the call with it and the tail of its `stderr`. After a turn
+  whose failure ended the session (below), each `chat`, `send_streaming`
+  and `next_trigger_turn` fails with it without sending. A trigger's
+  `TriggerContext::send` gets it, with an empty `stderr`, once the agent is
+  shut down or dropped.
 - `HarnessExited`: a failed exit on `shutdown()`, with `stderr`.
 - `Config`: spawn-time validation, including the safety gate.
 - `Turn { kind, message }`: a failed turn (below).
@@ -1447,9 +1448,9 @@ A failed turn is `Turn { kind, message }`, where `kind` is a
 
 `kind.ends_session()` answers the last column. On harness 0.1.23 the
 harness's run ends with a `ModelBackend` or `Trajectory` failure, and the
-agent fails every later call with `ConnectionClosed`, without sending: the
-harness can take one more message before it closes its WebSocket and
-answer it with an empty turn.
+agent fails every later `chat`, `send_streaming` and `next_trigger_turn`
+with `ConnectionClosed`, without sending: the harness can take one more
+message before it closes its WebSocket and answer it with an empty turn.
 
 ```rust,no_run
 use genai_rs::antigravity::{AntigravityAgent, AntigravityError, TurnFailure};

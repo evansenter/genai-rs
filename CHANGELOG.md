@@ -869,8 +869,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the harness cancelled the turn) or `Hook` (a hook's thread did not run).
   `TurnFailure::ends_session()` is true for `ModelBackend` and
   `Trajectory`, after which harness 0.1.23 ends its run, and the agent
-  fails every later call with `ConnectionClosed` without sending. `message`
-  is the harness's text alone, and `Display` names the kind. Migration:
+  fails every later `chat`, `send_streaming` and `next_trigger_turn` with
+  `ConnectionClosed` without sending. `message` is the harness's text
+  alone, and `Display` names the kind. Migration:
   match `AntigravityError::Turn { kind, message }` where you matched
   `Turn(message)`, and decide on `kind` (or `kind.ends_session()` for
   whether to spawn a new agent) where you searched the message for "HTTP
@@ -881,17 +882,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InitFailed`.** A WebSocket connect that fails during `spawn()`, and a
   failed read of the harness's initialization reply, are `InitFailed`
   errors whose `source()` is the `WebSocket` error (it held only the
-  text). With `on_session_start` set, a failed read or a failed answer
-  while `spawn()` waits for the session-start hook was the bare
-  `WebSocket`, `Protocol` or `Turn` error, with no stderr, and a hook that
-  overran its 30 s was `Timeout`; each is now `InitFailed`, with the
-  stderr tail and the cause, when there is one, as its source. A
-  `HandshakeFailed` from a binary that would not start, a failed handshake
-  exchange or a reply that does not decode has that I/O or decode error
-  as its source, where its message held the text. `WebSocket`,
-  `Protocol`, `Io`, `HandshakeFailed` and `InitFailed` print what was
-  being done; `source()` gives the cause, so a reporter that walks the
-  chain prints each cause once. Migration: match
+  text). With `on_session_start` set, a failed read, a failed answer or a
+  harness message that failed a turn while `spawn()` waits for the
+  session-start hook was the bare `WebSocket`, `Protocol` or `Turn` error,
+  with no stderr, and a hook that overran its 30 s was `Timeout`; each is
+  now `InitFailed`, with the stderr tail and the cause, when there is one,
+  as its source. A `HandshakeFailed` from a binary that would not start,
+  a failed handshake exchange or a reply that does not decode has that I/O
+  or decode error as its source, where its message held the text.
+  `WebSocket`, `Protocol`, `Io`, `HandshakeFailed` and `InitFailed` print
+  what was being done; `source()` gives the cause, so a reporter that
+  walks the chain prints each cause once. Migration: match
   `InitFailed { message, stderr, .. }` and
   `HandshakeFailed { message, stderr, .. }`; match `InitFailed` where you
   matched `WebSocket`, `Protocol`, `Turn` or `Timeout` from a `spawn()`
