@@ -41,6 +41,9 @@ enum Then {
     CancelledTrajectory,
     /// Sends the session-start hook's request, then holds.
     StartHook,
+    /// Reports the main trajectory running, sends the session-start hook's
+    /// request, then holds.
+    RunningThenStartHook,
     /// Sends the session-end hook's request, then holds.
     EndHook,
     /// Skips two events that are not the answer, answers, then holds.
@@ -64,6 +67,10 @@ fn init_response() -> serde_json::Value {
 
 fn hook_request(hook_type: &str) -> serde_json::Value {
     json!({"callHookRequest": {"requestId": "hook-1", "type": hook_type}})
+}
+
+fn running_trajectory() -> serde_json::Value {
+    json!({"trajectoryStateUpdate": {"trajectoryId": "main", "state": "STATE_RUNNING"}})
 }
 
 fn cancelled_trajectory() -> serde_json::Value {
@@ -110,14 +117,14 @@ async fn peer(listener: tokio::net::TcpListener, answer_init: bool, then: Then) 
         Then::StartHook => {
             send_json(&mut ws, hook_request("LIFECYCLE_HOOK_ON_SESSION_START")).await;
         }
+        Then::RunningThenStartHook => {
+            send_json(&mut ws, running_trajectory()).await;
+            send_json(&mut ws, hook_request("LIFECYCLE_HOOK_ON_SESSION_START")).await;
+        }
         Then::EndHook => send_json(&mut ws, hook_request("LIFECYCLE_HOOK_ON_SESSION_END")).await,
         Then::NoiseThenAnswer => {
             send_json(&mut ws, json!({})).await;
-            send_json(
-                &mut ws,
-                json!({"trajectoryStateUpdate": {"trajectoryId": "main", "state": "STATE_RUNNING"}}),
-            )
-            .await;
+            send_json(&mut ws, running_trajectory()).await;
             send_json(&mut ws, init_response()).await;
         }
         Then::CloseOnSessionEnd => {
@@ -271,6 +278,19 @@ async fn test_events_before_the_initialization_response_are_skipped() {
 }
 
 #[tokio::test]
+async fn test_spawn_answers_the_session_start_hook_after_the_messages_before_it() {
+    let ran = Arc::new(AtomicBool::new(false));
+    let hook_ran = Arc::clone(&ran);
+    let builder = AntigravityAgent::builder()
+        .on_session_start(move || hook_ran.store(true, Ordering::SeqCst));
+    let mut spawned = Spawned::new(builder, true, Then::RunningThenStartHook).await;
+    // The running trajectory before the hook's request is handled, not
+    // taken for the hook, and spawn() returns once the hook is answered.
+    spawned.agent().await;
+    assert!(ran.load(Ordering::SeqCst), "the session-start hook ran");
+}
+
+#[tokio::test]
 async fn test_a_failed_session_start_is_init_failed_with_its_cause() {
     let ran = Arc::new(AtomicBool::new(false));
     let builder = || {
@@ -413,6 +433,25 @@ async fn test_a_harness_that_stops_answering_fails_initialization_at_init_timeou
 }
 
 #[tokio::test]
+async fn test_an_initialization_message_the_harness_never_takes_fails_at_init_timeout() {
+    let mut spawned = Spawned::new(AntigravityAgent::builder(), true, Then::Hold).await;
+    let agent = spawned.agent().await;
+    let releaser = hold_the_sink(agent, GUARD).await;
+    let (result, elapsed) = timed(agent.initialize(InitializeConversationEvent::default())).await;
+    // Dropping the task drops the sink's guard.
+    releaser.abort();
+    let error = result.expect_err("the message is never taken");
+    let (message, source) = init_failed(&error);
+    assert!(
+        message.contains("did not take the initialization message"),
+        "{message}"
+    );
+    // A bound that passed has no error of its own to keep.
+    assert!(source.is_none(), "{source:?}");
+    assert!(at(elapsed, INIT_TIMEOUT), "{elapsed:?}");
+}
+
+#[tokio::test]
 async fn test_a_session_start_hook_that_overruns_fails_at_init_timeout() {
     // Spawned without the hook, so the hook's request waits unread.
     let mut spawned = Spawned::new(AntigravityAgent::builder(), true, Then::StartHook).await;
@@ -505,6 +544,22 @@ fn test_a_session_end_request_the_harness_never_takes_ends_at_its_bound() {
     assert!(at(elapsed, SESSION_END_TIMEOUT), "{elapsed:?}");
     assert!(
         logs(&messages, "did not take the session-end request"),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn test_a_session_end_the_harness_never_confirms_ends_at_its_bound() {
+    let (elapsed, messages) = logged(async {
+        // The peer takes the request (into the socket's buffer) and never
+        // answers it.
+        let mut spawned = Spawned::new(AntigravityAgent::builder(), true, Then::Hold).await;
+        let agent = spawned.agent().await;
+        timed(agent.end_session()).await.1
+    });
+    assert!(at(elapsed, SESSION_END_TIMEOUT), "{elapsed:?}");
+    assert!(
+        logs(&messages, "The session-end hooks did not finish"),
         "{messages:?}"
     );
 }
