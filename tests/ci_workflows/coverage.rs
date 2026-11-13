@@ -501,6 +501,7 @@ fn the_module_walk_tells_test_only_files_from_library_code() {
         "src/test_subscriber.rs",
         "src/fuzzing.rs",
         "src/fuzzing_tests.rs",
+        "src/fuzzing_wire.rs",
         "src/request/tests.rs",
         "src/antigravity/process_tree_tests.rs",
     ] {

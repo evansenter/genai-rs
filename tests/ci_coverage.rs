@@ -46,7 +46,7 @@ mod live_verbs;
 // `duplicate_mod`).
 use live_verbs::source_scan;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 /// Run in the `test-antigravity` job's own steps, not the matrix (see
@@ -481,6 +481,75 @@ fn fuzz_matrix_runs_every_fuzz_target() {
             "the {bin} target has no fuzz/seeds/{bin}/ directory"
         );
     }
+}
+
+/// The `required-features` of each `[[bin]]` in `fuzz/Cargo.toml` that has
+/// any, by target name.
+fn fuzz_bin_features() -> BTreeMap<String, String> {
+    let manifest = std::fs::read_to_string(root().join("fuzz/Cargo.toml"))
+        .expect("read fuzz/Cargo.toml")
+        .replace("\r\n", "\n");
+    let mut features = BTreeMap::new();
+    let mut name = None;
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with('[') {
+            name = None;
+        } else if let Some(bin) = line.strip_prefix("name = \"") {
+            name = Some(bin.trim_end_matches('"').to_string());
+        } else if let (Some(bin), Some(list)) = (&name, line.strip_prefix("required-features = ["))
+        {
+            let list: Vec<&str> = list
+                .trim_end_matches(']')
+                .split(',')
+                .map(|feature| feature.trim().trim_matches('"'))
+                .filter(|feature| !feature.is_empty())
+                .collect();
+            features.insert(bin.clone(), list.join(","));
+        }
+    }
+    features
+}
+
+/// A target whose `[[bin]]` has `required-features` does not build without
+/// them, so the matrix gives it exactly those (`include:` with
+/// `features:`, which the run passes as `--features`), and no other target
+/// any.
+#[test]
+fn fuzz_matrix_builds_each_target_with_its_required_features() {
+    let workflow = fuzz_yml();
+    let mut given = BTreeMap::new();
+    let mut target = None;
+    for line in workflow.lines().map(str::trim) {
+        if let Some(name) = line.strip_prefix("- target:") {
+            target = Some(name.trim().to_string());
+        } else if let (Some(name), Some(features)) = (&target, line.strip_prefix("features:")) {
+            given.insert(name.clone(), features.trim().to_string());
+            target = None;
+        }
+    }
+    let required = fuzz_bin_features();
+    assert!(
+        required.contains_key("harness_output_event"),
+        "the harness target needs the antigravity feature: {required:?}"
+    );
+    assert_eq!(
+        given, required,
+        "fuzz.yml's matrix `include:` must give each target its [[bin]]'s required-features"
+    );
+    assert!(
+        workflow.contains("FEATURES: ${{ matrix.features }}")
+            && workflow.contains("cargo +nightly fuzz run ${FEATURES:+--features \"$FEATURES\"}"),
+        "the fuzz step must pass the matrix's features to `cargo fuzz run`"
+    );
+    // The harness protocol the harness target reads is a fuzzed path; the
+    // rest of `src/antigravity/` is not.
+    let protocol = workflow.find("src/antigravity/protocol/*)");
+    let rest = workflow.find("src/antigravity/*) ;;");
+    assert!(
+        protocol.is_some() && rest.is_some() && protocol < rest,
+        "fuzz.yml's path check must fuzz on src/antigravity/protocol/ before it skips \
+         the rest of src/antigravity/"
+    );
 }
 
 /// The matrix's checks exist only on runs that fuzz, so branch protection

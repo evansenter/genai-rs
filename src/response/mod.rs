@@ -105,7 +105,7 @@ pub struct InteractionError {
 /// Under API revision 2026-05-20 the response carries a `steps` array; use the
 /// convenience helpers (`as_text()`, `function_calls()`, `images()`, ...) or
 /// iterate [`InteractionResponse::steps`] directly.
-#[derive(Clone, Deserialize, Serialize, Debug, Default)]
+#[derive(Clone, Deserialize, Serialize, Debug, Default, PartialEq)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct InteractionResponse {
