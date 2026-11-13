@@ -12,6 +12,12 @@
 //! Not part of `common/mod.rs`, which every integration test compiles: the
 //! guards that scan include this file by `#[path]`, and nothing else
 //! compiles it.
+//!
+//! `tests/model_literals.rs` and `tests/temp_file_tests.rs` walk with
+//! [`rust_files`] too (#553). `tests/redaction_guards.rs`,
+//! `tests/setter_convention.rs` and the coverage oracle
+//! (`src/coverage_oracle/request/fills.rs`) read the library's own source
+//! with [`library_sources`]; each keeps its own floor as well.
 
 #![allow(
     dead_code,
@@ -154,5 +160,149 @@ fn type_name(ty: &syn::Type) -> Option<String> {
         syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
         syn::Type::Reference(r) => type_name(&r.elem),
         _ => None,
+    }
+}
+
+/// Whether the attributes gate an item to test builds: a `cfg` in which
+/// `test` appears outside any `not(..)` (`all(test, unix)` and
+/// `any(test, fuzzing)` count), or a test attribute (`#[test]`,
+/// `#[tokio::test]`).
+pub fn is_test_gated(attrs: &[syn::Attribute]) -> bool {
+    use syn::punctuated::Punctuated;
+    fn mentions_test(meta: &syn::Meta, negated: bool) -> bool {
+        match meta {
+            syn::Meta::Path(path) => !negated && path.is_ident("test"),
+            syn::Meta::List(list) => {
+                let negated = negated ^ list.path.is_ident("not");
+                list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                    .is_ok_and(|nested| nested.iter().any(|m| mentions_test(m, negated)))
+            }
+            syn::Meta::NameValue(_) => false,
+        }
+    }
+    attrs.iter().any(|attr| {
+        attr.path()
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "test")
+            || (attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Meta>()
+                    .is_ok_and(|meta| mentions_test(&meta, false)))
+    })
+}
+
+/// Whether a repo-relative path is one of the library's test-only files:
+/// one `Cargo.toml`'s `include` leaves out of `src/` (`!/src/...`), since
+/// those build only under `cfg(test)` and the `check` job fails when one
+/// ships (#501). Read from `Cargo.toml`, so a pattern added there counts
+/// here too.
+pub fn is_test_only_file(rel: &str) -> bool {
+    static PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
+        let manifest = std::fs::read_to_string(root().join("Cargo.toml"))
+            .unwrap_or_else(|e| panic!("could not read Cargo.toml: {e}"));
+        let include = manifest
+            .split_once("\ninclude = [")
+            .and_then(|(_, rest)| rest.split_once("\n]"))
+            .map(|(list, _)| list)
+            .expect("Cargo.toml has an `include = [` list");
+        let patterns: Vec<regex::Regex> = include
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("\"!/src/"))
+            .map(|glob| {
+                let glob = glob.trim_end_matches(',').trim_end_matches('"');
+                let mut pattern = String::from("^src/");
+                let mut rest = glob;
+                while !rest.is_empty() {
+                    if let Some(after) = rest.strip_prefix("**/") {
+                        pattern.push_str("(?:.*/)?");
+                        rest = after;
+                    } else if let Some(after) = rest.strip_prefix("**") {
+                        pattern.push_str(".*");
+                        rest = after;
+                    } else if let Some(after) = rest.strip_prefix('*') {
+                        pattern.push_str("[^/]*");
+                        rest = after;
+                    } else {
+                        let c = rest.chars().next().expect("not empty");
+                        pattern.push_str(&regex::escape(&c.to_string()));
+                        rest = &rest[c.len_utf8()..];
+                    }
+                }
+                pattern.push('$');
+                regex::Regex::new(&pattern).expect("a glob makes a valid pattern")
+            })
+            .collect();
+        assert!(
+            !patterns.is_empty(),
+            "Cargo.toml's `include` leaves nothing out of src/: the test-only files \
+             cannot be told from the library's"
+        );
+        patterns
+    });
+    PATTERNS.iter().any(|pattern| pattern.is_match(rel))
+}
+
+/// The library's own source, parsed and keyed by repo-relative path: every
+/// `.rs` file under `src/` but the test-only ones ([`is_test_only_file`]),
+/// with its test-only items removed ([`is_test_gated`]) at any depth of
+/// inline modules, and from `impl` and `trait` blocks.
+pub fn library_sources() -> Vec<(String, syn::File)> {
+    fn strip(items: &mut Vec<syn::Item>) {
+        items.retain(|item| !is_test_gated(item_attrs(item)));
+        for item in items {
+            match item {
+                syn::Item::Mod(module) => {
+                    if let Some((_, inner)) = &mut module.content {
+                        strip(inner);
+                    }
+                }
+                syn::Item::Impl(imp) => imp.items.retain(|item| match item {
+                    syn::ImplItem::Fn(f) => !is_test_gated(&f.attrs),
+                    syn::ImplItem::Const(c) => !is_test_gated(&c.attrs),
+                    syn::ImplItem::Type(t) => !is_test_gated(&t.attrs),
+                    _ => true,
+                }),
+                syn::Item::Trait(tr) => tr.items.retain(|item| match item {
+                    syn::TraitItem::Fn(f) => !is_test_gated(&f.attrs),
+                    _ => true,
+                }),
+                _ => {}
+            }
+        }
+    }
+    let sources: Vec<(String, syn::File)> = rust_files(&root().join("src"))
+        .iter()
+        .map(|path| (repo_relative(path), path))
+        .filter(|(rel, _)| !is_test_only_file(rel))
+        .map(|(rel, path)| {
+            let mut file = parse_file(path);
+            strip(&mut file.items);
+            (rel, file)
+        })
+        .collect();
+    assert!(
+        sources.iter().any(|(rel, _)| rel == "src/lib.rs"),
+        "the library's sources leave out src/lib.rs"
+    );
+    sources
+}
+
+/// An item's attributes, for the kinds that carry a `cfg` worth reading.
+pub fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Const(i) => &i.attrs,
+        syn::Item::Enum(i) => &i.attrs,
+        syn::Item::Fn(i) => &i.attrs,
+        syn::Item::Impl(i) => &i.attrs,
+        syn::Item::Macro(i) => &i.attrs,
+        syn::Item::Mod(i) => &i.attrs,
+        syn::Item::Static(i) => &i.attrs,
+        syn::Item::Struct(i) => &i.attrs,
+        syn::Item::Trait(i) => &i.attrs,
+        syn::Item::Type(i) => &i.attrs,
+        syn::Item::Union(i) => &i.attrs,
+        syn::Item::Use(i) => &i.attrs,
+        _ => &[],
     }
 }

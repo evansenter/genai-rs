@@ -2877,6 +2877,35 @@ and the harness options `AgentBuilder`'s `Debug` prints) are the other
 half of I-9 in #504. A new type that holds one of these secrets needs its own
 `Debug` and a row in the sentinel test; nothing finds it by itself.
 
+**Amended 2026-11-10 (J-3, #555 items 1, 2 and 4).** Three limits above
+have moved:
+- Every impl named here, and `Client`'s, `HttpContext`'s,
+  `CredentialConfig`'s, `CredentialUpdate`'s, `Webhook`'s,
+  `RotateSigningSecretResponse`'s and `SigningSecret`'s, which predate
+  the decision and printed a `"[REDACTED]"` literal or read their fields
+  without destructuring, goes through `src/redact.rs` and destructures its
+  type without `..`. `Client` prints its key through `HttpContext`'s
+  `Debug`, and `SigningSecret` its `extra` as keys alone (`redact::keys`).
+- `Tool`'s `Debug` prints each arm's `extra` and an `Unknown` tool's
+  `data` through the wire's walk (`redact::map`, `redact::json`), so a
+  secret there under a name the wire redacts prints redacted. Every other
+  `extra` map and `Unknown` payload still prints as it is, for the reason
+  above.
+- `tests/redaction_guards.rs` reads the wire's `REDACT_FIELDS`,
+  `REDACT_VALUES_BENEATH` and `ENV_FIELD` from `src/wire/mod.rs` and fails
+  when a type in the library's non-test code derives `Debug` over a field
+  so named (in snake case, or by `#[serde(rename)]`), unless its
+  `NOT_SECRET` list gives the reason the value is not a secret; none
+  needs one today. So a new type holding one of these secrets under the
+  wire's name is found; one holding it under another name, or a name
+  added to an impl but not to the wire's lists, still needs its row in the
+  sentinel test. It also fails on a placeholder spelled outside
+  `src/redact.rs`.
+
+The wire's walk now holds the Antigravity harness's camelCase keys too
+(D-064's amendment), so `WireEvent`'s `Debug` redacts a harness message
+in either direction.
+
 ## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
 **Context.** #504's final grade found the recursive `.rs` walker written
