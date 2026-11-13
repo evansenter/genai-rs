@@ -1005,6 +1005,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Breaking: no message to the Antigravity harness can wait forever. A
+  failed initialization send fails `spawn()` with `InitFailed`, not
+  `WebSocket`, and a send in a turn with no timeout gives up with
+  `Timeout`.** `chat()` and `send_streaming()` start the turn deadline
+  before sending the message, so a harness that has stopped reading fails
+  the turn with `AntigravityError::Timeout` at `with_turn_timeout` (the
+  default 300 s included) instead of holding the call past it, however
+  large the prompt (inline media included). The halt sent before a turn
+  counts against the five-second halt-and-drain budget, the initialization
+  and the session-end request against their 30 s budgets (a stuck or failed
+  initialization message fails `spawn()` with `InitFailed` and the stderr
+  tail, where a failed one was a `WebSocket` error), the close in
+  `shutdown()` waits for a send in progress only within its half-second
+  bound, and any other send (`cancel()`, a trigger's delivery, a reply to
+  the harness mid-turn, the message of a turn with no timeout) gives up
+  after 30 s with `Timeout` (#504, D-066). Migration: match
+  `InitFailed { .. }` where you matched a `WebSocket` error from `spawn()`;
+  the `WebSocket` error is its `source()`. After `without_turn_timeout()`,
+  and from `cancel()`, handle `Timeout` from a send the harness has not
+  read within 30 s, where the call used to wait.
+- **Breaking: an Antigravity harness that dies mid-turn, or while
+  `next_trigger_turn` waits, fails the call with
+  `AntigravityError::ConnectionClosed`, not `WebSocket`.** The error
+  carries the tail of the harness's stderr, as that variant says. A
+  connection that ended without a close frame, as a crashed or killed
+  harness's does, read as a `WebSocket` error with no stderr. Migration:
+  match `ConnectionClosed { message, stderr }` where you matched a
+  `WebSocket` error for a harness that crashed or was killed; `stderr` says
+  why it died.
+- **Breaking: an Antigravity turn whose model call failed after the agent
+  delegated to a subagent fails with `AntigravityError::Turn`, not `Ok`.**
+  One without a subagent always did. On such a turn (a 503 with no retries
+  left), harness 0.1.23 reports the error before the turn's final state, so
+  `chat` returned `Ok` with the error only in `errors()`, and the next call
+  failed on the closed connection. Migration: handle
+  `Err(AntigravityError::Turn { kind, .. })` where you looked for a failed
+  delegated turn in an `Ok` response's `errors()`; `kind.ends_session()`
+  says whether to spawn a new agent.
 - `Debug` no longer prints the secrets a value holds. `ExaAiSearchConfig`
   and `ParallelAiSearchConfig` printed their `api_key` (and one nested in
   `custom_config`), `McpServerConfig` and `Tool::McpServer` their header
@@ -1259,31 +1297,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AgentBuilder`'s, which printed the values given to `add_model_header`
   and `add_harness_env`. `dbg!` or `tracing::debug!(?value)` undid the
   wire inspector's redaction.
-- An Antigravity turn whose model call failed after the agent delegated to
-  a subagent (a 503 with no retries left) fails with
-  `AntigravityError::Turn`, as one without a subagent does. Harness 0.1.23
-  reports that error before the turn's final state, so `chat` returned
-  `Ok` with the error only in `errors()`, and the next call failed on the
-  closed connection.
-- Antigravity: no message to the harness can wait forever. `chat()` and
-  `send_streaming()` start the turn deadline before sending the message, so
-  a harness that has stopped reading fails the turn with
-  `AntigravityError::Timeout` at `with_turn_timeout` (the default 300 s
-  included) instead of holding the call past it, however large the prompt
-  (inline media included). The halt sent before a turn counts against the
-  five-second halt-and-drain budget, the initialization and the session-end
-  request against their 30 s budgets (a stuck or failed initialization
-  message fails `spawn()` with `InitFailed` and the stderr tail, where a
-  failed one was a `WebSocket` error), the close in `shutdown()` waits for a
-  send in progress only within its half-second bound, and any other send
-  (`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
-  message of a turn with no timeout) gives up after 30 s with `Timeout`
-  (#504, D-066).
-- Antigravity: a harness that dies mid-turn, or while `next_trigger_turn`
-  waits, fails the call with `AntigravityError::ConnectionClosed` and the
-  tail of the harness's stderr, as that variant says. A connection that
-  ended without a close frame, as a crashed or killed harness's does, read
-  as a `WebSocket` error with no stderr.
 - `InlineSkill::add_dependent_tool` said the tool is loaded when the skill
   is looked up. Harness 0.1.23 loads nothing, and does nothing with
   `add_allowed_tool` either: a call to a tool outside the list still runs,

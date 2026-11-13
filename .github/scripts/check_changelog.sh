@@ -22,8 +22,15 @@
 #      what to do about it in a `Migration:` of its own (CLAUDE.md, D-007).
 #      An entry runs from its `- ` to the next line that is neither blank
 #      nor indented. Checked where rule 1 is.
+#   6. No entry appears twice within one `## [...]` section: no two
+#      entries (list items at column 0) share their first line, and no two
+#      share a bold title (the `**...**` an entry opens with, wrapped or
+#      not, a leading `Breaking:` aside, so a copy that lost or gained its
+#      marker still matches). A keep-both merge that re-adds an entry's old
+#      text beside its rewrite leaves a contradictory pair that every other
+#      rule passes. Checked where rule 1 is, across its `###` subsections.
 #
-# Fenced code blocks are skipped for all five. An unclosed fence is itself
+# Fenced code blocks are skipped for all six. An unclosed fence is itself
 # reported: otherwise everything after it would go unchecked and pass.
 #
 # Output: one `<file>:<line>: <problem>` per violation, on stdout.
@@ -61,6 +68,33 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
         migration = 0
     }
 
+    # Rule 6: a bold title, once its closing `**` is read. `Breaking:` (or
+    # `BREAKING`) and the whitespace a wrap leaves are not part of it; a
+    # title that is only the marker (`**Breaking:** text`) is none.
+    function finish_title(text,    end, title) {
+        end = index(text, "**")
+        if (!end) {
+            return 0
+        }
+        title = substr(text, 1, end - 1)
+        gsub(/[[:space:]]+/, " ", title)
+        sub(/^ /, "", title)
+        sub(/ $/, "", title)
+        if (tolower(substr(title, 1, 8)) == "breaking") {
+            title = substr(title, 9)
+            sub(/^:? */, "", title)
+        }
+        if (title != "" && !same_line) {
+            if (title in seen_title) {
+                printf "%s:%d: two entries titled \"%s\" in %s (first at line %d)\n", file, title_line, title, section, seen_title[title]
+                bad = 1
+            } else {
+                seen_title[title] = title_line
+            }
+        }
+        return 1
+    }
+
     # Fences toggle on their own line; nothing inside one is structure.
     /^[[:space:]]*```/ {
         fenced = !fenced
@@ -86,6 +120,31 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
     }
     breaking && /Migration:/ { migration = 1 }
 
+    # Rule 6. A title still open takes each indented line that follows;
+    # anything else abandons it.
+    title_open && /^[[:space:]]+[^[:space:]]/ {
+        title_text = title_text " " $0
+        if (finish_title(title_text)) {
+            title_open = 0
+        }
+    }
+    title_open && !/^[[:space:]]+[^[:space:]]/ { title_open = 0 }
+    checked && /^- / {
+        entry = $0
+        sub(/[[:space:]]+$/, "", entry)
+        same_line = entry in seen_entry
+        if (same_line) {
+            report("duplicate entry in " section " (first at line " seen_entry[entry] "): " entry)
+        } else {
+            seen_entry[entry] = NR
+        }
+        if (substr(entry, 1, 4) == "- **") {
+            title_line = NR
+            title_text = substr(entry, 5)
+            title_open = !finish_title(title_text)
+        }
+    }
+
     /^###? / {
         if (NR > 1 && prev !~ /^[[:space:]]*$/) {
             report("heading not preceded by a blank line: " $0)
@@ -105,6 +164,9 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
             seen_section[head] = NR
         }
         delete seen
+        delete seen_entry
+        delete seen_title
+        title_open = 0
     }
 
     checked && /^### / {
