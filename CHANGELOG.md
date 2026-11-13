@@ -1016,10 +1016,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interaction, an agent's `base_environment` or a trigger) read as a remote
   environment and was written back as `"type": "remote"`; it is now
   `EnvironmentSpec::Unknown`, typed `<non-string: ...>`, and written back
-  as it came. A domain-less allowlist entry, the disabled echo's
-  `{"mode": "disabled"}` beside another entry or key, was written back
-  with a `"domain": ""` it never had; an empty `domain` is no longer
-  written. `ThinkingSummaries::to_agent_config_value`, and so a
+  as it came (its `Debug` prints that JSON as it is, `env` values
+  included, as every `Unknown` payload's does). A domain-less allowlist
+  entry, the disabled echo's `{"mode": "disabled"}` beside another entry
+  or key, was written back with a `"domain": ""` it never had; an empty
+  `domain` is no longer written, so one read as `""` is written back
+  without it. `ThinkingSummaries::to_agent_config_value`, and so a
   `DeepResearchConfig` built from a value read from the wire, wrote a
   non-string unknown as its `<non-string: ...>` type rather than the JSON
   it came as, and a voice listing filtered by a listed voice's non-string

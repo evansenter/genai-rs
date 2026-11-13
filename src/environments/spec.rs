@@ -132,7 +132,8 @@ pub struct AllowlistEntry {
     /// Required on send. An empty domain is not written, so an entry read
     /// without one (the `{"mode": "disabled"}` a GET echoes for
     /// [`NetworkConfig::AllowlistDisabled`], beside another key or entry) is
-    /// written back as it was read.
+    /// written back as it was read, and one read with `"domain": ""` is
+    /// written back without it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub domain: String,
     /// Headers to inject on outbound requests matching this domain.
@@ -887,11 +888,15 @@ mod tests {
         let wire = json!({"id": "e", "network": {"allowlist": [{"mode": "disabled", "zz": 1}]}});
         let environment: crate::Environment = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(serde_json::to_value(&environment).unwrap(), wire);
-        // A caller's empty domain is not sent either.
+        // A caller's empty domain is not sent either, and one read as `""`
+        // is written back without it (D-NEXT-J7-a).
         assert_eq!(
             serde_json::to_value(AllowlistEntry::new("")).unwrap(),
             json!({})
         );
+        let read: AllowlistEntry = serde_json::from_value(json!({"domain": ""})).unwrap();
+        assert_eq!(read, AllowlistEntry::new(""));
+        assert_eq!(serde_json::to_value(&read).unwrap(), json!({}));
     }
 
     #[test]

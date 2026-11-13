@@ -2957,17 +2957,28 @@ code execution result). A type that promises to write back the JSON it
 read is also checked against its input (`src/fuzzing_wire.rs`): both
 sides in a canonical form (a `null`, `[]` or `{}` member is absent, a whole
 float is its integer, the `f32` fields hold what an `f32` can), the input
-through the type's documented normalizations first.
+through the type's documented normalizations first. So an empty value lost
+on the first read (a harness `usageUpdate` of `[]`) is not seen by the
+comparison; unit tests hold those.
 
 - **Promise it, and are checked:** `EnvironmentSpec` (normalizing a
   missing or null `type` to `"remote"`, the `env` the API echoes as a list
   to the map a request sends, the disabled allowlist echo to its request
-  form, and an empty allowlist `domain` to none), `Agent`, which
-  `Agents::create` re-sends (its environment as above, an unknown tool's
-  tag merged in), and the harness's `OutputEvent` (both usage spellings as
-  one `usageUpdate`; read as proto3 reads its JSON, where an int64 string is
-  its number and a scalar at its default is absent, which the first run
-  found: a `toolResponse` with no `id` was written with `"id": ""`).
+  form, and an empty allowlist `domain`, missing or read as `""`, to
+  none), `Agent`, which `Agents::create` re-sends (its environment as
+  above, an unknown tool's tag merged in, a retrieval tool's backend
+  configs as their types write them, since D-034 keeps no `extra` on
+  those), and the harness's `OutputEvent` (both usage spellings as one
+  `usageUpdate`). Its proto3 JSON is read as its types read it, and only
+  there: an int64 string is its number at the fields read through
+  `flex_num` (a test holds the key list to the protocol's source), and a
+  `toolResponse`'s `id`, a proto3 scalar the type writes as `""` when it
+  was missing, is absent at its default (the target's first run,
+  2026-11-13, found it). Everywhere else a `false`, `0`, `""` or numeric
+  string is kept as it came: a oneof member such as `sessionEndResponse`
+  has presence, and an unknown or `extra` value is JSON kept whole.
+  Reading every member as proto3 does, as the first cut did, hid both
+  harness findings for a falsy input.
 - **Normalize more than the check can follow, and are checked on the value
   alone:** `Step`, `StepDelta` and `Content`, and so `InteractionResponse`
   and `Trigger`, which hold them (a missing or non-string `type` becomes
@@ -2978,11 +2989,16 @@ through the type's documented normalizations first.
 
 The property tests now draw a string enum's unknown as a string or a
 non-string (`unknown_or`, `<non-string: ...>` with the JSON as data), and
-the step, delta, content and annotation properties also compare the value
-read back with the value written, through the same `Normalize`
-(`assert_first_write_keeps`). Reverting #548's fix to the code execution
-language fails them. `ToolChoice`'s bare mode stays a string: a non-string
-one reads back as `ToolChoice::Unknown`, typed by its shape.
+the properties of every type that holds one (step, delta, content,
+annotation, tool, tool choice, turn content, interaction input and
+response) also compare the value read back with the value written, through
+the same `Normalize` (`assert_first_write_keeps`; generation config's
+compares its values directly): drawing them alone did not catch the class. Reverting #548's fix to the
+code execution language fails them, and so does a tool writing its search
+types through `Display`. An interaction input whose content list holds an
+unknown block reads back as steps, the one arm change the check allows.
+`ToolChoice`'s bare mode stays a string: a non-string one reads back as
+`ToolChoice::Unknown`, typed by its shape, which `Normalize` follows.
 
 **Consequences.** `InteractionResponse` derives `PartialEq`. The fuzz crate
 has an `antigravity` feature, which only its harness target requires
@@ -3019,11 +3035,22 @@ first read; the rounding is documented on `GenerationConfig`.
 
 Also for `EnvironmentSpec`: a null `type` reads as a missing one does
 (`"remote"`), as a null reads for every `Option`; any other non-string one
-is an unknown type, `<non-string: ...>`, kept whole.
+is an unknown type, `<non-string: ...>`, kept whole. Its `Debug` then
+prints that JSON as it is, as D-067 prints every `Unknown` payload: an
+`env` value in such an object shows, where reading it as remote printed
+`[REDACTED]`. Redacting `Unknown` payloads is D-067's open question, not
+this decision's; the API has not been seen to send a non-string `type`.
+
+And for `AllowlistEntry`: an empty `domain` is not written, so an entry
+read with `"domain": ""` is written back without it, as one read without a
+domain is written back as it came. Keeping the difference needs the field
+to become an `Option`, breaking for every caller, for an empty domain the
+API rejects on send either way.
 
 **Consequences.** A caller reading a response's single-object input sees a
 one-element list, and one re-sending it sends the array. A config with an
-`f32` beyond its range reads it as unset.
+`f32` beyond its range reads it as unset. An environment with a
+non-string `type` prints its `env` values in `Debug`.
 
 ## D-NEXT-J7-b — `speech_config` keeps the keys beside `speakers` in a new field (2026-11-10)
 
