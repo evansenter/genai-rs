@@ -372,16 +372,44 @@ fn canonical_form_merges_only_what_the_crate_treats_as_one() {
         false
     ));
     assert!(same(json!({"alpha": 1e39, "k": 1}), json!({"k": 1}), false));
-    // proto3 JSON's int64 strings and default scalars, only where asked for.
+    // proto3 JSON's int64 strings and default scalars: only where asked
+    // for, and only at the fields the harness types read so.
     assert!(same(json!({"seqNum": "5"}), json!({"seqNum": 5}), true));
-    assert!(!same(json!({"seqNum": "5"}), json!({"seqNum": 5}), false));
     assert!(same(
-        json!({"id": "", "n": 0, "b": false, "k": "0"}),
-        json!({}),
+        json!({"stepUpdate": {"stepIndex": "7"}}),
+        json!({"stepUpdate": {"stepIndex": 7}}),
         true
     ));
-    assert!(!same(json!({"id": ""}), json!({}), false));
-    assert!(!same(json!({"n": [0, false, ""]}), json!({"n": []}), true));
+    assert!(!same(json!({"seqNum": "5"}), json!({"seqNum": 5}), false));
+    assert!(same(
+        json!({"customTool": {"toolResponse": {"id": "", "x": 1}}}),
+        json!({"customTool": {"toolResponse": {"x": 1}}}),
+        true
+    ));
+    assert!(!same(json!({"toolResponse": {"id": ""}}), json!({}), false));
+    // Elsewhere a scalar default has presence (a oneof member) or is JSON
+    // kept as it came (an unknown or `extra` value), and a numeric string
+    // is a string.
+    for (input, written) in [
+        (json!({"sessionEndResponse": false}), json!({})),
+        (
+            json!({"sessionEndResponse": 0}),
+            json!({"sessionEndResponse": false}),
+        ),
+        (json!({"usageUpdate": ""}), json!({})),
+        (json!({"seqNum": 1, "usageUpdate": 0}), json!({"seqNum": 1})),
+        (json!({"zz": {"id": ""}}), json!({"zz": {}})),
+        (
+            json!({"stepUpdate": {"text": "5"}}),
+            json!({"stepUpdate": {"text": 5}}),
+        ),
+        (json!({"n": [0, false, ""]}), json!({"n": []})),
+    ] {
+        assert!(
+            !same(input.clone(), written.clone(), true),
+            "{input} and {written}"
+        );
+    }
     // Not the same: a changed value, an added key, a null in a list, an empty
     // string, and a number beside a string elsewhere.
     assert!(!same(json!({"type": 5}), json!({"type": "remote"}), false));
@@ -395,8 +423,15 @@ fn canonical_form_merges_only_what_the_crate_treats_as_one() {
     assert!(!same(json!({"text": "5"}), json!({"text": 5}), false));
 }
 
-/// The round-trip findings of 2026-11-10, each as the input that showed it,
-/// through the target that reaches it.
+/// The round-trip findings of 2026-11-10 that a fuzz target catches, each
+/// as the input that showed it, through the target that reaches it. Two are
+/// not here, as no target can see them: `InteractionResponse` is checked on
+/// the value alone (D-NEXT-J7), and each is a change on the first read that
+/// later writes keep. The keys beside `speech_config`'s `speakers` are held
+/// by `generation_config_tests.rs` and the property
+/// `generation_config_speakers_form_roundtrip`; a single input object,
+/// written back as a one-element array on purpose (D-NEXT-J7-a), by
+/// `request/tests.rs`.
 #[test]
 fn regression_round_trip_findings() {
     // A non-string environment `type` read as "remote" (D-001).
@@ -414,16 +449,30 @@ fn regression_round_trip_findings() {
     resource(br#"{"environment_id":"e","env":[{"A":{"value":"x"}},{"B":{"credential":"c"}}]}"#);
     resource(br#"{"type":null,"network":{"allowlist":[{"mode":"disabled"}]}}"#);
     resource(br#"{"tools":[{"x":1},{"type":"brand_new"}],"base_environment":"env-1"}"#);
-    // The speakers form's keys, and an f32 beyond its range.
-    interaction_response(
-        br#"{"status":"completed","generation_config":{"speech_config":{"speakers":[{"voice":"Kore"}],"x":1},"temperature":1e39}}"#,
+    // An f32 beyond its range, read as an infinity and written as `null`.
+    interaction_response(br#"{"status":"completed","generation_config":{"temperature":1e39}}"#);
+}
+
+/// `resource`, 2026-11-13 (its first run with a retrieval tool in a seed):
+/// an agent's retrieval tool whose `rag_store_config` held a key the crate
+/// does not model was written back without it. Intended: the retrieval
+/// tool's backend configs are sent only and keep no `extra` (D-034), so the
+/// agent's check reads them as their types write them.
+#[test]
+fn regression_retrieval_config_keeps_no_unmodeled_key() {
+    // The input exactly as the run saved it.
+    resource(
+        br#"{"id":"a2","tools":[{"type":"google_search","search_types":[5,"web_search",{"k":1}]},{"type":"function","name":"f","parameters":{"type":"object","properties":{}}},{"type":"retrieval","retrieval_types":[true],"rag_store_config":{"r.g_retrieval_config":{"hybrid_search":{"alpha":0.5}}}}],"agent_config":{"type":"deep-research","thinking_summaries":7}}"#,
     );
-    // A single input object.
-    interaction_response(br#"{"input":{"type":"text","text":"hi"}}"#);
+    // The tool's own unmodeled key is kept, and still checked.
+    resource(br#"{"id":"a","tools":[{"type":"retrieval","vertex_ai_search_config":{"engine":"e","zz":1},"zz":2}]}"#);
 }
 
 /// The harness findings of 2026-11-10: a non-object `usageUpdate` dropped,
-/// and a non-bool `sessionEndResponse` read as `false`.
+/// and a non-bool `sessionEndResponse` read as `false`. (A `usageUpdate` of
+/// `[]` or `{}` is not here: the canonical form leaves an empty member out,
+/// so the comparison cannot tell it from a dropped one. The unit tests in
+/// `protocol_tests.rs` compare a non-object one's written JSON exactly.)
 #[cfg(feature = "antigravity")]
 #[test]
 fn regression_harness_event_round_trips() {
@@ -432,6 +481,16 @@ fn regression_harness_event_round_trips() {
         r#"{"seqNum":"1","usageUpdate":7,"stepUpdate":{"trajectoryId":"t"}}"#,
         r#"{"sessionEndResponse":{"hooksRun":2}}"#,
         r#"{"sessionEndResponse":"true"}"#,
+        // The falsy and empty forms, which a proto3 reading of every member
+        // once made look like the `false` or the nothing they were read as.
+        r#"{"seqNum":1,"usageUpdate":0}"#,
+        r#"{"seqNum":1,"usageUpdate":false}"#,
+        r#"{"seqNum":1,"usageUpdate":""}"#,
+        r#"{"sessionEndResponse":0}"#,
+        r#"{"sessionEndResponse":""}"#,
+        r#"{"sessionEndResponse":{}}"#,
+        r#"{"sessionEndResponse":[]}"#,
+        r#"{"sessionEndResponse":null}"#,
         r#"{"usageMetadata":{"totalTokenCount":1},"usageUpdate":{"total":{"totalTokenCount":2}}}"#,
     ] {
         harness_output_event(input.as_bytes());
@@ -449,6 +508,56 @@ fn regression_harness_default_scalar_written_back() {
     harness_output_event(
         br#"{"stepUpdate":{"cascadeId":"c","customTool":{"toolCall":{"arguments":{"fields":[{"name":"city","value":{"stringValue":"Zurich"}}]},"raugmentsJson":"{\"city\":\"Zurich\"}","id":"call_58372","name":"antigravity_test_weather"},"toolResponse":{"ie":"antigravity_test_weather","responseJson":"{\"result\":\"ok\"}"}},"source":"SOURCE_MODEL","state":"STATE_DONE","stepIndex":1,"target":"TARGET_ENVIRMNMENT","text":"Weather check","textDelta":"","thinking":"","thinkingDelta":"","trajectoryId":"t"},"seqNum":"9"}"#,
     );
+}
+
+/// [`wire::PROTO3_INT64_KEYS`] names every harness field that reads an
+/// int64 string, so the canonical form reads one there and nowhere else: the
+/// keys `OutputEvent` reads with `take_i64`, and each field read through
+/// `flex_num`, by its camelCase wire name.
+#[cfg(feature = "antigravity")]
+#[test]
+fn proto3_int64_keys_are_the_fields_read_as_int64() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/antigravity/protocol");
+    let mut keys = std::collections::BTreeSet::new();
+    for path in listing(&dir) {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.ends_with(".rs") || name.ends_with("_tests.rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).unwrap();
+        for chunk in source.split("take_i64(&mut map, \"").skip(1) {
+            keys.insert(chunk.split('"').next().unwrap().to_string());
+        }
+        let lines: Vec<&str> = source.lines().collect();
+        for (at, line) in lines.iter().enumerate() {
+            if !line.contains("deserialize_with = \"flex_num::") {
+                continue;
+            }
+            let field = lines[at..]
+                .iter()
+                .find_map(|line| line.trim().strip_prefix("pub "))
+                .and_then(|rest| rest.split(':').next())
+                .unwrap_or_else(|| panic!("no field after {name}:{}", at + 1));
+            let mut camel = String::new();
+            let mut upper = false;
+            for c in field.chars() {
+                if c == '_' {
+                    upper = true;
+                } else if upper {
+                    camel.extend(c.to_uppercase());
+                    upper = false;
+                } else {
+                    camel.push(c);
+                }
+            }
+            keys.insert(camel);
+        }
+    }
+    let listed: std::collections::BTreeSet<String> = wire::PROTO3_INT64_KEYS
+        .iter()
+        .map(|key| (*key).to_string())
+        .collect();
+    assert_eq!(listed, keys);
 }
 
 /// The normalizers apply what each type documents and nothing more: an

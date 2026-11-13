@@ -17,15 +17,19 @@ A type that promises to write back the JSON it read (D-NEXT-J7 in
 `DECISIONS.md`) is also checked against its input, not only against its
 own later writes, so a value lost on the first read fails the target. Both
 sides are compared in a canonical form: a `null`, `[]` or `{}` member is
-absent, a whole float is its integer, and the `f32` fields
-(`temperature`, `top_p`, `alpha`) hold what an `f32` can; the harness's
-JSON is read as proto3 reads it (an int64 string is its number, and a
-scalar at its default is absent). Each type's own normalizations are
-applied to the input first (`src/fuzzing_wire.rs`): an environment's
-missing `type` written as `"remote"`, its echoed `env` list written as a
-map, the disabled allowlist echo written in its request form, an empty
-allowlist `domain` not written, an unknown tool's tag merged in, and an
-event's two usage spellings written as one `usageUpdate`.
+absent (so an empty value lost on the first read is not seen), a whole
+float is its integer, and the `f32` fields (`temperature`, `top_p`,
+`alpha`) hold what an `f32` can. In the harness's JSON, and only at the
+fields its types read so, an int64 string is its number and a
+`toolResponse`'s `id` at its default is absent; a oneof member, or an
+unknown or `extra` value, keeps a `false`, `0`, `""` or numeric string as
+it came. Each type's own normalizations are applied to the input first
+(`src/fuzzing_wire.rs`): an environment's missing `type` written as
+`"remote"`, its echoed `env` list written as a map, the disabled allowlist
+echo written in its request form, an empty allowlist `domain` not written
+(one read as `""` included), an unknown tool's tag merged in, a retrieval
+tool's backend configs written as their types write them (they keep no
+`extra`), and an event's two usage spellings written as one `usageUpdate`.
 
 The entry points live in the library, in `src/fuzzing.rs` (`genai_rs::__fuzz`,
 compiled only under `cfg(fuzzing)` and in tests), so the targets here are one

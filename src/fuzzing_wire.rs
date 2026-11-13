@@ -15,19 +15,54 @@ use crate::{Agent, EnvironmentSpec, NetworkConfig, RemoteEnvironment, Tool};
 /// `top_p`, and the retrieval tool's hybrid-search `alpha`.
 const F32_KEYS: &[&str] = &["temperature", "top_p", "alpha"];
 
+/// The keys of the Antigravity harness fields that read a protobuf int64 as
+/// a string or a number and write the number: `OutputEvent`'s own two, and
+/// every field read through `flex_num` (a test holds this list to the
+/// protocol's source).
+pub(super) const PROTO3_INT64_KEYS: &[&str] = &[
+    "seqNum",
+    "timestampMicros",
+    "stepIndex",
+    "continuationCount",
+    "tokenCount",
+    "promptTokenCount",
+    "cachedContentTokenCount",
+    "candidatesTokenCount",
+    "thoughtsTokenCount",
+    "totalTokenCount",
+    "depth",
+    "fileSize",
+    "numResults",
+    "startLine",
+    "endLine",
+    "contentOffset",
+    "exitCode",
+    "httpCode",
+];
+
+/// The harness's scalar fields with no presence in proto3 that its types
+/// write at their default when the input left them out, as `(message key,
+/// field key)`: a `toolResponse`'s `id`, the one such field an
+/// `OutputEvent` reaches (its first fuzz run found it).
+const PROTO3_DEFAULTED: &[(&str, &str)] = &[("toolResponse", "id")];
+
 /// `value` in the form a comparison of written JSON with its input uses:
 ///
 /// - A member that is `null`, `[]` or `{}` is left out: an `Option` reads
-///   `null` as absent, and a field skips an empty collection on write.
+///   `null` as absent, and a field skips an empty collection on write. (So
+///   an empty value lost on the first read is not seen here.)
 /// - A number that is a whole `f64` in `i64`'s range is that integer: an
 ///   `f64` field writes `1` as `1.0`.
 /// - A number under an `f32` field's key is what that field holds: rounded
 ///   to an `f32`, or left out beyond its range.
-/// - With `proto3`, for the Antigravity harness's protobuf JSON: a string
-///   that spells an `i64` or `u64` is that number (protobuf JSON writes an
-///   int64 as a string, and the harness types read either and write the
-///   number), and a member at its scalar default (`""`, `0`, `false`) is
-///   left out, as proto3 has no presence for it.
+/// - With `proto3`, for the Antigravity harness's protobuf JSON, and only
+///   where its types do so: a string under a [`PROTO3_INT64_KEYS`] key that
+///   spells an `i64` or `u64` is that number (protobuf JSON writes an int64
+///   as a string, and the harness types read either and write the number),
+///   and a [`PROTO3_DEFAULTED`] field at its scalar default (`""`, `0`,
+///   `false`) is left out. Anywhere else, a oneof member or an unknown or
+///   `extra` value among them, a scalar default and a numeric string are
+///   kept as they are: they have presence, or are JSON kept as it came.
 pub(super) fn canonical(value: &Value, proto3: bool) -> Value {
     canonical_member(None, value, proto3)
 }
@@ -37,8 +72,15 @@ fn canonical_member(key: Option<&str>, value: &Value, proto3: bool) -> Value {
         Value::Object(members) => Value::Object(
             members
                 .iter()
+                .filter(|(field, value)| {
+                    !(proto3
+                        && key.is_some_and(|message| {
+                            PROTO3_DEFAULTED.contains(&(message, field.as_str()))
+                        })
+                        && is_scalar_default(value))
+                })
                 .map(|(key, value)| (key.clone(), canonical_member(Some(key), value, proto3)))
-                .filter(|(_, value)| !is_empty(value) && !(proto3 && is_scalar_default(value)))
+                .filter(|(_, value)| !is_empty(value))
                 .collect(),
         ),
         Value::Array(items) => Value::Array(
@@ -62,11 +104,14 @@ fn canonical_member(key: Option<&str>, value: &Value, proto3: bool) -> Value {
             Some(float) if number.is_f64() => canonical_number(float),
             _ => value.clone(),
         },
-        Value::String(text) if proto3 => text
-            .parse::<i64>()
-            .map(Value::from)
-            .or_else(|_| text.parse::<u64>().map(Value::from))
-            .unwrap_or_else(|_| value.clone()),
+        Value::String(text)
+            if proto3 && key.is_some_and(|key| PROTO3_INT64_KEYS.contains(&key)) =>
+        {
+            text.parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| text.parse::<u64>().map(Value::from))
+                .unwrap_or_else(|_| value.clone())
+        }
         _ => value.clone(),
     }
 }
@@ -163,9 +208,11 @@ pub(super) fn network_config(network: &NetworkConfig, input: &Value) -> Value {
 }
 
 /// What an [`Agent`] read from `input` writes back: its
-/// `base_environment` as [`environment_spec`] writes it, and an unknown
-/// tool with its type tag merged in, as every unknown tagged union does
-/// ([`super::unknown_read_back`]).
+/// `base_environment` as [`environment_spec`] writes it, an unknown tool
+/// with its type tag merged in, as every unknown tagged union does
+/// ([`super::unknown_read_back`]), and a retrieval tool's backend configs
+/// as they read: sent only, they keep no `extra` (D-034), so a key they do
+/// not model is not written back.
 pub(super) fn agent(agent: &Agent, input: &Value) -> Value {
     let mut object = input.as_object().cloned().unwrap_or_default();
     if let (Some(spec), Some(value)) = (&agent.base_environment, object.get_mut("base_environment"))
@@ -174,12 +221,44 @@ pub(super) fn agent(agent: &Agent, input: &Value) -> Value {
     }
     if let (Some(tools), Some(Value::Array(values))) = (&agent.tools, object.get_mut("tools")) {
         for (tool, value) in tools.iter().zip(values) {
-            if let Tool::Unknown { tool_type, .. } = tool {
-                super::unknown_read_back(tool_type, value);
+            match tool {
+                Tool::Unknown { tool_type, .. } => super::unknown_read_back(tool_type, value),
+                Tool::Retrieval {
+                    vertex_ai_search_config,
+                    exa_ai_search_config,
+                    parallel_ai_search_config,
+                    rag_store_config,
+                    ..
+                } => {
+                    let configs = [
+                        ("vertex_ai_search_config", to_value(vertex_ai_search_config)),
+                        ("exa_ai_search_config", to_value(exa_ai_search_config)),
+                        (
+                            "parallel_ai_search_config",
+                            to_value(parallel_ai_search_config),
+                        ),
+                        ("rag_store_config", to_value(rag_store_config)),
+                    ];
+                    if let Some(tool) = value.as_object_mut() {
+                        for (key, config) in configs {
+                            if let (Some(config), Some(read)) = (config, tool.get_mut(key)) {
+                                *read = config;
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
     Value::Object(object)
+}
+
+/// A config as it is written, when it was read.
+fn to_value<T: serde::Serialize>(config: &Option<T>) -> Option<Value> {
+    config
+        .as_ref()
+        .map(|config| serde_json::to_value(config).expect("a config serializes"))
 }
 
 /// What an Antigravity `OutputEvent` read from `input` writes back: with

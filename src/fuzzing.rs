@@ -375,8 +375,9 @@ no_normalization!(
 /// What a type promises about the JSON it writes back, beyond a stable
 /// round trip (D-NEXT-J7).
 trait WireForm {
-    /// Whether the type speaks proto3 JSON, whose int64 strings and default
-    /// scalars [`wire::canonical`] then reads as proto3 does.
+    /// Whether the type speaks proto3 JSON: [`wire::canonical`] then reads
+    /// an int64 string as its number, and a field written at its default
+    /// as absent, at the fields where the harness types do so.
     const PROTO3: bool = false;
 
     /// The JSON this value, read from `input`, writes back, when the type
