@@ -7,9 +7,11 @@
 # D-051 tells a pointer from a provenance tag by what the sentence claims,
 # which no script can read. This check is narrower: it finds the pointer
 # phrasings CLAUDE.md lists, "tracked in #N" (or by, on, at), "see #N for"
-# and "until #N", which D-051 requires a pointer to use, in ROOT's tracked files (default: the current directory,
-# a git work tree), on one line or wrapped across two, and looks each N up
-# with `gh`. Not read: CHANGELOG.md and DECISIONS.md (history), fixtures
+# and "until #N", which D-051 requires a pointer to use, in ROOT's tracked
+# files (default: the current directory, a git work tree), on one line or
+# wrapped across two, and looks each N up with `gh`. DECISIONS.md is read:
+# a decision's pointer goes stale like any other. Not read: CHANGELOG.md
+# (a released section is not edited, so it holds no pointer), fixtures
 # (any `fixtures/` directory) and the script harnesses'
 # .github/scripts/tests/, whose strings are fixture data. A bare "#N item
 # M" is not matched: D-051 uses that form for provenance tags too. A
@@ -66,7 +68,7 @@ import time
 root, print_only = sys.argv[1], sys.argv[2] == "1"
 TITLE = "Issue pointers name closed issues"
 LABEL = "documentation"
-HISTORY = {"CHANGELOG.md", "DECISIONS.md"}
+HISTORY = {"CHANGELOG.md"}
 POINTER = re.compile(
     r"\b(?:tracked\s+(?:in|by|on|at)\s+#(\d+)|see\s+#(\d+)\s+for\b|until\s+#(\d+))",
     re.I,
@@ -169,7 +171,7 @@ body = "\n".join(
         "",
         "The daily API surface sweep (`.github/scripts/check_issue_pointers.sh`) looks for",
         'the pointer phrasings D-051 lists ("tracked in #N", "see #N for", "until #N")',
-        "outside CHANGELOG.md, DECISIONS.md and fixtures, and looks each issue up. "
+        "outside CHANGELOG.md and fixtures, and looks each issue up. "
         f"Checked {time.strftime('%Y-%m-%d', time.gmtime())}:",
         "",
         *rows,

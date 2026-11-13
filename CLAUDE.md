@@ -56,11 +56,14 @@ work, so it names an open issue only: when the issue closes, state the
 outcome in place and drop the pointer. A pointer uses one of the
 phrasings `check_issue_pointers.sh` reads: "tracked in #N" (or by, on,
 at; "tracked in #N item M" for an item), "see #N for" or "until #N", never
-a bare `(#N)` or "#N item M", which read as provenance. The daily
-`api-surface-sweep` lists each one that names a closed issue on a rolling
-`documentation` issue, and `check_issue_pointers.sh --print` lists every
-pointer with its issue's state. It reads wording only: it does not tell a
-pointer from a provenance tag worded like one.
+a bare `(#N)` or "#N item M", which read as provenance. The check reads
+every tracked file, `DECISIONS.md` included, but `CHANGELOG.md` (which
+holds no pointer: a released section is not edited), fixtures and the
+script harnesses. The daily `api-surface-sweep` lists each pointer that
+names a closed issue on a rolling `documentation` issue, and
+`check_issue_pointers.sh --print` lists every pointer with its issue's
+state. It reads wording only: it does not tell a pointer from a provenance
+tag worded like one.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the

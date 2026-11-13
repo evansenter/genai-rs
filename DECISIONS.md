@@ -36,7 +36,7 @@ costs three helper methods (`is_unknown`, `unknown_<context>_type`,
 `unknown_data`) and a round-trip test. In exchange, an API addition is a
 `warn!` rather than an outage.
 
-Unknown *fields* on a known variant were dropped until #491 (2026-11-04):
+Unknown *fields* on a known variant were dropped before #491 (2026-11-04):
 the hand-written `Step`, `StepDelta`, `Content` and `Annotation`
 deserializers read only what they modeled. Each known variant now keeps the
 rest in an `extra` map, so "round-trips intact" covers fields as well as
@@ -1961,17 +1961,20 @@ elsewhere would turn an unrelated PR red.
 **Amended 2026-11-10 (#504, J-8).** A pointer must use one of the
 phrasings the check reads: "tracked in #N" (or by, on or at, and "tracked
 in #N item M" for an item), "see #N for" or "until #N". The check then
-sees every pointer that follows the rule in the files it reads. It saw one
-of the six live pointers there; the other five ("unverified (#530)"
-twice, "That is unverified on Windows (#536)", "A background consumer
-(#535) would" and "a server bug, #473, not reproduced") said the issue
-holds pending work but were worded as provenance tags, so nothing would
-have flagged them when their issues closed. Each now reads "tracked in
-#N". A bare `(#N)` or "#N item M" stays a provenance tag, as above.
+sees every pointer that follows the rule. It saw one of the seven live
+pointers. Five ("unverified (#530)" twice, "That is unverified on Windows
+(#536)", "A background consumer (#535) would" and "a server bug, #473,
+not reproduced") said the issue holds pending work but were worded as
+provenance tags, so nothing would have flagged them when their issues
+closed; each now reads "tracked in #N". The seventh, D-039's pointer to
+#539, sat in a file the check skipped. `DECISIONS.md` is read now: a
+decision's pointer goes stale like any other, and a stale one is fixed by
+an amendment. Its one provenance tag worded like a pointer, D-001's on
+#491 (fields "dropped until" it), now says "before". `CHANGELOG.md` is
+still not read: a released section is not edited, so it holds no
+pointer. A bare `(#N)` or "#N item M" stays a provenance tag, as above.
 `--print` lists every pointer it finds with its issue's state, open ones
-included, so a local run shows what the check sees. `CHANGELOG.md` and
-`DECISIONS.md` are still not read: they are history, so a pointer in a
-decision is left to review.
+included, so a local run shows what the check sees.
 
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
@@ -2934,3 +2937,50 @@ passed a scratch copy, though no instance was in the tree:
 
 The known limits are now a bare expression that ends otherwise, and a
 cross-reference to another row's file outside parentheses.
+
+## D-NEXT-J5 — The retry-loop guard follows what reaches the sleep (2026-11-10)
+
+**Context.** #504's J-6 asked `tests/reliability_tests.rs`'s recipe guard
+to require a capped delay, to reject `Instant + Duration` on a value
+derived from `retry_after()` and to require jitter in count-bounded
+loops, across the docs, rustdoc and `examples/`. The same item names the
+poll's wait as `max(retry_after, delay)`, with no cap on the server's
+ask. A first guard matched words (`.min(` anywhere on a line, `rand`
+anywhere in the loop, `+` beside a named variable), and reviews found a
+passing mutation for each.
+
+**Decision.** The guard reads a loop that calls `is_retryable()`,
+`sleep(` or an awaited `.get(` (a `for` over items only through
+`is_retryable()`), follows each sleep's argument back through the
+assignments it is built from, and requires:
+- **A ceiling.** Growth (`*`, `<<`, `.pow(`, `_mul(`, or a value built
+  from itself with `+` or an `add(`) reaches the sleep only through a
+  `.min(` over it. A `retry_after()` needs a `.min(` on its own method
+  chain, unless the loop compares the variable that holds it with the time
+  left: a line that names the variable and a deadline, an `elapsed()` or a
+  value built from one, with a comparison. That is the doc's poll, which
+  gives up when the wait would outlast the budget, so a huge Retry-After
+  ends the poll rather than the sleep.
+- **No overflow.** No `+`, `-` or `*` applies to an uncapped Retry-After:
+  a `retry_after()` call with its receiver and chain, a variable assigned
+  one, or a closure parameter along its chain.
+- **Jitter where a count bounds the loop.** A name that reads as random
+  (`rand`, `RandomState`, `fastrand`, an `rng`) or as jitter reaches each
+  sleep. A deadline poll of one interaction is not required to jitter: no
+  crowd of clients failed with it.
+- **No early exit.** A poll checks `is_retryable()`, and no retry or poll
+  loop awaits a request with `?`; a deadline poll bounds each request with
+  `timeout(`.
+
+Rejected: a `.min(` on the Retry-After in a deadline poll too. J-6 names
+the uncapped `max`, and a cap below the server's ask polls sooner than
+the server said to; the comparison bounds the sleep by the budget
+instead. Rejected for now: reading the loops with `syn`. The lexical
+reading catches every mutation the reviews found, each kept as a test.
+
+**Consequences.** The guard reads code, not a type system. A value that
+passes through a function, a struct field or a shadowed name is not
+followed, and a `.min(` inside a closure on the chain
+(`.map(|a| a.min(MAX))`) reads as no cap; such a recipe is rewritten with
+the `.min(` on the chain. A comparison with the time left that bounds
+nothing still counts.
