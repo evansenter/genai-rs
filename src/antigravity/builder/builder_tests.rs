@@ -1,6 +1,6 @@
 use super::wire::workspace_announcement;
 use super::*;
-use crate::antigravity::{BuiltinTool, PreToolDecision, policy};
+use crate::antigravity::{BuiltinTool, PreToolDecision, TurnDecision, policy};
 
 #[tokio::test]
 async fn test_spawn_requires_policy_for_write_tools() {
@@ -257,6 +257,43 @@ async fn test_spawn_rejects_zero_interval_trigger() {
     };
     assert!(message.contains("non-zero"));
     assert!(message.contains("tick"));
+}
+
+#[test]
+fn test_spawn_warns_that_trigger_turns_skip_the_pre_turn_hook() {
+    // spawn() warns before it looks for the harness, so a path that names
+    // no file ends the call right after.
+    let missing = std::env::temp_dir().join("agy-no-such-harness-3460");
+    let spawn_messages = |builder: AgentBuilder| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        crate::test_subscriber::capture_messages(|| {
+            let spawned = runtime.block_on(builder.with_harness_path(&missing).spawn());
+            assert!(
+                matches!(spawned, Err(AntigravityError::HarnessNotFound { .. })),
+                "{spawned:?}"
+            );
+        })
+    };
+    let warned = |messages: Vec<String>| {
+        messages
+            .iter()
+            .any(|m| m.contains("on_pre_turn") && m.contains("trigger"))
+    };
+    let pre_turn = || AntigravityAgent::builder().on_pre_turn(|_| TurnDecision::Allow);
+    let tick = || TriggerConfig::new("tick", Duration::from_secs(60));
+
+    assert!(warned(spawn_messages(pre_turn().add_trigger(tick()))));
+    assert!(warned(spawn_messages(
+        pre_turn().add_custom_trigger(|_| async { Ok(()) })
+    )));
+    // Either alone is fine.
+    assert!(!warned(spawn_messages(pre_turn())));
+    assert!(!warned(spawn_messages(
+        AntigravityAgent::builder().add_trigger(tick())
+    )));
 }
 
 #[test]

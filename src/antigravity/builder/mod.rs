@@ -448,10 +448,17 @@ impl AgentBuilder {
     /// Sets a wall-clock budget per turn. When exceeded, `chat` /
     /// `send_streaming` fail with [`AntigravityError::Timeout`].
     ///
-    /// The budget starts before the message is sent and bounds the send
-    /// too, so a harness that has stopped reading fails the turn on time
-    /// rather than holding it. A halt of an earlier turn, sent first when
-    /// one is still running, has a five-second budget of its own.
+    /// The budget starts when `chat` or `send_streaming` is called, and
+    /// bounds the wait for a trigger's message still going out to the
+    /// harness, the halt of an earlier turn still running (five seconds at
+    /// most), and every message to the harness in the turn, its own and the
+    /// replies to the harness's requests. So a harness that has stopped
+    /// reading fails the turn on time rather than holding it. When the
+    /// budget runs out mid-turn, the call halts the harness's turn and
+    /// drains its events before it returns the timeout, which takes up to
+    /// five seconds more. A `Duration` too large to add to the clock
+    /// (`Duration::MAX`) sets no deadline, as
+    /// [`without_turn_timeout`](Self::without_turn_timeout) does.
     ///
     /// Defaults to [`DEFAULT_TURN_TIMEOUT`]. Raise it for agents that
     /// legitimately run long (deep subagent trees, many tool calls); lower
@@ -633,6 +640,7 @@ impl AgentBuilder {
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
         let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
         self.validate(&dispatcher)?;
+        self.warn_trigger_turns_skip_pre_turn();
         let policy_engine = PolicyEngine::new(self.policies.clone());
 
         let binary = process::discover_harness(self.harness_path.as_deref()).await?;
@@ -753,6 +761,21 @@ impl AgentBuilder {
                 agent.harness.kill().await;
                 Err(e.with_version_note(agent.harness.version()))
             }
+        }
+    }
+
+    /// Warns when a pre-turn hook and a trigger are both set: harness
+    /// 0.1.23 never consults the hook on a trigger's turn. Not a refusal, as
+    /// a caller may want the hook for its own turns only.
+    fn warn_trigger_turns_skip_pre_turn(&self) {
+        if self.lifecycle.pre_turn.is_some()
+            && !(self.triggers.is_empty() && self.custom_triggers.is_empty())
+        {
+            tracing::warn!(
+                "on_pre_turn is set beside a trigger, and harness 0.1.23 does not consult the \
+                 pre-turn hook on a turn a trigger starts: a trigger's turn runs without it. \
+                 Decide in the trigger whether to send."
+            );
         }
     }
 

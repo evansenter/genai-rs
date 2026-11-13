@@ -198,40 +198,7 @@ impl AntigravityAgent {
         // Errors: fatal model-backend codes abort the turn; everything else
         // is surfaced as an event and recorded (the harness retries or the
         // model reacts).
-        if step.state == Some(StepState::Error) || step.error.is_some() {
-            let message = non_blank(step.error.as_ref().and_then(|e| e.error_message.as_deref()))
-                .or_else(|| non_blank(step.error_message.as_deref()))
-                .or_else(|| non_blank(step.text.as_deref()))
-                .unwrap_or("unknown harness error")
-                .to_string();
-            let http_code = step.error.as_ref().and_then(|e| e.http_code);
-            if let Some(status) = backend_status(&step) {
-                if FATAL_HTTP_CODES.contains(&status) {
-                    return Err(AntigravityError::turn(
-                        TurnFailure::ModelBackend { status },
-                        message,
-                    ));
-                }
-                // Any other status the harness may retry; if the turn then
-                // fails, this is why.
-                turn.backend_status = Some(status);
-            }
-            // An error step is terminal, so the harness re-delivers it on
-            // each tick; dedup on the step key (a dedicated set, not
-            // `announced_actions` — a step can carry both an action and an
-            // error, and the two must each surface exactly once).
-            if turn.announced_errors.insert(step_key.clone()) {
-                turn.errors.push(message.clone());
-                // Reaching here means the turn continues: the turn-aborting
-                // case (system-source fatal HTTP code) returned above. A fatal
-                // code that did *not* abort (non-system source) is still
-                // serious, so it surfaces as `Severe`; everything else is
-                // transient harness-internal noise (retried, model reacts).
-                let severity = classify_error_severity(http_code);
-                turn.queue
-                    .push_back(AgentEvent::Error { message, severity });
-            }
-        }
+        turn.record_step_errors(&step, &step_key, is_main)?;
 
         // Thinking text accumulates from completed steps.
         if step.state == Some(StepState::Done)
@@ -324,7 +291,7 @@ impl AntigravityAgent {
                     // failure.
                     let kind = turn
                         .backend_status
-                        .map_or(TurnFailure::Trajectory, |status| {
+                        .map_or(TurnFailure::Trajectory, |(_, status)| {
                             TurnFailure::ModelBackend { status }
                         });
                     return Err(AntigravityError::turn(failure(kind), error));
@@ -383,6 +350,9 @@ fn backend_status(step: &StepUpdate) -> Option<u32> {
 /// the turn as a [`TurnFailure::ModelBackend`] — is
 /// still serious and surfaces as [`ErrorSeverity::Severe`]; every other
 /// error is transient harness-internal noise the turn recovers from.
+// A 5xx stays transient (#556): on 0.1.23 (scripted, 2026-11-13) a 503 the
+// harness is about to retry arrives as the same system error step, httpCode
+// 503, as one with no retries left, so the step cannot say the session ends.
 fn classify_error_severity(http_code: Option<u32>) -> ErrorSeverity {
     if http_code.is_some_and(|code| FATAL_HTTP_CODES.contains(&code)) {
         ErrorSeverity::Severe
@@ -486,10 +456,12 @@ pub(super) struct TurnState {
     /// The pre-turn hook refused this turn, so its failing end is a
     /// [`TurnFailure::Denied`].
     pub(super) pre_turn_denied: bool,
-    /// The status of the last model call the backend failed this turn
-    /// (from a system error step), so a turn the harness then ends with an
-    /// error is a [`TurnFailure::ModelBackend`].
-    backend_status: Option<u32>,
+    /// The step index and status of the main trajectory's model call the
+    /// backend failed (from a system error step), until the harness goes
+    /// on past it (a later model step or error step of that trajectory): a
+    /// turn the harness then ends with an error is a
+    /// [`TurnFailure::ModelBackend`].
+    backend_status: Option<(u32, u32)>,
     /// The first error a main-trajectory state update carried this turn,
     /// which fails the turn when it ends even if the terminal update has
     /// none.
@@ -517,12 +489,29 @@ impl TurnState {
             reported_calls: HashSet::new(),
             running: None,
             timeout,
-            deadline: timeout.map(|t| tokio::time::Instant::now() + t),
+            // A timeout too large for the clock (`Duration::MAX`) is no
+            // deadline, as it is for `tokio::time::sleep`.
+            deadline: timeout.and_then(|t| tokio::time::Instant::now().checked_add(t)),
             _turn_guard: turn_guard,
             draining: false,
             pre_turn_denied: false,
             backend_status: None,
             trajectory_error: None,
+        }
+    }
+
+    /// Takes the guard that marks the agent busy for the turn's lifetime.
+    /// The turn's state, and so its deadline, exists before the guard: the
+    /// wait for the lock the guard is taken under counts against it.
+    pub(super) fn hold(&mut self, guard: TurnGuard) {
+        self._turn_guard = Some(guard);
+    }
+
+    /// The turn's timeout error, `cause` saying what held it.
+    pub(super) fn timed_out(&self, cause: &str) -> AntigravityError {
+        AntigravityError::Timeout {
+            operation: format!("agent turn ({cause})"),
+            timeout: self.timeout.unwrap_or_default(),
         }
     }
 
@@ -613,6 +602,75 @@ impl TurnState {
         {
             self.main_trajectory = Some(id.to_string());
         }
+    }
+
+    /// Handles a step's error, if it has one. A fatal model-backend status
+    /// fails the turn at once. Another backend failure on the main
+    /// trajectory is kept for the turn's end until a later model step or
+    /// error step of that trajectory follows it: the harness went on after
+    /// it, retrying the call (harness 0.1.23 reports a call it retries with
+    /// the same system error step as one it gives up on) or failing on
+    /// something else, so a failure that ends the turn later is not that
+    /// one. A later system step that is neither does not count: after a
+    /// delegation, 0.1.23 can follow a 503 with no retries left with a
+    /// done system step (its message to the model that the subagent went
+    /// idle) before it goes idle. A subagent's failure is not kept: its
+    /// error is not the turn's. Every error that does not fail the turn
+    /// surfaces once, as an [`AgentEvent::Error`], and in the response's
+    /// `errors()`.
+    fn record_step_errors(
+        &mut self,
+        step: &StepUpdate,
+        step_key: &(String, u32),
+        is_main: bool,
+    ) -> Result<(), AntigravityError> {
+        let index = step.step_index.unwrap_or_default();
+        let is_error = step.state == Some(StepState::Error) || step.error.is_some();
+        if is_main
+            && (is_error || step.source == Some(StepSource::Model))
+            && self
+                .backend_status
+                .is_some_and(|(failed_at, _)| index > failed_at)
+        {
+            self.backend_status = None;
+        }
+        if !is_error {
+            return Ok(());
+        }
+        let message = non_blank(step.error.as_ref().and_then(|e| e.error_message.as_deref()))
+            .or_else(|| non_blank(step.error_message.as_deref()))
+            .or_else(|| non_blank(step.text.as_deref()))
+            .unwrap_or("unknown harness error")
+            .to_string();
+        if let Some(status) = backend_status(step) {
+            if FATAL_HTTP_CODES.contains(&status) {
+                return Err(AntigravityError::turn(
+                    TurnFailure::ModelBackend { status },
+                    message,
+                ));
+            }
+            // Any other status the harness may retry; if the turn then
+            // fails before the trajectory goes on, this is why.
+            if is_main {
+                self.backend_status = Some((index, status));
+            }
+        }
+        // An error step is terminal, so the harness re-delivers it on each
+        // tick; dedup on the step key (a dedicated set, not
+        // `announced_actions` — a step can carry both an action and an
+        // error, and the two must each surface exactly once).
+        if self.announced_errors.insert(step_key.clone()) {
+            self.errors.push(message.clone());
+            // Reaching here means the turn continues: the turn-aborting case
+            // (system-source fatal HTTP code) returned above. A fatal code
+            // that did *not* abort (non-system source) is still serious, so
+            // it surfaces as `Severe`; everything else is transient
+            // harness-internal noise (retried, model reacts).
+            let severity = classify_error_severity(step.error.as_ref().and_then(|e| e.http_code));
+            self.queue
+                .push_back(AgentEvent::Error { message, severity });
+        }
+        Ok(())
     }
 
     /// Claims the pending hook denial a terminal error step reports, if

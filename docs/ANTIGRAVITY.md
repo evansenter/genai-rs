@@ -651,7 +651,7 @@ by the turn deadline like the rest:
 |--------|-------|------------|
 | `on_session_start` | once, before `spawn()` returns | — |
 | `on_session_end` | during `shutdown()` (not on drop) | — |
-| `on_pre_turn` | before each turn, with the user's text | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn` of kind `TurnFailure::Denied`, the reason as its message; the agent stays usable |
+| `on_pre_turn` | before each turn, with the user's text; not consulted on trigger turns (harness 0.1.23, see [Triggers](#triggers)) | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn` of kind `TurnFailure::Denied`, the reason as its message; the agent stays usable |
 | `on_post_turn` | after each turn, with its response text | — |
 | `on_tool_error` | when a tool call fails | `Some(text)` replaces the error the model sees |
 | `on_compaction` | when the harness compacts the history | — |
@@ -675,9 +675,9 @@ by the turn deadline like the rest:
 ```
 
 `on_stop` must stop eventually: check `continuation_count`, or the turn runs
-until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn,
-then the tool hooks and tool errors as calls happen, then stop (again after
-each continue), then post-turn.
+until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn
+(except on a trigger turn), then the tool hooks and tool errors as calls
+happen, then stop (again after each continue), then post-turn.
 
 A turn nobody consumes (one that hit its `with_turn_timeout`, one you
 abandoned by dropping `chat` or its stream, or a trigger turn the next
@@ -969,22 +969,25 @@ budget is exceeded, the crate halts the harness's still-running turn and
 drains its remaining events before returning `AntigravityError::Timeout`, so
 the next turn starts from a clean stream.
 
-The deadline is absolute, stamped when the turn starts, and it covers the
-whole turn rather than the gaps between harness events: that includes this
-crate's own work inside the turn, so a custom tool or hook that hangs ends
-the turn on time, with the `Timeout`'s `operation` naming it
-(`agent turn (custom tool 'x' was still running at the deadline)`). It is
-stamped before your message is sent, so it bounds the send too: a harness
+The deadline is absolute, stamped when `chat` or `send_streaming` is
+called, and it covers the whole turn rather than the gaps between harness
+events: that includes this crate's own work inside the turn, so a custom
+tool or hook that hangs ends the turn on time, with the `Timeout`'s
+`operation` naming it (`agent turn (custom tool 'x' was still running at
+the deadline)`). It covers what the call does before the turn too: the
+wait for a trigger's message still going out to the harness, and the halt
+and drain of an earlier turn still running. And it bounds every message to
+the harness in the turn, your message and the replies to the harness's
+requests (hook answers, tool results, answers to its questions): a harness
 that has stopped reading fails the turn on time (`agent turn (the harness
 did not take the message)`) instead of holding it, however large the
 prompt, at the turn timeout you set, however long. Every other message to
-the harness has a bound of its own: the halt before a turn counts against
-the five-second drain budget, the initialization in `spawn()` and the
-session-end request in `shutdown()` against their 30-second budgets, the
-close in `shutdown()` gives up after half a second, and any other send (a
-`cancel()`, a trigger's delivery, a reply to the harness mid-turn, the
-message of a turn with no timeout) gives up after 30 seconds, as a
-`Timeout` where the call returns an error.
+the harness has a bound of its own: the halt before a turn also counts
+against the five-second drain budget, the initialization in `spawn()` and
+the session-end request in `shutdown()` against their 30-second budgets,
+the close in `shutdown()` gives up after half a second, and any other send
+(a `cancel()`, a trigger's delivery, a message in a turn with no timeout)
+gives up after 30 seconds, as a `Timeout` where the call returns an error.
 
 Each custom tool call runs on a tokio task of its own, and a call the
 deadline abandons is aborted: an async tool stops at its next `.await`. A
@@ -1220,6 +1223,13 @@ Delivery semantics (see `antigravity::triggers` for details):
   turn can never surface as (or desync) your turn's response. The trigger's
   effects on conversation history (and any tool calls completed before the
   halt) persist.
+- `on_pre_turn` is not consulted on trigger turns (harness 0.1.23): a
+  trigger's turn runs without asking it, though its stop and post-turn
+  hooks run, so a pre-turn gate (a turn budget, say) does not see those
+  turns. Decide in the trigger whether to send; `spawn()` logs a warning
+  when `on_pre_turn` and a trigger are both set.
+  `test_scripted_a_trigger_turn_skips_the_pre_turn_hook` fails the day the
+  harness starts consulting it.
 
 ## Session persistence and resume
 
@@ -1417,7 +1427,7 @@ A failed turn is `Turn { kind, message }`, where `kind` is a
 
 | `TurnFailure` | When | The agent after it |
 |---|---|---|
-| `ModelBackend { status }` | the model backend failed a call: with a status the harness does not retry (400, 401 or 403), or with one whose retries ran out (a 503, say) | gone: respawn |
+| `ModelBackend { status }` | the model backend failed a call: with a status the harness does not retry (400, 401 or 403), or with one whose retries ran out (a 503, say) on a call of the agent's own rather than a subagent's | gone: respawn |
 | `Trajectory` | the harness ended the turn with an error of its own, such as an MCP server that failed to load | gone: respawn |
 | `Denied` | the pre-turn hook refused the turn (`message` is its reason) | usable |
 | `Cancelled` | the harness cancelled the turn of its own accord | usable |

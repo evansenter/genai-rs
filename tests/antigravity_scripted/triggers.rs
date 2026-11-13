@@ -4,7 +4,7 @@
 //! endpoint with a placeholder key).
 
 use super::*;
-use genai_rs::antigravity::triggers;
+use genai_rs::antigravity::{StopDecision, TurnDecision, triggers};
 
 /// Records every message this client sends the harness.
 #[derive(Default)]
@@ -66,6 +66,67 @@ async fn test_scripted_custom_trigger_turn_is_consumed_by_next_trigger_turn() {
     // A user turn still works after a consumed trigger turn.
     let next = agent.chat("hello").await.expect("turn");
     assert_eq!(next.text(), "user-reply-3412");
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// Harness 0.1.23 never asks the pre-turn hook about a trigger turn: a
+/// gate there does not see it, though the turn's other hooks run. `spawn()`
+/// warns about the pair for that reason. This fails the day the harness
+/// starts asking, and the docs saying it does not must change with it.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_trigger_turn_skips_the_pre_turn_hook() {
+    let fake = FakeGemini::start(vec![
+        ModelTurn::text("trigger-reply-3451"),
+        ModelTurn::text("user-reply-3452"),
+    ])
+    .await;
+    let log: Arc<Mutex<Vec<String>>> = Arc::default();
+    let (pre, post, stop) = (Arc::clone(&log), Arc::clone(&log), Arc::clone(&log));
+    let mut agent = scripted_agent(&fake)
+        .add_custom_trigger(|ctx| async move { ctx.send("custom-trigger-3450").await })
+        .on_pre_turn(move |turn| {
+            pre.lock().unwrap().push(format!("pre_turn:{}", turn.text));
+            // A gate that refuses everything, so a call would show twice.
+            TurnDecision::deny("PRE-TURN-GATE-3453")
+        })
+        .on_post_turn(move |turn| {
+            post.lock()
+                .unwrap()
+                .push(format!("post_turn:{}", turn.response_text));
+        })
+        .on_stop(move |_| {
+            stop.lock().unwrap().push("stop".to_string());
+            StopDecision::Stop
+        })
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let response = agent
+        .next_trigger_turn(Duration::from_secs(20))
+        .await
+        .expect("the gate is not consulted, so the trigger turn runs")
+        .expect("the trigger started a turn");
+    assert_eq!(response.text(), "trigger-reply-3451");
+    assert_eq!(
+        log.lock().unwrap().as_slice(),
+        ["stop", "post_turn:trigger-reply-3451"],
+        "a trigger turn runs the stop and post-turn hooks but not the pre-turn hook"
+    );
+
+    // A turn of the caller's own is asked about, and refused.
+    let err = agent.chat("a user turn").await.unwrap_err();
+    let AntigravityError::Turn { kind, message } = &err else {
+        panic!("the pre-turn hook refuses a user turn: {err:?}");
+    };
+    assert_eq!(*kind, TurnFailure::Denied);
+    assert!(message.contains("PRE-TURN-GATE-3453"), "{message}");
+    assert_eq!(
+        log.lock().unwrap().last().map(String::as_str),
+        Some("pre_turn:a user turn")
+    );
+    assert_eq!(fake.requests().len(), 1, "the refused turn called no model");
     agent.shutdown().await.expect("shutdown");
 }
 

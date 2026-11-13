@@ -197,7 +197,7 @@ fn test_a_failed_trajectory_names_its_kind() {
     // After the backend failed a model call, the error that ends the turn
     // is that failure, with its status.
     let mut turn = TurnState::new(None, None);
-    turn.backend_status = Some(503);
+    turn.backend_status = Some((1, 503));
     let update = trajectory_update(Some("root"), TrajectoryState::Idle, Some("unreachable"));
     let err = AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap_err();
     assert!(
@@ -217,7 +217,7 @@ fn test_an_error_on_a_non_terminal_update_fails_the_turn_at_its_end() {
     // 0.1.23, after a delegation: the main trajectory's error arrives while
     // it waits for subagents, and the idle that follows carries none.
     for (status, expected) in [
-        (Some(503), TurnFailure::ModelBackend { status: 503 }),
+        (Some((2, 503)), TurnFailure::ModelBackend { status: 503 }),
         (None, TurnFailure::Trajectory),
     ] {
         let mut turn = TurnState::new(None, None);
@@ -267,6 +267,105 @@ fn test_backend_status_reads_http_errors_on_system_steps_only() {
     // gRPC's UNKNOWN, which 0.1.23 sends for a failed MCP load.
     assert_eq!(backend_status(&step("SOURCE_SYSTEM", 2)), None);
     assert_eq!(backend_status(&step("SOURCE_MODEL", 503)), None);
+}
+
+/// A system error step on `trajectory` at `index` with HTTP status `code`,
+/// as harness 0.1.23 reports a failed model call (`parent` marks a
+/// subagent's).
+fn system_error_step(trajectory: &str, parent: Option<&str>, index: u32, code: u32) -> StepUpdate {
+    serde_json::from_value(serde_json::json!({
+        "trajectoryId": trajectory, "parentTrajectoryId": parent, "stepIndex": index,
+        "state": "STATE_ERROR", "source": "SOURCE_SYSTEM",
+        "error": {"errorMessage": "Agent execution terminated due to error.", "httpCode": code}
+    }))
+    .unwrap()
+}
+
+/// Feeds `steps` through the error bookkeeping, as `process_step` does,
+/// then ends the main trajectory with an error; returns the turn's kind.
+fn failure_after(steps: &[StepUpdate]) -> TurnFailure {
+    let mut turn = TurnState::new(None, None);
+    turn.main_trajectory = Some("root".to_string());
+    for step in steps {
+        let key = (
+            step.trajectory_id.clone().unwrap_or_default(),
+            step.step_index.unwrap_or_default(),
+        );
+        let is_main =
+            step.parent_trajectory_id.is_none() && step.trajectory_id.as_deref() == Some("root");
+        turn.record_step_errors(step, &key, is_main).unwrap();
+    }
+    let idle = trajectory_update(Some("root"), TrajectoryState::Idle, Some("run ended"));
+    let err = AntigravityAgent::process_trajectory_update(&idle, &mut turn).unwrap_err();
+    let AntigravityError::Turn { kind, .. } = err else {
+        panic!("expected a Turn error: {err:?}");
+    };
+    kind
+}
+
+#[test]
+fn test_only_the_main_trajectorys_last_backend_failure_names_the_turns() {
+    let later_step = |index: u32| -> StepUpdate {
+        serde_json::from_value(serde_json::json!({
+            "trajectoryId": "root", "stepIndex": index, "state": "STATE_ACTIVE",
+            "source": "SOURCE_MODEL"
+        }))
+        .unwrap()
+    };
+    // The main trajectory's call fails with no retries left: the turn's
+    // failure is that one, re-delivered or not.
+    let failed = system_error_step("root", None, 1, 503);
+    assert_eq!(
+        failure_after(&[failed.clone(), failed.clone()]),
+        TurnFailure::ModelBackend { status: 503 }
+    );
+    // After a delegation, 0.1.23 can follow that 503 with a done system
+    // step, its message to the model that the subagent went idle, before
+    // going idle: the harness did not go on past the failed call, so the
+    // failure is still the 503.
+    let system_done: StepUpdate = serde_json::from_value(serde_json::json!({
+        "trajectoryId": "root", "stepIndex": 2, "state": "STATE_DONE",
+        "source": "SOURCE_SYSTEM", "target": "TARGET_MODEL",
+        "text": "[Message] sender=system content=Subagent sub has gone idle."
+    }))
+    .unwrap();
+    assert_eq!(
+        failure_after(&[failed.clone(), system_done]),
+        TurnFailure::ModelBackend { status: 503 }
+    );
+    // A 503 the harness retried (0.1.23 reports it the same way), then the
+    // retry's step: an error that ends the turn later is the harness's
+    // own, as is a later step's that carries no HTTP status (an invalid
+    // tool call with no output retries left, `httpCode` 0).
+    assert_eq!(
+        failure_after(&[failed.clone(), later_step(2)]),
+        TurnFailure::Trajectory
+    );
+    assert_eq!(
+        failure_after(&[failed.clone(), system_error_step("root", None, 2, 0)]),
+        TurnFailure::Trajectory
+    );
+    // A subagent's failed call is the subagent's (PR #548 review): the
+    // main trajectory's own error that ends the turn is not a 503.
+    assert_eq!(
+        failure_after(&[system_error_step("sub", Some("root"), 1, 503)]),
+        TurnFailure::Trajectory
+    );
+    // The last of several failures on the main trajectory counts.
+    assert_eq!(
+        failure_after(&[failed, system_error_step("root", None, 3, 500)]),
+        TurnFailure::ModelBackend { status: 500 }
+    );
+}
+
+#[test]
+fn test_a_turn_timeout_too_large_for_the_clock_is_no_deadline() {
+    // `with_turn_timeout(Duration::MAX)` panicked at the first turn (J-12).
+    let turn = TurnState::new(Some(Duration::MAX), None);
+    assert_eq!(turn.deadline, None);
+    assert_eq!(turn.timeout, Some(Duration::MAX));
+    let turn = TurnState::new(Some(Duration::from_secs(5)), None);
+    assert!(turn.deadline.is_some());
 }
 
 #[test]

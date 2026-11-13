@@ -5,8 +5,8 @@
 use super::*;
 use genai_rs::antigravity::protocol::StopReason;
 use genai_rs::antigravity::{
-    Budget, InlineSkill, RetryConfig, RunCommandOptions, SessionContinuation, Subagent,
-    SystemInstructions,
+    AgentEventStream, Budget, ErrorSeverity, InlineSkill, RetryConfig, RunCommandOptions,
+    SessionContinuation, Subagent, SystemInstructions,
 };
 
 // =============================================================================
@@ -337,6 +337,81 @@ async fn test_scripted_retry_config_decides_whether_a_503_ends_the_turn() {
     let response = agent.chat("hi").await.expect("turn");
     assert_eq!(response.text(), "recovered-2201");
     agent.shutdown().await.expect("shutdown");
+}
+
+/// Reads a turn's stream to its end: its error events, and how it ended.
+async fn errors_until_the_end(
+    mut stream: AgentEventStream<'_>,
+) -> (
+    Vec<(String, ErrorSeverity)>,
+    Result<ChatResponse, AntigravityError>,
+) {
+    let mut errors = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event {
+            Ok(AgentEvent::Error { message, severity }) => errors.push((message, severity)),
+            Ok(AgentEvent::Finished(response)) => return (errors, Ok(*response)),
+            Ok(_) => {}
+            Err(e) => return (errors, Err(e)),
+        }
+    }
+    panic!("the stream ended without a Finished event or an error");
+}
+
+/// Harness 0.1.23 reports a 503 it retries with the same system error step,
+/// `httpCode` 503 on the main trajectory, as one with no retries left
+/// (#556), so the event is `Transient` either way: only how the turn ends
+/// tells them apart. And a retried 503 is not why the turn fails later
+/// (PR #548 review): with the retry's output unusable and no output retries
+/// left, the harness ends the turn with an error of its own.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure() {
+    let unavailable = || ModelTurn::error(503, "scripted-unavailable-2203");
+    let retrying = |fake: &FakeGemini| {
+        scripted_agent(fake).with_retry(
+            RetryConfig::new()
+                .with_max_api_retries(1)
+                .with_max_output_retries(0)
+                .with_initial_backoff(Duration::from_millis(10)),
+        )
+    };
+
+    // Retried, then answered: the turn succeeds, with the 503 reported.
+    let fake = FakeGemini::start(vec![unavailable(), ModelTurn::text("recovered-2204")]).await;
+    let mut agent = retrying(&fake).spawn().await.expect("spawn");
+    let stream = agent.send_streaming("hi").await.expect("stream starts");
+    let (errors, end) = errors_until_the_end(stream).await;
+    let response = end.expect("the retry recovers the turn");
+    assert_eq!(response.text(), "recovered-2204");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let (message, severity) = &errors[0];
+    assert!(message.contains("scripted-unavailable-2203"), "{message}");
+    assert_eq!(*severity, ErrorSeverity::Transient);
+    assert_eq!(response.errors(), std::slice::from_ref(message));
+    agent.shutdown().await.expect("shutdown");
+
+    // Retried, then a call to an undeclared tool with no output retries
+    // left: the turn fails as the harness's own error, not the 503's.
+    let fake = FakeGemini::start(vec![
+        unavailable(),
+        ModelTurn::call("no_such_tool_2205", json!({"a": 1})),
+    ])
+    .await;
+    let mut agent = retrying(&fake).spawn().await.expect("spawn");
+    let stream = agent.send_streaming("hi").await.expect("stream starts");
+    let (errors, end) = errors_until_the_end(stream).await;
+    let Err(AntigravityError::Turn { kind, message }) = &end else {
+        panic!("the unusable output ends the turn: {end:?}");
+    };
+    assert_eq!(*kind, TurnFailure::Trajectory, "{message}");
+    assert!(message.contains("no_such_tool_2205"), "{message}");
+    assert_eq!(errors.len(), 2, "the 503 and the invalid call: {errors:?}");
+    assert!(
+        errors
+            .iter()
+            .all(|(_, severity)| *severity == ErrorSeverity::Transient)
+    );
 }
 
 /// A `run_command` call as the model makes it. Unix only, as the tests that

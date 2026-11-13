@@ -536,6 +536,38 @@ Turn failures (0.1.23, 2026-11-09, scripted model; D-062):
   runs) it closed first every time. The agent now refuses the next call
   itself (D-062).
 
+Trigger turns and retried model calls (0.1.23, 2026-11-13, scripted model):
+
+- A turn a trigger starts never reaches the pre-turn callback: with
+  `on_pre_turn` refusing every turn, `next_trigger_turn` still returned the
+  trigger turn's answer, and the stop and post-turn callbacks fired for it
+  (a probe for the 2026-11-09 grade counted the same). A `chat` after it
+  was refused. `spawn()` warns when the two are set together
+  (`test_scripted_a_trigger_turn_skips_the_pre_turn_hook`).
+- A 503 the harness retries arrives as a system error step on the main
+  trajectory with `httpCode` 503, as one with no retries left does; only
+  the message differs ("Encountered retryable error from model provider:"
+  before "Agent execution terminated due to error."). The retry follows as
+  the next step of the same trajectory. So a 5xx error step does not mean
+  the session is ending, and its `AgentEvent::Error` stays `Transient`
+  (#556): severity is decided when the step arrives, before the harness
+  has retried or given up, and telling the two apart would mean reading
+  the harness's text. The status a backend failure gives the turn is
+  dropped once a later model step or error step of the main trajectory
+  follows it, and a subagent's is never taken: after a retried 503, a
+  model call to an undeclared tool with no output retries left (a system
+  error step with `httpCode` 0) ended the turn as
+  `TurnFailure::Trajectory`, where the turn had reported
+  `ModelBackend { status: 503 }`
+  (`test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`).
+  Any later step would not do: after a delegation, a 503 with no retries
+  left on the main trajectory was followed in 8 of 40 runs by a
+  `STATE_DONE` system step at the next index, the harness's message to the
+  model that the subagent had gone idle, before the idle. Dropping the
+  status on it failed `test_scripted_a_503_after_delegating_fails_the_turn`
+  as `Trajectory` in 2 of 16 runs, each one with that step; dropping it
+  only on a model or error step passed 24 of 24, 6 of them with that step.
+
 Subagent names (0.1.23, 2026-11-07, live
 `test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`
 action still carries no name, as on 0.1.5 through 0.1.18, so
