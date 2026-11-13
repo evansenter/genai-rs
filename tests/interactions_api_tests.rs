@@ -350,11 +350,15 @@ mod basic {
         assert_eq!(response.status, InteractionStatus::InProgress);
         let id = response.id.expect("stored interaction should have id");
 
-        let cancelled = client
-            .interactions()
-            .cancel(&id)
-            .await
-            .expect("interactions().cancel failed");
+        // The cancel can meet a transient error too: a `500 api_error` a
+        // second or two after the create failed it twice on 2026-11-06, and
+        // nothing retried it. A retry is safe even when the failed attempt
+        // took effect: a second cancel answers `200` with the interaction
+        // `cancelled` (live 2026-11-13).
+        let cancelled = retry_request!([client, id] => {
+            client.interactions().cancel(&id).await
+        })
+        .expect("interactions().cancel failed");
         assert_eq!(cancelled.status, InteractionStatus::Cancelled);
     }
 
