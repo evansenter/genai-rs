@@ -855,7 +855,11 @@ async fn test_a_failed_handshake_keeps_its_cause_as_the_source() {
 async fn test_a_handshake_with_no_reply_fails_at_its_bound_without_a_source() {
     use std::error::Error as _;
     let dir = tempfile::tempdir().unwrap();
-    let silent = stub_named_interpreter(dir.path(), "localharness", "exec cat >/dev/null");
+    // No `exec`: the shell must keep holding the stdout pipe. `exec cat
+    // >/dev/null` gives the pipe's one write end over to /dev/null, so the
+    // read ends at once (an I/O error, not a missing reply), and on this
+    // paused clock which comes first was a race with the real process.
+    let silent = stub_named_interpreter(dir.path(), "localharness", "cat >/dev/null");
     let started = tokio::time::Instant::now();
     let error = failed_handshake(&silent).await;
     let elapsed = started.elapsed();
