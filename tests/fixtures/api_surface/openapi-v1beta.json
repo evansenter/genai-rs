@@ -38,175 +38,580 @@
   "POST /{api_version}/webhooks/{id}:rotateSigningSecret",
   "PUT /upload/{api_version}/environments/{environment}/files/{path}"
  ],
- "fetched": "2026-11-09",
+ "fetched": "2026-11-13",
  "operations": {
   "DELETE /{api_version}/agents/{agentsId}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Empty"
+      }
+     }
+    }
+   }
   },
   "DELETE /{api_version}/credentials/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Empty"
+      }
+     }
+    }
+   }
   },
   "DELETE /{api_version}/environments/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Empty"
+      }
+     }
+    }
+   }
   },
   "DELETE /{api_version}/interactions/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "200": {
+     "content": {}
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   }
   },
   "DELETE /{api_version}/triggers/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Empty"
+      }
+     }
+    }
+   }
   },
   "DELETE /{api_version}/voices/{voicesId}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/DeleteVoiceResponse"
+      }
+     }
+    }
+   }
   },
   "DELETE /{api_version}/webhooks/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Empty"
+      }
+     }
+    }
+   }
   },
   "GET /{api_version}/agents": {
+   "header": {},
    "query": {
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "parent": {
-     "required": true
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/ListAgentsResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/agents/{agentsId}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Agent"
+      }
+     }
+    }
+   }
   },
   "GET /{api_version}/credentials": {
+   "header": {},
    "query": {
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/ListCredentialsResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/credentials/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Credential"
+      }
+     }
+    }
+   }
   },
   "GET /{api_version}/environments": {
+   "header": {},
    "query": {
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/ListEnvironmentsResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/environments/{environment}/files/{path}": {
+   "header": {},
    "query": {
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "recursive": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "boolean"
+     }
+    }
+   },
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/GetEnvironmentFilesResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/environments/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Environment"
+      }
+     }
+    }
+   }
   },
   "GET /{api_version}/interactions/{id}": {
+   "header": {},
    "query": {
     "last_event_id": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "stream": {
-     "required": false
+     "required": false,
+     "schema": {
+      "default": false,
+      "type": "boolean"
+     }
+    }
+   },
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Interaction"
+      },
+      "text/event-stream": {
+       "$ref": "#/components/schemas/InteractionSseStreamEvent"
+      }
+     }
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/triggers": {
+   "header": {},
    "query": {
     "filter": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/ListTriggersResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/triggers/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Trigger"
+      }
+     }
+    }
+   }
   },
   "GET /{api_version}/triggers/{triggerId}/executions": {
+   "header": {},
    "query": {
     "filter": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/ListTriggerExecutionsResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/voices": {
+   "header": {},
    "query": {
     "accent": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
     },
     "context": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
     },
     "gender": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
     },
     "language_code": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
     },
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "persona": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
     },
     "pitch": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
     },
     "region_code": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
     },
     "search": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "type": {
-     "required": false
+     "required": false,
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/ListVoicesResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/voices/{voicesId}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Voice"
+      }
+     }
+    }
+   }
   },
   "GET /{api_version}/webhooks": {
+   "header": {},
    "query": {
     "page_size": {
-     "required": false
+     "required": false,
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
     },
     "page_token": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/ListWebhooksResponse"
+      }
+     }
     }
    }
   },
   "GET /{api_version}/webhooks/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Webhook"
+      }
+     }
+    }
+   }
   },
   "PATCH /{api_version}/credentials/{id}": {
    "body": {
@@ -214,9 +619,22 @@
      "$ref": "#/components/schemas/CredentialUpdateParams"
     }
    },
+   "header": {},
    "query": {
     "update_mask": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Credential"
+      }
+     }
     }
    }
   },
@@ -226,7 +644,17 @@
      "$ref": "#/components/schemas/UpdateTriggerRequest"
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Trigger"
+      }
+     }
+    }
+   }
   },
   "PATCH /{api_version}/webhooks/{id}": {
    "body": {
@@ -234,7 +662,17 @@
      "$ref": "#/components/schemas/UpdateWebhookRequest"
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Webhook"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/agents": {
    "body": {
@@ -242,9 +680,22 @@
      "$ref": "#/components/schemas/Agent"
     }
    },
+   "header": {},
    "query": {
     "parent": {
-     "required": true
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Agent"
+      }
+     }
     }
    }
   },
@@ -254,7 +705,17 @@
      "$ref": "#/components/schemas/CredentialCreateParams"
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Credential"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/environments": {
    "body": {
@@ -262,7 +723,17 @@
      "$ref": "#/components/schemas/CreateEnvironmentRequest"
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Environment"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/interactions": {
    "body": {
@@ -277,10 +748,93 @@
      ]
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Interaction"
+      },
+      "text/event-stream": {
+       "$ref": "#/components/schemas/InteractionSseStreamEvent"
+      }
+     }
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/interactions/{id}/cancel": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Interaction"
+      }
+     }
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/triggers": {
    "body": {
@@ -288,10 +842,30 @@
      "$ref": "#/components/schemas/Trigger"
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Trigger"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/triggers/{triggerId}/executions": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/TriggerExecution"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/voices": {
    "body": {
@@ -299,7 +873,17 @@
      "$ref": "#/components/schemas/CreateVoiceRequest"
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Voice"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/webhooks": {
    "body": {
@@ -307,25 +891,116 @@
      "$ref": "#/components/schemas/CreateWebhookRequest"
     }
    },
+   "header": {},
    "query": {
     "webhook_id": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    }
+   },
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Webhook"
+      }
+     }
     }
    }
   },
   "POST /{api_version}/webhooks/{id}:ping": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/PingWebhookResponse"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/webhooks/{id}:rotateSigningSecret": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "default": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/RotateSigningSecretResponse"
+      }
+     }
+    }
+   }
   },
   "PUT /upload/{api_version}/environments/{environment}/files/{path}": {
+   "header": {
+    "X-Goog-Upload-Command": {
+     "required": true,
+     "schema": {
+      "const": "start",
+      "default": "start",
+      "type": "string"
+     }
+    },
+    "X-Goog-Upload-Header-Content-Length": {
+     "required": true,
+     "schema": {
+      "format": "int64",
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "X-Goog-Upload-Header-Content-Type": {
+     "required": true,
+     "schema": {
+      "minLength": 1,
+      "type": "string"
+     }
+    },
+    "X-Goog-Upload-Protocol": {
+     "required": true,
+     "schema": {
+      "const": "resumable",
+      "default": "resumable",
+      "type": "string"
+     }
+    }
+   },
    "query": {
     "extract": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "boolean"
+     }
     },
     "overwrite": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "boolean"
+     }
+    }
+   },
+   "responses": {
+    "200": {
+     "content": {},
+     "headers": {
+      "X-Goog-Upload-URL": {
+       "schema": {
+        "format": "uri",
+        "type": "string"
+       }
+      }
+     }
+    },
+    "4XX": {
+     "content": {}
+    },
+    "5XX": {
+     "content": {}
     }
    }
   }

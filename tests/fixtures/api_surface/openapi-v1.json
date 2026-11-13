@@ -5,18 +5,104 @@
   "POST /{api_version}/interactions",
   "POST /{api_version}/interactions/{id}/cancel"
  ],
- "fetched": "2026-11-09",
+ "fetched": "2026-11-13",
  "operations": {
   "DELETE /{api_version}/interactions/{id}": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "200": {
+     "content": {}
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   }
   },
   "GET /{api_version}/interactions/{id}": {
+   "header": {},
    "query": {
     "last_event_id": {
-     "required": false
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
     },
     "stream": {
-     "required": false
+     "required": false,
+     "schema": {
+      "default": false,
+      "type": "boolean"
+     }
+    }
+   },
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Interaction"
+      },
+      "text/event-stream": {
+       "$ref": "#/components/schemas/InteractionSseStreamEvent"
+      }
+     }
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
     }
    }
   },
@@ -33,10 +119,93 @@
      ]
     }
    },
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Interaction"
+      },
+      "text/event-stream": {
+       "$ref": "#/components/schemas/InteractionSseStreamEvent"
+      }
+     }
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   }
   },
   "POST /{api_version}/interactions/{id}/cancel": {
-   "query": {}
+   "header": {},
+   "query": {},
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "$ref": "#/components/schemas/Interaction"
+      }
+     }
+    },
+    "4XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    },
+    "5XX": {
+     "content": {
+      "application/json": {
+       "properties": {
+        "error": {
+         "$ref": "#/components/schemas/Error"
+        }
+       },
+       "required": [
+        "error"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   }
   }
  },
  "schemas": {

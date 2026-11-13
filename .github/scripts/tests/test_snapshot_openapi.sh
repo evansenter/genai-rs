@@ -31,21 +31,47 @@ cat >"$work/spec.json" <<'EOF'
         "description": "x", "x-codeSamples": [{"source": "..."}],
         "parameters": [{"name": "thing_id", "in": "query", "description": "An id."}],
         "requestBody": {"required": true, "content": {"application/json": {
-          "schema": {"$ref": "#/components/schemas/Thing"}}}}
+          "schema": {"$ref": "#/components/schemas/Thing"}}}},
+        "responses": {"default": {"description": "Created.", "content": {"application/json": {
+          "schema": {"$ref": "#/components/schemas/Thing"}}}}}
       },
       "get": {
         "parameters": [
-          {"name": "page_size", "in": "query", "required": true},
-          {"$ref": "#/components/parameters/Filter"}
-        ]
+          {"name": "page_size", "in": "query", "required": true,
+           "schema": {"type": "integer", "format": "int32", "description": "Prose."}},
+          {"$ref": "#/components/parameters/Filter"},
+          {"name": "kind", "in": "query", "explode": true,
+           "schema": {"type": "array", "items": {"type": "string"}}},
+          {"name": "session", "in": "cookie"}
+        ],
+        "responses": {
+          "200": {"description": "OK.", "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/Thing"},
+                                 "examples": {"one": {"value": {"id": "x"}}}},
+            "text/event-stream": {"schema": {"$ref": "#/components/schemas/title"},
+                                  "x-speakeasy-sse-sentinel": "[DONE]"}}},
+          "4XX": {"$ref": "#/components/responses/Error"}
+        }
       }
     },
     "/{api_version}/things/{id}": {
-      "patch": {"requestBody": {"$ref": "#/components/requestBodies/Patch"}}
+      "patch": {"requestBody": {"$ref": "#/components/requestBodies/Patch"}},
+      "put": {
+        "parameters": [{"$ref": "#/components/parameters/Command"}],
+        "responses": {"200": {"description": "Started.",
+          "headers": {"X-Upload-URL": {"$ref": "#/components/headers/UploadUrl"}}}}
+      }
     }
   },
   "components": {
-  "parameters": {"Filter": {"name": "filter", "in": "query", "description": "Prose."}},
+  "parameters": {
+    "Filter": {"name": "filter", "in": "query", "description": "Prose.", "schema": {"type": "string"}},
+    "Command": {"name": "X-Upload-Command", "in": "header", "required": true, "description": "Prose.",
+                "schema": {"type": "string", "const": "start", "default": "start"}}
+  },
+  "headers": {"UploadUrl": {"description": "Prose.", "schema": {"type": "string", "format": "uri"}}},
+  "responses": {"Error": {"description": "Prose.", "content": {"application/json": {"schema": {
+    "type": "object", "properties": {"error": {"type": "string", "description": "E."}}}}}}},
   "requestBodies": {"Patch": {"content": {"application/json": {"schema": {
     "type": "object", "description": "Inline.",
     "properties": {"thing": {"$ref": "#/components/schemas/Thing", "description": "T."}}}}}}},
@@ -62,6 +88,7 @@ cat >"$work/spec.json" <<'EOF'
         "title": {"type": "object", "properties": {"title": {"type": "string", "title": "T"}}}
       }
     },
+    "Other": {"type": "object"},
     "title": {"type": "string", "description": "A schema named like a prose keyword."}
   }}
 }
@@ -80,6 +107,7 @@ ok = [
         "GET /{api_version}/things",
         "PATCH /{api_version}/things/{id}",
         "POST /{api_version}/things",
+        "PUT /{api_version}/things/{id}",
     ],
     "description" not in thing and "description" not in thing["properties"]["id"],
     "example" not in thing["properties"]["size"],
@@ -94,11 +122,28 @@ ok = [
     d["schemas"].get("title") == {"type": "string"},
     # Each operation keeps its query parameters, those of the path item and
     # the operation overriding one of the same name, a `$ref` followed,
-    # with whether each is required; path and header parameters are left out.
+    # with whether each is required and its schema and other keys without
+    # their prose; path parameters are left out.
     d["operations"]["POST /{api_version}/things"]["query"]
     == {"page_size": {"required": False}, "thing_id": {"required": False}},
     d["operations"]["GET /{api_version}/things"]["query"]
-    == {"filter": {"required": False}, "page_size": {"required": True}},
+    == {
+        "filter": {"required": False, "schema": {"type": "string"}},
+        "kind": {
+            "explode": True,
+            "required": False,
+            "schema": {"items": {"type": "string"}, "type": "array"},
+        },
+        "page_size": {"required": True, "schema": {"format": "int32", "type": "integer"}},
+    },
+    # Header parameters the same way, those of the path item included; one in
+    # another location gets a map of its own.
+    d["operations"]["POST /{api_version}/things"]["header"] == {"trace": {"required": False}},
+    d["operations"]["PUT /{api_version}/things/{id}"]["header"]
+    == {"X-Upload-Command": {
+        "required": True, "schema": {"const": "start", "default": "start", "type": "string"}}},
+    d["operations"]["GET /{api_version}/things"]["cookie"] == {"session": {"required": False}},
+    "cookie" not in d["operations"]["POST /{api_version}/things"],
     # And its request body by content type: a `$ref` as it is, an inline
     # schema (or one behind a `requestBodies` reference) without its prose.
     d["operations"]["POST /{api_version}/things"]["body"]
@@ -107,11 +152,30 @@ ok = [
     d["operations"]["PATCH /{api_version}/things/{id}"]
     == {
         "query": {},
+        "header": {},
         "body": {"application/json": {
             "type": "object",
             "properties": {"thing": {"$ref": "#/components/schemas/Thing"}},
         }},
+        "responses": {},
     },
+    # And its responses by status: the schema of each content type without its
+    # prose or examples (a `responses` reference followed), and the
+    # headers of the response when it has any.
+    d["operations"]["GET /{api_version}/things"]["responses"]
+    == {
+        "200": {"content": {
+            "application/json": {"$ref": "#/components/schemas/Thing"},
+            "text/event-stream": {"$ref": "#/components/schemas/title"},
+        }},
+        "4XX": {"content": {"application/json": {
+            "type": "object", "properties": {"error": {"type": "string"}}}}},
+    },
+    d["operations"]["POST /{api_version}/things"]["responses"]
+    == {"default": {"content": {"application/json": {"$ref": "#/components/schemas/Thing"}}}},
+    d["operations"]["PUT /{api_version}/things/{id}"]["responses"]
+    == {"200": {"content": {}, "headers": {
+        "X-Upload-URL": {"schema": {"format": "uri", "type": "string"}}}}},
 ]
 print(" ".join("ok" if x else f"fail{i}" for i, x in enumerate(ok)))
 ' <<<"$out")
@@ -119,18 +183,55 @@ case "$checks" in
     *fail*) fail "snapshot output wrong: $checks" ;;
 esac
 
-# A reference the spec does not resolve fails, rather than dropping the
-# parameter it stood for.
-python3 -c '
+# A drift in what the snapshot keeps changes the reduced output (#504 J-1):
+# the first three reduced to the same bytes before header parameters,
+# parameter schemas and responses were kept, so the daily watch stayed
+# green. Each mutation is a Python statement on `spec`.
+mutate() {
+    python3 -c '
 import json, sys
 spec = json.load(open(sys.argv[1]))
-spec["paths"]["/{api_version}/things"]["get"]["parameters"].append(
-    {"$ref": "#/components/parameters/Missing"})
+exec(sys.argv[3])
 json.dump(spec, open(sys.argv[2], "w"))
-' "$work/spec.json" "$work/dangling.json"
-if python3 "$SNAPSHOT" "$work/dangling.json" x 2026-11-01 >/dev/null 2>&1; then
-    fail "a dangling parameter reference exited 0"
-fi
+' "$work/spec.json" "$work/mutated.json" "$1"
+    python3 "$SNAPSHOT" "$work/mutated.json" https://example.com/spec.json 2026-11-01
+}
+expect_drift() {
+    local what=$1 statement=$2 check=$3 mutated
+    mutated=$(mutate "$statement")
+    if [ "$mutated" = "$out" ]; then
+        fail "$what: the reduced snapshot did not change"
+    elif ! python3 -c "import json, sys; d = json.loads(sys.stdin.read()); sys.exit(0 if ($check) else 1)" \
+        <<<"$mutated"; then
+        fail "$what: the reduced snapshot changed, but not as expected"
+    fi
+}
+expect_drift "a required header added to an operation" \
+    'spec["paths"]["/{api_version}/things"]["post"]["parameters"].append({"name": "X-Goog-Api-Revision", "in": "header", "required": True, "schema": {"type": "string"}})' \
+    'd["operations"]["POST /{api_version}/things"]["header"]["X-Goog-Api-Revision"] == {"required": True, "schema": {"type": "string"}}'
+expect_drift "a query parameter retyped from an array of strings to a string enum" \
+    'next(p for p in spec["paths"]["/{api_version}/things"]["get"]["parameters"] if p.get("name") == "kind")["schema"] = {"type": "string", "enum": ["a", "b"]}' \
+    'd["operations"]["GET /{api_version}/things"]["query"]["kind"]["schema"] == {"enum": ["a", "b"], "type": "string"}'
+expect_drift "a response pointed at another schema" \
+    'spec["paths"]["/{api_version}/things"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] = {"$ref": "#/components/schemas/Other"}' \
+    'd["operations"]["GET /{api_version}/things"]["responses"]["200"]["content"]["application/json"] == {"$ref": "#/components/schemas/Other"}'
+expect_drift "a header parameter made optional" \
+    'spec["components"]["parameters"]["Command"]["required"] = False' \
+    'd["operations"]["PUT /{api_version}/things/{id}"]["header"]["X-Upload-Command"]["required"] is False'
+expect_drift "a response header removed" \
+    'spec["paths"]["/{api_version}/things/{id}"]["put"]["responses"]["200"].pop("headers")' \
+    'd["operations"]["PUT /{api_version}/things/{id}"]["responses"]["200"] == {"content": {}}'
+
+# A reference the spec does not resolve fails, rather than dropping what it
+# stood for: a parameter, a response or a response header.
+for statement in \
+    'spec["paths"]["/{api_version}/things"]["get"]["parameters"].append({"$ref": "#/components/parameters/Missing"})' \
+    'spec["paths"]["/{api_version}/things"]["get"]["responses"]["4XX"] = {"$ref": "#/components/responses/Missing"}' \
+    'spec["paths"]["/{api_version}/things/{id}"]["put"]["responses"]["200"]["headers"]["X-Upload-URL"] = {"$ref": "#/components/headers/Missing"}'; do
+    if mutate "$statement" >/dev/null 2>&1; then
+        fail "a dangling reference exited 0: $statement"
+    fi
+done
 
 # Not an OpenAPI 3 document: fail rather than write an empty snapshot.
 echo '{"swagger": "2.0"}' >"$work/bad.json"

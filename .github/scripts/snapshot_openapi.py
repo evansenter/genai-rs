@@ -5,13 +5,20 @@ Usage: snapshot_openapi.py <spec.json> <source URL> <fetched YYYY-MM-DD>
 
 Keeps every schema's structure (properties, types, formats, enums, `$ref`,
 `oneOf`, `required`, `deprecated`, `readOnly`), the endpoint list, and each
-endpoint's operation: its query parameters, each with whether it is
-required, and its request body's schema by content type (a `$ref`, or the
-schema without its prose). Drops the prose (descriptions, examples, code
-samples), which is most of the file and churns on every docs edit. Output
-is sorted and indented so a refreshed copy diffs line by line against the
-committed one in `tests/fixtures/api_surface/`. See
-`.github/scripts/refresh_api_snapshot.sh`.
+endpoint's operation:
+- its query and header parameters (`query`, `header`, and `cookie` if it
+  has one), each with whether it is required, its schema (type, array
+  items, format, default, enum, const) and any other non-prose key it has
+  (`style`, `explode`, ...); a path parameter is in the endpoint's path, so
+  it is not kept again;
+- its request body's schema by content type (`body`, a `$ref`, or the
+  schema without its prose);
+- its responses by status (`responses`), each with its schema by content
+  type (`content`) and, when it has any, its headers (`headers`).
+Drops the prose (descriptions, examples, code samples), which is most of the
+file and churns on every docs edit. Output is sorted and indented so a
+refreshed copy diffs line by line against the committed one in
+`tests/fixtures/api_surface/`. See `.github/scripts/refresh_api_snapshot.sh`.
 """
 
 import json
@@ -71,27 +78,57 @@ def resolve(spec, node, kind):
         sys.exit(f"dangling reference {ref!r}")
 
 
+# Parameter locations every operation has a map for, empty when it has none.
+# A parameter elsewhere (`cookie`) gets a map of its own; a path parameter
+# none, since the endpoint's path names it.
+LOCATIONS = ("query", "header")
+
+
+def parameter(param):
+    """A parameter without its prose, name and location, its required flag
+    made explicit."""
+    kept = {k: v for k, v in strip(param).items() if k not in ("name", "in")}
+    kept["required"] = bool(param.get("required", False))
+    return kept
+
+
+def content(media_types):
+    """A content map's schema by content type, each without its prose."""
+    return {
+        content_type: strip(media.get("schema", {}))
+        for content_type, media in (media_types or {}).items()
+    }
+
+
 def operation(spec, path_item, op):
-    """An operation's query parameters (name -> {required}) and its request
-    body (content type -> schema). An operation's own parameter replaces the
-    path item's of the same name and location."""
+    """An operation's query and header parameters (name -> parameter), its
+    request body (content type -> schema) and its responses (status ->
+    content and headers). An operation's own parameter replaces the path
+    item's of the same name and location."""
     params = {}
     for source in (path_item.get("parameters", []), op.get("parameters", [])):
         for param in source:
             param = resolve(spec, param, "parameters")
             params[(param.get("in"), param.get("name"))] = param
-    query = {
-        name: {"required": bool(param.get("required", False))}
-        for (location, name), param in params.items()
-        if location == "query"
-    }
-    out = {"query": query}
+    out = {location: {} for location in LOCATIONS}
+    for (location, name), param in params.items():
+        if location != "path":
+            out.setdefault(location, {})[name] = parameter(param)
     body = resolve(spec, op.get("requestBody"), "requestBodies")
     if body:
-        out["body"] = {
-            content_type: strip(media.get("schema", {}))
-            for content_type, media in body.get("content", {}).items()
+        out["body"] = content(body.get("content"))
+    responses = {}
+    for status, response in op.get("responses", {}).items():
+        response = resolve(spec, response, "responses")
+        entry = {"content": content(response.get("content"))}
+        headers = {
+            name: strip(resolve(spec, header, "headers"))
+            for name, header in response.get("headers", {}).items()
         }
+        if headers:
+            entry["headers"] = headers
+        responses[str(status)] = entry
+    out["responses"] = responses
     return out
 
 
