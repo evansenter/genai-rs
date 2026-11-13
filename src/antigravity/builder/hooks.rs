@@ -111,6 +111,11 @@ impl AgentBuilder {
     }
 
     /// Runs `hook` once the session starts, before `spawn()` returns.
+    ///
+    /// The wait for the hook, and its run, count against `spawn()`'s 30 s
+    /// session-start budget: a hook that overruns it fails
+    /// [`spawn()`](Self::spawn) with
+    /// [`AntigravityError::InitFailed`](crate::antigravity::AntigravityError::InitFailed).
     #[must_use]
     pub fn on_session_start(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
         self.lifecycle.session_start = Some(Arc::new(hook));

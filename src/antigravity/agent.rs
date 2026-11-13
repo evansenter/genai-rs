@@ -76,10 +76,11 @@ pub struct AntigravityAgent {
     pub(super) turn_unfinished: bool,
     /// The failure of the turn that ended the session
     /// ([`TurnFailure::ends_session`]), once there is one. Every later
-    /// call fails with [`AntigravityError::ConnectionClosed`] without
-    /// sending: harness 0.1.23 ends its run and closes the connection, but
-    /// can first take the next message and answer it with an empty turn,
-    /// which would read as a success.
+    /// `chat`, `send_streaming` and `next_trigger_turn` fails with
+    /// [`AntigravityError::ConnectionClosed`] without sending (`cancel()`
+    /// and `shutdown()` do not check): harness 0.1.23 ends its run and
+    /// closes the connection, but can first take the next message and
+    /// answer it with an empty turn, which would read as a success.
     pub(super) session_ended: Option<TurnFailure>,
     /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
     /// aborted on shutdown and on drop.

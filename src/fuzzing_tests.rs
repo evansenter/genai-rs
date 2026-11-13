@@ -306,7 +306,7 @@ fn round_trip_catches_a_field_dropped_on_write() {
 }
 
 // =============================================================================
-// The wire-read targets and the faithfulness check (D-NEXT-J7)
+// The wire-read targets and the faithfulness check (D-070)
 // =============================================================================
 
 /// A type whose deserializer rewrites what it read (an unknown discriminant
@@ -426,11 +426,11 @@ fn canonical_form_merges_only_what_the_crate_treats_as_one() {
 /// The round-trip findings of 2026-11-10 that a fuzz target catches, each
 /// as the input that showed it, through the target that reaches it. Two are
 /// not here, as no target can see them: `InteractionResponse` is checked on
-/// the value alone (D-NEXT-J7), and each is a change on the first read that
+/// the value alone (D-070), and each is a change on the first read that
 /// later writes keep. The keys beside `speech_config`'s `speakers` are held
 /// by `generation_config_tests.rs` and the property
 /// `generation_config_speakers_form_roundtrip`; a single input object,
-/// written back as a one-element array on purpose (D-NEXT-J7-a), by
+/// written back as a one-element array on purpose (D-071), by
 /// `request/tests.rs`.
 #[test]
 fn regression_round_trip_findings() {

@@ -360,7 +360,7 @@ fn test_only_the_main_trajectorys_last_backend_failure_names_the_turns() {
 
 #[test]
 fn test_a_turn_timeout_too_large_for_the_clock_is_no_deadline() {
-    // `with_turn_timeout(Duration::MAX)` panicked at the first turn (J-12).
+    // `with_turn_timeout(Duration::MAX)` panicked at the first turn (#504, J-12).
     let turn = TurnState::new(Some(Duration::MAX), None);
     assert_eq!(turn.deadline, None);
     assert_eq!(turn.timeout, Some(Duration::MAX));

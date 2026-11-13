@@ -1,4 +1,4 @@
-//! The wire-faithfulness half of the fuzz round trip (D-NEXT-J7): a type
+//! The wire-faithfulness half of the fuzz round trip (D-070): a type
 //! that promises to write back the JSON it read is checked against its
 //! input, not only against its own later writes, so a value lost on the
 //! first read is caught too.

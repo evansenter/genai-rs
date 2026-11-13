@@ -13,7 +13,7 @@ checks a round trip where the input is valid:
 | `resource` | JSON | The same round trip for every type the input reads as: `Agent`, `Trigger`, `Webhook`, `Environment`, `EnvironmentSpec` and each list page (a trigger's request `Content` input reads back as one `user_input` step). `EnvironmentSpec` and `Agent` must also write back the JSON they read (see below) |
 | `harness_output_event` | JSON (the `antigravity` feature) | The same round trip for the Antigravity harness's `OutputEvent`, which must also write back the JSON it read |
 
-A type that promises to write back the JSON it read (D-NEXT-J7 in
+A type that promises to write back the JSON it read (D-070 in
 `DECISIONS.md`) is also checked against its input, not only against its
 own later writes, so a value lost on the first read fails the target. Both
 sides are compared in a canonical form: a `null`, `[]` or `{}` member is

@@ -212,7 +212,8 @@ reaches the wire must use a real id.
 ### API conventions
 
 - `with_*` configures a setting (calling twice replaces); `add_*` appends to a
-  collection. See `docs/BUILDER_API.md`.
+  collection (`tests/setter_convention.rs` checks it). See
+  `docs/BUILDER_API.md`.
 - Resources are reached through handles: `client.<resources>().<verb>(..)`
   (`client.webhooks().get(id)`). Handle methods take `self`; required
   arguments are positional and optional inputs live on a value. Lists return
@@ -244,7 +245,8 @@ reaches the wire must use a real id.
   request bodies only at `debug`; API keys always redacted. A type that
   holds a secret `LOUD_WIRE` redacts has a hand-written `Debug` printing
   `[REDACTED]` (`src/redact.rs`) and a row in its sentinel test
-  (D-067).
+  (D-067); `tests/redaction_guards.rs` fails on a derived `Debug` over such
+  a field.
 - Breaking changes are fine when they simplify the API (D-007); no
   compatibility shims. Pre-1.0.
 

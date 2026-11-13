@@ -1,25 +1,30 @@
-//! The source scans the guards share (D-068): one recursive `.rs`
-//! walker, and one discovery of the resource handles (D-016) and their
-//! public methods.
+//! The source scans the guards share (D-068): one recursive file walker,
+//! one discovery of the resource handles (D-016) and their public methods,
+//! one module walk and one reading of a `cfg`.
 //!
-//! `tests/module_size.rs`, `tests/non_exhaustive_responses.rs` and
-//! `tests/ci_coverage.rs` walk the tree with [`rust_files`];
-//! `tests/live_verbs/` (for `ci_coverage` and `request_wire_oracle`) and
-//! `tests/http_mock_resources/paging.rs` find the handles with [`structs`],
-//! [`handles`] and [`public_methods`]. Each keeps its own floor, so a scan
-//! that finds nothing fails there.
+//! `tests/module_size.rs`, `tests/non_exhaustive_responses.rs`,
+//! `tests/ci_coverage.rs`, `tests/model_literals.rs`,
+//! `tests/temp_file_tests.rs`'s scan of `examples/`, `tests/ci_workflows/`
+//! and the coverage oracle (`src/coverage_oracle/request/fills.rs`) walk
+//! the tree with [`rust_files`], and `tests/reliability_tests/` reads the
+//! docs with [`files_with_extensions`]; `tests/live_verbs/` (for
+//! `ci_coverage` and `request_wire_oracle`) and
+//! `tests/http_mock_resources/paging.rs` find the handles with
+//! [`structs`], [`handles`] and [`public_methods`]. Each keeps its own
+//! floor, so a scan that finds nothing fails there.
 //!
 //! Not part of `common/mod.rs`, which every integration test compiles: the
 //! guards that scan include this file by `#[path]`, and nothing else
 //! compiles it.
 //!
-//! `tests/model_literals.rs` and `tests/temp_file_tests.rs` walk with
-//! [`rust_files`] too (#553). `tests/redaction_guards.rs`,
-//! `tests/setter_convention.rs` and the coverage oracle
-//! (`src/coverage_oracle/request/fills.rs`) read the library's own source
-//! with [`library_sources`]; each keeps its own floor as well. It and
-//! `tests/non_exhaustive_responses.rs` tell test-only code from the
-//! library's with [`is_test_gated`] and [`test_modules`].
+//! What is library code and what is test-only is read in one way,
+//! [`cfg_needs`] ([`is_test_gated`] for an item), from either of two module
+//! resolvers. [`module_files`] walks a crate on disk from its root, as
+//! rustc does, and the coverage guard and `tests/ci_coverage.rs` read it.
+//! [`test_modules`] reads a set of files already parsed, so
+//! `tests/non_exhaustive_responses.rs` can feed its own checks a tree of
+//! made-up files; [`library_sources`], which `tests/redaction_guards.rs`,
+//! `tests/setter_convention.rs` and the coverage oracle read, uses it too.
 
 #![allow(
     dead_code,
@@ -50,25 +55,7 @@ pub fn repo_relative(path: &Path) -> String {
 /// that does not exist, or a directory that cannot be read, fails: a tree
 /// that is gone must not read as one with nothing in it.
 pub fn rust_files(dir: &Path) -> Vec<PathBuf> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let entries = std::fs::read_dir(dir)
-            .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()));
-        for entry in entries {
-            let path = entry
-                .unwrap_or_else(|e| panic!("could not read an entry of {}: {e}", dir.display()))
-                .path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
-            }
-        }
-    }
-    assert!(dir.is_dir(), "scan root {} does not exist", dir.display());
-    let mut out = Vec::new();
-    walk(dir, &mut out);
-    out.sort();
-    out
+    files_with_extensions(dir, &["rs"], true)
 }
 
 /// The source file at `path`, parsed.
@@ -302,27 +289,31 @@ pub fn lexically_normal(path: &Path) -> PathBuf {
     out
 }
 
-/// Whether the attributes gate an item to test builds: a test attribute
-/// (`#[test]`, `#[tokio::test]`), or a `cfg` that cannot hold unless `test`
-/// is set, whatever every other option is (`test`, `all(test, unix)`,
-/// `any(test, all(test, x))`). One that can hold without it builds outside
-/// tests, so it does not count: `any(target_os = "linux", test)` (a Linux
-/// release), `any(test, fuzzing)`, `not(test)`.
-pub fn is_test_gated(attrs: &[syn::Attribute]) -> bool {
+/// Whether a `cfg` predicate can hold only with one of `options` set: in
+/// a build with each of them off, and every other option either way, it
+/// cannot hold. With `["test"]`, `test`, `all(test, unix)` and
+/// `any(test, all(test, x))` need it; `any(target_os = "linux", test)` (a
+/// Linux release), `any(test, fuzzing)` and `not(test)` do not. A predicate
+/// this cannot read can hold. [`is_test_gated`] asks it of `test`, and the
+/// coverage guard (`tests/ci_workflows/coverage.rs`) of `test` and
+/// `fuzzing`, the builds a coverage run does not measure.
+pub fn cfg_needs(meta: &syn::Meta, options: &[&str]) -> bool {
     use syn::punctuated::Punctuated;
-    /// Whether `meta` can hold, and whether it can fail, in a build
-    /// without `test` where every other option may be either way. A
-    /// predicate this cannot read can do both.
-    fn without_test(meta: &syn::Meta) -> (bool, bool) {
+    /// Whether `meta` can hold, and whether it can fail, in such a build.
+    /// A predicate this cannot read can do both.
+    fn reach(meta: &syn::Meta, options: &[&str]) -> (bool, bool) {
         match meta {
-            syn::Meta::Path(path) if path.is_ident("test") => (false, true),
+            syn::Meta::Path(path) if options.iter().any(|option| path.is_ident(option)) => {
+                (false, true)
+            }
             syn::Meta::List(list) => {
                 let Ok(nested) =
                     list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
                 else {
                     return (true, true);
                 };
-                let parts: Vec<(bool, bool)> = nested.iter().map(without_test).collect();
+                let parts: Vec<(bool, bool)> =
+                    nested.iter().map(|meta| reach(meta, options)).collect();
                 if list.path.is_ident("not") {
                     match parts.as_slice() {
                         [(hold, fail)] => (*fail, *hold),
@@ -345,6 +336,14 @@ pub fn is_test_gated(attrs: &[syn::Attribute]) -> bool {
             _ => (true, true),
         }
     }
+    !reach(meta, options).0
+}
+
+/// Whether the attributes gate an item to test builds: a test attribute
+/// (`#[test]`, `#[tokio::test]`), or a `cfg` that cannot hold unless `test`
+/// is set ([`cfg_needs`]). One that can hold without it builds outside
+/// tests, so it does not count.
+pub fn is_test_gated(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.path()
             .segments
@@ -353,7 +352,7 @@ pub fn is_test_gated(attrs: &[syn::Attribute]) -> bool {
             || (attr.path().is_ident("cfg")
                 && attr
                     .parse_args::<syn::Meta>()
-                    .is_ok_and(|meta| !without_test(&meta).0))
+                    .is_ok_and(|meta| cfg_needs(&meta, &["test"])))
     })
 }
 

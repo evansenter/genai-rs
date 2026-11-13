@@ -716,7 +716,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{"speakers": [...]}` form of `speech_config` carries beside the list,
   which a stored interaction read back used to lose; while it holds one,
   `speech_config` is written in that form with them, and otherwise as the
-  list (D-NEXT-J7-b). Migration: a struct literal needs
+  list (D-072). Migration: a struct literal needs
   `extra: Default::default()` and `speech_config_extra: Default::default()`,
   or `..Default::default()`.
 - **Breaking: `generation_config`, `response_format`,
@@ -882,8 +882,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Trajectory`, after which harness 0.1.23 ends its run, and the agent
   fails every later `chat`, `send_streaming` and `next_trigger_turn` with
   `ConnectionClosed` without sending. `message` is the harness's text
-  alone, and `Display` names the kind. Migration:
-  match `AntigravityError::Turn { kind, message }` where you matched
+  alone, and `Display` names the kind. Migration: match
+  `AntigravityError::Turn { kind, message }` where you matched
   `Turn(message)`, and decide on `kind` (or `kind.ends_session()` for
   whether to spawn a new agent) where you searched the message for "HTTP
   400" or a reason.
@@ -1085,8 +1085,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interaction, an agent's `base_environment` or a trigger) read as a remote
   environment and was written back as `"type": "remote"`; it is now
   `EnvironmentSpec::Unknown`, typed `<non-string: ...>`, and written back
-  as it came (its `Debug` prints that JSON as it is, `env` values
-  included, as every `Unknown` payload's does). A domain-less allowlist
+  as it came (its `Debug` prints that JSON through the wire's redaction,
+  so an `env` value prints as `[REDACTED]`, as a remote one's does). A
+  domain-less allowlist
   entry, the disabled echo's `{"mode": "disabled"}` beside another entry
   or key, was written back with a `"domain": ""` it never had; an empty
   `domain` is no longer written, so one read as `""` is written back
@@ -1100,7 +1101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `false` (it is kept as `OutputPayload::Unknown`, and still ends the
   session). An `f32` field (`temperature`, `top_p`, the retrieval tool's
   `alpha`) read from a number beyond `f32`'s range held an infinity,
-  written as `null`; it is dropped on read with a `warn!` (D-NEXT-J7-a).
+  written as `null`; it is dropped on read with a `warn!` (D-071).
   `InteractionInput`'s docs said a response's input is written back in the
   shape it came in; a single input object is written back as a
   one-element array, and they now say so.

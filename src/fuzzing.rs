@@ -21,7 +21,7 @@
 //!   on purpose (see `Normalize`), and a second write and read changes
 //!   neither the wire form nor the value. A type that promises to write
 //!   back what it read is also checked against its input (see `WireForm`,
-//!   D-NEXT-J7), so a value lost on the first read is caught too.
+//!   D-070), so a value lost on the first read is caught too.
 //!
 //! A failed check panics, as a test's does: that is how `cargo fuzz` and
 //! `fuzzing_tests.rs` report it.
@@ -406,7 +406,7 @@ no_normalization!(
 );
 
 /// What a type promises about the JSON it writes back, beyond a stable
-/// round trip (D-NEXT-J7).
+/// round trip (D-070).
 trait WireForm {
     /// Whether the type speaks proto3 JSON: [`wire::canonical`] then reads
     /// an int64 string as its number, and a field written at its default
@@ -426,7 +426,7 @@ trait WireForm {
 /// The types that normalize more than [`WireForm::faithful_wire`] can follow:
 /// a missing or non-string type tag becomes `"<missing type>"` on a tagged
 /// union, and the resources read their int64s, timestamps and list elements
-/// leniently, dropping what does not read (D-NEXT-J7).
+/// leniently, dropping what does not read (D-070).
 macro_rules! normalizing {
     ($($ty:ty),+ $(,)?) => {
         $(impl WireForm for $ty {})+

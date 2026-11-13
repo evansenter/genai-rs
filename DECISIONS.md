@@ -1313,7 +1313,7 @@ Carrying the completed event's would make `ExecutingFunctions` and
 stream's last chunk, take an `extra` too: two more breaking changes,
 left for the owner to ask for.
 
-*Amended 2026-11-10 (J7).* The list above said a key beside the disabled
+*Amended 2026-11-10 (#504, round-trip audit).* The list above said a key beside the disabled
 echo kept the object whole as `NetworkConfig::Unknown`. The code reads the
 echo's list form as `NetworkConfig::Allowlist` then, and wrote its
 domain-less `{"mode": "disabled"}` entry back with a `"domain": ""` it never
@@ -2304,7 +2304,7 @@ says what failed.
 carry the source's text, as D-049's amendment gives for `WebSocket`:
 `message` says what was being done, and `source()` says why.
 
-*Amended 2026-11-10 (J-10).* `HandshakeFailed` formatted its `io::Error`
+*Amended 2026-11-10 (#504, J-10).* `HandshakeFailed` formatted its `io::Error`
 into `message`. It gets `InitFailed`'s
 `source: Option<Box<dyn Error + Send + Sync>>` (D-062): the I/O error of a
 binary that would not start or of the handshake exchange, or the error
@@ -2429,7 +2429,7 @@ PR ran.
   job; `rust.yml` is in the filter so that a change to the job runs it.
   It is not a required check, and on a push it is skipped by design.
 
-**Amended 2026-11-10 (J-4, J-14).** The #504 grade of 2026-11-09 found
+**Amended 2026-11-10 (#504, J-4, J-14).** The #504 grade of 2026-11-09 found
 that "nothing skips the floor or ignores its failure" did not hold: the
 guard read the YAML keys alone, and seven edits passed all 60 ci_coverage
 tests: `--fail-under-lines 93 || true` (M3), `|| true` on the release gate
@@ -2619,7 +2619,7 @@ flags it: the watch sees the spec change, not behavior, so a later probe
 has to. The spec also wraps webhook update's and trigger update's bodies;
 those wrappers were not probed.
 
-**Amended 2026-11-13 (J-1).** The first bullet claimed more than the
+**Amended 2026-11-13 (#504, J-1).** The first bullet claimed more than the
 snapshot kept. It held each query parameter's name and required flag and
 each request body's schema, not "parameters": a served v1beta with a
 required header added to webhook create, the voices `gender` parameter
@@ -2653,7 +2653,7 @@ path parameter is matched by its position), a request body's required
 flag, a response's schema reference against the type the verb returns
 (the response oracle maps crate types to spec schemas, not to
 operations), and a request body against the binding class the crate sends
-(D-040); that diff is the follow-on #550 holds. The two update wrappers
+(D-040); that diff is tracked in #558. The two update wrappers (#550)
 were probed on 2026-11-13: both are a `400 Unknown parameter`, with or
 without `id` and `update_mask`, and the flat bodies the crate sends apply
 (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query parameters"), so the
@@ -2806,7 +2806,7 @@ reading that text ("Encountered retryable error from model provider").
 The unit tests feed each sequence; `test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`
 runs the harness's.
 
-*Amended 2026-11-10 (J-10).* The wait for the session-start hook is part
+*Amended 2026-11-10 (#504, J-10).* The wait for the session-start hook is part
 of `spawn()`'s start-up as the initialization is. With `on_session_start`
 set, a read that failed, or a message whose handling failed (the hook's
 answer included), reached the caller as the bare `WebSocket`, `Protocol`
@@ -2891,7 +2891,7 @@ written alongside D-067's) into `src/redact.rs`, so the crate has one
 `src/antigravity/redact_tests.rs`, declared from `antigravity/mod.rs`
 (D-011).
 
-**Amended 2026-11-10 (J-3).** The fold is finished. The crate's
+**Amended 2026-11-10 (#504, J-3).** The fold is finished. The crate's
 placeholder is `redact::REDACTED` alone: the wire's walk spells its
 redactions with it (its own `REDACTED_PLACEHOLDER` is gone), and so does
 every `Debug` impl. The session's `redact_for_inspection`, which walked
@@ -3004,7 +3004,7 @@ send bound, a send bounded by a later deadline alone, the close bound and
 a dropped connection, and the scripted `lifecycle.rs` kills the harness
 mid-turn and while `next_trigger_turn` waits.
 
-**Amended 2026-11-10 (J-12, #552).** Two of the bounds above moved to the
+**Amended 2026-11-10 (#504, J-12, #552).** Two of the bounds above moved to the
 turn deadline.
 - A reply to the harness mid-turn (a hook's answer, a tool result, a
   question reply, a tool confirmation, a policy decision) goes through
@@ -3104,7 +3104,7 @@ and the harness options `AgentBuilder`'s `Debug` prints) are the other
 half of I-9 in #504. A new type that holds one of these secrets needs its own
 `Debug` and a row in the sentinel test; nothing finds it by itself.
 
-**Amended 2026-11-10 (J-3, #555 items 1, 2 and 4).** Three limits above
+**Amended 2026-11-10 (#504, J-3, #555 items 1, 2 and 4).** Three limits above
 have moved:
 - Every impl named here, and `Client`'s, `HttpContext`'s,
   `CredentialConfig`'s, `CredentialUpdate`'s, `Webhook`'s,
@@ -3114,8 +3114,11 @@ have moved:
   type without `..`. `Client` prints its key through `HttpContext`'s
   `Debug`, and `SigningSecret` its `extra` as keys alone (`redact::keys`).
 - `Tool`'s `Debug` prints each arm's `extra` and an `Unknown` tool's
-  `data` through the wire's walk (`redact::map`, `redact::json`), and so
-  does every other impl here that prints an `extra`: `AllowlistEntry`'s,
+  `data` through the wire's walk (`redact::map`, `redact::json`), as
+  `EnvironmentSpec`'s does an `Unknown` environment's (D-071: an
+  environment whose `type` is not a string, which read as remote before,
+  `env` and all), and so does every other impl here that prints an
+  `extra`: `AllowlistEntry`'s,
   `EnvVar`'s, `RemoteEnvironment`'s (beside the `env` it could not read),
   `Webhook`'s and `RotateSigningSecretResponse`'s. So a secret there under
   a name the wire redacts prints redacted. Every other `extra` map and
@@ -3240,7 +3243,22 @@ Stdio { env, .. } = &mut self.transport { env.insert(..) }`), or an
 of #504's I-10 renames fails it, and so does renaming any of the
 `add_*` setters that append through such a binding.
 
-## D-NEXT-J5 — The retry-loop guard follows what reaches the sleep (2026-11-10)
+**Amended 2026-11-13 (#553, Wave J merge).** The rest of #553 landed
+beside it. `tests/ci_workflows/coverage.rs`'s module walk moved here as
+`module_files` (each file module of a crate, with the `cfg` predicates on
+the way to it, a `#[path]`'s `..` kept as rustc spells it, and
+`lexically_normal` to resolve one), and `tests/ci_coverage.rs`'s
+text-based walk uses it too. `tests/ci_workflows/flakiness.rs` walks with
+`rust_files`, and `tests/reliability_tests/` reads the docs with
+`files_with_extensions`, which `rust_files` now calls. A `cfg` is read
+one way, `cfg_needs`: `is_test_gated` asks it of `test`, and the coverage
+guard of `test` and `fuzzing`, where it had its own reading of the
+predicate's text. Two module resolvers stay. `module_files` walks a crate
+on disk from its root; `test_modules` reads files already parsed, which
+`tests/non_exhaustive_responses.rs`'s own checks feed with made-up trees,
+so a disk walk cannot replace it. Both read the same `cfg`s the same way.
+
+## D-069 — The retry-loop guard follows what reaches the sleep (2026-11-10)
 
 **Context.** #504's J-6 asked `tests/reliability_tests.rs`'s recipe guard
 to require a capped delay, to reject `Instant + Duration` on a value
@@ -3292,7 +3310,7 @@ bar, so the recipe checks, the backon one and this guard, moved unchanged
 to `tests/reliability_tests/retry_recipes.rs`, a module of the same test
 binary (D-011).
 
-## D-NEXT-J7 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
+## D-070 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
 
 **Context.** The 2026-11-10 round-trip audit found values lost on the
 *first* read: a non-string environment `type` read as `"remote"`, a
@@ -3342,7 +3360,7 @@ comparison; unit tests hold those.
 - **Normalize more than the check can follow, and are checked on the value
   alone:** `Step`, `StepDelta` and `Content`, and so `InteractionResponse`
   and `Trigger`, which hold them (a missing or non-string `type` becomes
-  `"<missing type>"`; D-NEXT-J7-a lists the input's normalization); and the
+  `"<missing type>"`; D-071 lists the input's normalization); and the
   resources and their list pages, which read their int64s, timestamps and
   list elements leniently, dropping what does not read
   (`src/serde_util.rs`).
@@ -3368,7 +3386,7 @@ has an `antigravity` feature, which only its harness target requires
 documents it and adds it to its normalizer in `src/fuzzing_wire.rs`, or the
 target fails on it.
 
-## D-NEXT-J7-a — Two normalizations stay, documented: a single input object, and an `f32` beyond its range (2026-11-10)
+## D-071 — Two normalizations stay, documented: a single input object, and an `f32` beyond its range (2026-11-10)
 
 **Context.** The audit found two more first-read changes. `InteractionInput`
 reads a single content or step object as a one-element list, so it is
@@ -3395,11 +3413,12 @@ first read; the rounding is documented on `GenerationConfig`.
 
 Also for `EnvironmentSpec`: a null `type` reads as a missing one does
 (`"remote"`), as a null reads for every `Option`; any other non-string one
-is an unknown type, `<non-string: ...>`, kept whole. Its `Debug` then
-prints that JSON as it is, as D-067 prints every `Unknown` payload: an
-`env` value in such an object shows, where reading it as remote printed
-`[REDACTED]`. Redacting `Unknown` payloads is D-067's open question, not
-this decision's; the API has not been seen to send a non-string `type`.
+is an unknown type, `<non-string: ...>`, kept whole. Its `Debug` prints
+that JSON through the wire's redaction (`redact::json`), as `Tool`'s does
+an unknown tool's, so an `env` value in such an object still prints as
+`[REDACTED]`, as it did when the object read as remote (amended at the
+Wave J merge, D-067); the API has not been seen to send a non-string
+`type`.
 
 And for `AllowlistEntry`: an empty `domain` is not written, so an entry
 read with `"domain": ""` is written back without it, as one read without a
@@ -3409,10 +3428,9 @@ API rejects on send either way.
 
 **Consequences.** A caller reading a response's single-object input sees a
 one-element list, and one re-sending it sends the array. A config with an
-`f32` beyond its range reads it as unset. An environment with a
-non-string `type` prints its `env` values in `Debug`.
+`f32` beyond its range reads it as unset.
 
-## D-NEXT-J7-b — `speech_config` keeps the keys beside `speakers` in a new field (2026-11-10)
+## D-072 — `speech_config` keeps the keys beside `speakers` in a new field (2026-11-10)
 
 **Context.** `speech_config` reads three forms into one list, and the
 `{"speakers": [...]}` form a stored interaction serves dropped any key

@@ -88,30 +88,14 @@ fn code_coverage_reports_a_summary_and_fails_a_failed_upload() {
     }
 }
 
-/// Whether a `#[cfg(..)]` predicate holds in a test build alone: `test`,
-/// `all(test, ..)`, or `any(..)` of `test` and `fuzzing` (the fuzzing entry
-/// points are compiled for cargo-fuzz too, which a coverage run is not).
+/// Whether a `#[cfg(..)]` predicate (`module_files` keeps each as its
+/// tokens) holds only in a test or fuzzing build: `test`, `all(test, ..)`,
+/// `any(fuzzing, test)` (the fuzzing entry points are compiled for
+/// cargo-fuzz too, which a coverage run is not), through the guards' one
+/// `cfg` reading (`source_scan::cfg_needs`). One it cannot parse can hold.
 fn test_build_only(predicate: &str) -> bool {
-    let compact: String = predicate.split_whitespace().collect();
-    let items = |inner: &str| -> Vec<String> { inner.split(',').map(str::to_owned).collect() };
-    if compact == "test" {
-        return true;
-    }
-    if let Some(inner) = compact
-        .strip_prefix("all(")
-        .and_then(|r| r.strip_suffix(')'))
-    {
-        return items(inner).iter().any(|item| item == "test");
-    }
-    if let Some(inner) = compact
-        .strip_prefix("any(")
-        .and_then(|r| r.strip_suffix(')'))
-    {
-        let items = items(inner);
-        return items.iter().any(|item| item == "test")
-            && items.iter().all(|item| item == "test" || item == "fuzzing");
-    }
-    false
+    syn::parse_str::<syn::Meta>(predicate)
+        .is_ok_and(|meta| source_scan::cfg_needs(&meta, &["test", "fuzzing"]))
 }
 
 /// Every file module of the crate rooted at `lib`, as `(path relative to
@@ -488,6 +472,12 @@ fn the_module_walk_tells_test_only_files_from_library_code() {
         ("any(target_os = \"linux\", test)", false),
         ("unix", false),
         ("not(test)", false),
+        ("not(not(test))", true),
+        (
+            "all(unix, not(any(target_os = \"linux\", target_os = \"macos\")))",
+            false,
+        ),
+        ("any (fuzzing , test)", true),
     ] {
         assert_eq!(test_build_only(predicate), only, "{predicate}");
     }

@@ -642,7 +642,11 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
 ///     .add_source(EnvironmentSource::gcs("gs://bucket", "/data"))
 ///     .into();
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `Debug` prints an `Unknown` spec's JSON through the wire's redaction, so
+/// an environment variable's value in it prints as `[REDACTED]`, as it does
+/// in a remote environment's.
+#[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub enum EnvironmentSpec {
     /// A string ID referencing an existing environment.
@@ -656,6 +660,23 @@ pub enum EnvironmentSpec {
         /// The raw JSON value, preserved for debugging and roundtrip
         data: serde_json::Value,
     },
+}
+
+impl std::fmt::Debug for EnvironmentSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Id(id) => f.debug_tuple("Id").field(id).finish(),
+            Self::Remote(remote) => f.debug_tuple("Remote").field(remote).finish(),
+            Self::Unknown {
+                environment_type,
+                data,
+            } => f
+                .debug_struct("Unknown")
+                .field("environment_type", environment_type)
+                .field("data", &redact::json(data))
+                .finish(),
+        }
+    }
 }
 
 impl EnvironmentSpec {
@@ -886,7 +907,7 @@ mod tests {
         let environment: crate::Environment = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(serde_json::to_value(&environment).unwrap(), wire);
         // A caller's empty domain is not sent either, and one read as `""`
-        // is written back without it (D-NEXT-J7-a).
+        // is written back without it (D-071).
         assert_eq!(
             serde_json::to_value(AllowlistEntry::new("")).unwrap(),
             json!({})

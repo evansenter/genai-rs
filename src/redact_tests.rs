@@ -6,9 +6,9 @@ use super::REDACTED;
 use crate::wire::WireEvent;
 use crate::{
     Agent, AllowlistEntry, Client, CreateCredentialRequest, CreateTriggerRequest, CredentialConfig,
-    CredentialType, CredentialUpdate, EnvVar, Environment, ExaAiSearchConfig, InjectionLocation,
-    InteractionResponse, McpServerConfig, NetworkConfig, ParallelAiSearchConfig, RemoteEnvironment,
-    RetrievalConfig, RotateSigningSecretResponse, Tool, Trigger, Webhook,
+    CredentialType, CredentialUpdate, EnvVar, Environment, EnvironmentSpec, ExaAiSearchConfig,
+    InjectionLocation, InteractionResponse, McpServerConfig, NetworkConfig, ParallelAiSearchConfig,
+    RemoteEnvironment, RetrievalConfig, RotateSigningSecretResponse, Tool, Trigger, Webhook,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -75,6 +75,14 @@ fn debug_never_prints_a_secret() {
         tool_type: "future_tool".to_string(),
         data: json!({"type": "future_tool", "config": {"api_key": SECRET}}),
     };
+    // An environment whose `type` is not a string reads as unknown, its
+    // `env` unread (D-071).
+    let unknown_environment: EnvironmentSpec = serde_json::from_value(json!({
+        "type": 5,
+        "env": {"API_KEY": {"value": SECRET}, "OTHER": SECRET},
+    }))
+    .unwrap();
+    assert!(unknown_environment.is_unknown());
     let tool_extra = Tool::CodeExecution {
         extra: json!({"auth": {"headers": {"Authorization": SECRET}}, "token": SECRET})
             .as_object()
@@ -301,6 +309,10 @@ fn debug_never_prints_a_secret() {
             ),
         ),
         ("Tool::Unknown", format!("{unknown_tool:?}")),
+        (
+            "EnvironmentSpec::Unknown",
+            format!("{unknown_environment:?}"),
+        ),
         ("Tool's extra", format!("{tool_extra:?}")),
         ("AllowlistEntry's extra", format!("{allowlist_extra:?}")),
         ("EnvVar's extra", format!("{env_var_extra:?}")),

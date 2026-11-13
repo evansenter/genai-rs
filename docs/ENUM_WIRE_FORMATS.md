@@ -245,7 +245,7 @@ The wrap applies only to `InteractionRequest::input`.
 with one normalization: a single object (the spec's bare `Content` arm, or a
 single step, which the crate also reads) reads as a one-element list and is
 written back as a one-element array. The value is kept; only the array
-around it is added (D-NEXT-J7-a). A request's `Content` input deserializes
+around it is added (D-071). A request's `Content` input deserializes
 back as `Steps(vec![Step::user_input(..)])`, since the two are identical on
 the wire.
 
@@ -870,7 +870,7 @@ forms and normalizes them to a list, since a `GenerationConfig` nested in a
 `{"speakers": [...]}` form carries beside the list (none today) are kept in
 `GenerationConfig::speech_config_extra`, and while it holds one the config
 is written in that form, which the API accepts, so they go back out
-(D-NEXT-J7-b). For maintainers: the untagged `{"speakers": [...]}` arm must
+(D-072). For maintainers: the untagged `{"speakers": [...]}` arm must
 be tried before the single-object arm. Every `SpeechConfig` field is
 optional, so the single arm would match it and silently drop the speakers.
 

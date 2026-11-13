@@ -67,7 +67,7 @@ where
 /// equal to the value, once that is put through the differences the fuzz
 /// round trip allows ([`crate::__fuzz::Normalize`]). A value written in the
 /// wrong form, such as a non-string unknown written as its `<non-string:
-/// ...>` type (J-11), reads back as a different value whose own writes are
+/// ...>` type (#504, J-11), reads back as a different value whose own writes are
 /// stable, so [`assert_value_roundtrip`] alone does not see it.
 fn assert_first_write_keeps<T>(value: &T) -> Result<(), TestCaseError>
 where
@@ -244,7 +244,7 @@ fn unknown_or<T: Clone + std::fmt::Debug + 'static>(
 
 /// An unrecognized string-enum value as `wire_enum!` reads it, `(type,
 /// data)`: a string the crate does not know, typed as itself, or a value
-/// that is not a string at all (J-11), typed `<non-string: ...>` with its
+/// that is not a string at all (#504, J-11), typed `<non-string: ...>` with its
 /// JSON as the data, which `Serialize` writes back.
 #[cfg(not(genai_strict_unknown))]
 fn arb_wire_unknown() -> impl Strategy<Value = (String, serde_json::Value)> {

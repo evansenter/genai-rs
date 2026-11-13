@@ -195,8 +195,8 @@ pub enum TurnFailure {
     /// status the harness does not retry (400, 401 or 403), or with one
     /// whose retries ran out (a 503 under
     /// [`RetryConfig::with_max_api_retries(0)`](crate::antigravity::RetryConfig::with_max_api_retries),
-    /// say). The harness ends the session too
-    /// ([`ends_session`](Self::ends_session)).
+    /// say) on a call of the agent's own rather than a subagent's. The
+    /// harness ends the session too ([`ends_session`](Self::ends_session)).
     ModelBackend {
         /// The HTTP status the model backend answered with.
         status: u32,

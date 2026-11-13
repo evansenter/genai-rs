@@ -2,7 +2,7 @@
 //! backon recipe matches `examples/retry_with_backoff.rs`, and every retry
 //! or poll loop bounds its attempts, sleeps between them, honors
 //! `Retry-After` without overflow, caps its delay and, bounded by a count,
-//! adds jitter (D-NEXT-J5).
+//! adds jitter (D-069).
 
 use crate::source_scan;
 
@@ -822,7 +822,7 @@ struct RetryLoop {
 ///   variable or in a closure along its chain;
 /// - when a count bounds it, add a random value that reaches the sleep.
 ///
-/// D-NEXT-J5 records these rules and their limits.
+/// D-069 records these rules and their limits.
 ///
 /// Comments, string literals and doctest-hidden lines (`# ...`) don't
 /// count.

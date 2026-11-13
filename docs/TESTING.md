@@ -63,7 +63,10 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   loop.
 - **`reliability_tests.rs`** covers the default timeouts, how a cut-off
   stream is classified, the read of a stream's tail after its terminal
-  event, and `Retry-After` in a poll.
+  event, and `Retry-After` in a poll. Its `reliability_tests/retry_recipes.rs`
+  checks every retry and poll loop in the docs, rustdoc and `examples/`
+  for a ceiling, jitter where a count bounds it, and no overflow on
+  `Retry-After` (D-069).
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'

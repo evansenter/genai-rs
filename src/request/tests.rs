@@ -210,7 +210,7 @@ fn test_interaction_input_serialized_strings() {
     }
 }
 
-/// Pins the one normalization `InteractionInput` makes (D-NEXT-J7-a): a
+/// Pins the one normalization `InteractionInput` makes (D-071): a
 /// single content or step object, read from a response or a stored trigger,
 /// keeps its value but is written back as a one-element array. Asserted so
 /// that its rustdoc, `Trigger::interaction`'s and
