@@ -13,7 +13,7 @@ follow.
 | Offline values | Builders and the macro: `tests/interaction_builder_tests.rs`, `tests/function_declaration_builder_tests.rs`, `tests/macro_tests.rs`. Serde against the documented wire: `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs`, `tests/round_trip_fidelity_tests.rs`, `tests/envelope_extra.rs`, and `tests/strict_unknown_tests.rs` (both modes) | No | `make test` (and `make test-strict`) |
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
-| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`, the workflow guards in `tests/ci_workflows/` and the doc guards in `tests/doc_guards/`), `tests/model_literals.rs`, `tests/module_size.rs` (D-014's size bars), `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason) | No | `make test` |
+| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`, the workflow guards in `tests/ci_workflows/` and the doc guards in `tests/doc_guards/`), `tests/model_literals.rs`, `tests/module_size.rs` (D-014's size bars), `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason), `tests/redaction_guards.rs` (no `"[REDACTED]"` outside `src/redact.rs`, no derived `Debug` over a field the wire redacts; D-067), `tests/setter_convention.rs` (a `with_*` replaces, an `add_*` appends) | No | `make test` |
 | CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, a reason above every `ignore` fence, and every Rust block compiled or `ignore`d with its reason, `CHANGELOG.md`'s history aside) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | In `tests/`: `api_canary_tests.rs`, `binding_parity_tests.rs`, `credentials_tests.rs`, `environment_files_tests.rs`, `error_handling_tests.rs`, `file_search_stores_tests.rs`, `files_api_tests.rs`, `function_calling_tests.rs`, `interactions_api_tests.rs`, `multimodal_tests.rs`, `multiturn_tests.rs`, `processing_steps_tests.rs`, `streaming_multiturn_tests.rs`, `streaming_resume_tests.rs`, `temp_file_tests.rs`, `tool_service_tests.rs`, `tools_and_config_tests.rs`, `voices_tests.rs`, `webhooks_and_agents_tests.rs`. Each live test is `#[ignore = "Requires API key"]`; a file's offline tests run in `make test` | Yes | `make test-all` |
@@ -307,7 +307,9 @@ the semantic checks in `semantic.rs` and the fixture data in `fixtures.rs`.
 walker and the resource-handle discovery the guards share
 (`module_size`, `non_exhaustive_responses`, `ci_coverage` with
 `live_verbs/`, and `http_mock_resources`'s paging scan), and each of them
-includes it by `#[path]`.
+includes it by `#[path]`. So do `model_literals`, `temp_file_tests`, and
+the guards and the coverage oracle that read the library's own source
+through its `library_sources` (D-068).
 
 | Helper | Purpose |
 |--------|---------|

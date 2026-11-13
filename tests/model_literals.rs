@@ -2,7 +2,9 @@
 //!
 //! Lives in its own test binary rather than `tests/common`, which is
 //! compiled into every integration test crate and would run this scan
-//! a dozen times per suite.
+//! a dozen times per suite. Walks the tree with the guards' shared walker
+//! (`tests/common/source_scan.rs`, D-068), which fails on a scan root that
+//! is gone or an entry it cannot read.
 
 #![allow(
     clippy::unwrap_used,
@@ -13,6 +15,9 @@
     clippy::unimplemented,
     reason = "a test reports a failure by panicking"
 )]
+
+#[path = "common/source_scan.rs"]
+mod source_scan;
 
 // =============================================================================
 
@@ -63,40 +68,20 @@ fn no_hardcoded_model_ids_outside_the_constants() {
         "tests/model_literals.rs",
     ];
 
-    fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
+    fn scan(dir: &Path, hits: &mut Vec<String>) -> usize {
         // A scan root that does not exist must not read as one that is
         // clean. This test's whole argument is that a missed literal is
         // invisible, so it should not be able to stop covering a directory
-        // silently when one is moved or renamed.
-        assert!(
-            dir.is_dir(),
-            "scan root {} does not exist — this guard would silently stop \
-             covering it",
-            dir.display()
-        );
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                scan(root, &path, hits);
-                continue;
-            }
-            if path.extension().is_none_or(|e| e != "rs") {
-                continue;
-            }
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
+        // silently when one is moved or renamed: the shared walker fails
+        // on a missing root, and on an entry it cannot read.
+        let files = source_scan::rust_files(dir);
+        for path in &files {
+            let rel = source_scan::repo_relative(path);
             if ALLOWED.contains(&rel.as_str()) {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("could not read {rel}: {e}"));
             for (i, line) in text.lines().enumerate() {
                 // A quoted id, so `genai_rs::DEFAULT_MODEL` does not match.
                 if MODEL_LITERAL.is_match(line) {
@@ -104,22 +89,25 @@ fn no_hardcoded_model_ids_outside_the_constants() {
                 }
             }
         }
+        files.len()
     }
 
     // The root crate *is* the workspace root, so `target/` sits beside
     // these and is never walked.
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = source_scan::root();
     let mut hits = Vec::new();
-    scan(root, &root.join("src"), &mut hits);
+    let mut scanned = scan(&root.join("src"), &mut hits);
     // Walks recursively, so the trybuild fixtures in tests/ui/ are covered
     // too — they are ordinary .rs files and would pin a model just as
     // invisibly as any other.
-    scan(root, &root.join("tests"), &mut hits);
-    scan(root, &root.join("examples"), &mut hits);
+    scanned += scan(&root.join("tests"), &mut hits);
+    scanned += scan(&root.join("examples"), &mut hits);
     // The other workspace member, which is Cargo.toml + src/ only. Clean
     // today, but a literal pinned there would be exactly the invisible one
     // this test exists to catch.
-    scan(root, &root.join("genai-rs-macros/src"), &mut hits);
+    scanned += scan(&root.join("genai-rs-macros/src"), &mut hits);
+    // A walk that finds nothing reads as a clean tree (D-068's floors).
+    assert!(scanned > 300, "only {scanned} .rs files scanned");
 
     assert!(
         hits.is_empty(),

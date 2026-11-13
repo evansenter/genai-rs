@@ -17,6 +17,8 @@
 )]
 
 mod common;
+#[path = "common/source_scan.rs"]
+mod source_scan;
 
 use base64::Engine;
 use common::{
@@ -417,57 +419,50 @@ fn example_fixtures_match_test_fixtures() {
         ("TINY_RED_PNG_BASE64", TINY_RED_PNG_BASE64),
         ("TINY_BLUE_PNG_BASE64", TINY_BLUE_PNG_BASE64),
     ];
-    let examples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
+    // The guards' shared walker (D-068), which fails on a root that is
+    // gone or an entry it cannot read.
     let mut checked = 0;
     let mut seen = std::collections::HashSet::new();
-    let mut stack = vec![std::path::PathBuf::from(examples_dir)];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read examples dir") {
-            let path = entry.expect("dir entry").path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                let src = std::fs::read_to_string(&path).expect("read example");
-                let mut from = 0;
-                while let Some(hit) = src[from..].find("_BASE64") {
-                    let after = from + hit + "_BASE64".len();
-                    from = after;
-                    // Declarations look like `X_BASE64: <type> = <literal>`:
-                    // a colon, then an `=` before the opening quote, all
-                    // within a short span. Format-string interpolation
-                    // (`{X_BASE64:?}`) and doc-comment mentions have the
-                    // colon but not the `= ... "` shape, so they're skipped.
-                    let tail = &src[after..];
-                    if !tail.trim_start().starts_with(':') {
-                        continue;
-                    }
-                    let window_end = tail.char_indices().nth(200).map_or(tail.len(), |(i, _)| i);
-                    let window = &tail[..window_end];
-                    let (Some(eq), Some(q1)) = (window.find('='), window.find('"')) else {
-                        continue;
-                    };
-                    if eq > q1 {
-                        continue;
-                    }
-                    // Base64 contains no quotes or escapes, so the literal is
-                    // exactly the span between the next two quote characters
-                    // (works for both "..." and r#"..."# forms).
-                    let lit = &tail[q1 + 1..];
-                    let q2 = lit.find('"').expect("unterminated string literal");
-                    let value = &lit[..q2];
-                    let matched = canonical.iter().find(|(_, v)| *v == value);
-                    assert!(
-                        matched.is_some(),
-                        "{} embeds a base64 fixture this guard doesn't recognize: {}... — \
-                         if it's a copy of a tests/common fixture it has drifted; if it's \
-                         a deliberately new fixture, add it to this guard's canonical list",
-                        path.display(),
-                        value.chars().take(40).collect::<String>()
-                    );
-                    seen.insert(matched.expect("asserted above").0);
-                    checked += 1;
-                }
+    for path in source_scan::rust_files(&source_scan::root().join("examples")) {
+        let src = std::fs::read_to_string(&path).expect("read example");
+        let mut from = 0;
+        while let Some(hit) = src[from..].find("_BASE64") {
+            let after = from + hit + "_BASE64".len();
+            from = after;
+            // Declarations look like `X_BASE64: <type> = <literal>`:
+            // a colon, then an `=` before the opening quote, all
+            // within a short span. Format-string interpolation
+            // (`{X_BASE64:?}`) and doc-comment mentions have the
+            // colon but not the `= ... "` shape, so they're skipped.
+            let tail = &src[after..];
+            if !tail.trim_start().starts_with(':') {
+                continue;
             }
+            let window_end = tail.char_indices().nth(200).map_or(tail.len(), |(i, _)| i);
+            let window = &tail[..window_end];
+            let (Some(eq), Some(q1)) = (window.find('='), window.find('"')) else {
+                continue;
+            };
+            if eq > q1 {
+                continue;
+            }
+            // Base64 contains no quotes or escapes, so the literal is
+            // exactly the span between the next two quote characters
+            // (works for both "..." and r#"..."# forms).
+            let lit = &tail[q1 + 1..];
+            let q2 = lit.find('"').expect("unterminated string literal");
+            let value = &lit[..q2];
+            let matched = canonical.iter().find(|(_, v)| *v == value);
+            assert!(
+                matched.is_some(),
+                "{} embeds a base64 fixture this guard doesn't recognize: {}... — \
+                 if it's a copy of a tests/common fixture it has drifted; if it's \
+                 a deliberately new fixture, add it to this guard's canonical list",
+                path.display(),
+                value.chars().take(40).collect::<String>()
+            );
+            seen.insert(matched.expect("asserted above").0);
+            checked += 1;
         }
     }
     for (name, _) in &canonical {

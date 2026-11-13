@@ -2975,3 +2975,22 @@ passed a scratch copy, though no instance was in the tree:
 
 The known limits are now a bare expression that ends otherwise, and a
 cross-reference to another row's file outside parentheses.
+
+**Amended 2026-11-10 (#553).** Two of the walkers the Consequences above
+left outside are gone, and a third that Wave I wrote: `tests/model_literals.rs`
+and `tests/temp_file_tests.rs`'s scan of `examples/` walk with
+`rust_files`, so an entry `model_literals` cannot read now fails it rather
+than being skipped, and the coverage oracle's
+`request_values_are_full_literals` (`src/coverage_oracle/request/fills.rs`)
+drops its own `rust_files` and includes this file by `#[path]`, as
+`src/coverage_oracle/mod.rs` includes `tests/api_surface/`. The file also
+holds what reads the library's own source: `is_test_gated` (a `cfg` with
+`test` outside a `not(..)`, or a test attribute), `is_test_only_file` (the
+`src/` files `Cargo.toml`'s `include` leaves out, read from the manifest,
+which the `check` job keeps true) and `library_sources` (every other
+`src/` file, parsed, with its test-only items removed). The oracle's type
+scan, `tests/redaction_guards.rs` (D-067) and `tests/setter_convention.rs`
+read it; the last fails on a public `with_*` that pushes, inserts, extends
+or appends onto a collection it reaches through `self`, or an `add_*` that
+assigns a field of `self` whole, which reverting either of #504's I-10
+renames does.
