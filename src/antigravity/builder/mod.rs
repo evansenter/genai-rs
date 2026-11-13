@@ -113,26 +113,57 @@ pub struct AgentBuilder {
     options: HarnessOptions,
 }
 
+// Prints the API key redacted (D-067); destructured without `..`, so a new
+// field fails to compile here until it is printed, redacted or left out.
 impl std::fmt::Debug for AgentBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            harness_path,
+            api_key,
+            gemini_base_url,
+            model,
+            system_instructions: _,
+            workspaces,
+            tools,
+            tool_services: _,
+            mcp_servers,
+            policies,
+            pre_tool: _,
+            questions: _,
+            post_tool: _,
+            lifecycle,
+            save_dir: _,
+            conversation_id: _,
+            capabilities,
+            response_schema: _,
+            app_data_dir: _,
+            skills_paths: _,
+            turn_timeout: _,
+            inspectors: _,
+            triggers,
+            custom_triggers,
+            subagents,
+            workspace_announcement: _,
+            agent_behavior: _,
+            workspace_containment: _,
+            ungated_subagents,
+            options,
+        } = self;
         f.debug_struct("AgentBuilder")
-            .field("harness_path", &self.harness_path)
-            .field("api_key", &crate::redact::optional(self.api_key.as_ref()))
-            .field("gemini_base_url", &self.gemini_base_url)
-            .field("model", &self.model)
-            .field("workspaces", &self.workspaces)
-            .field("tools", &self.tools.len())
-            .field("mcp_servers", &self.mcp_servers.len())
-            .field("policies", &self.policies.len())
-            .field("capabilities", &self.capabilities)
-            .field(
-                "triggers",
-                &(self.triggers.len() + self.custom_triggers.len()),
-            )
-            .field("subagents", &self.subagents.len())
-            .field("ungated_subagents", &self.ungated_subagents)
-            .field("lifecycle", &self.lifecycle)
-            .field("options", &self.options)
+            .field("harness_path", harness_path)
+            .field("api_key", &crate::redact::optional(api_key.as_ref()))
+            .field("gemini_base_url", gemini_base_url)
+            .field("model", model)
+            .field("workspaces", workspaces)
+            .field("tools", &tools.len())
+            .field("mcp_servers", &mcp_servers.len())
+            .field("policies", &policies.len())
+            .field("capabilities", capabilities)
+            .field("triggers", &(triggers.len() + custom_triggers.len()))
+            .field("subagents", &subagents.len())
+            .field("ungated_subagents", ungated_subagents)
+            .field("lifecycle", lifecycle)
+            .field("options", options)
             .finish_non_exhaustive()
     }
 }

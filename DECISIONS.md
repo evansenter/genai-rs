@@ -2695,6 +2695,27 @@ written alongside D-067's) into `src/redact.rs`, so the crate has one
 `src/antigravity/redact_tests.rs`, declared from `antigravity/mod.rs`
 (D-011).
 
+**Amended 2026-11-10 (J-3).** The fold is finished. The crate's
+placeholder is `redact::REDACTED` alone: the wire's walk spells its
+redactions with it (its own `REDACTED_PLACEHOLDER` is gone), and so does
+every `Debug` impl. The session's `redact_for_inspection`, which walked
+an outgoing harness message with a key list of its own (`apiKey`, and
+the values of an `env`, `headers` or `httpHeaders` map), is now the
+wire's walk: `apiKey` joined its `REDACT_FIELDS`, `httpHeaders` its
+`REDACT_VALUES_BENEATH`, and a string directly under an `env` (an MCP
+stdio server's variables) is redacted beside an `env` entry's `value`.
+So the copy of a sent message the session hands its inspectors goes
+through the same list as an Interactions API body, and `LOUD_WIRE`, the
+`TracingForwarder` and `WireEvent`'s `Debug` redact a message the harness
+sends back as they do one sent to it (#555 item 2), where they printed it
+as received. The session still redacts what it sends before any inspector
+sees it, so the harness's API key reaches no inspector, as the Gemini key
+in an HTTP header reaches none. `src/redact.rs` holds the helpers:
+`optional`, `values` for a header or environment map, `json`, `raw_json`
+and `map` through the walk, `keys` and `json_strings`. `AgentBuilder`'s
+`Debug` destructures it too. `tests/redaction_guards.rs` fails on a
+placeholder spelled anywhere else in the library's non-test code.
+
 ---
 
 ## D-065 — The Antigravity session's start and end move to `agent/session_lifecycle.rs` (2026-11-09)

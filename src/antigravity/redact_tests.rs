@@ -5,8 +5,13 @@ use crate::antigravity::protocol::{
     GeminiApiEndpoint, HarnessConfig, InitializeConversationEvent, McpHttpTransport,
     McpServerConfig, McpStdioTransport, ModelConfig, VertexEndpoint,
 };
+use crate::antigravity::session::{Session, WireContext};
 use crate::antigravity::{AntigravityAgent, McpServer};
 use crate::redact::REDACTED;
+use crate::wire::{WireEvent, WireInspector};
+use futures_util::{SinkExt, StreamExt};
+use std::sync::{Arc, Mutex};
+use tokio_tungstenite::tungstenite::Message;
 
 /// The secret every value below holds; no `Debug` output may contain it.
 const SECRET: &str = "sentinel-secret-5150";
@@ -160,4 +165,82 @@ fn test_an_unset_secret_prints_as_unset() {
     let debug = format!("{endpoint:?}");
     assert!(debug.contains("api_key: None"), "{debug}");
     assert!(debug.contains("http_headers: {}"), "{debug}");
+}
+
+/// Records every wire event.
+#[derive(Default)]
+struct Recorder(Mutex<Vec<WireEvent>>);
+
+impl WireInspector for Recorder {
+    fn on_event(&self, event: &WireEvent) {
+        self.0.lock().unwrap().push(event.clone());
+    }
+}
+
+/// An outgoing message reaches the inspectors through the wire's own walk,
+/// and the harness gets the original (D-067). A message the harness sends
+/// back reaches them as received, as an HTTP response body does, and its
+/// `Debug` redacts the same keys.
+#[tokio::test]
+async fn test_a_session_redacts_what_its_inspectors_see() {
+    let listener = tokio::net::TcpListener::bind("localhost:0")
+        .await
+        .expect("bind a local port");
+    let port = i32::from(listener.local_addr().expect("local address").port());
+    let reply = serde_json::json!({"echo": {"apiKey": SECRET, "httpHeaders": {NAME: SECRET}}});
+    let harness = tokio::spawn({
+        let reply = reply.to_string();
+        async move {
+            let (socket, _) = listener.accept().await.expect("accept");
+            let mut ws = tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("upgrade");
+            let Some(Ok(Message::Text(received))) = ws.next().await else {
+                panic!("no text frame from the client");
+            };
+            ws.send(Message::Text(reply.into())).await.expect("reply");
+            received.to_string()
+        }
+    });
+    let recorder = Arc::new(Recorder::default());
+    let mut session = Session::connect(
+        port,
+        "token",
+        WireContext::new(vec![recorder.clone() as Arc<dyn WireInspector>]),
+    )
+    .await
+    .expect("connect");
+    let init = InitializeConversationEvent {
+        config: Some(HarnessConfig {
+            models: vec![ModelConfig {
+                gemini_api_endpoint: Some(gemini_endpoint()),
+                ..Default::default()
+            }],
+            mcp_servers: mcp_servers(),
+            ..Default::default()
+        }),
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    session
+        .send_before(&init, deadline)
+        .await
+        .expect("within the deadline")
+        .expect("sent");
+    // The reply is no harness message, so it does not parse; it was
+    // inspected before that.
+    let _ = session.next_event().await;
+    let received = harness.await.expect("the harness side ends");
+    assert!(received.contains(SECRET), "the harness got {received}");
+
+    let events = recorder.0.lock().unwrap();
+    let [
+        WireEvent::WsSend { payload: sent, .. },
+        WireEvent::WsReceive { payload, .. },
+    ] = events.as_slice()
+    else {
+        panic!("expected one send and one receive: {events:?}");
+    };
+    assert_redacted("WsSend's payload", &sent.to_string(), true);
+    assert_eq!(payload, &reply, "a receive reaches inspectors as received");
+    assert_redacted("WsReceive's Debug", &format!("{:?}", events[1]), true);
 }

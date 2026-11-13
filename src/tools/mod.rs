@@ -52,7 +52,9 @@ use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 ///
 /// `Debug` prints an MCP server's header names with every value as
 /// `[REDACTED]`, as `LOUD_WIRE` does, and the retrieval configs redact
-/// their API keys.
+/// their API keys. A secret `LOUD_WIRE` redacts inside an `extra` map or an
+/// unknown tool's payload (an `api_key`, a `headers` map) prints redacted
+/// too.
 #[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Tool {
@@ -206,9 +208,11 @@ pub enum Tool {
     },
 }
 
-// Hand-written only for `McpServer`'s header values, which are secrets such
-// as an `Authorization` token (D-067); every other field prints as the
-// derive would. Each arm lists its fields, so a new one fails to compile here.
+// Hand-written for the secrets `LOUD_WIRE` redacts (D-067): `McpServer`'s
+// header values, such as an `Authorization` token, and any such secret in
+// an arm's `extra` or an unknown tool's payload, which go through the wire's
+// own walk. Every other field prints as the derive would. Each arm lists
+// its fields, so a new one fails to compile here.
 impl std::fmt::Debug for Tool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -222,7 +226,7 @@ impl std::fmt::Debug for Tool {
                 .field("name", name)
                 .field("description", description)
                 .field("parameters", parameters)
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
             Self::GoogleSearch {
                 search_types,
@@ -230,7 +234,7 @@ impl std::fmt::Debug for Tool {
             } => f
                 .debug_struct("GoogleSearch")
                 .field("search_types", search_types)
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
             Self::GoogleMaps {
                 enable_widget,
@@ -242,15 +246,16 @@ impl std::fmt::Debug for Tool {
                 .field("enable_widget", enable_widget)
                 .field("latitude", latitude)
                 .field("longitude", longitude)
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
             Self::CodeExecution { extra } => f
                 .debug_struct("CodeExecution")
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
-            Self::UrlContext { extra } => {
-                f.debug_struct("UrlContext").field("extra", extra).finish()
-            }
+            Self::UrlContext { extra } => f
+                .debug_struct("UrlContext")
+                .field("extra", &redact::map(extra))
+                .finish(),
             Self::ComputerUse {
                 environment,
                 excluded_predefined_functions,
@@ -269,7 +274,7 @@ impl std::fmt::Debug for Tool {
                     enable_prompt_injection_detection,
                 )
                 .field("disabled_safety_policies", disabled_safety_policies)
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
             Self::McpServer {
                 name,
@@ -283,7 +288,7 @@ impl std::fmt::Debug for Tool {
                 .field("url", url)
                 .field("allowed_tools", allowed_tools)
                 .field("headers", &headers.as_ref().map(redact::values))
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
             Self::FileSearch {
                 store_names,
@@ -295,7 +300,7 @@ impl std::fmt::Debug for Tool {
                 .field("store_names", store_names)
                 .field("top_k", top_k)
                 .field("metadata_filter", metadata_filter)
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
             Self::Retrieval {
                 retrieval_types,
@@ -311,12 +316,12 @@ impl std::fmt::Debug for Tool {
                 .field("exa_ai_search_config", exa_ai_search_config)
                 .field("parallel_ai_search_config", parallel_ai_search_config)
                 .field("rag_store_config", rag_store_config)
-                .field("extra", extra)
+                .field("extra", &redact::map(extra))
                 .finish(),
             Self::Unknown { tool_type, data } => f
                 .debug_struct("Unknown")
                 .field("tool_type", tool_type)
-                .field("data", data)
+                .field("data", &redact::json(data))
                 .finish(),
         }
     }

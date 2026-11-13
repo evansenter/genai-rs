@@ -28,6 +28,7 @@
 use crate::client::Client;
 use crate::errors::GenaiError;
 use crate::paging;
+use crate::redact;
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -100,13 +101,20 @@ pub struct SigningSecret {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+// Prints `extra`'s keys alone (see the field doc). Destructured without
+// `..`, so a field added later fails to compile here until it is printed
+// or redacted (D-067).
 impl std::fmt::Debug for SigningSecret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            truncated_secret,
+            expire_time,
+            extra,
+        } = self;
         f.debug_struct("SigningSecret")
-            .field("truncated_secret", &self.truncated_secret)
-            .field("expire_time", &self.expire_time)
-            // Keys only: see the field doc.
-            .field("extra", &self.extra.keys().collect::<Vec<_>>())
+            .field("truncated_secret", truncated_secret)
+            .field("expire_time", expire_time)
+            .field("extra", &redact::keys(extra))
             .finish()
     }
 }
@@ -194,27 +202,40 @@ pub struct Webhook {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-// Custom Debug that redacts the one-time signing secret (mirrors the
-// api_key redaction on `Client` / `HttpContext`).
+// Prints the one-time signing secret redacted (D-067). Destructured without
+// `..`, so a field added later fails to compile here until it is printed or
+// redacted.
 impl std::fmt::Debug for Webhook {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            uri,
+            subscribed_events,
+            name,
+            id,
+            state,
+            signing_secrets,
+            new_signing_secret,
+            create_time,
+            update_time,
+            extra,
+        } = self;
         f.debug_struct("Webhook")
-            .field("uri", &self.uri)
-            .field("subscribed_events", &self.subscribed_events)
-            .field("name", &self.name)
-            .field("id", &self.id)
-            .field("state", &self.state)
-            .field("signing_secrets", &self.signing_secrets)
+            .field("uri", uri)
+            .field("subscribed_events", subscribed_events)
+            .field("name", name)
+            .field("id", id)
+            .field("state", state)
+            .field("signing_secrets", signing_secrets)
             .field(
                 "new_signing_secret",
-                &self.new_signing_secret.as_ref().map(|_| "[REDACTED]"),
+                &redact::optional(new_signing_secret.as_ref()),
             )
-            .field("create_time", &self.create_time)
-            .field("update_time", &self.update_time)
+            .field("create_time", create_time)
+            .field("update_time", update_time)
             // Listed so unmodeled keys stay visible. They print verbatim:
             // nothing can redact a secret-bearing field the crate does not
             // model yet.
-            .field("extra", &self.extra)
+            .field("extra", extra)
             .finish()
     }
 }
@@ -382,16 +403,17 @@ pub struct RotateSigningSecretResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-// Custom Debug that redacts the rotated signing secret (mirrors the
-// api_key redaction on `Client` / `HttpContext`).
+// Prints the rotated signing secret redacted (D-067), destructured without
+// `..` like `Webhook`'s.
 impl std::fmt::Debug for RotateSigningSecretResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { secret, extra } = self;
         f.debug_struct("RotateSigningSecretResponse")
-            .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
+            .field("secret", &redact::optional(secret.as_ref()))
             // Listed so unmodeled keys stay visible. They print verbatim, as
             // on `Webhook`: nothing can redact a field the crate does not
             // model yet.
-            .field("extra", &self.extra)
+            .field("extra", extra)
             .finish()
     }
 }

@@ -1019,8 +1019,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every request and response body whole. Each prints `[REDACTED]` in the
   secret's place, as `LOUD_WIRE` does, and keeps the header and variable
   names, so `dbg!`, `tracing::debug!(?request)` or an inspector logging
-  `{event:?}` no longer undoes the wire's redaction. A `WireEvent`'s fields
-  and serialized form still hold the bodies raw.
+  `{event:?}` no longer undoes the wire's redaction. A `Tool`'s `extra` map
+  and an unknown tool's payload print such a secret (an `api_key`, a
+  `headers` map) redacted too, as do a harness message's `apiKey`,
+  `httpHeaders` and `env` values in a `WireEvent::WsReceive` (#555). A
+  `WireEvent`'s fields and serialized form still hold the bodies raw,
+  except a `WsSend` payload, which the session redacts before any inspector
+  sees it.
+- `LOUD_WIRE` and `wire::TracingForwarder` redact a message the
+  Antigravity harness sends back as they do one sent to it: its `apiKey`,
+  and the values under `httpHeaders` and an `env` map (#555). `LOUD_WIRE`
+  printed a received message's raw, and the forwarder logged both
+  directions as given. The wire's walk now holds the harness's keys, so a
+  sent message reaches every inspector through the same list as an
+  Interactions API body, which also redacts a `token`, `secret` or `api_key`
+  key the harness's own list did not; and a string directly under any
+  `env` (an MCP server's variable, or an environment `env` the crate could
+  not read) prints as `[REDACTED]`.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed

@@ -333,6 +333,108 @@ fn test_redact_fields_ordinary_value_keys_still_print() {
 }
 
 #[test]
+fn test_redact_fields_harness_api_keys_everywhere() {
+    // The Antigravity harness's wire is camelCase: a model endpoint's
+    // `apiKey`, wherever the endpoint sits.
+    let mut value = serde_json::json!({
+        "config": {
+            "models": [
+                {"geminiApiEndpoint": {"apiKey": "secret-1"}},
+                {"vertexEndpoint": {"apiKey": "secret-2"}}
+            ],
+            "tools": [{"name": "t"}]
+        }
+    });
+    redact_secrets(&mut value);
+    assert_eq!(
+        value["config"]["models"][0]["geminiApiEndpoint"]["apiKey"],
+        "[REDACTED]"
+    );
+    assert_eq!(
+        value["config"]["models"][1]["vertexEndpoint"]["apiKey"],
+        "[REDACTED]"
+    );
+    assert_eq!(value["config"]["tools"][0]["name"], "t");
+    assert!(!value.to_string().contains("secret-"));
+}
+
+#[test]
+fn test_redact_fields_leave_a_plain_harness_message_alone() {
+    let payload = serde_json::json!({"userInput": {"text": "what is an apiKey?"}});
+    let mut value = payload.clone();
+    redact_secrets(&mut value);
+    assert_eq!(value, payload);
+}
+
+#[test]
+fn test_redact_fields_harness_mcp_and_endpoint_credentials() {
+    // An MCP stdio server's `env` is a map of strings, unlike a remote
+    // environment's; an MCP HTTP server's `headers` and a model endpoint's
+    // `httpHeaders` are header maps. The names stay.
+    let mut value = serde_json::json!({
+        "config": {
+            "models": [
+                {"geminiApiEndpoint": {
+                    "apiKey": "secret-1",
+                    "httpHeaders": {"x-custom-auth": "secret-2"}
+                }}
+            ],
+            "mcpServers": [
+                {"stdio": {
+                    "command": "my-mcp",
+                    "env": {"GITHUB_TOKEN": "secret-3", "MODE": "fast"}
+                }},
+                {"http": {
+                    "url": "https://internal/mcp",
+                    "headers": {"Authorization": "Bearer secret-4"}
+                }}
+            ]
+        }
+    });
+    redact_secrets(&mut value);
+    let text = value.to_string();
+    assert!(!text.contains("secret-"), "credential leaked: {text}");
+    let servers = &value["config"]["mcpServers"];
+    assert_eq!(servers[0]["stdio"]["command"], "my-mcp");
+    assert_eq!(servers[1]["http"]["url"], "https://internal/mcp");
+    assert_eq!(servers[1]["http"]["headers"]["Authorization"], "[REDACTED]");
+    assert_eq!(
+        value["config"]["models"][0]["geminiApiEndpoint"]["httpHeaders"]["x-custom-auth"],
+        "[REDACTED]"
+    );
+    // Every value of an `env` is one: a value cannot be told from a
+    // setting there, so over-redaction is the trade.
+    assert_eq!(servers[0]["stdio"]["env"]["MODE"], "[REDACTED]");
+    assert_eq!(servers[0]["stdio"]["env"]["GITHUB_TOKEN"], "[REDACTED]");
+}
+
+#[test]
+fn test_redact_fields_an_env_held_as_text() {
+    // An `env` the crate could not read, as a string or a list of them.
+    let mut value = serde_json::json!({
+        "a": {"env": "FOO=secret-1"},
+        "b": {"env": ["FOO=secret-2"]},
+        "c": {"env": null},
+    });
+    redact_secrets(&mut value);
+    let text = value.to_string();
+    assert!(!text.contains("secret-"), "leaked: {text}");
+    assert!(value["c"]["env"].is_null());
+}
+
+#[test]
+fn test_redact_map_secrets_reads_the_maps_own_keys() {
+    let mut map = serde_json::Map::new();
+    map.insert("api_key".into(), serde_json::json!("secret-1"));
+    map.insert("nested".into(), serde_json::json!({"token": "secret-2"}));
+    map.insert("note".into(), serde_json::json!("kept"));
+    redact_map_secrets(&mut map);
+    let text = serde_json::Value::Object(map.clone()).to_string();
+    assert!(!text.contains("secret-"), "leaked: {text}");
+    assert_eq!(map["note"], "kept");
+}
+
+#[test]
 fn test_loud_wire_printer_smoke_all_variants() {
     // No assertions on the output itself (it goes to stderr); this
     // guards against panics in formatting, including UTF-8 truncation.

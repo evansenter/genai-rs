@@ -27,8 +27,9 @@ fn header(name: &str) -> HashMap<String, String> {
 /// The types that redacted before (`Client`, the credential and webhook
 /// secrets) are here too, and so are the JSON values that carry these
 /// secrets: a retrieval config's `custom_config`, an `env` the crate could
-/// not read, and a `WireEvent`'s bodies. Every one shows the placeholder
-/// where the secret was, and the names around the secret stay.
+/// not read, a `Tool`'s `extra` and an unknown tool's payload, and a
+/// `WireEvent`'s bodies and harness messages. Every one shows the
+/// placeholder where the secret was, and the names around the secret stay.
 #[test]
 fn debug_never_prints_a_secret() {
     let exa = ExaAiSearchConfig::new(SECRET);
@@ -65,6 +66,19 @@ fn debug_never_prints_a_secret() {
     }))
     .unwrap();
     assert!(unread_env.env.is_empty() && unread_env.extra.contains_key("env"));
+
+    // JSON the crate does not model, where a secret travels under a name
+    // the wire redacts (#555 item 4).
+    let unknown_tool = Tool::Unknown {
+        tool_type: "future_tool".to_string(),
+        data: json!({"type": "future_tool", "config": {"api_key": SECRET}}),
+    };
+    let tool_extra = Tool::CodeExecution {
+        extra: json!({"auth": {"headers": {"Authorization": SECRET}}, "token": SECRET})
+            .as_object()
+            .unwrap()
+            .clone(),
+    };
 
     let cases = [
         ("ExaAiSearchConfig", format!("{exa:?}")),
@@ -255,6 +269,22 @@ fn debug_never_prints_a_secret() {
                 }
             ),
         ),
+        // The harness's own camelCase keys, in a message it sends back.
+        (
+            "WireEvent::WsReceive",
+            format!(
+                "{:?}",
+                WireEvent::WsReceive {
+                    id: 1,
+                    payload: json!({"models": [{"geminiApiEndpoint": {
+                        "apiKey": SECRET,
+                        "httpHeaders": {"Authorization": SECRET}
+                    }}], "mcpServers": [{"stdio": {"env": {"API_KEY": SECRET}}}]}),
+                }
+            ),
+        ),
+        ("Tool::Unknown", format!("{unknown_tool:?}")),
+        ("Tool's extra", format!("{tool_extra:?}")),
     ];
 
     for (what, debug) in &cases {
@@ -268,9 +298,16 @@ fn debug_never_prints_a_secret() {
         );
     }
     // The names around a secret stay: the header's, the variable's.
-    for what in ["InteractionRequest", "WireEvent::Request"] {
+    let request_names = ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"];
+    let kept: [(&str, &[&str]); 4] = [
+        ("InteractionRequest", &request_names),
+        ("WireEvent::Request", &request_names),
+        ("WireEvent::WsReceive", &["Authorization", "API_KEY"]),
+        ("Tool's extra", &["Authorization"]),
+    ];
+    for (what, names) in kept {
         let (_, debug) = cases.iter().find(|(w, _)| *w == what).unwrap();
-        for name in ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"] {
+        for name in names {
             assert!(debug.contains(name), "{what}, {name}: {debug}");
         }
     }
