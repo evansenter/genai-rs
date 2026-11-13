@@ -553,12 +553,20 @@ Trigger turns and retried model calls (0.1.23, 2026-11-13, scripted model):
   (#556): severity is decided when the step arrives, before the harness
   has retried or given up, and telling the two apart would mean reading
   the harness's text. The status a backend failure gives the turn is
-  dropped once a later step of the main trajectory follows it, and a
-  subagent's is never taken: after a retried 503, a model call to an
-  undeclared tool with no output retries left (a system error step with
-  `httpCode` 0) ended the turn as `TurnFailure::Trajectory`, where the
-  turn had reported `ModelBackend { status: 503 }`
+  dropped once a later model step or error step of the main trajectory
+  follows it, and a subagent's is never taken: after a retried 503, a
+  model call to an undeclared tool with no output retries left (a system
+  error step with `httpCode` 0) ended the turn as
+  `TurnFailure::Trajectory`, where the turn had reported
+  `ModelBackend { status: 503 }`
   (`test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`).
+  Any later step would not do: after a delegation, a 503 with no retries
+  left on the main trajectory was followed in 8 of 40 runs by a
+  `STATE_DONE` system step at the next index, the harness's message to the
+  model that the subagent had gone idle, before the idle. Dropping the
+  status on it failed `test_scripted_a_503_after_delegating_fails_the_turn`
+  as `Trajectory` in 2 of 16 runs, each one with that step; dropping it
+  only on a model or error step passed 24 of 24, 6 of them with that step.
 
 Subagent names (0.1.23, 2026-11-07, live
 `test_antigravity_subagent_is_actually_invoked`): the `invokeSubagent`

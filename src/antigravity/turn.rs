@@ -457,9 +457,10 @@ pub(super) struct TurnState {
     /// [`TurnFailure::Denied`].
     pub(super) pre_turn_denied: bool,
     /// The step index and status of the main trajectory's model call the
-    /// backend failed (from a system error step), while no later step of
-    /// that trajectory has followed it: a turn the harness then ends with
-    /// an error is a [`TurnFailure::ModelBackend`].
+    /// backend failed (from a system error step), until the harness goes
+    /// on past it (a later model step or error step of that trajectory): a
+    /// turn the harness then ends with an error is a
+    /// [`TurnFailure::ModelBackend`].
     backend_status: Option<(u32, u32)>,
     /// The first error a main-trajectory state update carried this turn,
     /// which fails the turn when it ends even if the terminal update has
@@ -605,13 +606,18 @@ impl TurnState {
 
     /// Handles a step's error, if it has one. A fatal model-backend status
     /// fails the turn at once. Another backend failure on the main
-    /// trajectory is kept for the turn's end until a later step of that
-    /// trajectory follows it: the harness went on after it, retrying the
-    /// call (harness 0.1.23 reports a call it retries with the same system
-    /// error step as one it gives up on), so a failure that ends the turn
-    /// later is not that one. A subagent's is not kept: its error is not
-    /// the turn's. Every error that does not fail the turn surfaces once,
-    /// as an [`AgentEvent::Error`], and in the response's `errors()`.
+    /// trajectory is kept for the turn's end until a later model step or
+    /// error step of that trajectory follows it: the harness went on after
+    /// it, retrying the call (harness 0.1.23 reports a call it retries with
+    /// the same system error step as one it gives up on) or failing on
+    /// something else, so a failure that ends the turn later is not that
+    /// one. A later system step that is neither does not count: after a
+    /// delegation, 0.1.23 can follow a 503 with no retries left with a
+    /// done system step (its message to the model that the subagent went
+    /// idle) before it goes idle. A subagent's failure is not kept: its
+    /// error is not the turn's. Every error that does not fail the turn
+    /// surfaces once, as an [`AgentEvent::Error`], and in the response's
+    /// `errors()`.
     fn record_step_errors(
         &mut self,
         step: &StepUpdate,
@@ -619,14 +625,16 @@ impl TurnState {
         is_main: bool,
     ) -> Result<(), AntigravityError> {
         let index = step.step_index.unwrap_or_default();
+        let is_error = step.state == Some(StepState::Error) || step.error.is_some();
         if is_main
+            && (is_error || step.source == Some(StepSource::Model))
             && self
                 .backend_status
                 .is_some_and(|(failed_at, _)| index > failed_at)
         {
             self.backend_status = None;
         }
-        if step.state != Some(StepState::Error) && step.error.is_none() {
+        if !is_error {
             return Ok(());
         }
         let message = non_blank(step.error.as_ref().and_then(|e| e.error_message.as_deref()))

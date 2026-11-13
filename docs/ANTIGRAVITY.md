@@ -1427,7 +1427,7 @@ A failed turn is `Turn { kind, message }`, where `kind` is a
 
 | `TurnFailure` | When | The agent after it |
 |---|---|---|
-| `ModelBackend { status }` | the model backend failed a call: with a status the harness does not retry (400, 401 or 403), or with one whose retries ran out (a 503, say) | gone: respawn |
+| `ModelBackend { status }` | the model backend failed a call: with a status the harness does not retry (400, 401 or 403), or with one whose retries ran out (a 503, say) on a call of the agent's own rather than a subagent's | gone: respawn |
 | `Trajectory` | the harness ended the turn with an error of its own, such as an MCP server that failed to load | gone: respawn |
 | `Denied` | the pre-turn hook refused the turn (`message` is its reason) | usable |
 | `Cancelled` | the harness cancelled the turn of its own accord | usable |

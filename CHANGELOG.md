@@ -863,10 +863,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AntigravityError::Turn { kind, message }`, and `kind` says why.** `kind`
   is the new `TurnFailure` (`#[non_exhaustive]`): `ModelBackend { status }`
   (the model backend failed a call: a 400, 401 or 403, or a 503 whose
-  retries ran out), `Trajectory` (the harness ended the turn with an error
-  of its own, such as an MCP server that failed to load), `Denied` (the
-  pre-turn hook refused the turn; `message` is its reason), `Cancelled`
-  (the harness cancelled the turn) or `Hook` (a hook's thread did not run).
+  retries ran out on a call of the agent's own rather than a subagent's),
+  `Trajectory` (the harness ended the turn with an error of its own, such
+  as an MCP server that failed to load), `Denied` (the pre-turn hook
+  refused the turn; `message` is its reason), `Cancelled` (the harness
+  cancelled the turn) or `Hook` (a hook's thread did not run).
   `TurnFailure::ends_session()` is true for `ModelBackend` and
   `Trajectory`, after which harness 0.1.23 ends its run, and the agent
   fails every later call with `ConnectionClosed` without sending. `message`

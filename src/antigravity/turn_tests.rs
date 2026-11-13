@@ -319,6 +319,20 @@ fn test_only_the_main_trajectorys_last_backend_failure_names_the_turns() {
         failure_after(&[failed.clone(), failed.clone()]),
         TurnFailure::ModelBackend { status: 503 }
     );
+    // After a delegation, 0.1.23 can follow that 503 with a done system
+    // step, its message to the model that the subagent went idle, before
+    // going idle: the harness did not go on past the failed call, so the
+    // failure is still the 503.
+    let system_done: StepUpdate = serde_json::from_value(serde_json::json!({
+        "trajectoryId": "root", "stepIndex": 2, "state": "STATE_DONE",
+        "source": "SOURCE_SYSTEM", "target": "TARGET_MODEL",
+        "text": "[Message] sender=system content=Subagent sub has gone idle."
+    }))
+    .unwrap();
+    assert_eq!(
+        failure_after(&[failed.clone(), system_done]),
+        TurnFailure::ModelBackend { status: 503 }
+    );
     // A 503 the harness retried (0.1.23 reports it the same way), then the
     // retry's step: an error that ends the turn later is the harness's
     // own, as is a later step's that carries no HTTP status (an invalid
