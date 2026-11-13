@@ -1283,6 +1283,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Antigravity: `with_turn_timeout(Duration::MAX)` panicked at the first
   turn. A timeout too large to add to the clock now sets no deadline, as
   `without_turn_timeout()` does.
+- `AgentBuilder::on_pre_turn` said it is consulted before each turn.
+  Harness 0.1.23 does not consult it on a turn a trigger starts, so a
+  pre-turn gate does not see trigger turns. Its rustdoc and the guide say
+  so, `spawn()` logs a warning when the hook and a trigger are both set,
+  and a scripted test notices the day the harness starts consulting it.
 - Antigravity: a harness that dies mid-turn, or while `next_trigger_turn`
   waits, fails the call with `AntigravityError::ConnectionClosed` and the
   tail of the harness's stderr, as that variant says. A connection that

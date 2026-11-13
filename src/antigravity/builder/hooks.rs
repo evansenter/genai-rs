@@ -131,6 +131,12 @@ impl AgentBuilder {
     /// [`AntigravityError::Turn`](crate::antigravity::AntigravityError::Turn)
     /// of kind [`TurnFailure::Denied`](crate::antigravity::TurnFailure::Denied),
     /// the reason as its message, and the agent stays usable.
+    ///
+    /// Not consulted on trigger turns (harness 0.1.23): a turn a
+    /// [trigger](Self::add_trigger) starts runs without asking it, though
+    /// its other hooks run. A gate meant for those turns belongs in the
+    /// trigger, which decides whether to send; `spawn()` logs a warning when
+    /// this hook and a trigger are both set.
     #[must_use]
     pub fn on_pre_turn(
         mut self,

@@ -607,6 +607,7 @@ impl AgentBuilder {
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
         let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
         self.validate(&dispatcher)?;
+        self.warn_trigger_turns_skip_pre_turn();
         let policy_engine = PolicyEngine::new(self.policies.clone());
 
         let binary = process::discover_harness(self.harness_path.as_deref()).await?;
@@ -727,6 +728,21 @@ impl AgentBuilder {
                 agent.harness.kill().await;
                 Err(e.with_version_note(agent.harness.version()))
             }
+        }
+    }
+
+    /// Warns when a pre-turn hook and a trigger are both set: harness
+    /// 0.1.23 never consults the hook on a trigger's turn. Not a refusal, as
+    /// a caller may want the hook for its own turns only.
+    fn warn_trigger_turns_skip_pre_turn(&self) {
+        if self.lifecycle.pre_turn.is_some()
+            && !(self.triggers.is_empty() && self.custom_triggers.is_empty())
+        {
+            tracing::warn!(
+                "on_pre_turn is set beside a trigger, and harness 0.1.23 does not consult the \
+                 pre-turn hook on a turn a trigger starts: a trigger's turn runs without it. \
+                 Decide in the trigger whether to send."
+            );
         }
     }
 

@@ -651,7 +651,7 @@ by the turn deadline like the rest:
 |--------|-------|------------|
 | `on_session_start` | once, before `spawn()` returns | — |
 | `on_session_end` | during `shutdown()` (not on drop) | — |
-| `on_pre_turn` | before each turn, with the user's text | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn` of kind `TurnFailure::Denied`, the reason as its message; the agent stays usable |
+| `on_pre_turn` | before each turn, with the user's text; not consulted on trigger turns (harness 0.1.23, see [Triggers](#triggers)) | `TurnDecision::Deny` fails the turn with `AntigravityError::Turn` of kind `TurnFailure::Denied`, the reason as its message; the agent stays usable |
 | `on_post_turn` | after each turn, with its response text | — |
 | `on_tool_error` | when a tool call fails | `Some(text)` replaces the error the model sees |
 | `on_compaction` | when the harness compacts the history | — |
@@ -675,9 +675,9 @@ by the turn deadline like the rest:
 ```
 
 `on_stop` must stop eventually: check `continuation_count`, or the turn runs
-until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn,
-then the tool hooks and tool errors as calls happen, then stop (again after
-each continue), then post-turn.
+until its deadline. The order within a turn, as 0.1.23 calls them: pre-turn
+(except on a trigger turn), then the tool hooks and tool errors as calls
+happen, then stop (again after each continue), then post-turn.
 
 A turn nobody consumes (one that hit its `with_turn_timeout`, one you
 abandoned by dropping `chat` or its stream, or a trigger turn the next
@@ -1223,6 +1223,13 @@ Delivery semantics (see `antigravity::triggers` for details):
   turn can never surface as (or desync) your turn's response. The trigger's
   effects on conversation history (and any tool calls completed before the
   halt) persist.
+- `on_pre_turn` is not consulted on trigger turns (harness 0.1.23): a
+  trigger's turn runs without asking it, though its stop and post-turn
+  hooks run, so a pre-turn gate (a turn budget, say) does not see those
+  turns. Decide in the trigger whether to send; `spawn()` logs a warning
+  when `on_pre_turn` and a trigger are both set.
+  `test_scripted_a_trigger_turn_skips_the_pre_turn_hook` fails the day the
+  harness starts consulting it.
 
 ## Session persistence and resume
 
