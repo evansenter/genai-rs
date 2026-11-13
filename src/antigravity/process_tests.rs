@@ -80,10 +80,12 @@ fn test_harness_file_names_add_the_exe_on_windows() {
 }
 
 #[test]
-fn test_python_interpreters_add_python_on_windows() {
-    // python.org's Windows installer has no `python3`.
-    assert_eq!(python_interpreters(true), ["python3", "python"]);
-    assert_eq!(python_interpreters(false), ["python3"]);
+fn test_python_interpreters_add_python_then_the_py_launcher_on_windows() {
+    // python.org's Windows installer has no `python3`, and its `py`
+    // launcher can be the only one on PATH; it takes `-3` before `-c`.
+    let windows: &[&[&str]] = &[&["python3"], &["python"], &["py", "-3"]];
+    assert_eq!(python_interpreters(true), windows);
+    assert_eq!(python_interpreters(false), [["python3"]]);
     assert_eq!(PYTHONS, python_interpreters(cfg!(windows)));
 }
 
@@ -119,10 +121,11 @@ fn test_discovery_asks_the_next_interpreter_only_while_the_harness_is_missing() 
     let AntigravityError::HarnessNotFound { searched } = &err else {
         panic!("{err:?}");
     };
+    let pythons: Vec<_> = PYTHONS.iter().map(|command| command.join(" ")).collect();
     assert!(
         searched
             .iter()
-            .any(|entry| entry.starts_with(&format!("{} site-packages", PYTHONS.join(" or ")))),
+            .any(|entry| entry.starts_with(&format!("{} site-packages", pythons.join(" or ")))),
         "{searched:?}"
     );
 }
@@ -302,14 +305,14 @@ fn test_python_site_dirs_reads_the_interpreters_answer() {
     let dir = tempfile::tempdir().unwrap();
     let python = stub_interpreter(dir.path(), "echo /a/site-packages; echo; echo '  /b  '");
     assert_eq!(
-        python_site_dirs(python.as_os_str(), Duration::from_secs(10)),
+        python_site_dirs(&[python.into_os_string()], Duration::from_secs(10)),
         [PathBuf::from("/a/site-packages"), PathBuf::from("/b")]
     );
     // A failing or missing interpreter gives nothing, and discovery moves on.
     let failing = stub_interpreter(&dir.path().join("fail"), "echo /a; exit 1");
-    assert!(python_site_dirs(failing.as_os_str(), Duration::from_secs(10)).is_empty());
+    assert!(python_site_dirs(&[failing.into_os_string()], Duration::from_secs(10)).is_empty());
     let missing = dir.path().join("no-such-python");
-    assert!(python_site_dirs(missing.as_os_str(), Duration::from_secs(10)).is_empty());
+    assert!(python_site_dirs(&[missing.into_os_string()], Duration::from_secs(10)).is_empty());
 }
 
 #[cfg(unix)]
@@ -334,7 +337,10 @@ async fn test_discovery_finds_and_versions_a_wheel_only_python_has() {
         None,
         None,
         None,
-        vec![python3.into_os_string(), python.into_os_string()],
+        vec![
+            vec![python3.into_os_string()],
+            vec![python.into_os_string()],
+        ],
         Duration::from_secs(10),
     )
     .await
@@ -349,11 +355,68 @@ async fn test_discovery_finds_and_versions_a_wheel_only_python_has() {
 
 #[cfg(unix)]
 #[test]
+fn test_python_site_dirs_passes_the_launchers_arguments_before_the_script() {
+    let dir = tempfile::tempdir().unwrap();
+    // A stand-in `py` that answers only when `-3` comes first and the
+    // script after it, as the launcher reads them.
+    let py = stub_named_interpreter(
+        dir.path(),
+        "py",
+        r#"[ "$1" = -3 ] && [ "$2" = -c ] && [ -n "$3" ] && echo /launcher/site || exit 2"#,
+    );
+    let launcher = [py.into_os_string(), OsString::from("-3")];
+    assert_eq!(
+        python_site_dirs(&launcher, Duration::from_secs(10)),
+        [PathBuf::from("/launcher/site")]
+    );
+    // Without its arguments it answers nothing: the stand-in checks them.
+    assert!(python_site_dirs(&launcher[..1], Duration::from_secs(10)).is_empty());
+    assert!(python_site_dirs(&[], Duration::from_secs(10)).is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_discovery_finds_a_wheel_only_the_py_launcher_has() {
+    // Windows' order where neither `python3` nor `python` answers: the
+    // Microsoft Store's stub, no `python` on PATH, and python.org's `py`.
+    let dir = tempfile::tempdir().unwrap();
+    let site = dir.path().join("site");
+    let binary = wheel_install(&site, &["0.1.23"]);
+    let python3 = stub_named_interpreter(
+        &dir.path().join("store"),
+        "python3",
+        "echo 'Python was not found' >&2; exit 9009",
+    );
+    let py = stub_named_interpreter(
+        &dir.path().join("launcher"),
+        "py",
+        &format!(
+            r#"[ "$1" = -3 ] && [ "$2" = -c ] && echo '{}'"#,
+            site.display()
+        ),
+    );
+    let interpreters: Vec<Vec<OsString>> = vec![
+        vec![python3.into_os_string()],
+        vec![dir.path().join("no-python").into_os_string()],
+        vec![py.into_os_string(), OsString::from("-3")],
+    ];
+    let found = discover(None, None, None, interpreters, Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert_eq!(found, binary);
+    assert_eq!(
+        harness_version(HARNESS_FILE_NAMES, &found).as_deref(),
+        Some("0.1.23")
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn test_python_site_dirs_gives_up_on_a_hung_interpreter() {
     let dir = tempfile::tempdir().unwrap();
     let python = stub_interpreter(dir.path(), "exec sleep 60");
     let started = std::time::Instant::now();
-    assert!(python_site_dirs(python.as_os_str(), Duration::from_millis(200)).is_empty());
+    assert!(python_site_dirs(&[python.into_os_string()], Duration::from_millis(200)).is_empty());
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "a hung interpreter held discovery for {:?}",
@@ -393,7 +456,7 @@ async fn test_discovery_runs_off_the_runtime_and_bounds_the_interpreter() {
         None,
         None,
         Some(path_dir.clone().into_os_string()),
-        vec![python.into_os_string()],
+        vec![vec![python.into_os_string()]],
         Duration::from_millis(500),
     )
     .await

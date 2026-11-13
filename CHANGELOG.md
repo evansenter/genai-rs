@@ -1033,11 +1033,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed
   harness was not found without `ANTIGRAVITY_HARNESS_PATH`.
-- On Windows, Antigravity harness discovery asks `python` for its
-  site-packages after `python3`. python.org's installer provides no
-  `python3` (often only the Microsoft Store's stub is there), so a wheel
-  installed with its `pip` was not found without `ANTIGRAVITY_HARNESS_PATH`.
-  `python` is started only when `python3`'s site-packages lack the harness.
+- On Windows, Antigravity harness discovery asks `python`, then the `py`
+  launcher (`py -3`), for its site-packages after `python3`. python.org's
+  installer provides no `python3` (often only the Microsoft Store's stub
+  is there), and its launcher can be on `PATH` when `python` is not, so a
+  wheel installed with its `pip` was not found without
+  `ANTIGRAVITY_HARNESS_PATH`. Each is started only when the interpreters
+  before it lack the harness.
 - Antigravity's `spawn()` no longer waits forever on a harness that
   accepts the WebSocket connection but never answers the upgrade: each of
   the 5 connect attempts gives up after 5 s and counts as failed, so

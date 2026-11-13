@@ -1896,6 +1896,19 @@ the binary, not the interpreter. The `py` launcher is not tried; it needs
 its own arguments (`py -3`), and `ANTIGRAVITY_HARNESS_PATH` covers an
 install found neither way.
 
+*Amended 2026-11-10 (#557).* The `py` launcher is tried too, after
+`python`, which replaces the sentence above: python.org installs it even
+when `python` is not on `PATH`, so a wheel installed through it was found
+by neither name. An interpreter is now a program and the arguments it
+takes before `-c`, so `python_interpreters(true)` is `python3`, `python`,
+`py -3`: the launcher reads its version flag before the script, and `-3`
+picks its latest Python 3. It is started last, only when the two before it
+gave no site-packages holding the harness, with the same discovery
+timeout, and a harness it finds is version-checked from the wheel
+metadata as any other. Off Windows the list stays `python3` alone. A test
+on every OS checks the order and the arguments, and stand-in interpreters
+on Unix check that the arguments go before the script.
+
 ---
 
 ## D-051 — An issue number is a provenance tag or a pointer; only a pointer must name an open issue (2026-11-07)

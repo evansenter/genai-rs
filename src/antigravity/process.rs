@@ -1,7 +1,7 @@
 //! Harness process management: binary discovery, spawn + stdio handshake,
 //! and ordered shutdown. The stderr drain is in `harness_stderr`.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -46,18 +46,21 @@ const fn harness_file_names(windows: bool) -> &'static [&'static str] {
 }
 
 /// The interpreters discovery asks for their site-packages directories, in
-/// order, on this platform.
-const PYTHONS: &[&str] = python_interpreters(cfg!(windows));
+/// order, on this platform: each a program and the arguments it takes
+/// before `-c`.
+const PYTHONS: &[&[&str]] = python_interpreters(cfg!(windows));
 
 /// The interpreters, on Windows or elsewhere. python.org's Windows
 /// installer provides `python.exe` and no `python3`, which there is often
 /// only the Microsoft Store's stub (it fails and prints how to install
-/// Python), so Windows asks `python` after `python3`.
-const fn python_interpreters(windows: bool) -> &'static [&'static str] {
+/// Python), so Windows asks `python` after `python3`, then the `py`
+/// launcher, which python.org installs even when `python` is not on
+/// `PATH`; `-3` picks its latest Python 3 and goes before the script.
+const fn python_interpreters(windows: bool) -> &'static [&'static [&'static str]] {
     if windows {
-        &["python3", "python"]
+        &[&["python3"], &["python"], &["py", "-3"]]
     } else {
-        &["python3"]
+        &[&["python3"]]
     }
 }
 
@@ -96,8 +99,8 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 /// 2. `ANTIGRAVITY_HARNESS_PATH` environment variable, when set and not
 ///    empty.
 /// 3. `google/antigravity/bin/localharness` inside `python3`'s
-///    site-packages directories, then (on Windows) `python`'s
-///    ([`PYTHONS`]).
+///    site-packages directories, then (on Windows) `python`'s and
+///    `py -3`'s ([`PYTHONS`]).
 /// 4. `localharness` on `PATH`.
 ///
 /// On Windows steps 3 and 4 look for `localharness.exe` first
@@ -109,8 +112,8 @@ const KILL_GRACE: Duration = Duration::from_secs(1);
 ///
 /// An interpreter is asked for its site-packages only when the steps
 /// before it find nothing, so an explicit path costs no interpreter
-/// start-up, and `python` none when `python3`'s site-packages hold the
-/// harness.
+/// start-up, and a later interpreter none when an earlier one's
+/// site-packages hold the harness.
 ///
 /// The search runs on tokio's blocking pool, not on the caller's runtime
 /// thread: it checks files and may start the interpreters, each of which
@@ -120,7 +123,10 @@ pub(crate) async fn discover_harness(explicit: Option<&Path>) -> Result<PathBuf,
         explicit.map(Path::to_path_buf),
         std::env::var_os(HARNESS_PATH_ENV).map(PathBuf::from),
         std::env::var_os("PATH"),
-        PYTHONS.iter().map(OsString::from).collect(),
+        PYTHONS
+            .iter()
+            .map(|c| c.iter().map(OsString::from).collect())
+            .collect(),
         DISCOVERY_TIMEOUT,
     )
     .await
@@ -132,7 +138,7 @@ async fn discover(
     explicit: Option<PathBuf>,
     env_path: Option<PathBuf>,
     path_var: Option<OsString>,
-    interpreters: Vec<OsString>,
+    interpreters: Vec<Vec<OsString>>,
     interpreter_timeout: Duration,
 ) -> Result<PathBuf, AntigravityError> {
     off_runtime(move || {
@@ -213,9 +219,10 @@ fn discover_in(
         }
     }
     if !any_site_dirs {
+        let pythons = PYTHONS.iter().map(|c| c.join(" ")).collect::<Vec<_>>();
         searched.push(format!(
             "{} site-packages (not found, or no site dirs)",
-            PYTHONS.join(" or ")
+            pythons.join(" or ")
         ));
     }
 
@@ -237,18 +244,23 @@ fn discover_in(
     Err(AntigravityError::HarnessNotFound { searched })
 }
 
-/// Asks `interpreter` for its site-packages directories, giving it
-/// `timeout` to answer. Returns an empty list when it is unavailable,
-/// fails, or does not answer in time (it is then killed): discovery moves
-/// on to the next interpreter, then to `PATH`.
+/// Asks `interpreter` (a program and the arguments it takes before `-c`)
+/// for its site-packages directories, giving it `timeout` to answer.
+/// Returns an empty list when it is unavailable, fails, or does not answer
+/// in time (it is then killed): discovery moves on to the next
+/// interpreter, then to `PATH`.
 ///
 /// Blocking: call it off the runtime ([`discover`] does). Its stdout is
 /// read on a thread of its own, so the bound holds even if something the
 /// interpreter started keeps the pipe open; that thread ends when the pipe
 /// closes.
-fn python_site_dirs(interpreter: &OsStr, timeout: Duration) -> Vec<PathBuf> {
+fn python_site_dirs(interpreter: &[OsString], timeout: Duration) -> Vec<PathBuf> {
     let deadline = Instant::now() + timeout;
-    let Ok(mut child) = std::process::Command::new(interpreter)
+    let Some((program, launcher_args)) = interpreter.split_first() else {
+        return Vec::new();
+    };
+    let Ok(mut child) = std::process::Command::new(program)
+        .args(launcher_args)
         .arg("-c")
         .arg(
             "import site, sys\n\
@@ -299,7 +311,7 @@ fn python_site_dirs(interpreter: &OsStr, timeout: Duration) -> Vec<PathBuf> {
             tracing::warn!(
                 "{} did not list its site-packages within {timeout:?}; discovery goes on \
                  without them",
-                interpreter.to_string_lossy()
+                program.to_string_lossy()
             );
             Vec::new()
         }

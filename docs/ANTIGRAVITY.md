@@ -111,13 +111,15 @@ expose (the keys of the parity table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 2. `ANTIGRAVITY_HARNESS_PATH` environment variable (the same variable the
    Python SDK honors).
 3. `google/antigravity/bin/localharness` inside `python3`'s site-packages,
-   then, on Windows, inside `python`'s.
+   then, on Windows, inside `python`'s, then inside those of the `py`
+   launcher's Python 3 (`py -3`).
 4. `localharness` on `PATH`.
 
 On Windows steps 3 and 4 look for `localharness.exe` first, the name the
 Windows wheel ships, as the Python SDK does. Step 3 asks `python` there
-because python.org's Windows installer provides no `python3`; `python` is
-started only when `python3`'s site-packages lack the harness.
+because python.org's Windows installer provides no `python3`, and `py -3`
+because the launcher it installs can be on `PATH` when `python` is not;
+each is started only when the interpreters before it lack the harness.
 
 A path given in step 1 or 2 is the harness, as the Python SDK takes the
 variable's: when it is not a file, `spawn()` fails with
@@ -127,10 +129,10 @@ so a mistyped path cannot start a different harness. An empty
 `HarnessNotFound` listing every location searched. The search runs on
 tokio's blocking pool, not on your runtime's threads, and each interpreter
 gets 10 seconds to list its site-packages before the search moves on (on
-Windows from `python3` to `python`, then to `PATH`). The read of the
-installed wheel's version beside the binary gets
-the same 10 seconds, on a thread of its own, so a read abandoned at the
-limit does not hold up your runtime's shutdown. File checks and the start
+Windows from `python3` to `python` to `py -3`, then to `PATH`). The read
+of the installed wheel's version beside the binary gets the same 10
+seconds, on a thread of its own, so a read abandoned at the limit does not
+hold up your runtime's shutdown. File checks and the start
 of the binary itself are not bounded.
 
 ## Quick start
