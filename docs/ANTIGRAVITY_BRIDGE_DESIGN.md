@@ -225,8 +225,8 @@ src/antigravity/
                    (D-065)
   builder/         AgentBuilder: mod.rs (setters, spawn), hooks.rs (hook
                    setters), options.rs (model, subagent and harness option
-                   setters), validate.rs (spawn-time checks), wire.rs (the
-                   HarnessConfig it sends)
+                   setters), workspaces.rs (workspace setters), validate.rs
+                   (spawn-time checks), wire.rs (the HarnessConfig it sends)
   config.rs        Capabilities, BuiltinTool, ModelTarget, workspaces
   instructions.rs  SystemInstructions: appended, edited or custom prompt
   prompt.rs        Prompt, Media, SlashCommand: what a turn sends

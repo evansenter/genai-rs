@@ -772,6 +772,13 @@ before 2026-11-05 point at the old layout. `tracing` events from moved code
 log under the new module path (`genai_rs::antigravity::policies`), which an
 `antigravity` prefix filter still selects.
 
+**Amended 2026-11-13 (Wave J merge).** `builder/mod.rs` went over D-014's
+800 lines when three Wave J packages each grew it. The workspace setters
+(`with_workspace`, `add_workspace`, `with_workspace_announcement`,
+`with_workspace_containment`) and the two readers `validate.rs` and
+`wire.rs` call (`announce_workspaces`, `contains_workspaces`) moved, as
+they were, to `builder/workspaces.rs`. The public paths are unchanged.
+
 ---
 
 ## D-022 — Antigravity policies are evaluated client-side; the auto policy runs in the harness (2026-11-05)
