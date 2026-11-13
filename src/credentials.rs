@@ -38,6 +38,7 @@
 use crate::client::Client;
 use crate::errors::GenaiError;
 use crate::paging;
+use crate::redact;
 use crate::serde_util::{ResourceName, deserialize_lenient_timestamp};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
@@ -190,9 +191,9 @@ pub enum CredentialConfig {
     },
 }
 
-// Custom Debug that redacts the write-only secrets (mirrors the api_key
-// redaction on `Client`), so `dbg!` or `tracing::debug!(?request)` cannot
-// undo the LOUD_WIRE redaction.
+// Prints the write-only secrets redacted (D-067), so `dbg!` or
+// `tracing::debug!(?request)` cannot undo the LOUD_WIRE redaction. Each
+// variant is destructured without `..`.
 impl std::fmt::Debug for CredentialConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -202,7 +203,7 @@ impl std::fmt::Debug for CredentialConfig {
                 prefix,
             } => f
                 .debug_struct("BearerToken")
-                .field("token", &"[REDACTED]")
+                .field("token", &redact::REDACTED)
                 .field("header_name", header_name)
                 .field("prefix", prefix)
                 .finish(),
@@ -212,7 +213,7 @@ impl std::fmt::Debug for CredentialConfig {
                 trusted_domains,
             } => f
                 .debug_struct("EnvironmentVariable")
-                .field("value", &"[REDACTED]")
+                .field("value", &redact::REDACTED)
                 .field("injection_location", injection_location)
                 .field("trusted_domains", trusted_domains)
                 .finish(),
@@ -225,8 +226,8 @@ impl std::fmt::Debug for CredentialConfig {
             } => f
                 .debug_struct("OAuth2")
                 .field("client_id", client_id)
-                .field("client_secret", &"[REDACTED]")
-                .field("refresh_token", &"[REDACTED]")
+                .field("client_secret", &redact::REDACTED)
+                .field("refresh_token", &redact::REDACTED)
                 .field("token_url", token_url)
                 .field("scopes", scopes)
                 .finish(),
@@ -360,7 +361,7 @@ pub struct CredentialUpdate {
     pub update_mask: Option<String>,
 }
 
-// Custom Debug that redacts the write-only secrets, like `CredentialConfig`.
+// Prints the write-only secrets redacted, like `CredentialConfig` (D-067).
 // Destructured with no `..`, so adding a field is a compile error here until
 // someone decides whether it needs redacting.
 impl std::fmt::Debug for CredentialUpdate {
@@ -380,18 +381,17 @@ impl std::fmt::Debug for CredentialUpdate {
             scopes,
             update_mask,
         } = self;
-        let redact = |secret: &Option<String>| secret.as_ref().map(|_| "[REDACTED]");
         f.debug_struct("CredentialUpdate")
             .field("credential_type", credential_type)
-            .field("token", &redact(token))
+            .field("token", &redact::optional(token.as_ref()))
             .field("header_name", header_name)
             .field("prefix", prefix)
-            .field("value", &redact(value))
+            .field("value", &redact::optional(value.as_ref()))
             .field("injection_location", injection_location)
             .field("trusted_domains", trusted_domains)
             .field("client_id", client_id)
-            .field("client_secret", &redact(client_secret))
-            .field("refresh_token", &redact(refresh_token))
+            .field("client_secret", &redact::optional(client_secret.as_ref()))
+            .field("refresh_token", &redact::optional(refresh_token.as_ref()))
             .field("token_url", token_url)
             .field("scopes", scopes)
             .field("update_mask", update_mask)

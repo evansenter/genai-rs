@@ -143,7 +143,7 @@ pub struct AllowlistEntry {
 }
 
 // A transform's header values are secrets, such as an injected API key
-// (D-067).
+// (D-067). `extra` goes through the wire's walk.
 impl std::fmt::Debug for AllowlistEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -159,7 +159,7 @@ impl std::fmt::Debug for AllowlistEntry {
             .field("domain", domain)
             .field("transform", &transform)
             .field("credential", credential)
-            .field("extra", extra)
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }
@@ -214,7 +214,7 @@ pub struct EnvVar {
 }
 
 // A plain value is often a secret: a key the sandbox's code reads
-// (D-067).
+// (D-067). `extra` goes through the wire's walk.
 impl std::fmt::Debug for EnvVar {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -225,7 +225,7 @@ impl std::fmt::Debug for EnvVar {
         f.debug_struct("EnvVar")
             .field("value", &redact::optional(value.as_ref()))
             .field("credential", credential)
-            .field("extra", extra)
+            .field("extra", &redact::map(extra))
             .finish()
     }
 }
@@ -470,7 +470,7 @@ pub struct RemoteEnvironment {
 // An `env` the crate could not read (one entry not an `EnvVar`) is kept
 // whole in `extra`, where its values are as secret as in `env`: every string
 // beneath it prints redacted, since a value cannot be told from a name there
-// (D-067). The rest of `extra` prints as it is.
+// (D-067). The rest of `extra` goes through the wire's walk.
 impl std::fmt::Debug for RemoteEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
@@ -480,14 +480,11 @@ impl std::fmt::Debug for RemoteEnvironment {
             env,
             extra,
         } = self;
-        let extra: std::borrow::Cow<'_, _> = match extra.get("env") {
-            Some(unread) => {
-                let mut extra = extra.clone();
-                extra.insert("env".into(), redact::json_strings(unread));
-                std::borrow::Cow::Owned(extra)
-            }
-            None => std::borrow::Cow::Borrowed(extra),
-        };
+        let mut extra = redact::map(extra);
+        if let Some(unread) = extra.get_mut("env") {
+            let redacted = redact::json_strings(unread);
+            *unread = redacted;
+        }
         f.debug_struct("RemoteEnvironment")
             .field("environment_id", environment_id)
             .field("sources", sources)

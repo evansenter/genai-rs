@@ -12,6 +12,14 @@
 //! Not part of `common/mod.rs`, which every integration test compiles: the
 //! guards that scan include this file by `#[path]`, and nothing else
 //! compiles it.
+//!
+//! `tests/model_literals.rs` and `tests/temp_file_tests.rs` walk with
+//! [`rust_files`] too (#553). `tests/redaction_guards.rs`,
+//! `tests/setter_convention.rs` and the coverage oracle
+//! (`src/coverage_oracle/request/fills.rs`) read the library's own source
+//! with [`library_sources`]; each keeps its own floor as well. It and
+//! `tests/non_exhaustive_responses.rs` tell test-only code from the
+//! library's with [`is_test_gated`] and [`test_modules`].
 
 #![allow(
     dead_code,
@@ -292,4 +300,237 @@ pub fn lexically_normal(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Whether the attributes gate an item to test builds: a test attribute
+/// (`#[test]`, `#[tokio::test]`), or a `cfg` that cannot hold unless `test`
+/// is set, whatever every other option is (`test`, `all(test, unix)`,
+/// `any(test, all(test, x))`). One that can hold without it builds outside
+/// tests, so it does not count: `any(target_os = "linux", test)` (a Linux
+/// release), `any(test, fuzzing)`, `not(test)`.
+pub fn is_test_gated(attrs: &[syn::Attribute]) -> bool {
+    use syn::punctuated::Punctuated;
+    /// Whether `meta` can hold, and whether it can fail, in a build
+    /// without `test` where every other option may be either way. A
+    /// predicate this cannot read can do both.
+    fn without_test(meta: &syn::Meta) -> (bool, bool) {
+        match meta {
+            syn::Meta::Path(path) if path.is_ident("test") => (false, true),
+            syn::Meta::List(list) => {
+                let Ok(nested) =
+                    list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                else {
+                    return (true, true);
+                };
+                let parts: Vec<(bool, bool)> = nested.iter().map(without_test).collect();
+                if list.path.is_ident("not") {
+                    match parts.as_slice() {
+                        [(hold, fail)] => (*fail, *hold),
+                        _ => (true, true),
+                    }
+                } else if list.path.is_ident("all") {
+                    (
+                        parts.iter().all(|(hold, _)| *hold),
+                        parts.iter().any(|(_, fail)| *fail),
+                    )
+                } else if list.path.is_ident("any") {
+                    (
+                        parts.iter().any(|(hold, _)| *hold),
+                        parts.iter().all(|(_, fail)| *fail),
+                    )
+                } else {
+                    (true, true)
+                }
+            }
+            _ => (true, true),
+        }
+    }
+    attrs.iter().any(|attr| {
+        attr.path()
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "test")
+            || (attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Meta>()
+                    .is_ok_and(|meta| !without_test(&meta).0))
+    })
+}
+
+/// The out-of-line modules `file`, at repo-relative `rel`, declares, each
+/// as an extension-less repo path and whether its declaration is
+/// test-gated ([`is_test_gated`]): `mod x;` names `x` in
+/// [`child_module_dir`], and one with a `#[path = "x_tests.rs"]` names that
+/// file, relative to the declaring file's own directory. Inline modules
+/// are not followed: an out-of-line `mod` inside one would resolve to a
+/// nested directory, and `src/` has none.
+pub fn declared_modules(rel: &str, file: &syn::File) -> Vec<(String, bool)> {
+    let dir = child_module_dir(rel);
+    let file_dir = Path::new(rel)
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) if module.content.is_none() => {
+                let path = match path_attr(&module.attrs) {
+                    Some(path) => {
+                        let path = path.strip_suffix(".rs").unwrap_or(&path).to_owned();
+                        format!("{file_dir}/{path}")
+                    }
+                    None => format!("{dir}/{}", module.ident),
+                };
+                Some((path, is_test_gated(&module.attrs)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The test-only modules among `files` (repo-relative path and parsed
+/// source), as [`declared_modules`] names them: each a test-gated `mod`
+/// declares, and each module a test-only file declares, gated or not
+/// (`proptest_tests.rs`'s `#[path = "proptest_content.rs"] mod content;`).
+pub fn test_modules<'a, I>(files: I) -> BTreeSet<String>
+where
+    I: IntoIterator<Item = (&'a str, &'a syn::File)>,
+{
+    let declared: Vec<(&str, Vec<(String, bool)>)> = files
+        .into_iter()
+        .map(|(rel, file)| (rel, declared_modules(rel, file)))
+        .collect();
+    let mut found: BTreeSet<String> = declared
+        .iter()
+        .flat_map(|(_, modules)| modules.iter())
+        .filter(|(_, gated)| *gated)
+        .map(|(module, _)| module.clone())
+        .collect();
+    loop {
+        let before = found.len();
+        for (rel, modules) in &declared {
+            if is_test_only_path(rel, &found) {
+                found.extend(modules.iter().map(|(module, _)| module.clone()));
+            }
+        }
+        if found.len() == before {
+            return found;
+        }
+    }
+}
+
+/// Whether `rel` is a test-only file: the file of a module `m` in
+/// `test_modules` ([`test_modules`]), as `<m>.rs` or `<m>/mod.rs`, or any
+/// file below `<m>/`.
+pub fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
+    test_modules
+        .iter()
+        .any(|m| rel == format!("{m}.rs") || rel.starts_with(&format!("{m}/")))
+}
+
+/// Where the children of `rel`'s module live: `src/x.rs` declares into
+/// `src/x/`, while `lib.rs`, `main.rs` and `mod.rs` declare into their own
+/// directory.
+pub fn child_module_dir(rel: &str) -> String {
+    let path = Path::new(rel);
+    let stem = path
+        .file_stem()
+        .expect("a source file has a stem")
+        .to_string_lossy();
+    let parent = path
+        .parent()
+        .expect("a source file has a directory")
+        .to_string_lossy();
+    if stem == "lib" || stem == "mod" || stem == "main" {
+        parent.into_owned()
+    } else {
+        format!("{parent}/{stem}")
+    }
+}
+
+/// The value of a `#[path = "..."]` attribute, if present.
+fn path_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| match &attr.meta {
+        syn::Meta::NameValue(nv) if nv.path.is_ident("path") => match &nv.value {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) => Some(s.value()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// The library's own source, parsed and keyed by repo-relative path: every
+/// `.rs` file under `src/` but the test-only ones ([`test_modules`],
+/// [`is_test_only_path`]), with its test-only items removed
+/// ([`is_test_gated`]) at any depth of inline modules, and from `impl` and
+/// `trait` blocks.
+pub fn library_sources() -> Vec<(String, syn::File)> {
+    fn strip(items: &mut Vec<syn::Item>) {
+        items.retain(|item| !is_test_gated(item_attrs(item)));
+        for item in items {
+            match item {
+                syn::Item::Mod(module) => {
+                    if let Some((_, inner)) = &mut module.content {
+                        strip(inner);
+                    }
+                }
+                syn::Item::Impl(imp) => imp.items.retain(|item| match item {
+                    syn::ImplItem::Fn(f) => !is_test_gated(&f.attrs),
+                    syn::ImplItem::Const(c) => !is_test_gated(&c.attrs),
+                    syn::ImplItem::Type(t) => !is_test_gated(&t.attrs),
+                    _ => true,
+                }),
+                syn::Item::Trait(tr) => tr.items.retain(|item| match item {
+                    syn::TraitItem::Fn(f) => !is_test_gated(&f.attrs),
+                    _ => true,
+                }),
+                _ => {}
+            }
+        }
+    }
+    let parsed: Vec<(String, syn::File)> = rust_files(&root().join("src"))
+        .iter()
+        .map(|path| (repo_relative(path), parse_file(path)))
+        .collect();
+    let test_modules = test_modules(parsed.iter().map(|(rel, file)| (rel.as_str(), file)));
+    assert!(
+        !test_modules.is_empty(),
+        "no test-gated module found under src/: the test-only files cannot be told \
+         from the library's"
+    );
+    let sources: Vec<(String, syn::File)> = parsed
+        .into_iter()
+        .filter(|(rel, _)| !is_test_only_path(rel, &test_modules))
+        .map(|(rel, mut file)| {
+            strip(&mut file.items);
+            (rel, file)
+        })
+        .collect();
+    assert!(
+        sources.iter().any(|(rel, _)| rel == "src/lib.rs"),
+        "the library's sources leave out src/lib.rs"
+    );
+    sources
+}
+
+/// An item's attributes, for the kinds that carry a `cfg` worth reading.
+pub fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Const(i) => &i.attrs,
+        syn::Item::Enum(i) => &i.attrs,
+        syn::Item::Fn(i) => &i.attrs,
+        syn::Item::Impl(i) => &i.attrs,
+        syn::Item::Macro(i) => &i.attrs,
+        syn::Item::Mod(i) => &i.attrs,
+        syn::Item::Static(i) => &i.attrs,
+        syn::Item::Struct(i) => &i.attrs,
+        syn::Item::Trait(i) => &i.attrs,
+        syn::Item::Type(i) => &i.attrs,
+        syn::Item::Union(i) => &i.attrs,
+        syn::Item::Use(i) => &i.attrs,
+        _ => &[],
+    }
 }

@@ -11,11 +11,17 @@
 //!
 //! A modeled secret field is redacted by its type's impl. JSON a type
 //! carries where these secrets travel (a `WireEvent`'s bodies, a retrieval
-//! config's `custom_config`) goes through the wire's own walk ([`json`]),
-//! so there the two share one list.
+//! config's `custom_config`, the `extra` of a type with a hand-written
+//! `Debug` and an unknown tool's payload) goes through the wire's own walk
+//! ([`json`], [`map`]), so there the two share one list, and so does the
+//! copy of an outgoing harness message an Antigravity session hands its
+//! inspectors.
 //!
 //! Each impl destructures its type without `..`, so a field added later
-//! fails to compile until the impl prints it, or redacts it.
+//! fails to compile until the impl prints it, or redacts it. This module
+//! holds the crate's one placeholder and its helpers: a `"[REDACTED]"`
+//! written anywhere else outside test code fails `tests/redaction_guards.rs`,
+//! which also fails on a derived `Debug` over a field the wire redacts.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -65,6 +71,22 @@ pub(crate) fn raw_json(raw: &str) -> Cow<'_, str> {
         }
         Err(_) => Cow::Borrowed(raw),
     }
+}
+
+/// [`json`] for a JSON object held as a map (an `extra`), keeping the map's
+/// own `Debug` form.
+pub(crate) fn map(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = map.clone();
+    crate::wire::redact_map_secrets(&mut map);
+    map
+}
+
+/// A map's keys alone, in its order: for unmodeled fields on a type that
+/// holds a secret, where any value may be one.
+pub(crate) fn keys(map: &serde_json::Map<String, serde_json::Value>) -> Vec<&str> {
+    map.keys().map(String::as_str).collect()
 }
 
 /// A JSON value with every string replaced and the keys kept: for a map the

@@ -27,8 +27,11 @@ fn header(name: &str) -> HashMap<String, String> {
 /// The types that redacted before (`Client`, the credential and webhook
 /// secrets) are here too, and so are the JSON values that carry these
 /// secrets: a retrieval config's `custom_config`, an `env` the crate could
-/// not read, and a `WireEvent`'s bodies. Every one shows the placeholder
-/// where the secret was, and the names around the secret stay.
+/// not read, the `extra` of a `Tool`, a webhook and the environment pieces
+/// and an unknown tool's payload, and a `WireEvent`'s bodies and harness
+/// messages. Every one
+/// shows the placeholder where the secret was, and the names around the
+/// secret stay.
 #[test]
 fn debug_never_prints_a_secret() {
     let exa = ExaAiSearchConfig::new(SECRET);
@@ -65,6 +68,34 @@ fn debug_never_prints_a_secret() {
     }))
     .unwrap();
     assert!(unread_env.env.is_empty() && unread_env.extra.contains_key("env"));
+
+    // JSON the crate does not model, where a secret travels under a name
+    // the wire redacts (#555 item 4).
+    let unknown_tool = Tool::Unknown {
+        tool_type: "future_tool".to_string(),
+        data: json!({"type": "future_tool", "config": {"api_key": SECRET}}),
+    };
+    let tool_extra = Tool::CodeExecution {
+        extra: json!({"auth": {"headers": {"Authorization": SECRET}}, "token": SECRET})
+            .as_object()
+            .unwrap()
+            .clone(),
+    };
+    let webhook_extra = json!({"secret": SECRET, "delivery": {"token": SECRET}})
+        .as_object()
+        .unwrap()
+        .clone();
+    // The environment pieces' own `extra`, beside the secrets they model.
+    let unmodeled = json!({"auth": {"api_key": SECRET}})
+        .as_object()
+        .unwrap()
+        .clone();
+    let mut allowlist_extra = AllowlistEntry::new("api.example.com");
+    allowlist_extra.extra = unmodeled.clone();
+    let mut env_var_extra = EnvVar::credential("cred-1");
+    env_var_extra.extra = unmodeled.clone();
+    let mut environment_extra = RemoteEnvironment::new();
+    environment_extra.extra = unmodeled.clone();
 
     let cases = [
         ("ExaAiSearchConfig", format!("{exa:?}")),
@@ -255,6 +286,48 @@ fn debug_never_prints_a_secret() {
                 }
             ),
         ),
+        // The harness's own camelCase keys, in a message it sends back.
+        (
+            "WireEvent::WsReceive",
+            format!(
+                "{:?}",
+                WireEvent::WsReceive {
+                    id: 1,
+                    payload: json!({"models": [{"geminiApiEndpoint": {
+                        "apiKey": SECRET,
+                        "httpHeaders": {"Authorization": SECRET}
+                    }}], "mcpServers": [{"stdio": {"env": {"API_KEY": SECRET}}}]}),
+                }
+            ),
+        ),
+        ("Tool::Unknown", format!("{unknown_tool:?}")),
+        ("Tool's extra", format!("{tool_extra:?}")),
+        ("AllowlistEntry's extra", format!("{allowlist_extra:?}")),
+        ("EnvVar's extra", format!("{env_var_extra:?}")),
+        (
+            "RemoteEnvironment's extra",
+            format!("{environment_extra:?}"),
+        ),
+        (
+            "Webhook's extra",
+            format!(
+                "{:?}",
+                Webhook {
+                    extra: webhook_extra.clone(),
+                    ..Default::default()
+                }
+            ),
+        ),
+        (
+            "RotateSigningSecretResponse's extra",
+            format!(
+                "{:?}",
+                RotateSigningSecretResponse {
+                    extra: webhook_extra.clone(),
+                    ..Default::default()
+                }
+            ),
+        ),
     ];
 
     for (what, debug) in &cases {
@@ -268,9 +341,21 @@ fn debug_never_prints_a_secret() {
         );
     }
     // The names around a secret stay: the header's, the variable's.
-    for what in ["InteractionRequest", "WireEvent::Request"] {
+    let request_names = ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"];
+    let kept: [(&str, &[&str]); 9] = [
+        ("InteractionRequest", &request_names),
+        ("WireEvent::Request", &request_names),
+        ("WireEvent::WsReceive", &["Authorization", "API_KEY"]),
+        ("Tool's extra", &["Authorization"]),
+        ("AllowlistEntry's extra", &["auth"]),
+        ("EnvVar's extra", &["auth", "cred-1"]),
+        ("RemoteEnvironment's extra", &["auth"]),
+        ("Webhook's extra", &["delivery"]),
+        ("RotateSigningSecretResponse's extra", &["delivery"]),
+    ];
+    for (what, names) in kept {
         let (_, debug) = cases.iter().find(|(w, _)| *w == what).unwrap();
-        for name in ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"] {
+        for name in names {
             assert!(debug.contains(name), "{what}, {name}: {debug}");
         }
     }

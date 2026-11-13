@@ -328,9 +328,13 @@ async fn write_json(
     wire: &WireContext,
     value: serde_json::Value,
 ) -> Result<(), AntigravityError> {
+    // The inspection copy is redacted by the wire's own walk (the harness
+    // receives the original): the Gemini `apiKey` in a model endpoint, and
+    // the values of an MCP server's `env` and `headers` and an endpoint's
+    // `httpHeaders`, which are API keys and `Authorization` tokens by design.
     wire.emit(|| WireEvent::WsSend {
         id: wire.id(),
-        payload: redact_for_inspection(value.clone()),
+        payload: crate::redact::json(&value),
     });
     let text = value.to_string();
     sink.lock()
@@ -341,48 +345,6 @@ async fn write_json(
             message: "send failed".to_string(),
             source: Box::new(e),
         })
-}
-
-/// Redacts credential fields in the *inspection copy* of an outgoing
-/// payload (the harness receives the original). Credentials in the
-/// protocol: the Gemini `apiKey` inside model endpoint configs, plus the
-/// pure credential-carrier maps — MCP stdio `env`, MCP HTTP `headers`, and
-/// model-endpoint `httpHeaders` — whose values are API keys and
-/// `Authorization` tokens by design.
-fn redact_for_inspection(mut value: serde_json::Value) -> serde_json::Value {
-    redact_keys(&mut value);
-    value
-}
-
-/// Map-valued keys whose every entry is treated as a credential.
-const REDACT_MAP_KEYS: &[&str] = &["env", "headers", "httpHeaders"];
-
-fn redact_keys(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (key, entry) in map.iter_mut() {
-                if key == "apiKey" && entry.is_string() {
-                    *entry = serde_json::Value::String("[REDACTED]".to_string());
-                } else if REDACT_MAP_KEYS.contains(&key.as_str()) {
-                    if let serde_json::Value::Object(entries) = entry {
-                        for value in entries.values_mut() {
-                            if value.is_string() {
-                                *value = serde_json::Value::String("[REDACTED]".to_string());
-                            }
-                        }
-                    }
-                } else {
-                    redact_keys(entry);
-                }
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items.iter_mut() {
-                redact_keys(item);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Cloneable write-only handle used by [`CancelHandle`](super::CancelHandle).
@@ -624,84 +586,6 @@ mod tests {
         assert!(
             matches!(next, Ok(None)),
             "a dropped connection reads as closed: {next:?}"
-        );
-    }
-
-    #[test]
-    fn test_redaction_masks_api_keys_everywhere() {
-        let payload = json!({
-            "config": {
-                "models": [
-                    {"geminiApiEndpoint": {"apiKey": "secret-1"}},
-                    {"vertexEndpoint": {"apiKey": "secret-2"}}
-                ],
-                "tools": [{"name": "t"}]
-            }
-        });
-        let redacted = redact_for_inspection(payload);
-        assert_eq!(
-            redacted["config"]["models"][0]["geminiApiEndpoint"]["apiKey"],
-            "[REDACTED]"
-        );
-        assert_eq!(
-            redacted["config"]["models"][1]["vertexEndpoint"]["apiKey"],
-            "[REDACTED]"
-        );
-        // Non-credential content is untouched.
-        assert_eq!(redacted["config"]["tools"][0]["name"], "t");
-        assert!(!redacted.to_string().contains("secret-"));
-    }
-
-    #[test]
-    fn test_redaction_leaves_plain_payloads_alone() {
-        let payload = json!({"userInput": "what is an apiKey?"});
-        assert_eq!(redact_for_inspection(payload.clone()), payload);
-    }
-
-    #[test]
-    fn test_redaction_masks_mcp_and_endpoint_credentials() {
-        let payload = json!({
-            "config": {
-                "models": [
-                    {"geminiApiEndpoint": {
-                        "apiKey": "secret-1",
-                        "httpHeaders": {"x-custom-auth": "secret-2"}
-                    }}
-                ],
-                "mcpServers": [
-                    {"stdio": {
-                        "command": "my-mcp",
-                        "env": {"GITHUB_TOKEN": "secret-3", "MODE": "fast"}
-                    }},
-                    {"http": {
-                        "url": "https://internal/mcp",
-                        "headers": {"Authorization": "Bearer secret-4"}
-                    }}
-                ]
-            }
-        });
-        let redacted = redact_for_inspection(payload);
-        let text = redacted.to_string();
-        assert!(!text.contains("secret-"), "credential leaked: {text}");
-        // Structure survives: command/url untouched, header keys visible.
-        assert_eq!(
-            redacted["config"]["mcpServers"][0]["stdio"]["command"],
-            "my-mcp"
-        );
-        assert_eq!(
-            redacted["config"]["mcpServers"][1]["http"]["url"],
-            "https://internal/mcp"
-        );
-        assert_eq!(
-            redacted["config"]["mcpServers"][1]["http"]["headers"]["Authorization"],
-            "[REDACTED]"
-        );
-        // Non-string map values (none today) and non-credential env values are
-        // both redacted uniformly — env/headers are credential carriers by
-        // design, so over-redaction is the correct trade.
-        assert_eq!(
-            redacted["config"]["mcpServers"][0]["stdio"]["env"]["MODE"],
-            "[REDACTED]"
         );
     }
 }
