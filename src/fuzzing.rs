@@ -39,9 +39,10 @@ use crate::{
     Agent, AgentListResponse, Annotation, CodeExecutionOutput, Content, CredentialListResponse,
     Environment, EnvironmentFileListResponse, EnvironmentListResponse, EnvironmentSpec,
     FileListResponse, FileSearchDocumentListResponse, FileSearchStoreListResponse,
-    FunctionResultPayload, GenaiError, InteractionInput, InteractionRequest, InteractionResponse,
-    Step, StepDelta, StreamEvent, Tool, Trigger, TriggerExecutionListResponse, TriggerListResponse,
-    VoiceListResponse, Webhook, WebhookListResponse,
+    FunctionResultPayload, GenaiError, GenerationConfig, InteractionInput, InteractionRequest,
+    InteractionResponse, Step, StepDelta, StreamEvent, Tool, ToolChoice, Trigger,
+    TriggerExecutionListResponse, TriggerListResponse, TurnContent, VoiceListResponse, Webhook,
+    WebhookListResponse,
 };
 use bytes::Bytes;
 use futures_util::{FutureExt, Stream, StreamExt, stream};
@@ -164,6 +165,7 @@ pub fn stream_event(data: &[u8]) {
 ///   [`unknown_read_back`]). Read from the wire, its data already holds that
 ///   tag, so nothing changes; an input with no string `type` is tagged
 ///   `"<missing type>"`, and that tag is in its data from then on.
+/// - A `ToolChoice::Unknown` reads back typed by its data's shape.
 pub(crate) trait Normalize {
     /// Applies the differences the first write makes on purpose.
     fn normalize(&mut self);
@@ -279,6 +281,36 @@ impl Normalize for Tool {
     }
 }
 
+impl Normalize for ToolChoice {
+    fn normalize(&mut self) {
+        // An unknown choice reads back typed by its JSON's shape, as
+        // `ToolChoice`'s reader types it. (Data that reads as a known arm,
+        // a string or an `allowed_tools` that parses, is no unknown read
+        // from the wire.)
+        if let Self::Unknown { choice_type, data } = self {
+            *choice_type = if data.get("allowed_tools").is_some() {
+                "allowed_tools".to_string()
+            } else {
+                format!("<unrecognized: {data}>")
+            };
+        }
+    }
+}
+
+impl Normalize for GenerationConfig {
+    fn normalize(&mut self) {
+        self.tool_choice.normalize();
+    }
+}
+
+impl Normalize for TurnContent {
+    fn normalize(&mut self) {
+        if let Self::Parts(contents) = self {
+            contents.normalize();
+        }
+    }
+}
+
 impl<T: Normalize> Normalize for Vec<T> {
     fn normalize(&mut self) {
         self.iter_mut().for_each(Normalize::normalize);
@@ -308,6 +340,7 @@ impl Normalize for InteractionResponse {
         self.input.normalize();
         self.steps.normalize();
         self.tools.normalize();
+        self.generation_config.normalize();
     }
 }
 

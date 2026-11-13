@@ -86,6 +86,26 @@ where
     Ok(())
 }
 
+/// [`assert_first_write_keeps`] for an [`InteractionInput`], where its
+/// value reads back as the same arm. A content list holding an unknown
+/// block reads back as steps instead, as the reader types a list by its
+/// blocks' tags: that is the only arm change allowed.
+fn assert_input_first_write_keeps(input: &InteractionInput) -> Result<(), TestCaseError> {
+    let json = serde_json::to_value(input).expect("Serialization should succeed");
+    let restored: InteractionInput =
+        serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+    if std::mem::discriminant(input) == std::mem::discriminant(&restored) {
+        assert_first_write_keeps(input)
+    } else {
+        prop_assert!(
+            matches!(input, InteractionInput::Content(contents) if contents.iter().any(Content::is_unknown)),
+            "read back as another arm: {}",
+            json
+        );
+        Ok(())
+    }
+}
+
 // =============================================================================
 // Strategy Generators for Arbitrary Types
 // =============================================================================

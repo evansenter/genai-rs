@@ -1,0 +1,1 @@
+{"id":"a2","tools":[{"type":"google_search","search_types":[5,"web_search",{"k":1}]},{"type":"function","name":"f","parameters":{"type":"object","properties":{}}},{"type":"retrieval","retrieval_types":[true],"rag_store_config":{"rag_retrieval_config":{"hybrid_search":{"alpha":0.5}}}}],"agent_config":{"type":"deep-research","thinking_summaries":7}}

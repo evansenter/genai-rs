@@ -346,13 +346,13 @@ proptest! {
         prop_assert_eq!(allowed, restored);
     }
 
-    /// Test that ToolChoice roundtrips stably through JSON.
-    ///
-    /// Uses JSON comparison since the Unknown variant regenerates its
-    /// choice_type descriptor on deserialization.
+    /// Test that ToolChoice roundtrips through JSON: stably, and to the value
+    /// it was written from, once an Unknown's choice_type is the descriptor
+    /// its data reads back with.
     #[test]
     fn tool_choice_roundtrip(choice in arb_tool_choice()) {
         assert_value_roundtrip(&choice)?;
+        assert_first_write_keeps(&choice)?;
     }
 
     /// Test that RetrievalType roundtrips correctly through JSON.
@@ -363,10 +363,12 @@ proptest! {
         prop_assert_eq!(retrieval_type, restored);
     }
 
-    /// Test that Tool roundtrips stably through JSON.
+    /// Test that Tool roundtrips through JSON: stably, and to the value it
+    /// was written from (its non-string unknowns included).
     #[test]
     fn tool_roundtrip(tool in arb_tool()) {
         assert_value_roundtrip(&tool)?;
+        assert_first_write_keeps(&tool)?;
     }
 }
 

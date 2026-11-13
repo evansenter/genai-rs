@@ -458,6 +458,21 @@ proptest! {
     #[test]
     fn interaction_response_roundtrip(response in arb_interaction_response()) {
         assert_interaction_response_roundtrip(&response)?;
+        // The first write keeps the value, unless its input reads back as
+        // another arm (`assert_input_first_write_keeps` checks that one).
+        if let Some(input) = &response.input {
+            assert_input_first_write_keeps(input)?;
+        }
+        let json = serde_json::to_value(&response).expect("Serialization should succeed");
+        let restored: InteractionResponse =
+            serde_json::from_value(json).expect("Deserialization should succeed");
+        let mut response = response;
+        if let (Some(sent), Some(read)) = (&response.input, &restored.input)
+            && std::mem::discriminant(sent) != std::mem::discriminant(read)
+        {
+            response.input.clone_from(&restored.input);
+        }
+        assert_first_write_keeps(&response)?;
     }
 
     /// Test that StreamChunk roundtrips stably through JSON.

@@ -518,10 +518,12 @@ proptest! {
         prop_assert_eq!(config, restored);
     }
 
-    /// Test that TurnContent roundtrips stably through JSON.
+    /// Test that TurnContent roundtrips through JSON: stably, and to the
+    /// value it was written from.
     #[test]
     fn turn_content_roundtrip(content in arb_turn_content()) {
         assert_value_roundtrip(&content)?;
+        assert_first_write_keeps(&content)?;
     }
 
     /// Test that AgentConfig roundtrips correctly through JSON.
@@ -633,10 +635,12 @@ proptest! {
         prop_assert_eq!(spec, restored);
     }
 
-    /// Test that InteractionInput roundtrips stably through JSON.
+    /// Test that InteractionInput roundtrips through JSON: stably, and to
+    /// the value it was written from where it reads back as the same arm.
     #[test]
     fn interaction_input_roundtrip(input in arb_interaction_input()) {
         assert_value_roundtrip(&input)?;
+        assert_input_first_write_keeps(&input)?;
 
         // Text input must stay Text (arrays/objects never look like strings)
         if matches!(input, InteractionInput::Text(_)) {
