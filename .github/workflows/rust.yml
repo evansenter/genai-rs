@@ -648,7 +648,8 @@ jobs:
   # The macOS legs above run on main pushes and the schedule only, so a PR
   # that breaks process_tree.rs's libproc lookup would first fail on main.
   # This job runs those tests on macOS for a PR that changes the process
-  # code (src/antigravity/process*.rs) or this workflow, and passes without
+  # code (src/antigravity/process*.rs), what it builds with (Cargo.toml,
+  # Cargo.lock, a rust-toolchain file) or this workflow, and passes without
   # building otherwise. Not a required check: it does not run on pushes.
   process-tree-macos:
     name: Process Tree (macOS)
@@ -673,8 +674,8 @@ jobs:
           changed=false
           while IFS= read -r path; do
             case "$path" in
-              src/antigravity/process*.rs|.github/workflows/rust.yml)
-                echo "Process code changed: $path"
+              src/antigravity/process*.rs|Cargo.toml|Cargo.lock|rust-toolchain*|.github/workflows/rust.yml)
+                echo "Process code or its build changed: $path"
                 changed=true
                 ;;
             esac

@@ -2372,7 +2372,7 @@ PR ran.
   job; `rust.yml` is in the filter so that a change to the job runs it.
   It is not a required check, and on a push it is skipped by design.
 
-**Amended 2026-11-10 (J-4).** The #504 grade of 2026-11-09 found
+**Amended 2026-11-10 (J-4, J-14).** The #504 grade of 2026-11-09 found
 that "nothing skips the floor or ignores its failure" did not hold: the
 guard read the YAML keys alone, and seven edits passed all 60 ci_coverage
 tests: `--fail-under-lines 93 || true` (M3), `|| true` on the release gate
@@ -2407,6 +2407,10 @@ integration step (M8), and a skip budget of 300 (M5). Each now fails one.
 - The scripted harness step in `test-antigravity`, part of the required
   Test Suite (antigravity) check, runs with the key blanked and has no
   escape.
+- `process-tree-macos` also runs its tests when a PR changes `Cargo.toml`,
+  `Cargo.lock` or a `rust-toolchain*` file: a dependency (`libc`,
+  `tokio`) or toolchain change can break the libproc path as surely as
+  the code can, and it was first seen on main's push run.
 
 The guard still reads the workflow as text and knows the masks it names.
 A mask it does not know, inside a command substitution in quotes or behind

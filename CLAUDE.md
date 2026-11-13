@@ -368,7 +368,8 @@ wheel's protos with `python3`).
   path that Linux's test-antigravity cannot reach, on each macOS leg;
   trybuild's `ui_tests` are skipped on beta), process-tree-macos (PRs
   only, on macos-latest: those `process_tree` tests, when the PR changes
-  `src/antigravity/process*.rs` or `rust.yml`, and nothing otherwise),
+  `src/antigravity/process*.rs`, `Cargo.toml`, `Cargo.lock`, a
+  `rust-toolchain*` file or `rust.yml`, and nothing otherwise),
   coverage, build-metrics, main-push-status, scheduled-run-status. The
   coverage job measures the `antigravity` feature too, with its scripted
   suite, counts library files only (no test-only file; an inline
