@@ -4,8 +4,9 @@
 //! around it: the field's, and a header's or an environment variable's. The
 //! secrets are the ones the `LOUD_WIRE` printer redacts on the wire
 //! (`crate::wire`): an API key, a webhook signing secret, credential
-//! material, an environment variable's value, and every header value under
-//! an MCP server's `headers` or an allowlist entry's `transform`. So
+//! material, an environment variable's value, every header value under
+//! an MCP server's `headers` or an allowlist entry's `transform`, and a
+//! replicated voice's key, wherever it is sent. So
 //! `dbg!(request)` or `tracing::debug!(?request)` cannot undo the wire's
 //! redaction.
 //!
@@ -33,6 +34,19 @@ pub(crate) const REDACTED: &str = "[REDACTED]";
 /// is not, so `Debug` still shows which.
 pub(crate) fn optional<T>(secret: Option<&T>) -> Option<&'static str> {
     secret.map(|_| REDACTED)
+}
+
+/// A voice name with a replicated voice's key, which a request sends as a
+/// voice name (`crate::wire::is_voice_key`), redacted, and any other name as
+/// it is.
+pub(crate) fn voice_name(name: Option<&str>) -> Option<&str> {
+    name.map(|name| {
+        if crate::wire::is_voice_key(name) {
+            REDACTED
+        } else {
+            name
+        }
+    })
 }
 
 /// A header (or environment) map with its names kept and every value

@@ -118,34 +118,65 @@ pub struct InteractionBuilder<'a> {
     timeout: Option<Duration>,
 }
 
+// `extra` prints through the wire's walk, as `InteractionRequest`'s does
+// (D-067). The client is left out, and the tool service, which has no
+// `Debug`, prints as `...` when set.
 impl std::fmt::Debug for InteractionBuilder<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            client: _,
+            model,
+            agent,
+            agent_config,
+            history,
+            current_message,
+            content_input,
+            previous_interaction_id,
+            tools,
+            response_modalities,
+            response_format,
+            generation_config,
+            speech_configs,
+            background,
+            store,
+            system_instruction,
+            service_tier,
+            webhook_config,
+            environment,
+            safety_settings,
+            labels,
+            continuation_token,
+            extra,
+            max_function_call_loops,
+            tool_service,
+            timeout,
+        } = self;
         f.debug_struct("InteractionBuilder")
-            .field("model", &self.model)
-            .field("agent", &self.agent)
-            .field("agent_config", &self.agent_config)
-            .field("history", &self.history)
-            .field("current_message", &self.current_message)
-            .field("content_input", &self.content_input)
-            .field("previous_interaction_id", &self.previous_interaction_id)
-            .field("tools", &self.tools)
-            .field("response_modalities", &self.response_modalities)
-            .field("response_format", &self.response_format)
-            .field("generation_config", &self.generation_config)
-            .field("speech_configs", &self.speech_configs)
-            .field("webhook_config", &self.webhook_config)
-            .field("environment", &self.environment)
-            .field("background", &self.background)
-            .field("store", &self.store)
-            .field("system_instruction", &self.system_instruction)
-            .field("service_tier", &self.service_tier)
-            .field("safety_settings", &self.safety_settings)
-            .field("labels", &self.labels)
-            .field("continuation_token", &self.continuation_token)
-            .field("extra", &self.extra)
-            .field("max_function_call_loops", &self.max_function_call_loops)
-            .field("tool_service", &self.tool_service.as_ref().map(|_| "..."))
-            .field("timeout", &self.timeout)
+            .field("model", model)
+            .field("agent", agent)
+            .field("agent_config", agent_config)
+            .field("history", history)
+            .field("current_message", current_message)
+            .field("content_input", content_input)
+            .field("previous_interaction_id", previous_interaction_id)
+            .field("tools", tools)
+            .field("response_modalities", response_modalities)
+            .field("response_format", response_format)
+            .field("generation_config", generation_config)
+            .field("speech_configs", speech_configs)
+            .field("webhook_config", webhook_config)
+            .field("environment", environment)
+            .field("background", background)
+            .field("store", store)
+            .field("system_instruction", system_instruction)
+            .field("service_tier", service_tier)
+            .field("safety_settings", safety_settings)
+            .field("labels", labels)
+            .field("continuation_token", continuation_token)
+            .field("extra", &crate::redact::map(extra))
+            .field("max_function_call_loops", max_function_call_loops)
+            .field("tool_service", &tool_service.as_ref().map(|_| "..."))
+            .field("timeout", timeout)
             .finish()
     }
 }

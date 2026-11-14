@@ -643,9 +643,8 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
 ///     .into();
 /// ```
 ///
-/// `Debug` prints an `Unknown` spec's JSON through the wire's redaction, so
-/// an environment variable's value in it prints as `[REDACTED]`, as it does
-/// in a remote environment's.
+/// `Debug` prints an `Unknown` spec's JSON with every string `[REDACTED]`
+/// and its keys kept, as a remote environment's unread `env` prints.
 #[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub enum EnvironmentSpec {
@@ -673,7 +672,7 @@ impl std::fmt::Debug for EnvironmentSpec {
             } => f
                 .debug_struct("Unknown")
                 .field("environment_type", environment_type)
-                .field("data", &redact::json(data))
+                .field("data", &redact::json_strings(data))
                 .finish(),
         }
     }

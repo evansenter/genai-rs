@@ -200,7 +200,12 @@ from here rather than repeated.
   under Audio response and SpeechConfig in `docs/ENUM_WIRE_FORMATS.md`. A
   custom voice worked on the 3.8 and 2.5-pro TTS models;
   `gemini-3.1-flash-tts-preview` answered 500 (recorded without a date,
-  from the 2.25.0 sweep's Voices work of 2026-09-24).
+  from the 2.25.0 sweep's Voices work of 2026-09-24). A `speech_config`
+  voice that starts with `voicekey_` is read as a replicated voice's key:
+  on `gemini-3.8-flash-tts` one that does not parse is a 400
+  (`invalid_request`, "Unable to parse Voice Replication Key"), whose
+  message does not repeat it (live 2026-11-14). So the prefix the crate
+  redacts as a key (D-067) is the one the API reads as one.
 
 ### Requests
 

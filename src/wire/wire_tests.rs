@@ -456,6 +456,11 @@ fn test_redact_fields_leaves_a_schemas_property_names_alone() {
             "headers": {"Authorization": "secret-7"},
             "api_key": "secret-8"
         }},
+        // Gemini's `Schema` spells its types in upper case: `"OBJECT"` is
+        // `"object"` (#578), and `"STRING"` a schema type.
+        "gemini": {"type": "OBJECT", "properties": {
+            "api_key": {"type": "STRING", "description": "Key to use"}
+        }},
     });
     redact_secrets(&mut value);
     let properties = &value["parameters"]["properties"];
@@ -465,8 +470,73 @@ fn test_redact_fields_leaves_a_schemas_property_names_alone() {
         properties["nested"]["properties"]["token"]["description"],
         "A token"
     );
+    let gemini = &value["gemini"]["properties"]["api_key"];
+    assert_eq!(gemini["type"], "STRING", "{value}");
+    assert_eq!(gemini["description"], "Key to use");
     let text = value.to_string();
     assert!(!text.contains("secret-"), "leaked: {text}");
+}
+
+#[test]
+fn test_redact_fields_a_property_type_must_name_a_schema_type() {
+    // Under `properties` beside `"type": "object"`, a `type` makes a value a
+    // schema only when it names a JSON Schema type (or lists them): a
+    // bearer credential under `token` is the secret field, not a schema.
+    let mut value = serde_json::json!({"type": "object", "properties": {
+        "token": {"type": "bearer", "value": "secret-1"},
+        "api_key": {"type": ["bearer"], "value": "secret-2"},
+        "secret": {"type": [], "value": "secret-3"},
+        "credential": {"type": "environment_variable", "value": "secret-4"},
+        "env": {"type": ["string", "null"], "description": "Nullable env"},
+        "refresh_token": {"type": "Integer", "minimum": 0},
+        "client_secret": {"enum": ["a", "b"]}
+    }});
+    redact_secrets(&mut value);
+    let text = value.to_string();
+    assert!(!text.contains("secret-"), "leaked: {text}");
+    let properties = &value["properties"];
+    for name in ["token", "api_key", "secret"] {
+        assert_eq!(properties[name], REDACTED, "{name}: {text}");
+    }
+    // Not a schema, and not named as a secret: read as any object is.
+    assert_eq!(properties["credential"]["type"], "environment_variable");
+    assert_eq!(properties["credential"]["value"], REDACTED);
+    // A type list, a type in any case, and a schema keyword but `type`.
+    assert_eq!(properties["env"]["description"], "Nullable env");
+    assert_eq!(properties["refresh_token"]["minimum"], 0);
+    assert_eq!(properties["client_secret"]["enum"][1], "b");
+}
+
+#[test]
+fn test_redact_fields_a_voice_key_wherever_it_appears() {
+    // A replicated voice's key, as the voice returns it and as a request
+    // sends it for a voice name, in an array, and as the whole body.
+    let key = "voicekey_secret-1";
+    let mut value = serde_json::json!({
+        "key": key,
+        "generation_config": {"speech_config": [{"voice": key, "language": "en-US"}]},
+        "voices": [key, "kore"],
+        "data": key,
+        "type": "replicated",
+    });
+    redact_secrets(&mut value);
+    let text = value.to_string();
+    assert!(!text.contains("secret-"), "leaked: {text}");
+    assert_eq!(value["key"], REDACTED);
+    assert_eq!(
+        value["generation_config"]["speech_config"][0]["voice"],
+        REDACTED
+    );
+    assert_eq!(value["voices"][1], "kore");
+    assert_eq!(value["type"], "replicated");
+    let mut body = serde_json::json!(key);
+    truncate_long_fields(&mut body);
+    assert_eq!(body, REDACTED);
+    // Only a string that starts with the prefix.
+    let mut named = serde_json::json!({"voice": "my-voicekey_x", "id": "voice_123"});
+    redact_secrets(&mut named);
+    assert_eq!(named["voice"], "my-voicekey_x");
+    assert_eq!(named["id"], "voice_123");
 }
 
 #[test]

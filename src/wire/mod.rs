@@ -355,6 +355,16 @@ const REDACT_FIELDS: &[&str] = &[
 /// environment variable's value inside an `env` map (`RemoteEnvironment`).
 const CONTEXT_REDACT_FIELD: &str = "value";
 
+/// What a replicated voice's client-held key (`Voice::key`) starts with. The
+/// key is a secret, and a request sends it as a voice name, so a string
+/// starting so is redacted wherever it appears, under any name.
+const VOICE_KEY_PREFIX: &str = "voicekey_";
+
+/// Whether `value` is a replicated voice's key ([`VOICE_KEY_PREFIX`]).
+pub(crate) fn is_voice_key(value: &str) -> bool {
+    value.starts_with(VOICE_KEY_PREFIX)
+}
+
 /// Fields holding a header map whose *values* are secret while the names
 /// are worth seeing: an MCP server's `headers` (`{"Authorization": "Bearer
 /// ..."}`), an environment allowlist entry's `transform` list of header
@@ -378,7 +388,9 @@ const SCHEMA_PROPERTIES: &str = "properties";
 
 /// The keys one of which a property's schema holds: an object without any
 /// of them under [`SCHEMA_PROPERTIES`] is data (a call's arguments to a
-/// parameter named `properties`, say), not a schema.
+/// parameter named `properties`, say), not a schema. A `type` counts only
+/// when it names a [`SCHEMA_TYPES`] type, so a secret's object under a
+/// secret's name (`{"type": "bearer", ...}` under `token`) is data.
 const SCHEMA_KEYWORDS: &[&str] = &[
     "type",
     "$ref",
@@ -389,6 +401,12 @@ const SCHEMA_KEYWORDS: &[&str] = &[
     "anyOf",
     "oneOf",
     "allOf",
+];
+
+/// The JSON Schema type names, matched ignoring case: Gemini's `Schema`
+/// spells them in upper case (`"STRING"`).
+const SCHEMA_TYPES: &[&str] = &[
+    "string", "number", "integer", "boolean", "object", "array", "null",
 ];
 
 /// Maximum length before truncation (keep roughly the first 100 bytes,
@@ -423,8 +441,9 @@ pub(crate) fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
 /// contain strings longer than 100 bytes, and replaces secret fields (see
 /// [`REDACT_FIELDS`], [`REDACT_VALUES_BENEATH`], [`ENV_FIELD`] and
 /// [`CONTEXT_REDACT_FIELD`]; not the property names of a schema's
-/// [`SCHEMA_PROPERTIES`]) with [`REDACTED`] regardless of length. Text
-/// content and other fields are preserved in full.
+/// [`SCHEMA_PROPERTIES`]) and every voice key ([`VOICE_KEY_PREFIX`]) with
+/// [`REDACTED`] regardless of length. Text content and other fields are
+/// preserved in full.
 fn truncate_long_fields(value: &mut serde_json::Value) {
     redact_walk(value, false, true);
 }
@@ -460,6 +479,7 @@ pub(crate) fn redact_strings(value: &mut serde_json::Value) {
 /// the long base64 fields too.
 fn redact_walk(value: &mut serde_json::Value, in_env: bool, truncate: bool) {
     match value {
+        serde_json::Value::String(s) if is_voice_key(s) => *s = REDACTED.to_string(),
         serde_json::Value::Object(map) => redact_entries(map, in_env, truncate),
         serde_json::Value::Array(arr) => {
             for item in arr.iter_mut() {
@@ -484,6 +504,12 @@ fn redact_entries(
         .is_some_and(|kind| kind.eq_ignore_ascii_case("object"));
     for (key, val) in map.iter_mut() {
         let key = key.as_str();
+        if let serde_json::Value::String(s) = val
+            && is_voice_key(s)
+        {
+            *s = REDACTED.to_string();
+            continue;
+        }
         if REDACT_VALUES_BENEATH.contains(&key) {
             redact_strings(val);
         } else if REDACT_FIELDS.contains(&key) || (redact_value && key == CONTEXT_REDACT_FIELD) {
@@ -526,10 +552,7 @@ fn redact_schema_properties(
 ) {
     let mut data = serde_json::Map::new();
     for (name, value) in properties.iter_mut() {
-        let schema = value
-            .as_object()
-            .is_some_and(|object| SCHEMA_KEYWORDS.iter().any(|key| object.contains_key(*key)));
-        if schema {
+        if value.as_object().is_some_and(is_property_schema) {
             redact_walk(value, in_env, truncate);
         } else {
             data.insert(name.clone(), value.take());
@@ -539,6 +562,25 @@ fn redact_schema_properties(
     for (name, value) in data {
         properties.insert(name, value);
     }
+}
+
+/// Whether a value under [`SCHEMA_PROPERTIES`] is a schema: it holds a
+/// [`SCHEMA_KEYWORDS`] key, and a `type` among them names a JSON Schema type
+/// (or is a list of such names).
+fn is_property_schema(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let type_name = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .is_some_and(|name| SCHEMA_TYPES.iter().any(|t| name.eq_ignore_ascii_case(t)))
+    };
+    SCHEMA_KEYWORDS.iter().any(|key| match object.get(*key) {
+        None => false,
+        Some(kind) if *key == "type" => match kind {
+            serde_json::Value::Array(names) => !names.is_empty() && names.iter().all(type_name),
+            _ => type_name(kind),
+        },
+        Some(_) => true,
+    })
 }
 
 /// An [`ENV_FIELD`]'s value: a string in it, as the whole `env` or as an

@@ -28,6 +28,7 @@
 use crate::client::Client;
 use crate::errors::GenaiError;
 use crate::paging;
+use crate::redact;
 use crate::response::UsageMetadata;
 use crate::serde_util::{ResourceName, deserialize_lenient_timestamp};
 use crate::wire_enum::wire_enum;
@@ -128,7 +129,10 @@ impl PromptedVoice {
 }
 
 /// A voice, as returned by `/v1beta/voices`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+///
+/// `Debug` prints a replicated voice's [`key`](Self::key) as `[REDACTED]`: it
+/// is a secret, which `LOUD_WIRE` redacts too.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct Voice {
@@ -174,7 +178,9 @@ pub struct Voice {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompted: Option<PromptedVoice>,
     /// Client-managed key (`voicekey_...`), returned only for a replicated
-    /// voice created with `store: false`.
+    /// voice created with `store: false`. A secret, since it works as a
+    /// voice name: `Debug` and `LOUD_WIRE` print it redacted, here and
+    /// wherever a request sends it as one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// When a custom voice expires (one year after creation, observed).
@@ -192,6 +198,53 @@ pub struct Voice {
     /// Unmodeled fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// The key is a secret (D-067): printed redacted, and `extra` through the
+// wire's walk, which redacts a key there too.
+impl std::fmt::Debug for Voice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            id,
+            voice_type,
+            display_name,
+            description,
+            language_code,
+            region_code,
+            accent,
+            persona,
+            context,
+            gender,
+            pitch,
+            model,
+            prompted,
+            key,
+            expire_time,
+            sample_audio,
+            usage,
+            extra,
+        } = self;
+        f.debug_struct("Voice")
+            .field("id", id)
+            .field("voice_type", voice_type)
+            .field("display_name", display_name)
+            .field("description", description)
+            .field("language_code", language_code)
+            .field("region_code", region_code)
+            .field("accent", accent)
+            .field("persona", persona)
+            .field("context", context)
+            .field("gender", gender)
+            .field("pitch", pitch)
+            .field("model", model)
+            .field("prompted", prompted)
+            .field("key", &redact::optional(key.as_ref()))
+            .field("expire_time", expire_time)
+            .field("sample_audio", sample_audio)
+            .field("usage", usage)
+            .field("extra", &redact::map(extra))
+            .finish()
+    }
 }
 
 /// Response from listing voices.

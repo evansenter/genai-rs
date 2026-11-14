@@ -402,7 +402,7 @@ pub(crate) fn input_from_value(value: serde_json::Value) -> Result<InteractionIn
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct InteractionRequest {
     /// Model name (e.g. [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)) - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -571,6 +571,57 @@ pub struct InteractionRequest {
     /// 0.12.0 did.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// The modeled fields print as the derive printed them, each type that
+// holds a secret redacting it, and `extra` through the wire's walk (D-067).
+impl std::fmt::Debug for InteractionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            model,
+            agent,
+            agent_config,
+            input,
+            previous_interaction_id,
+            tools,
+            response_modalities,
+            response_format,
+            generation_config,
+            stream,
+            background,
+            store,
+            system_instruction,
+            service_tier,
+            webhook_config,
+            environment,
+            safety_settings,
+            labels,
+            continuation_token,
+            extra,
+        } = self;
+        f.debug_struct("InteractionRequest")
+            .field("model", model)
+            .field("agent", agent)
+            .field("agent_config", agent_config)
+            .field("input", input)
+            .field("previous_interaction_id", previous_interaction_id)
+            .field("tools", tools)
+            .field("response_modalities", response_modalities)
+            .field("response_format", response_format)
+            .field("generation_config", generation_config)
+            .field("stream", stream)
+            .field("background", background)
+            .field("store", store)
+            .field("system_instruction", system_instruction)
+            .field("service_tier", service_tier)
+            .field("webhook_config", webhook_config)
+            .field("environment", environment)
+            .field("safety_settings", safety_settings)
+            .field("labels", labels)
+            .field("continuation_token", continuation_token)
+            .field("extra", &crate::redact::map(extra))
+            .finish()
+    }
 }
 
 wire_enum! {
