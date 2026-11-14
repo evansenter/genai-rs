@@ -174,7 +174,14 @@ from here rather than repeated.
   for this model. Allowed values are: low, high.` The value is known to the
   endpoint everywhere: an unknown level is `400 The value 'ultra' is not
   supported for 'generation_config.thinking_level'. Supported values:
-  'minimal', 'low', 'medium', 'high', 'xhigh'.`
+  'minimal', 'low', 'medium', 'high', 'xhigh'.` On `generateContent`, the
+  API the Antigravity harness calls, the same day: `DEFAULT_MODEL` refused
+  `"xhigh"` (`400 Thinking level XHIGH is not supported for this model.`)
+  and `gemini-4-hydrogen` took it, while the Python harness SDK's own
+  spelling, `"extra_high"` (`ThinkingLevel.EXTRA_HIGH`), is a different
+  level there: both models took it, `DEFAULT_MODEL` included. An unknown
+  level is `400 Invalid value at
+  'generation_config.thinking_config.thinking_level'`.
 - **New model ids in google-genai 3.3.0** (`gemini-4-carbon`,
   `gemini-4-hydrogen`, `gemini-omni-1.2-flash`) are all served
   (2026-11-14): `GET /v1beta/models` lists each with `generateContent`, and
