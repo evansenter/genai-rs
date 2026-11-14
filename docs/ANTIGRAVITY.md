@@ -1222,9 +1222,10 @@ Delivery semantics (see `antigravity::triggers` for details):
   `None` when no turn starts within `wait`). Not consumed, it runs
   unobserved: the next `chat`/`send_streaming` call halts it if it is still
   running and discards its events before sending your input, so a trigger
-  turn can never surface as (or desync) your turn's response. The trigger's
-  effects on conversation history (and any tool calls completed before the
-  halt) persist.
+  turn can never surface as (or desync) your turn's response. A trigger
+  turn whose failure ended the session fails that call instead (see
+  [Errors](#errors)). The trigger's effects on conversation history (and
+  any tool calls completed before the halt) persist.
 - `on_pre_turn` is not consulted on trigger turns (harness 0.1.23): a
   trigger's turn runs without asking it, though its stop and post-turn
   hooks run, so a pre-turn gate (a turn budget, say) does not see those
@@ -1424,7 +1425,10 @@ variants, never on message text. Key variants:
   returned. A harness that dies mid-turn, or while `next_trigger_turn`
   waits, fails the call with it and the tail of its `stderr`. After a turn
   whose failure ended the session (below), each `chat`, `send_streaming`
-  and `next_trigger_turn` fails with it without sending. A trigger's
+  and `next_trigger_turn` fails with it without sending its message. So
+  does a `chat` or `send_streaming` that first halts and discards such a
+  turn (a trigger's that nothing consumed), or that sees the harness close
+  the connection while it discards one. A trigger's
   `TriggerContext::send` gets it, with an empty `stderr`, once the agent is
   shut down or dropped.
 - `HarnessExited`: a failed exit on `shutdown()`, with `stderr`.
@@ -1459,8 +1463,12 @@ A failed turn is `Turn { kind, message }`, where `kind` is a
 `kind.ends_session()` answers the last column. On harness 0.1.23 the
 harness's run ends with a `ModelBackend` or `Trajectory` failure, and the
 agent fails every later `chat`, `send_streaming` and `next_trigger_turn`
-with `ConnectionClosed`, without sending: the harness can take one more
-message before it closes its WebSocket and answer it with an empty turn.
+with `ConnectionClosed`, without sending its message: the harness can take
+one more message before it closes its WebSocket and answer it with an
+empty turn. A failure you never saw counts too. When a trigger's turn
+fails so and nothing consumes it, the next `chat` or `send_streaming`
+halts and discards it, then fails with `ConnectionClosed`, naming the
+failure, without sending its message.
 
 ```rust,no_run
 use genai_rs::antigravity::{AntigravityAgent, AntigravityError, TurnFailure};

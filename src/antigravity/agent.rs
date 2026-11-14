@@ -74,14 +74,13 @@ pub struct AntigravityAgent {
     /// [`begin_turn`](Self::begin_turn) halts and drains the harness's
     /// still-running turn before sending its own input.
     pub(super) turn_unfinished: bool,
-    /// The failure of the turn that ended the session
-    /// ([`TurnFailure::ends_session`]), once there is one. Every later
-    /// `chat`, `send_streaming` and `next_trigger_turn` fails with
+    /// What ended the session, once something has. Each later `chat`,
+    /// `send_streaming` and `next_trigger_turn` fails with
     /// [`AntigravityError::ConnectionClosed`] without sending (`cancel()`
     /// and `shutdown()` do not check): harness 0.1.23 ends its run and
     /// closes the connection, but can first take the next message and
     /// answer it with an empty turn, which would read as a success.
-    pub(super) session_ended: Option<TurnFailure>,
+    pub(super) session_ended: Option<SessionEnd>,
     /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
     /// aborted on shutdown and on drop.
     pub(super) trigger_tasks: triggers::TriggerTasks,
@@ -95,6 +94,17 @@ impl std::fmt::Debug for AntigravityAgent {
             .field("dispatcher", &self.dispatcher)
             .finish_non_exhaustive()
     }
+}
+
+/// What ended an agent's session (its `session_ended`).
+#[derive(Debug, Clone, Copy)]
+pub(super) enum SessionEnd {
+    /// A turn failed in a way that ends the session
+    /// ([`TurnFailure::ends_session`]): one the agent drove, or one a
+    /// halt-and-drain discarded (a trigger's turn, say).
+    Failed(TurnFailure),
+    /// The harness closed the connection while a halt-and-drain read it.
+    Closed,
 }
 
 /// Cancels an in-flight turn from outside the turn-driving future (e.g.
@@ -254,9 +264,10 @@ impl AntigravityAgent {
     /// not take; with no turn timeout, each send gives up after 30 seconds);
     /// [`AntigravityError::ConnectionClosed`] or
     /// [`AntigravityError::WebSocket`] when the connection to the harness
-    /// fails, and `ConnectionClosed`, without sending, once an earlier turn
-    /// ended the session; and [`AntigravityError::Protocol`] when the turn
-    /// ends without a `Finished` event.
+    /// fails, and `ConnectionClosed`, without sending the message, once an
+    /// earlier turn ended the session (a trigger's turn this call discards
+    /// included); and [`AntigravityError::Protocol`] when the turn ends
+    /// without a `Finished` event.
     ///
     /// [`Media`]: super::Media
     pub async fn chat(
@@ -305,8 +316,9 @@ impl AntigravityAgent {
     /// # Errors
     ///
     /// [`AntigravityError::Config`] for an empty [`Prompt`],
-    /// [`AntigravityError::ConnectionClosed`], without sending, once an
-    /// earlier turn ended the session, [`AntigravityError::WebSocket`] when
+    /// [`AntigravityError::ConnectionClosed`], without sending the message,
+    /// once an earlier turn ended the session (a trigger's turn this call
+    /// discards included), [`AntigravityError::WebSocket`] when
     /// the message cannot be sent, and [`AntigravityError::Timeout`] when
     /// the turn timeout passes before the harness takes it, or the harness
     /// does not take it within 30 seconds and the turn has no timeout (it
@@ -563,19 +575,21 @@ impl AntigravityAgent {
         if let Err(AntigravityError::Turn { kind, .. }) = &result
             && kind.ends_session()
         {
-            self.session_ended = Some(*kind);
+            self.session_ended = Some(SessionEnd::Failed(*kind));
         }
         result
     }
 
-    /// Fails a call that would start or wait for a turn once a turn has
-    /// ended the session (`session_ended`), naming that turn's failure.
+    /// Fails a call that would start or wait for a turn once the session
+    /// has ended (`session_ended`), naming what ended it.
     async fn fail_if_session_ended(&self) -> Result<(), AntigravityError> {
-        let Some(failure) = self.session_ended else {
-            return Ok(());
+        let ended = match self.session_ended {
+            None => return Ok(()),
+            Some(SessionEnd::Failed(kind)) => format!("an earlier turn ended the session ({kind})"),
+            Some(SessionEnd::Closed) => "the harness ended the session".to_string(),
         };
         Err(AntigravityError::ConnectionClosed {
-            message: format!("an earlier turn ended the session ({failure}); spawn a new agent"),
+            message: format!("{ended}; spawn a new agent"),
             stderr: self.harness.stderr_tail().await,
         })
     }
@@ -588,7 +602,9 @@ impl AntigravityAgent {
     ///
     /// The turn's deadline bounds the wait for `turn_sync` (a trigger's
     /// delivery holds it across a send) and the drain. Past it, the call
-    /// fails with the turn's `Timeout` before marking the agent busy.
+    /// fails with the turn's `Timeout` before marking the agent busy. A
+    /// drained turn that ended the session fails it with
+    /// `ConnectionClosed`, before the new turn's message is sent.
     ///
     /// Invariant (shared with [`triggers::spawn_trigger_task`]): flipping
     /// the idle flag and consuming `trigger_fired` happen under
@@ -612,12 +628,15 @@ impl AntigravityAgent {
         // busy, so trigger tasks defer and nothing new can fire meanwhile.
         // The unfinished flag stays set across the drain, so a turn
         // abandoned while draining is drained again by the next one.
-        if self.turn_unfinished {
-            self.halt_and_drain("discarding an abandoned or failed turn", turn.deadline)
-                .await;
-        } else if trigger_fired {
-            self.halt_and_drain("discarding a trigger-initiated turn", turn.deadline)
-                .await;
+        let stale = if self.turn_unfinished {
+            Some("discarding an abandoned or failed turn")
+        } else {
+            trigger_fired.then_some("discarding a trigger-initiated turn")
+        };
+        if let Some(why) = stale {
+            self.halt_and_drain(why, turn.deadline).await;
+            // The drained turn may have ended the session (a trigger's).
+            self.fail_if_session_ended().await?;
         }
         self.turn_unfinished = true;
         Ok(())
@@ -648,8 +667,9 @@ impl AntigravityAgent {
     /// never deadlocks, discarding everything surfaced — until the stream
     /// stays silent for [`HALT_DRAIN_SILENCE`] or [`HALT_DRAIN_BUDGET`],
     /// which the halt's send counts against, runs out. Stale-turn errors
-    /// (including the halt's own cancellation) are logged and swallowed;
-    /// only transport health matters here.
+    /// (including the halt's own cancellation) are logged and swallowed,
+    /// but one that ends the session, or the harness closing the
+    /// connection, sets `session_ended`.
     ///
     /// `limit`, the deadline of the turn about to start, cuts the budget
     /// short when it comes first.
@@ -717,12 +737,15 @@ impl AntigravityAgent {
                     };
                     match processed {
                         Ok(()) => state.queue.clear(),
-                        Err(AntigravityError::Turn { message, .. }) => {
+                        Err(AntigravityError::Turn { kind, message }) => {
                             // The stale turn's cancellation or its own
                             // fatal error: expected terminals. Keep
                             // draining until silence in case more turns
                             // (a second trigger) are queued behind it.
                             tracing::debug!("Drained stale-turn terminal ({why}): {message}");
+                            if kind.ends_session() {
+                                self.session_ended.get_or_insert(SessionEnd::Failed(kind));
+                            }
                         }
                         Err(e) => {
                             tracing::warn!("Error while draining stale turn ({why}): {e}");
@@ -732,6 +755,7 @@ impl AntigravityAgent {
                 }
                 Ok(Ok(None)) => {
                     tracing::warn!("Harness closed the connection while {why}.");
+                    self.session_ended.get_or_insert(SessionEnd::Closed);
                     return false;
                 }
                 Ok(Err(e)) => {

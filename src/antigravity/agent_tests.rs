@@ -453,7 +453,7 @@ async fn test_once_the_session_ended_each_turn_call_refuses_without_sending() {
     let builder = AntigravityAgent::builder().add_wire_inspector(sends.clone());
     let mut stalled = Stalled::spawn(builder).await;
     let agent = &mut stalled.agent;
-    agent.session_ended = Some(TurnFailure::Trajectory);
+    agent.session_ended = Some(SessionEnd::Failed(TurnFailure::Trajectory));
     sends.take();
     for call in TurnCall::ALL {
         let started = tokio::time::Instant::now();
@@ -467,6 +467,59 @@ async fn test_once_the_session_ended_each_turn_call_refuses_without_sending() {
         assert_eq!(sends.take(), Vec::<String>::new(), "{call:?} sent");
     }
     stalled.finish().await;
+}
+
+/// A system error step of the main trajectory with HTTP status `status`,
+/// the step harness 0.1.23 sends when the model backend fails a call.
+fn backend_error_step(status: u32) -> serde_json::Value {
+    serde_json::json!({"stepUpdate": {
+        "trajectoryId": "stalled", "stepIndex": 1, "source": "SOURCE_SYSTEM",
+        "target": "TARGET_USER", "state": "STATE_ERROR",
+        "error": {"errorMessage": "Agent execution terminated due to error.", "httpCode": status}
+    }})
+}
+
+#[tokio::test]
+async fn test_a_turn_that_ends_the_session_while_drained_fails_the_next_turn_unsent() {
+    // K-3 (#504): a trigger's turn that the model backend failed, left for
+    // the next chat to discard, ended the session unseen: the chat sent its
+    // message into the closed connection and failed with a WebSocket error.
+    // Harness 0.1.23 sends the error step, then the trajectory's idle state
+    // with the error, then closes; or the harness just closes.
+    let idle = serde_json::json!({"trajectoryStateUpdate": {
+        "trajectoryId": "stalled", "state": "STATE_FULLY_IDLE", "error": "Error 400"
+    }});
+    let cases = [
+        (
+            vec![
+                text(&backend_error_step(400)),
+                text(&idle),
+                Message::Close(None),
+            ],
+            "an earlier turn ended the session (model backend error, HTTP 400)",
+        ),
+        (vec![Message::Close(None)], "the harness ended the session"),
+    ];
+    for (then, cause) in cases {
+        let sends = Arc::new(Sends::default());
+        let builder = AntigravityAgent::builder().add_wire_inspector(sends.clone());
+        let mut stalled = Stalled::spawn_then(builder, then).await;
+        let agent = &mut stalled.agent;
+        // A trigger delivered, and its turn ran as above.
+        agent
+            .trigger_fired
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        sends.take();
+        // The chat halts the trigger's turn and drains it, then refuses.
+        let first = TurnCall::Chat.make(agent).await;
+        assert_refused(&first, cause);
+        assert_eq!(sends.take(), ["haltRequest"], "the message was not sent");
+        // The next call refuses at once.
+        let second = TurnCall::Chat.make(agent).await;
+        assert_refused(&second, cause);
+        assert_eq!(sends.take(), Vec::<String>::new());
+        stalled.finish().await;
+    }
 }
 
 #[tokio::test]

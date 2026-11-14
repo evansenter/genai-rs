@@ -80,13 +80,15 @@ pub enum AntigravityError {
     /// The harness closed the connection unexpectedly (it likely crashed),
     /// after `spawn()` returned: mid-turn, while
     /// [`next_trigger_turn`](super::AntigravityAgent::next_trigger_turn)
-    /// waits, or, without sending, on a call that starts or waits for a
-    /// turn ([`chat`](super::AntigravityAgent::chat),
+    /// waits, or, without sending its message, on a call that starts or
+    /// waits for a turn ([`chat`](super::AntigravityAgent::chat),
     /// [`send_streaming`](super::AntigravityAgent::send_streaming),
-    /// `next_trigger_turn`) after a turn whose failure ended the session
-    /// ([`TurnFailure::ends_session`]). A trigger's
-    /// [`TriggerContext::send`](super::TriggerContext::send) fails with it,
-    /// with an empty `stderr`, once the agent is gone.
+    /// `next_trigger_turn`) once the session has ended: after a turn whose
+    /// failure ended it ([`TurnFailure::ends_session`]), a trigger's turn
+    /// that the call halted and discarded included, or after the harness
+    /// closed the connection while a call discarded an earlier turn. A
+    /// trigger's [`TriggerContext::send`](super::TriggerContext::send)
+    /// fails with it, with an empty `stderr`, once the agent is gone.
     #[error("harness connection closed: {message}\nharness stderr:\n{stderr}")]
     ConnectionClosed {
         /// What went wrong.
@@ -131,8 +133,11 @@ pub enum AntigravityError {
     /// [`TurnFailure::Trajectory`], on harness 0.1.23), the harness ends
     /// its run and closes its WebSocket, and the agent's next turn (a
     /// `chat`, `send_streaming` or `next_trigger_turn`) fails with
-    /// [`ConnectionClosed`](Self::ConnectionClosed) without sending.
-    /// Spawn a new agent after one.
+    /// [`ConnectionClosed`](Self::ConnectionClosed) without sending its
+    /// message. A trigger's turn that fails so, unconsumed, never comes
+    /// back as this error: the `chat` or `send_streaming` that halts and
+    /// discards it fails with `ConnectionClosed` instead, naming the
+    /// failure. Spawn a new agent after one.
     #[error("agent turn failed ({kind}): {message}")]
     Turn {
         /// Why the turn failed.
@@ -227,7 +232,7 @@ impl TurnFailure {
     /// Whether the harness ended the session with the turn, so the agent's
     /// next turn (a `chat`, `send_streaming` or `next_trigger_turn`) fails
     /// with [`ConnectionClosed`](AntigravityError::ConnectionClosed),
-    /// without sending, and a new agent must be spawned. True for
+    /// without sending its message, and a new agent must be spawned. True for
     /// [`ModelBackend`](Self::ModelBackend) and
     /// [`Trajectory`](Self::Trajectory), whose errors end the harness's run
     /// on harness 0.1.23.

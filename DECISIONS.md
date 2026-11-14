@@ -2837,6 +2837,33 @@ turn (`chat`, `send_streaming`, `next_trigger_turn`), as
 `ConnectionClosed`'s rustdoc now names them; `cancel()` and `shutdown()`
 do not check.
 
+**Amended 2026-11-14 (#504, K-3).** A failure that ended the session in a
+turn this client did not drive went unrecorded. A trigger's turn the model
+backend failed (a 400, or a 503 with no retries left), left for the next
+`chat` to halt and discard, reached `halt_and_drain`, which logged its
+`Turn` error at debug level, then saw the harness close the connection
+and returned; the chat sent its message anyway and failed with
+`WebSocket { message: "send failed", .. }` (tungstenite's
+`SendAfterClosing`), with no stderr, as did the call after it. The drain
+now records, in `session_ended`, a drained failure whose `ends_session()`
+is true, and the harness closing the connection while it reads (a close
+with no failure before it names no kind: "the harness ended the
+session"). `begin_turn` checks after a drain, so the call fails with
+`ConnectionClosed`, naming what ended the session, with the stderr tail,
+before its message is sent; the drain's halt has gone out by then, since
+it is sent before the stale turn's events are read. The drain after a
+turn timeout records the same, so the call after that `Timeout` refuses
+too. A close seen outside a drain (mid-turn, or while `next_trigger_turn`
+waits) already fails that call with `ConnectionClosed` and is not
+recorded. Rejected: narrowing the guide to failures the caller saw, which
+would leave a caller who uses triggers without `next_trigger_turn` to
+read a `WebSocket` error as "the session is over".
+`test_scripted_a_trigger_turn_that_ends_the_session_fails_the_next_chat_unsent`
+runs the 400 and the 503 on the harness; stand-in unit tests hold the
+drained failure, the bare close, and the refusal of each of `chat`,
+`send_streaming` and `next_trigger_turn` (K-2), which no test held
+beyond `chat`'s.
+
 ---
 
 ## D-063 — A harness path the caller names is used as given (2026-11-09)

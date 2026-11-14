@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Breaking: an Antigravity `chat` or `send_streaming` that discards a
+  turn whose failure ended the session fails with
+  `AntigravityError::ConnectionClosed`, not `WebSocket`, without sending
+  its message.** A trigger's turn that the model backend failed (a 400, or
+  a 503 with no retries left) and that `next_trigger_turn` did not
+  consume ended the harness's run unseen: the next call halted and
+  discarded it, sent its message into the closed connection, and failed
+  with a `WebSocket` error and no stderr, as did the call after it. That
+  call now fails with `ConnectionClosed`, naming the failure, with the
+  tail of the harness's stderr, and every later `chat`, `send_streaming`
+  and `next_trigger_turn` fails the same way at once, as after a failed
+  turn of your own. So does a call during whose discard the harness
+  closes the connection. Migration: match `ConnectionClosed { message,
+  stderr }` where you matched a `WebSocket` error from the call after a
+  trigger's turn, and spawn a new agent.
+
 ## [0.14.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.0.0 (swept 2026-11-07;
