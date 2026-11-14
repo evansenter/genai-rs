@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: `GenaiError::Http`'s `Display` is `HTTP request error` alone**,
+  no longer followed by the `reqwest::Error`'s text, which stays its
+  `source()`. A reporter that walks the chain (anyhow's `{:#}`, eyre)
+  printed the transport error twice; it now prints it once, as it does for
+  `ClientBuild` and `StreamInterrupted` (D-049). Migration: where you read
+  the transport error from the top error's text, walk `source()` (or use
+  your reporter's chain form), or match `GenaiError::Http(e)` and read
+  `e.to_string()`, which is the text that followed `HTTP request error: `.
+
 ## [0.14.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.0.0 (swept 2026-11-07;

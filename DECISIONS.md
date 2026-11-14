@@ -1885,6 +1885,16 @@ client` alone, and a `StreamInterrupted` cut off by the transport says
 `the connection failed mid-body` and leaves the `reqwest::Error`'s text to
 `source()`. Neither variant's shape changes.
 
+**Amended 2026-11-14 (#504, K-4).** `GenaiError::Http`, which #554 left
+out, follows too: its `Display` is `HTTP request error` alone, and the
+`reqwest::Error` it holds through `#[from]` stays its `source()`. Breaking,
+with a CHANGELOG migration, since a caller may have read the transport
+error from the top error's text. One test in `src/errors.rs` builds every
+`GenaiError` variant, each that can hold a source with one, and fails when
+a `Display` contains its source's text; a match with no wildcard names
+each variant, and the variants are read from the enum's own source, so a
+new one fails the test until it is built there.
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
