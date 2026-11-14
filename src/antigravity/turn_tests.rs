@@ -643,6 +643,9 @@ fn test_classify_error_severity() {
     assert_eq!(classify_error_severity(None), ErrorSeverity::Transient);
     assert_eq!(classify_error_severity(Some(500)), ErrorSeverity::Transient);
     assert_eq!(classify_error_severity(Some(429)), ErrorSeverity::Transient);
+    // #556: a 503 stays transient. Harness 0.1.23 sends the same error step
+    // for a 503 it is about to retry as for one with no retries left.
+    assert_eq!(classify_error_severity(Some(503)), ErrorSeverity::Transient);
     // Fatal model-backend codes that reached the event path are serious.
     for code in FATAL_HTTP_CODES {
         assert_eq!(classify_error_severity(Some(code)), ErrorSeverity::Severe);
