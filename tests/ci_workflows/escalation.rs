@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{command_lines, jobs, read, root, steps};
+use super::{command_lines, jobs, read, root, steps, yaml};
 
 /// The job's one-line `needs: [...]`, if it has one.
 fn needs(job: &str) -> Option<BTreeSet<String>> {
@@ -26,9 +26,9 @@ fn needs(job: &str) -> Option<BTreeSet<String>> {
     )
 }
 
-/// The job's own `if:` (four-space indent; a step's is deeper).
-fn job_condition(job: &str) -> Option<&str> {
-    job.lines().find_map(|line| line.strip_prefix("    if: "))
+/// The job's own `if:` (not a step's), as YAML reads it.
+fn job_condition(job: &str) -> Option<String> {
+    yaml::job_value(job, "if").ok().flatten()
 }
 
 /// Whether a job runs only for a push to main, whatever its other jobs did.
@@ -53,7 +53,9 @@ fn main_push_escalation_problems(workflow: &str) -> Vec<String> {
     let all = jobs(workflow);
     let escalating: Vec<&(String, String)> = all
         .iter()
-        .filter(|(_, body)| job_condition(body).is_some_and(runs_after_every_push_to_main))
+        .filter(|(_, body)| {
+            job_condition(body).is_some_and(|condition| runs_after_every_push_to_main(&condition))
+        })
         .filter(|(_, body)| {
             command_lines(body).any(|line| line.contains("report_scheduled_failure.sh"))
         })
@@ -95,7 +97,8 @@ fn main_push_escalation_problems(workflow: &str) -> Vec<String> {
             problems.push(format!("{id} never calls {script}"));
             continue;
         };
-        if !step.lines().any(|line| line.trim() == condition) {
+        let gate = yaml::step_value(step, "if").ok().flatten();
+        if gate.map(|gate| format!("if: {gate}")).as_deref() != Some(condition) {
             problems.push(format!(
                 "{id}: the {script} step is not gated by `{condition}`"
             ));

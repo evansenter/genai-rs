@@ -60,10 +60,11 @@ a bare `(#N)` or "#N item M", which read as provenance. The check reads
 every tracked file, `DECISIONS.md` included, but `CHANGELOG.md` (which
 holds no pointer: a released section is not edited), fixtures and the
 script harnesses. The daily `api-surface-sweep` lists each pointer that
-names a closed issue on a rolling `documentation` issue, and
-`check_issue_pointers.sh --print` lists every pointer with its issue's
-state. It reads wording only: it does not tell a pointer from a provenance
-tag worded like one.
+names a closed issue on a rolling `documentation` issue
+(`check_issue_pointers.sh --update-issue`, the one mode that writes to
+GitHub). A run without it, as a local one is, lists every pointer with its
+issue's state and writes nothing. It reads wording only: it does not tell
+a pointer from a provenance tag worded like one.
 
 `tests/fixtures/api_surface/` holds the bindings (for the version in
 `.github/last-swept-sdk-version`) and both specs as snapshots, and the
@@ -397,17 +398,20 @@ wheel's protos with `python3`).
   reason), the coverage floor (one command, and no key in its step but
   `name:` and `run:`) and its library-only pattern, the steps the
   flakiness report counts (no offline test of the retry helper runs in
-  them), that no `if:` or `needs:` (but the live steps' owner gate and
-  `needs: check`), `continue-on-error`, `defaults:`, other shell or
-  shell-level mask it knows (`|| true`, `; true`, `set +e`, an `exit`
-  whose status may be 0, an `alias` or alias expansion turned on, a loop
+  them, and the workflows, composite actions and `.config/nextest.toml`
+  write a nextest retry only in a live step's env), that no `if:` or
+  `needs:` (but the live steps' owner gate and `needs: check`),
+  `continue-on-error`, `defaults:`, other shell or shell-level mask it
+  knows (`|| true`, `; true`, `set +e`, an `exit` whose status may be 0,
+  an `alias` or alias expansion turned on, a loop
   that drops a pass's failure, a `${{ }}` expression but a matrix value of
   plain words, read spliced in; `set -euo pipefail` first in a longer
   script, and wherever nextest is piped), each key and `run:` value read as
   a YAML parser reads it, lets the floor, a coverage run, the release gate,
   a live nextest step, the scripted harness step, any `run:` step of a
   required check's job or the fuzz run pass a failure (D-058 lists what it
-  reads), and release's push-run gate, which lets only the jobs a push skips
+  reads), Fuzz Gate and the path check before it (each pinned whole),
+  and release's push-run gate, which lets only the jobs a push skips
   by design be skipped and wants all six Cross Platform legs, and
   `api-surface-sweep`'s spec-watch and issue-pointer steps.
   `.gitattributes` checks text files out with LF on every OS.

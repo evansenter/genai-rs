@@ -17,17 +17,16 @@
 //! the `Api-Revision` value is the one the bindings pin.
 //!
 //! The workflows themselves are guarded in `tests/ci_workflows/`: no nextest
-//! run fails fast, retries are set in `NEXTEST_RETRIES` where the flakiness
-//! report sees them, trybuild's `ui_tests` stay off beta, every scheduled
-//! workflow and every push to main escalates its failures, a PR runs the
-//! Windows leg, the flakiness report reads every retry it claims to count,
-//! Code Coverage writes its summary on every run, and no shell-level mask
-//! or YAML key the guards know lets a guarded step's failure pass, a
-//! required check's or the fuzz run's among them, each read as YAML reads
-//! it. Two
-//! docs facts are guarded in `tests/doc_guards/`: `docs/TESTING.md`'s
-//! test-kind table places every test file under its kind, and every guide
-//! is doctested.
+//! run fails fast, retries are set as `NEXTEST_RETRIES` in a live step's
+//! env, where the log echoes them, trybuild's `ui_tests` stay off beta,
+//! every scheduled workflow and every push to main escalates its failures,
+//! a PR runs the Windows leg, the flakiness report reads every retry it
+//! claims to count, Code Coverage writes its summary on every run, and no
+//! shell-level mask or YAML key the guards know lets a guarded step's
+//! failure pass, a required check's or the fuzz run's among them, each
+//! read as YAML reads it. Two docs facts are guarded in
+//! `tests/doc_guards/`: `docs/TESTING.md`'s test-kind table places every
+//! test file under its kind, and every guide is doctested.
 
 #![allow(
     clippy::unwrap_used,
@@ -517,11 +516,13 @@ fn fuzz_matrix_builds_each_target_with_its_required_features() {
 /// The matrix's checks exist only on runs that fuzz, so branch protection
 /// can require only a job that reports on every pull request: `Fuzz Gate`.
 /// A `paths:` filter on the trigger would stop the whole workflow, leaving
-/// that required check pending forever, so the path check is a job.
+/// that required check pending forever, so the path check is a job. The
+/// gate's name, its `if: always()` and its `needs:`, and the path check,
+/// are pinned whole in `ci_workflows::fuzz`.
 #[test]
 fn fuzz_gate_reports_on_every_pull_request() {
     let workflow = fuzz_yml();
-    let (on, jobs) = workflow
+    let (on, _) = workflow
         .split_once("\njobs:\n")
         .expect("fuzz.yml has no jobs: section");
     assert!(
@@ -537,32 +538,6 @@ fn fuzz_gate_reports_on_every_pull_request() {
         filtered.is_empty(),
         "fuzz.yml's triggers are path-filtered ({filtered:?}): a pull request that \
          skips the workflow never reports the Fuzz Gate check"
-    );
-
-    let gate = jobs
-        .split("\n  fuzz-gate:\n")
-        .nth(1)
-        .expect("fuzz.yml has no fuzz-gate job")
-        .split("\n  scheduled-run-status:\n")
-        .next()
-        .unwrap();
-    let field = |key: &str| {
-        gate.lines()
-            .find_map(|line| line.strip_prefix("    ")?.strip_prefix(key))
-            .map(str::trim)
-            .unwrap_or_else(|| panic!("the fuzz-gate job has no `{key}` line"))
-    };
-    assert_eq!(field("name:"), "Fuzz Gate", "branch protection names it");
-    assert_eq!(field("if:"), "always()", "it must report when fuzz fails");
-    let needs: BTreeSet<&str> = field("needs:")
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .split(',')
-        .map(str::trim)
-        .collect();
-    assert!(
-        needs.contains("fuzz") && needs.contains("changes"),
-        "the gate must need the path check and the fuzz matrix: {needs:?}"
     );
 }
 

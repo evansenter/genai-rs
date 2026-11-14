@@ -483,11 +483,12 @@ jobs:
       # read an issue's state. This finds the pointer phrasings CLAUDE.md
       # lists outside the history and fixtures, looks each issue up, and
       # opens or updates one rolling `documentation` issue listing those that
-      # name a closed issue; a clean run closes it. It reads wording only, so
-      # whether a listed sentence is a stale pointer or a provenance tag
-      # worded like one stays the writer's call. Findings leave the run
-      # green; a failed `gh` call turns it red. `!cancelled()`: it does not
-      # depend on the steps above.
+      # name a closed issue; a clean run closes it. Only `--update-issue`
+      # writes to the issue: a run without it, as a local one is, only
+      # lists. It reads wording only, so whether a listed sentence is a
+      # stale pointer or a provenance tag worded like one stays the
+      # writer's call. Findings leave the run green; a failed `gh` call
+      # turns it red. `!cancelled()`: it does not depend on the steps above.
       - name: Flag issue pointers that name a closed issue
         if: ${{ !cancelled() }}
         env:
@@ -495,7 +496,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          .github/scripts/check_issue_pointers.sh
+          .github/scripts/check_issue_pointers.sh --update-issue
 
       # The coverage oracle (`src/coverage_oracle/`) reads the committed
       # bindings snapshot (#488). Offline, `make test-scripts` checks only

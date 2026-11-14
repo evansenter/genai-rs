@@ -12,7 +12,9 @@
 //! a PR runs, and clippy lints every target without default features, in
 //! CI and in `make clippy`.
 
-use super::{jobs, read, root, steps};
+use yaml_rust2::Yaml;
+
+use super::{jobs, read, root, steps, yaml};
 
 fn rust_yml() -> String {
     read(&root().join(".github/workflows/rust.yml"))
@@ -34,10 +36,12 @@ fn step_running(job: &str, command: &str) -> Option<String> {
     })
 }
 
-/// The step's own `if:`, if it has one.
-fn step_condition(step: &str) -> Option<&str> {
-    step.lines()
-        .find_map(|line| line.trim().strip_prefix("if: "))
+/// The step's own `if:`, as YAML reads it (a quoted key, or one with a
+/// space before its colon, too), if it has one. A step YAML cannot read
+/// gives a condition no term list allows, so it never reads as
+/// unconditional.
+fn step_condition(step: &str) -> Option<String> {
+    yaml::step_value(step, "if").unwrap_or_else(|e| Some(format!("<a step YAML cannot read: {e}>")))
 }
 
 /// The Windows clippy step's command.
@@ -75,7 +79,7 @@ fn unknown_condition_terms(step: &str, allowed: &[&str]) -> Vec<String> {
     let expression = condition
         .strip_prefix("${{")
         .and_then(|rest| rest.strip_suffix("}}"))
-        .unwrap_or(condition);
+        .unwrap_or(&condition);
     expression
         .split("&&")
         .map(str::trim)
@@ -125,8 +129,9 @@ pub(super) fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
 
 /// Problems with the cross-platform job, empty when it holds: it runs on
 /// every `rust.yml` trigger, the weekly schedule included (no job-level
-/// `if:`); a PR's matrix is the Windows stable leg and every other trigger's
-/// is the full matrix, none of it excluded; the doctests run after a failed
+/// `if:`, read as YAML reads the job's keys, as each `if:` here is); a PR's
+/// matrix is the Windows stable leg and every other trigger's is the full
+/// matrix, none of it excluded (no `exclude:`, read the same way); the doctests run after a failed
 /// unit-test step; the antigravity feature is checked on every Windows
 /// leg; clippy lints it, every target, on the Windows stable leg, with
 /// the toolchain's clippy component installed; and the antigravity
@@ -134,10 +139,27 @@ pub(super) fn event_matrix(value: &str) -> Option<(Vec<String>, Vec<String>)> {
 fn cross_platform_problems(workflow: &str) -> Vec<String> {
     let body = job(workflow, "cross-platform");
     let mut problems = Vec::new();
-    if let Some(condition) = body.lines().find_map(|line| line.strip_prefix("    if: ")) {
-        problems.push(format!(
-            "a job-level `if: {condition}`: the job must run on PRs and the schedule too"
-        ));
+    let read = yaml::job_mapping(&body);
+    match &read {
+        Ok(read) => {
+            if let Some(condition) = yaml::get(read, "if") {
+                problems.push(format!(
+                    "a job-level `if: {}`: the job must run on PRs and the schedule too",
+                    yaml::text(condition)
+                ));
+            }
+            let excludes = yaml::get(read, "strategy")
+                .and_then(Yaml::as_hash)
+                .and_then(|strategy| yaml::get(strategy, "matrix"))
+                .and_then(Yaml::as_hash)
+                .is_some_and(|matrix| yaml::get(matrix, "exclude").is_some());
+            if excludes {
+                problems.push("the matrix excludes legs: the full matrix must run whole".into());
+            }
+        }
+        Err(e) => problems.push(format!(
+            "a job YAML cannot read ({e}), so neither its `if:` nor its matrix can be read"
+        )),
     }
     for (key, on_pr, full) in MATRIX {
         let value = body
@@ -166,9 +188,6 @@ fn cross_platform_problems(workflow: &str) -> Vec<String> {
                  found {other_legs:?}"
             ));
         }
-    }
-    if body.lines().any(|line| line.trim() == "exclude:") {
-        problems.push("the matrix excludes legs: the full matrix must run whole".into());
     }
     match step_running(&body, "cargo test --workspace --release --doc") {
         Some(step) if step_condition(&step).is_some_and(|c| c.contains("!cancelled()")) => {}
@@ -338,6 +357,30 @@ fn the_cross_platform_check_catches_what_it_claims_to() {
             &format!("runner.os == 'macOS' }}}}\n        run: {PROCESS_TREE_TESTS}"),
             &format!("runner.os == 'Linux' }}}}\n        run: {PROCESS_TREE_TESTS}"),
         ),
+        // Each of these with its key quoted or spaced, which YAML reads as
+        // the key and a text match once missed (#504, L-6): a job-level
+        // `if:`, a step's `if:` that moves the antigravity check or the
+        // process-tree tests off their legs, and an `exclude:`.
+        workflow.replace(
+            "    runs-on: ${{ matrix.os }}\n",
+            "    \"if\": github.event_name == 'push'\n    runs-on: ${{ matrix.os }}\n",
+        ),
+        workflow.replace(
+            "    runs-on: ${{ matrix.os }}\n",
+            "    if : github.event_name == 'push'\n    runs-on: ${{ matrix.os }}\n",
+        ),
+        workflow.replace(
+            "        if: ${{ !cancelled() && runner.os != 'Linux' }}\n        run: cargo check --features antigravity",
+            "        \"if\": ${{ runner.os == 'macOS' }}\n        run: cargo check --features antigravity",
+        ),
+        workflow.replace(
+            &format!("        if: ${{{{ !cancelled() && runner.os == 'macOS' }}}}\n        run: {PROCESS_TREE_TESTS}"),
+            &format!("        'if': ${{{{ runner.os == 'Linux' }}}}\n        run: {PROCESS_TREE_TESTS}"),
+        ),
+        workflow.replace(
+            "fromJSON('[\"stable\", \"beta\"]') }}\n",
+            "fromJSON('[\"stable\", \"beta\"]') }}\n        \"exclude\":\n          - os: windows-latest\n",
+        ),
     ];
     for (i, text) in broken.iter().enumerate() {
         assert_ne!(text, &workflow, "mutation {i} did not apply");
@@ -373,7 +416,8 @@ const PROCESS_TREE_INPUTS: [&str; 5] = [
 /// would first fail on main. One job runs on every PR, on macos-latest; a
 /// step with `id: paths` sets `changed` to `true` when the PR touches one
 /// of [`PROCESS_TREE_INPUTS`] (and when it cannot tell, rather than skip),
-/// and the tests run when it is `true`.
+/// and the tests run when it is `true`. The job's keys, the step's `id:`
+/// and each `if:` are read as YAML reads them.
 fn process_tree_pr_problems(workflow: &str) -> Vec<String> {
     let found: Vec<(String, String)> = jobs(workflow)
         .into_iter()
@@ -386,28 +430,24 @@ fn process_tree_pr_problems(workflow: &str) -> Vec<String> {
         )];
     };
     let mut problems = Vec::new();
-    let field = |key: &str| {
-        body.lines()
-            .find_map(|line| line.strip_prefix("    ")?.strip_prefix(key))
-            .map(str::trim)
-    };
-    if field("runs-on:") != Some("macos-latest") {
+    let field = |key: &str| yaml::job_value(body, key).unwrap_or_else(|e| Some(format!("<{e}>")));
+    if field("runs-on").as_deref() != Some("macos-latest") {
         problems.push(format!(
             "{id} runs on {:?}, not macos-latest",
-            field("runs-on:")
+            field("runs-on")
         ));
     }
-    if field("if:") != Some("github.event_name == 'pull_request'") {
+    if field("if").as_deref() != Some("github.event_name == 'pull_request'") {
         problems.push(format!(
             "{id} must run on every pull request (`if: github.event_name == \
              'pull_request'`): found {:?}",
-            field("if:")
+            field("if")
         ));
     }
     let job_steps = steps(body);
     match job_steps
         .iter()
-        .find(|step| step.lines().any(|line| line.trim() == "id: paths"))
+        .find(|step| yaml::step_value(step, "id").ok().flatten().as_deref() == Some("paths"))
     {
         Some(check) => {
             let script: Vec<&str> = check.lines().map(str::trim).collect();
@@ -441,7 +481,7 @@ fn process_tree_pr_problems(workflow: &str) -> Vec<String> {
         )),
     }
     if let Some(step) = step_running(body, PR_PROCESS_TREE_TESTS) {
-        match step_condition(&step) {
+        match step_condition(&step).as_deref() {
             None | Some("steps.paths.outputs.changed == 'true'") => {}
             Some(other) => problems.push(format!(
                 "{id}: the tests run `if: {other}`, not when the process code changed"
@@ -501,6 +541,24 @@ fn the_process_tree_pr_check_catches_what_it_claims_to() {
             ),
             &format!(
                 "        if: steps.paths.outputs.changed == 'false'\n        run: {PR_PROCESS_TREE_TESTS}"
+            ),
+        ),
+        // ... the same with the key quoted or spaced, which a text match
+        // once read as no `if:` at all (#504, L-6).
+        workflow.replace(
+            &format!(
+                "        if: steps.paths.outputs.changed == 'true'\n        run: {PR_PROCESS_TREE_TESTS}"
+            ),
+            &format!(
+                "        \"if\": steps.paths.outputs.changed == 'false'\n        run: {PR_PROCESS_TREE_TESTS}"
+            ),
+        ),
+        workflow.replace(
+            &format!(
+                "        if: steps.paths.outputs.changed == 'true'\n        run: {PR_PROCESS_TREE_TESTS}"
+            ),
+            &format!(
+                "        if : steps.paths.outputs.changed == 'false'\n        run: {PR_PROCESS_TREE_TESTS}"
             ),
         ),
     ];

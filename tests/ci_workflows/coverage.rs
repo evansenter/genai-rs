@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
+use yaml_rust2::Yaml;
 
 use super::{command_lines, failure_escapes, jobs, read, root, run_script, steps, yaml};
 use crate::source_scan;
@@ -33,59 +34,142 @@ fn rust_yml() -> String {
 /// it, not the floor's own small moves.
 const MIN_FLOOR: f64 = 90.0;
 
-/// With no `CODECOV_TOKEN` the Codecov upload used to fail quietly under
-/// `fail_ci_if_error: false`, so the job passed with coverage reported
-/// nowhere. The job writes llvm-cov's summary to the job summary on every
-/// run, and the upload, when it runs, fails the job on an error.
-#[test]
-fn code_coverage_reports_a_summary_and_fails_a_failed_upload() {
-    let (_, all) = coverage_job(&rust_yml());
+/// Problems with the Code Coverage job's summary and upload, empty when
+/// they hold. With no `CODECOV_TOKEN` the Codecov upload used to fail
+/// quietly under `fail_ci_if_error: false`, so the job passed with coverage
+/// reported nowhere. The job writes llvm-cov's summary, over the packages
+/// it measured, to the job summary on every run (no `if:` on its step), and
+/// the upload, when it runs, fails the job on an error. The keys are read
+/// as YAML reads them, so a quoted or spaced `if:` counts.
+fn summary_problems(workflow: &str) -> Vec<String> {
+    let (_, all) = coverage_job(workflow);
+    let mut problems = Vec::new();
 
     let report_line = |step: &String| {
         command_lines(step)
             .find(|line| line.contains("cargo llvm-cov report") && line.contains("--summary-only"))
             .map(str::to_owned)
     };
-    let (summary, report) = all
+    let Some((summary, report)) = all
         .iter()
         .find_map(|step| report_line(step).map(|line| (step, line)))
-        .expect("a step runs `cargo llvm-cov report --summary-only`");
-    assert!(
-        summary.contains(">> \"$GITHUB_STEP_SUMMARY\"") && !summary.contains("        if:"),
-        "the coverage summary goes to the job summary on every run:\n{summary}"
-    );
+    else {
+        return vec!["no step runs `cargo llvm-cov report --summary-only`".into()];
+    };
+    if !summary.contains(">> \"$GITHUB_STEP_SUMMARY\"") {
+        problems.push(format!(
+            "the coverage summary goes to the job summary:\n{summary}"
+        ));
+    }
+    match yaml::step_value(summary, "if") {
+        Ok(None) => {}
+        Ok(Some(condition)) => problems.push(format!(
+            "the coverage summary is written on every run, but its step has \
+             `if: {condition}`"
+        )),
+        Err(e) => problems.push(format!(
+            "a summary step YAML cannot read ({e}), so its `if:` cannot be read"
+        )),
+    }
 
     // `cargo llvm-cov report` selects packages afresh: without the run's
     // `--workspace` it reports the root package only, so the summary would
     // leave out genai-rs-macros, which the uploaded lcov holds.
-    let run = all
+    match all
         .iter()
         .flat_map(|step| command_lines(step).collect::<Vec<_>>())
         .find(|line| line.contains("cargo llvm-cov nextest"))
-        .expect("the coverage job runs `cargo llvm-cov nextest`");
-    assert_eq!(
-        run.contains("--workspace"),
-        report.contains("--workspace"),
-        "the summary's `cargo llvm-cov report` must select the packages the run \
-         measured (`--workspace`):\n  run:    {run}\n  report: {report}"
-    );
+    {
+        Some(run) if run.contains("--workspace") != report.contains("--workspace") => {
+            problems.push(format!(
+                "the summary's `cargo llvm-cov report` must select the packages the run \
+                 measured (`--workspace`):\n  run:    {run}\n  report: {report}"
+            ));
+        }
+        Some(_) => {}
+        None => problems.push("the coverage job runs `cargo llvm-cov nextest`".into()),
+    }
 
     let uploads: Vec<&String> = all
         .iter()
         .filter(|step| step.contains("codecov/codecov-action"))
         .collect();
-    assert!(
-        !uploads.is_empty(),
-        "no Codecov upload step in the coverage job"
-    );
+    if uploads.is_empty() {
+        problems.push("no Codecov upload step in the coverage job".into());
+    }
     for upload in uploads {
+        let read = yaml::step_mapping(upload);
+        let fails = read.as_ref().ok().is_some_and(|step| {
+            yaml::get(step, "with")
+                .and_then(Yaml::as_hash)
+                .and_then(|with| yaml::get(with, "fail_ci_if_error"))
+                == Some(&Yaml::Boolean(true))
+        });
+        if !fails {
+            problems.push(format!(
+                "a Codecov upload must fail the job on an error (`fail_ci_if_error: true`):\n{upload}"
+            ));
+        }
+        if yaml::step_value(upload, "if").ok().flatten().as_deref()
+            != Some("steps.codecov.outputs.upload == 'true'")
+        {
+            problems.push(format!(
+                "the upload runs only when the token is set:\n{upload}"
+            ));
+        }
+    }
+    problems
+}
+
+#[test]
+fn code_coverage_reports_a_summary_and_fails_a_failed_upload() {
+    let problems = summary_problems(&rust_yml());
+    assert!(
+        problems.is_empty(),
+        "rust.yml's Code Coverage summary and upload:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+#[test]
+fn the_summary_check_catches_what_it_claims_to() {
+    let workflow = rust_yml();
+    assert!(summary_problems(&workflow).is_empty());
+    let summary = "      - name: Coverage summary\n";
+    let broken = [
+        // The summary skipped on some runs, its `if:` written plain,
+        // quoted or spaced (#504, L-6: the quoted key once passed).
+        workflow.replace(
+            summary,
+            &format!("{summary}        if: github.event_name == 'schedule'\n"),
+        ),
+        workflow.replace(
+            summary,
+            &format!("{summary}        \"if\": github.event_name == 'schedule'\n"),
+        ),
+        workflow.replace(
+            summary,
+            &format!("{summary}        if : github.event_name == 'schedule'\n"),
+        ),
+        // ... written somewhere else, or over the root package alone.
+        workflow.replace("} >> \"$GITHUB_STEP_SUMMARY\"", "} >> summary.md"),
+        workflow.replace(
+            "cargo llvm-cov report --workspace --ignore-filename-regex \"$COVERAGE_IGNORE\" --summary-only",
+            "cargo llvm-cov report --ignore-filename-regex \"$COVERAGE_IGNORE\" --summary-only",
+        ),
+        // A failed upload that passes, or an upload that runs with no
+        // token.
+        workflow.replace("fail_ci_if_error: true", "fail_ci_if_error: false"),
+        workflow.replace(
+            "        if: steps.codecov.outputs.upload == 'true'\n",
+            "        if: always()\n",
+        ),
+    ];
+    for (i, text) in broken.iter().enumerate() {
+        assert_ne!(text, &workflow, "mutation {i} did not apply");
         assert!(
-            upload.contains("fail_ci_if_error: true"),
-            "a Codecov upload must fail the job on an error:\n{upload}"
-        );
-        assert!(
-            upload.contains("if: steps.codecov.outputs.upload == 'true'"),
-            "the upload runs only when the token is set:\n{upload}"
+            !summary_problems(text).is_empty(),
+            "mutation {i} went unnoticed"
         );
     }
 }

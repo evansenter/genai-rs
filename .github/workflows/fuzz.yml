@@ -39,7 +39,9 @@ jobs:
   # request, only when it touches what the targets compile. That is the
   # crate (of the antigravity feature, only the harness protocol the
   # harness_output_event target reads), its macros crate, and the fuzz crate
-  # with its own lockfile (the root Cargo.lock is not used).
+  # with its own lockfile (the root Cargo.lock is not used). Fuzz Gate reads
+  # its verdict, so tests/ci_workflows/fuzz.rs pins this job whole: change
+  # the pin with it.
   changes:
     name: Fuzzed Paths
     runs-on: ubuntu-latest
@@ -158,6 +160,7 @@ jobs:
   # The check to require. The matrix's checks exist only on runs that fuzz,
   # so this one job passes when every target ran clean or none had to, and
   # fails otherwise. `always()`, so it reports when a target fails too.
+  # tests/ci_workflows/fuzz.rs pins this job whole: change the pin with it.
   fuzz-gate:
     name: Fuzz Gate
     needs: [changes, fuzz]
