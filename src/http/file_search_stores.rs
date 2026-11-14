@@ -19,7 +19,7 @@ use super::files::{
     ResumableUpload, check_upload_size, finish_resumable_upload, one_segment_name,
     with_camel_case_paging,
 };
-use crate::errors::GenaiError;
+use crate::errors::{ErrorChain, GenaiError};
 use crate::file_search_stores::{
     CreateFileSearchStoreRequest, DocumentImport, DocumentOptions, FileSearchDocument,
     FileSearchDocumentListResponse, FileSearchStore, FileSearchStoreListResponse,
@@ -467,7 +467,9 @@ fn unfinished_import(e: GenaiError, what: &str, handle: &str) -> GenaiError {
         GenaiError::MalformedResponse(message) => {
             GenaiError::MalformedResponse(format!("{context}{message}"))
         }
-        other => GenaiError::Internal(format!("{context}{other}")),
+        // The chain, since `Internal` has no source to hold the cause, and
+        // `Http`'s `Display` leaves it to one.
+        other => GenaiError::Internal(format!("{context}{}", ErrorChain(&other))),
     }
 }
 
@@ -485,31 +487,41 @@ async fn read_back(
     document_name: &str,
     what: &str,
 ) -> Result<FileSearchDocument, GenaiError> {
-    get_document(ctx, document_name).await.map_err(|e| {
-        tracing::error!("{what} '{document_name}', but reading it back failed: {e}");
-        let context = format!(
-            "{what} '{document_name}', but reading it back failed. The \
-             document exists — use that name to wait on or delete it. Cause: "
-        );
-        match e {
-            GenaiError::Api {
-                status_code,
-                message,
-                request_id,
-                retry_after,
-            } => GenaiError::Api {
-                status_code,
-                message: format!("{context}{message}"),
-                request_id,
-                retry_after,
-            },
-            other if other.is_retryable() => other,
-            GenaiError::MalformedResponse(message) => {
-                GenaiError::MalformedResponse(format!("{context}{message}"))
-            }
-            other => GenaiError::Internal(format!("{context}{other}")),
+    get_document(ctx, document_name)
+        .await
+        .map_err(|e| unread_document(e, document_name, what))
+}
+
+/// The error a failed [`read_back`] returns: it names the document, keeps
+/// an `Api` error's status and a retryable error as they are, and writes
+/// the rest, with its whole chain, into an `Internal` error.
+fn unread_document(e: GenaiError, document_name: &str, what: &str) -> GenaiError {
+    tracing::error!(
+        "{what} '{document_name}', but reading it back failed: {}",
+        ErrorChain(&e)
+    );
+    let context = format!(
+        "{what} '{document_name}', but reading it back failed. The \
+         document exists — use that name to wait on or delete it. Cause: "
+    );
+    match e {
+        GenaiError::Api {
+            status_code,
+            message,
+            request_id,
+            retry_after,
+        } => GenaiError::Api {
+            status_code,
+            message: format!("{context}{message}"),
+            request_id,
+            retry_after,
+        },
+        other if other.is_retryable() => other,
+        GenaiError::MalformedResponse(message) => {
+            GenaiError::MalformedResponse(format!("{context}{message}"))
         }
-    })
+        other => GenaiError::Internal(format!("{context}{}", ErrorChain(&other))),
+    }
 }
 
 /// The `X-Goog-Upload-File-Name` value for a filename.
@@ -705,6 +717,41 @@ mod tests {
             other => panic!("expected PollTimeout, got {other:?}"),
         }
         assert!(!timeout.is_retryable());
+    }
+
+    /// A request that cannot be built: an `Http` error that is not
+    /// retryable, whose `Display` leaves the reqwest error to `source()`.
+    fn unbuildable_request() -> (GenaiError, String) {
+        let error = reqwest::Client::new()
+            .get("localhost:8080/v1beta/operations")
+            .build()
+            .expect_err("a URL without a scheme fails the build");
+        let text = error.to_string();
+        let error = GenaiError::Http(error);
+        assert!(!error.is_retryable());
+        (error, text)
+    }
+
+    /// A non-retryable transport error becomes `Internal`, which has no
+    /// source, so its message keeps the reqwest error's text.
+    #[test]
+    fn an_internal_error_keeps_the_transport_text() {
+        let (error, text) = unbuildable_request();
+        let wrapped = unfinished_import(error, WHAT, HANDLE);
+        assert!(
+            matches!(&wrapped, GenaiError::Internal(m)
+                if m.contains(HANDLE) && m.contains(&format!("HTTP request error: {text}"))),
+            "{wrapped:?}"
+        );
+
+        let document = "fileSearchStores/s/documents/d";
+        let (error, text) = unbuildable_request();
+        let wrapped = unread_document(error, document, "Uploaded");
+        assert!(
+            matches!(&wrapped, GenaiError::Internal(m)
+                if m.contains(document) && m.contains(&format!("HTTP request error: {text}"))),
+            "{wrapped:?}"
+        );
     }
 
     /// The import wait's own deadline error ends with the handle, so it

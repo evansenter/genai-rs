@@ -1893,7 +1893,14 @@ error from the top error's text. One test in `src/errors.rs` builds every
 `GenaiError` variant, each that can hold a source with one, and fails when
 a `Display` contains its source's text; a match with no wildcard names
 each variant, and the variants are read from the enum's own source, so a
-new one fails the test until it is built there.
+new one fails the test until it is built there. Where the crate writes an
+error into a message of its own, which has no source to hold it (a
+`PollTimeout` after failed status reads, the `Internal` error of a failed
+file search import or read-back, and their log lines), it writes the chain
+through `errors::ErrorChain`, so the transport error stays in the text;
+`src/poll_tests.rs` and `src/http/file_search_stores.rs` test both. The
+docs and the retry example that printed an error by `Display` print the
+chain.
 
 ---
 

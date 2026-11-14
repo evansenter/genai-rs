@@ -17,7 +17,17 @@ use thiserror::Error;
 ///     Err(GenaiError::Api { status_code, message, request_id, .. }) => {
 ///         eprintln!("API error {status_code}: {message} (request: {request_id:?})");
 ///     }
-///     Err(other) => eprintln!("{other}"),
+///     Err(other) => {
+///         // `Display` is this error alone: an error it wraps, such as
+///         // `Http`'s transport error, is its `source()`.
+///         let mut text = other.to_string();
+///         let mut cause = std::error::Error::source(&other);
+///         while let Some(e) = cause {
+///             text = format!("{text}: {e}");
+///             cause = e.source();
+///         }
+///         eprintln!("{text}");
+///     }
 ///     Ok(response) => println!("{:?}", response.as_text()),
 /// }
 /// # }
@@ -367,6 +377,30 @@ impl GenaiError {
             GenaiError::Api { retry_after, .. } => *retry_after,
             _ => None,
         }
+    }
+}
+
+/// An error's `Display`, then that of each [`source`](std::error::Error::source)
+/// below it after `": "`, for text that carries no chain of its own: a
+/// [`GenaiError::PollTimeout`]'s or [`GenaiError::Internal`]'s message, or a
+/// log line. `GenaiError::Http`'s `Display` leaves the transport error to
+/// its source (D-049), so the text names it only through this. A source
+/// whose text is already there is not added again.
+pub(crate) struct ErrorChain<'a>(pub(crate) &'a (dyn std::error::Error + 'static));
+
+impl std::fmt::Display for ErrorChain<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut text = self.0.to_string();
+        let mut cause = self.0.source();
+        while let Some(error) = cause {
+            let line = error.to_string();
+            if !text.contains(&line) {
+                text.push_str(": ");
+                text.push_str(&line);
+            }
+            cause = error.source();
+        }
+        f.write_str(&text)
     }
 }
 
@@ -740,6 +774,38 @@ mod tests {
                 variant_name(&error)
             );
         }
+    }
+
+    /// `ErrorChain` writes the source below a variant whose `Display` leaves
+    /// it out, and does not repeat one whose text is already there.
+    #[test]
+    fn test_error_chain_writes_each_source_once() {
+        let error = GenaiError::Http(request_build_error());
+        let transport = request_build_error().to_string();
+        let chain = ErrorChain(&error).to_string();
+        assert!(
+            chain.starts_with(&format!("HTTP request error: {transport}")),
+            "{chain}"
+        );
+        assert_eq!(chain.matches(&transport).count(), 1, "{chain}");
+
+        /// An error whose `Display` repeats its source, as `Http`'s did.
+        #[derive(Debug)]
+        struct Repeats(std::io::Error);
+        impl std::fmt::Display for Repeats {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "outer: {}", self.0)
+            }
+        }
+        impl std::error::Error for Repeats {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let repeats = Repeats(std::io::Error::other("refused"));
+        assert_eq!(ErrorChain(&repeats).to_string(), "outer: refused");
+        let alone = GenaiError::InvalidInput("no input".to_string());
+        assert_eq!(ErrorChain(&alone).to_string(), alone.to_string());
     }
 
     // =============================================================================

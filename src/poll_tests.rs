@@ -304,3 +304,41 @@ async fn wait_with_a_huge_timeout_has_no_deadline() {
     assert_eq!(result.unwrap(), "ready");
     assert_eq!(reads, secs(&[0, 3600]));
 }
+
+/// A deadline reached after a failed status read keeps the transport
+/// error's text: `Http`'s `Display` leaves it to `source()`, and a
+/// `PollTimeout` has no source, so the message carries the chain.
+#[tokio::test]
+async fn a_deadline_after_a_transport_failure_names_the_transport_error() {
+    // Nothing listens on port 9 of localhost.
+    let transport = reqwest::Client::new()
+        .get("http://127.0.0.1:9/")
+        .send()
+        .await
+        .unwrap_err();
+    assert!(transport.is_connect(), "{transport:?}");
+    let text = transport.to_string();
+    let mut failure = Some(GenaiError::Http(transport));
+    // A zero timeout reads once, so the one failure is the last.
+    let err = PollOptions::new()
+        .with_timeout(Duration::ZERO)
+        .wait(
+            "resource",
+            (Duration::from_secs(120), Duration::from_secs(2)),
+            || {
+                let failure = failure.take().expect("one status read");
+                async move { Err::<(), _>(failure) }
+            },
+            |()| Ok(PollStep::Ready(())),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GenaiError::PollTimeout { .. }), "{err:?}");
+    let message = err.to_string();
+    assert!(
+        message.contains(&format!(
+            "the last status request failed: HTTP request error: {text}"
+        )),
+        "{message}"
+    );
+}

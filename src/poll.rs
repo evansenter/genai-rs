@@ -1,7 +1,7 @@
 //! [`PollOptions`] and the wait behind every `wait_until_active`
 //! ([`Files`](crate::Files) and file-search documents).
 
-use crate::errors::GenaiError;
+use crate::errors::{ErrorChain, GenaiError};
 use std::time::Duration;
 
 /// How long a wait such as
@@ -158,10 +158,13 @@ impl PollOptions {
                     }
                     None
                 }
+                // The whole chain: `Http`'s `Display` leaves the transport
+                // error to its source, and this message has none.
                 Ok(Err(e)) if e.is_retryable() => {
-                    tracing::warn!("Polling {what} failed ({e}); retrying until the deadline");
+                    let chain = ErrorChain(&e);
+                    tracing::warn!("Polling {what} failed ({chain}); retrying until the deadline");
                     retry_after = e.retry_after();
-                    Some(format!("the last status request failed: {e}"))
+                    Some(format!("the last status request failed: {chain}"))
                 }
                 Ok(Err(e)) => return Err(e),
                 // Nothing failed: the wait's own deadline ended the request.
