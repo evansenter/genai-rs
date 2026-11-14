@@ -48,10 +48,13 @@ pub(super) fn fake_harness(dir: &std::path::Path, port: u16) -> std::path::PathB
 }
 
 /// The stand-in harness's WebSocket: answers the conversation's
-/// initialization, then never reads again, as a wedged harness does. It
-/// holds the connection until `release` resolves.
+/// initialization and sends `then`, then never reads again, as a wedged
+/// harness does. It says so on `sent`, and holds the connection until
+/// `release` resolves.
 async fn answer_init_then_stop_reading(
     listener: tokio::net::TcpListener,
+    then: Vec<Message>,
+    sent: tokio::sync::oneshot::Sender<()>,
     release: tokio::sync::oneshot::Receiver<()>,
 ) {
     let (socket, _) = listener.accept().await.unwrap();
@@ -61,7 +64,16 @@ async fn answer_init_then_stop_reading(
     ws.send(Message::Text(answer.to_string().into()))
         .await
         .unwrap();
+    for message in then {
+        ws.send(message).await.unwrap();
+    }
+    let _ = sent.send(());
     let _ = release.await;
+}
+
+/// A harness message, as the stand-in's peer sends it.
+fn text(event: &serde_json::Value) -> Message {
+    Message::Text(event.to_string().into())
 }
 
 /// Whether `result` failed with the turn timeout.
@@ -82,16 +94,37 @@ impl Stalled {
     /// Spawns `builder`'s agent, then pauses the clock: a stuck send then
     /// waits on the clock alone.
     async fn spawn(builder: AgentBuilder) -> Self {
+        Self::spawn_then(builder, Vec::new()).await
+    }
+
+    /// As [`spawn`](Self::spawn), with the peer sending `then` after the
+    /// initialization's answer. The agent reads none of it until a call
+    /// does, by when it has been waiting in the socket on the real clock
+    /// (the stderr wait below), so a paused clock cannot outrun it.
+    async fn spawn_then(builder: AgentBuilder, then: Vec<Message>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let listener = tokio::net::TcpListener::bind("localhost:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let (release, released) = tokio::sync::oneshot::channel();
-        let peer = tokio::spawn(answer_init_then_stop_reading(listener, released));
+        let (sent, all_sent) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(answer_init_then_stop_reading(
+            listener, then, sent, released,
+        ));
         let agent = builder
             .with_harness_path(fake_harness(dir.path(), port))
             .spawn()
             .await
             .expect("spawn");
+        all_sent.await.unwrap();
+        // The stand-in's stderr line is in, so an error's tail shows it.
+        let mut stderr = String::new();
+        for _ in 0..100 {
+            stderr = agent.harness.stderr_tail().await;
+            if stderr.contains(STAND_IN_STDERR) {
+                break;
+            }
+        }
+        assert!(stderr.contains(STAND_IN_STDERR), "{stderr}");
         tokio::time::pause();
         Self {
             agent,
@@ -291,15 +324,59 @@ async fn test_a_reply_mid_turn_is_bounded_by_the_turn_deadline_alone() {
     stalled.finish().await;
 }
 
+/// How long [`TurnCall::NextTriggerTurn`] waits for a turn to start.
+const TRIGGER_WAIT: Duration = Duration::from_secs(5);
+
+/// A call that starts a turn or waits for one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnCall {
+    Chat,
+    SendStreaming,
+    NextTriggerTurn,
+}
+
+impl TurnCall {
+    const ALL: [Self; 3] = [Self::Chat, Self::SendStreaming, Self::NextTriggerTurn];
+
+    /// Makes the call on `agent`, failing the test when it hangs past
+    /// [`GUARD`]. `next_trigger_turn` waits up to [`TRIGGER_WAIT`].
+    async fn make(self, agent: &mut AntigravityAgent) -> Result<(), AntigravityError> {
+        let call = async {
+            match self {
+                Self::Chat => agent.chat("hi").await.map(|_| ()),
+                Self::SendStreaming => agent.send_streaming("hi").await.map(|_| ()),
+                Self::NextTriggerTurn => agent.next_trigger_turn(TRIGGER_WAIT).await.map(|_| ()),
+            }
+        };
+        tokio::time::timeout(GUARD, call)
+            .await
+            .unwrap_or_else(|_| panic!("{self:?} gives up rather than hanging"))
+    }
+}
+
+/// The main trajectory's first update of a turn, as a trigger's turn
+/// starts.
+fn running_update() -> serde_json::Value {
+    serde_json::json!({"trajectoryStateUpdate": {"trajectoryId": "stalled", "state": "STATE_RUNNING"}})
+}
+
 #[tokio::test]
 async fn test_the_turn_deadline_starts_before_the_wait_for_a_trigger_delivery() {
     // J-12: a trigger's delivery holds `turn_sync` across its send, up to
     // 30 s on a harness that stopped reading, and the deadline started
-    // only after chat() had taken it.
+    // only after chat() had taken it. K-2 (#504): next_trigger_turn's wait,
+    // once its turn's first event is in, had no test.
     let turn_timeout = Duration::from_secs(10);
-    for streaming in [false, true] {
-        let mut stalled =
-            Stalled::spawn(AntigravityAgent::builder().with_turn_timeout(turn_timeout)).await;
+    for call in TurnCall::ALL {
+        let trigger_turn = call == TurnCall::NextTriggerTurn;
+        // A trigger's turn has started, for next_trigger_turn to take up.
+        let then = if trigger_turn {
+            vec![text(&running_update())]
+        } else {
+            Vec::new()
+        };
+        let builder = AntigravityAgent::builder().with_turn_timeout(turn_timeout);
+        let mut stalled = Stalled::spawn_then(builder, then).await;
         let agent = &mut stalled.agent;
         let delivery = Arc::clone(&agent.turn_sync).lock_owned().await;
         let releaser = tokio::spawn(async move {
@@ -307,33 +384,89 @@ async fn test_the_turn_deadline_starts_before_the_wait_for_a_trigger_delivery() 
             drop(delivery);
         });
         let started = tokio::time::Instant::now();
-        let result = if streaming {
-            tokio::time::timeout(GUARD, agent.send_streaming("hi"))
-                .await
-                .expect("send_streaming gives up rather than hanging")
-                .map(|_| ())
-        } else {
-            tokio::time::timeout(GUARD, agent.chat("hi"))
-                .await
-                .expect("chat gives up rather than hanging")
-                .map(|_| ())
-        };
+        let result = call.make(agent).await;
         let elapsed = started.elapsed();
-        assert!(timed_out_at(&result, turn_timeout), "{result:?}");
+        assert!(timed_out_at(&result, turn_timeout), "{call:?}: {result:?}");
         let Err(AntigravityError::Timeout { operation, .. }) = &result else {
             unreachable!()
         };
-        assert!(operation.contains("trigger"), "{operation}");
+        assert!(operation.contains("trigger"), "{call:?}: {operation}");
+        // next_trigger_turn's deadline starts with the first event. Read on
+        // the paused clock, it can come as the clock jumps to the wait's
+        // end; either way the delivery still holds the lock.
+        let read = if trigger_turn {
+            TRIGGER_WAIT
+        } else {
+            Duration::ZERO
+        };
         assert!(
-            elapsed >= turn_timeout && elapsed < turn_timeout + Duration::from_secs(1),
-            "{elapsed:?}"
+            elapsed >= turn_timeout && elapsed < turn_timeout + read + Duration::from_secs(1),
+            "{call:?}: {elapsed:?}"
         );
-        // Nothing was started: the agent is idle, with no turn to drain.
+        // Nothing was started: the agent is idle. A chat leaves no turn to
+        // drain; a trigger's turn is left for the next chat to halt.
         assert!(*agent.idle.borrow());
-        assert!(!agent.turn_unfinished);
+        assert_eq!(agent.turn_unfinished, trigger_turn, "{call:?}");
         releaser.await.unwrap();
         stalled.finish().await;
     }
+}
+
+/// Records the kind of each message the agent sends the harness: its
+/// payload's one key (`userInput`, `haltRequest`, ...).
+#[derive(Default)]
+struct Sends(std::sync::Mutex<Vec<String>>);
+
+impl crate::wire::WireInspector for Sends {
+    fn on_event(&self, event: &crate::wire::WireEvent) {
+        if let crate::wire::WireEvent::WsSend { payload, .. } = event {
+            let keys = payload.as_object().into_iter().flat_map(|o| o.keys());
+            self.0.lock().unwrap().extend(keys.cloned());
+        }
+    }
+}
+
+impl Sends {
+    /// The kinds sent since the last call.
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+/// Asserts that `result` is a refusal to start or wait for a turn after
+/// the session ended: `ConnectionClosed`, its message containing `cause`,
+/// with the harness's stderr.
+fn assert_refused(result: &Result<(), AntigravityError>, cause: &str) {
+    let Err(AntigravityError::ConnectionClosed { message, stderr }) = result else {
+        panic!("expected ConnectionClosed: {result:?}");
+    };
+    assert!(message.contains(cause), "{message}");
+    assert!(stderr.contains(STAND_IN_STDERR), "{stderr}");
+}
+
+#[tokio::test]
+async fn test_once_the_session_ended_each_turn_call_refuses_without_sending() {
+    // K-2 (#504): only chat's refusal had a test. Each call fails with
+    // ConnectionClosed at once: a send would go to a harness that ended
+    // its run, and a wait would wait on nothing.
+    let sends = Arc::new(Sends::default());
+    let builder = AntigravityAgent::builder().add_wire_inspector(sends.clone());
+    let mut stalled = Stalled::spawn(builder).await;
+    let agent = &mut stalled.agent;
+    agent.session_ended = Some(TurnFailure::Trajectory);
+    sends.take();
+    for call in TurnCall::ALL {
+        let started = tokio::time::Instant::now();
+        let result = call.make(agent).await;
+        assert_refused(&result, "ended the session");
+        // At once: the stderr tail's brief yield, not TRIGGER_WAIT.
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{call:?} waited"
+        );
+        assert_eq!(sends.take(), Vec::<String>::new(), "{call:?} sent");
+    }
+    stalled.finish().await;
 }
 
 #[tokio::test]
