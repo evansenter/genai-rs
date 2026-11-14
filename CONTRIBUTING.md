@@ -158,6 +158,9 @@ heading each was written under — check the merged result, not the diff. CI's
 `shell-scripts` job lints the structure (duplicate `###` headings in
 `[Unreleased]` or the current version, a duplicated `## [...]` section,
 conflict markers, a missing blank line before a heading, an unclosed code
-fence, and a breaking entry in either section with no `Migration:`) via
+fence, a breaking entry in either section with no `Migration:`, and two
+entries in either section that share a first line or a bold title, which
+it matches across a dropped or added `Breaking:` marker or bold, a change
+of case and a retitling that keeps most of the words) via
 `.github/scripts/check_changelog.sh`; it cannot tell whether an
 entry sits under the *right* heading.
