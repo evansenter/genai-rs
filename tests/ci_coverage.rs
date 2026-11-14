@@ -517,11 +517,13 @@ fn fuzz_matrix_builds_each_target_with_its_required_features() {
 /// The matrix's checks exist only on runs that fuzz, so branch protection
 /// can require only a job that reports on every pull request: `Fuzz Gate`.
 /// A `paths:` filter on the trigger would stop the whole workflow, leaving
-/// that required check pending forever, so the path check is a job.
+/// that required check pending forever, so the path check is a job. The
+/// gate's name, its `if: always()` and its `needs:`, and the path check,
+/// are pinned whole in `ci_workflows::fuzz`.
 #[test]
 fn fuzz_gate_reports_on_every_pull_request() {
     let workflow = fuzz_yml();
-    let (on, jobs) = workflow
+    let (on, _) = workflow
         .split_once("\njobs:\n")
         .expect("fuzz.yml has no jobs: section");
     assert!(
@@ -537,32 +539,6 @@ fn fuzz_gate_reports_on_every_pull_request() {
         filtered.is_empty(),
         "fuzz.yml's triggers are path-filtered ({filtered:?}): a pull request that \
          skips the workflow never reports the Fuzz Gate check"
-    );
-
-    let gate = jobs
-        .split("\n  fuzz-gate:\n")
-        .nth(1)
-        .expect("fuzz.yml has no fuzz-gate job")
-        .split("\n  scheduled-run-status:\n")
-        .next()
-        .unwrap();
-    let field = |key: &str| {
-        gate.lines()
-            .find_map(|line| line.strip_prefix("    ")?.strip_prefix(key))
-            .map(str::trim)
-            .unwrap_or_else(|| panic!("the fuzz-gate job has no `{key}` line"))
-    };
-    assert_eq!(field("name:"), "Fuzz Gate", "branch protection names it");
-    assert_eq!(field("if:"), "always()", "it must report when fuzz fails");
-    let needs: BTreeSet<&str> = field("needs:")
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .split(',')
-        .map(str::trim)
-        .collect();
-    assert!(
-        needs.contains("fuzz") && needs.contains("changes"),
-        "the gate must need the path check and the fuzz matrix: {needs:?}"
     );
 }
 
