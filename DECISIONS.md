@@ -2721,10 +2721,15 @@ still drops, and why:
   operation whose `text/event-stream` response the snapshot keeps.
 - A component nothing kept names: it shapes no request or response until
   something names it, and then it is kept where it is named.
-None of the newly kept keys is diffed against the crate offline: each is
-watched. The retry policy, `[408, 409, 429, 5XX]` with backoff, is the
-generated client's, which D-053 already weighed: the crate's differs on
-409 and six 5xx, for the reasons given there.
+None of the newly kept keys is diffed against the crate offline, and each
+is watched: each states what the crate fixes in its own code (the server
+`Client` defaults to, the `X-Goog-Api-Key` header, the SSE parser
+skipping `[DONE]`) or does not use (a deprecation, the optional
+`x-goog-user-project` header, the generated client's retry policy), so a
+change to one is for a probe to settle, as a parameter's retyping is. The
+retry policy, `[408, 409, 429, 5XX]` with backoff, is one D-053 already
+weighed: the crate's differs on 409 and six 5xx, for the reasons given
+there.
 
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
