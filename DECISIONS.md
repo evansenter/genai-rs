@@ -2529,7 +2529,9 @@ passes on that job's result.
 - The guards still find a job or a step by its text. Each one `escapes`
   reads must be a job and a step YAML reads, every key included, and a
   test holds every workflow's split to YAML's. A comment at a step's
-  indent or less no longer ends the step.
+  indent or less no longer ends the step. An alias to an anchor outside
+  the step does not read in the step alone, so the check flags it; no
+  workflow uses one.
 - `alias`, and `shopt -s expand_aliases`, are rejected, as a function is.
 - Every `run:` step of the jobs whose checks are required on `main` is
   held to `failure_escapes`. `REQUIRED_JOBS` in
