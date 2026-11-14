@@ -4,11 +4,12 @@
 //! Measured the way D-014 states them:
 //!
 //! - an implementation module in `src/` or `genai-rs-macros/src/`: its lines
-//!   outside its own `#[cfg(test)]` test modules (`mod tests` or
-//!   `mod <name>_tests`, inline or out of line), at most 800. Every test
-//!   module sits at the end of its file today, so this is the "lines before
-//!   its test module" D-014 states; one declared earlier does not hide the
-//!   code after it;
+//!   outside its own test modules (`mod tests` or `mod <name>_tests`, inline
+//!   or out of line, under a test attribute or a `cfg` that needs `test`, as
+//!   `source_scan::is_test_gated` reads it: `#[cfg(all(test, unix))]` too),
+//!   at most 800. Every test module sits at the end of its file today, so
+//!   this is the "lines before its test module" D-014 states; one declared
+//!   earlier does not hide the code after it;
 //! - a unit-test file in `src/` (`*_tests.rs`, `tests.rs`, and the property
 //!   tests `proptest_*.rs`): every line, at most 1,500;
 //! - the shared test modules `tests/common/` and `tests/live_verbs/`: every
@@ -34,6 +35,8 @@
 
 #[path = "common/source_scan.rs"]
 mod source_scan;
+
+use syn::parse::Parser as _;
 
 /// Which bar a file is held to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +83,7 @@ fn classify(rel: &str) -> Kind {
 }
 
 /// The lines a file is measured by: for an implementation module, all but
-/// its test modules' (each from its `#[cfg(test)]` through its `mod` line,
+/// its test modules' (each from its first attribute through its `mod` line,
 /// or through the closing brace of an inline one); for any other file, all.
 fn measured_lines(kind: Kind, text: &str) -> usize {
     let lines: Vec<&str> = text.lines().collect();
@@ -101,19 +104,33 @@ fn measured_lines(kind: Kind, text: &str) -> usize {
     counted
 }
 
-/// If a top-level `#[cfg(test)]` at `start` gates a module named `tests` or
-/// `<name>_tests`, the index of that module's last line: its `mod` line when
-/// declared out of line, its column-0 closing brace when inline. Other
-/// test-gated items, such as a helper or a test-support child module like
-/// `test_subscriber`, count as the module's own code.
+/// If the top-level attributes from `start` on gate a module named `tests`
+/// or `<name>_tests` to test builds (`source_scan::is_test_gated`, the one
+/// reading of a `cfg` the guards share: `#[cfg(test)]`,
+/// `#[cfg(all(test, unix))]`, but not `#[cfg(any(test, ..))]`), the index
+/// of that module's last line: its `mod` line when declared out of line,
+/// its column-0 closing brace when inline. Other test-gated items, such as
+/// a helper or a test-support child module like `test_subscriber`, count
+/// as the module's own code, and so does a module whose attributes span
+/// lines (none does; rustfmt keeps a `cfg` on one).
 fn test_module_end(lines: &[&str], start: usize) -> Option<usize> {
-    if !lines[start].starts_with("#[cfg(test)]") {
+    if !lines[start].starts_with("#[") {
         return None;
     }
-    let offset = lines[start + 1..]
+    let offset = lines[start..]
         .iter()
         .position(|line| !line.starts_with("#[") && !line.starts_with("///"))?;
-    let mod_line = start + 1 + offset;
+    let mod_line = start + offset;
+    let attrs = lines[start..mod_line]
+        .iter()
+        .filter(|line| line.starts_with("#["))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let attrs = syn::Attribute::parse_outer.parse_str(&attrs).ok()?;
+    if !source_scan::is_test_gated(&attrs) {
+        return None;
+    }
     let item = lines[mod_line];
     let item = item
         .strip_prefix("pub(crate) ")
@@ -238,6 +255,18 @@ fn an_implementation_module_is_counted_without_its_test_modules() {
     // Test-gated items that are not its test module are the module's code.
     let helpers = "#[cfg(test)]\npub(crate) mod test_subscriber;\n#[cfg(test)]\nfn helper() {}\nfn a() {}\n#[cfg(test)]\nmod tests;\n";
     assert_eq!(measured_lines(Kind::Implementation, helpers), 5);
+
+    // A test module under any `cfg` that needs `test` is left out, its
+    // gate after another attribute too; one that builds outside tests
+    // counts.
+    let unix = "fn a() {}\n#[cfg(all(test, unix))]\nmod tests {\n    fn t() {}\n}\n";
+    assert_eq!(measured_lines(Kind::Implementation, unix), 1);
+    let path_first = "fn a() {}\n#[path = \"a_tests.rs\"]\n#[cfg(test)]\nmod tests;\n";
+    assert_eq!(measured_lines(Kind::Implementation, path_first), 1);
+    let shipped = "fn a() {}\n#[cfg(any(test, feature = \"x\"))]\nmod tests {\n    fn t() {}\n}\n";
+    assert_eq!(measured_lines(Kind::Implementation, shipped), 5);
+    let not_test = "fn a() {}\n#[cfg(not(test))]\nmod tests;\n";
+    assert_eq!(measured_lines(Kind::Implementation, not_test), 3);
 
     // An indented `#[cfg(test)]` is inside another item, not the module's.
     let nested = "mod inner {\n    #[cfg(test)]\n    mod tests;\n}\n";

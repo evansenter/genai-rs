@@ -539,7 +539,8 @@ fn every_verb_with_a_body_is_called_above() {
 }
 
 /// The discovery follows a verb through the functions it calls by name, and
-/// leaves out a verb whose requests carry no body.
+/// leaves out a verb whose requests carry no body, and test code: a module
+/// under `cfg(all(test, unix))` as one under `cfg(test)`.
 #[test]
 fn verbs_with_a_body_are_found_through_helpers() {
     let file: syn::File = syn::parse_quote! {
@@ -570,6 +571,10 @@ fn verbs_with_a_body_are_found_through_helpers() {
         }
         #[cfg(test)]
         mod tests {
+            fn get_thing() { let _ = reqwest::Method::PUT; }
+        }
+        #[cfg(all(test, unix))]
+        mod unix_tests {
             fn get_thing() { let _ = reqwest::Method::PUT; }
         }
     };

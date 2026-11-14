@@ -3305,6 +3305,22 @@ on disk from its root; `test_modules` reads files already parsed, which
 `tests/non_exhaustive_responses.rs`'s own checks feed with made-up trees,
 so a disk walk cannot replace it. Both read the same `cfg`s the same way.
 
+**Amended 2026-11-14 (#504, K-6).** The test-side readers left outside
+moved here too, so a `cfg` is read one way, as the amendment above says.
+The three `is_test` copies, which read `cfg(test)` by its bare ident
+(`tests/request_wire_oracle/query_literals.rs`, `query_options.rs`, and
+the coverage oracle's type scan in `src/coverage_oracle/request/fills.rs`),
+and `tests/live_verbs/bodies.rs`'s `test_only`, call `is_test_gated`: test
+code under `cfg(all(test, unix))` is left out as under `cfg(test)`, where
+a probe module so gated in `src/http/` read as library code.
+`query_literals` walks `src/http/` with `rust_files`, at any depth, and
+leaves out the test-only files `test_modules` finds, so a file in a
+subdirectory, which passed the guard, fails it as one directly in
+`src/http/` does. `tests/doc_guards/`' `guide_candidates` reads the
+Markdown with `files_with_extensions`, and `tests/module_size.rs` tells a
+test module by `is_test_gated` over its attributes rather than by a line
+that starts `#[cfg(test)]`. `git grep 'fn is_test'` finds only this file.
+
 ## D-069 — The retry-loop guard follows what reaches the sleep (2026-11-10)
 
 **Context.** #504's J-6 asked `tests/reliability_tests.rs`'s recipe guard
