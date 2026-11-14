@@ -27,13 +27,16 @@
 //! `continue-on-error`, on the step or its job, no `defaults:` on the job
 //! or the workflow, no other shell, no merge key, and no shell-level mask
 //! that `shell::shell_masks` knows (`|| true`, `; true`, `set +e`, an
-//! `exit` whose status may be 0, an `alias` and the others it lists; a
-//! script of more than one line starts with `set -euo pipefail`, and every
-//! step that pipes nextest does). Each key, and the `run:` value, is read
-//! as YAML reads it (`yaml`), so a quoted or spaced key and a continuation
-//! line YAML joins to the command are read too. The script within the
-//! value is read as text, so a status computed out of its sight could still
-//! pass it (D-058).
+//! `exit` whose status may be 0, an `alias` or alias expansion turned on,
+//! a loop that drops a pass's failure, and the others it lists; a script
+//! of more than one line starts with `set -euo pipefail`, and every step
+//! that pipes nextest does). Each key, and the `run:` value, is read as
+//! YAML reads it (`yaml`), so a quoted or spaced key and a continuation
+//! line YAML joins to the command are read too. The runner splices a
+//! `${{ }}` expression into the script before bash reads it, so the script
+//! is read with each matrix value spliced in, and any other expression is
+//! rejected. The script is read as text, so a status computed out of its
+//! sight could still pass it (D-058).
 //!
 //! The workflows are YAML that only runs in CI, so a regression in how they
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a
@@ -67,8 +70,8 @@ mod sweep;
 mod yaml;
 
 use shell::{
-    SKIP_COUNT, blank_quotes, exits_with_rc, failed_list_exits, fails_the_step, if_branch,
-    lists_failed_rc, pipes_nextest, run_script, shell_masks, turns_checks_off,
+    SKIP_COUNT, exits_with_rc, failed_list_exits, fails_the_step, if_branch, lists_failed_rc,
+    pipes_nextest, run_script, shell_masks, turns_checks_off,
 };
 
 fn root() -> PathBuf {
@@ -328,8 +331,7 @@ fn step_name(step: &str) -> &str {
 /// What in `workflow` itself can change how every one of its bash steps
 /// runs, each named: a workflow-level `defaults:` (a key as YAML reads
 /// it, quoted or not), whose shell template (`true {0}`) can run no script
-/// at all, and `BASH_ENV`, `SHELLOPTS` or `BASHOPTS` anywhere in its text
-/// but a comment line, which bash reads before a step's script.
+/// at all, and [`SHELL_ENV`] anywhere in its text but a comment line.
 fn workflow_escapes(workflow: &str) -> Vec<String> {
     let mut found = Vec::new();
     match yaml::document(workflow) {
@@ -351,9 +353,7 @@ fn workflow_escapes(workflow: &str) -> Vec<String> {
         )),
     }
     for line in workflow.lines() {
-        let names_shell_env = ["BASH_ENV", "SHELLOPTS", "BASHOPTS"]
-            .iter()
-            .any(|name| line.contains(name));
+        let names_shell_env = SHELL_ENV.iter().any(|name| line.contains(name));
         if names_shell_env && !line.trim_start().starts_with('#') {
             found.push(format!(
                 "`{}` in the workflow, which can change how every bash step runs",
@@ -363,6 +363,13 @@ fn workflow_escapes(workflow: &str) -> Vec<String> {
     }
     found
 }
+
+/// The variables bash reads, from its environment or once set, that change
+/// how it runs a script: `BASH_ENV` (a file it sources first), `SHELLOPTS`
+/// and `BASHOPTS` (options it starts with), and `POSIXLY_CORRECT` (POSIX
+/// mode, which expands aliases in a script). Set in an `env:` at any level,
+/// in `$GITHUB_ENV` by an earlier step, or in the script itself.
+const SHELL_ENV: [&str; 4] = ["BASH_ENV", "SHELLOPTS", "BASHOPTS", "POSIXLY_CORRECT"];
 
 /// YAML's merge key, which this parser keeps as a key of its own.
 const MERGE_KEY: &str = "<<";
@@ -386,12 +393,15 @@ fn merge_key_escape(place: &str) -> String {
 /// `shell:` other than `bash`; on the workflow, what [`workflow_escapes`]
 /// names: each can run its script under other rules. Anywhere, a merge key
 /// (`<<`), whose keys the guard does not read. In its script, the `run:`
-/// value YAML reads: a shell-level mask ([`shell_masks`]). `allowed` lists
+/// value YAML reads with each of the job's matrix values its expressions
+/// name spliced in, as the runner splices them: a shell-level mask, or any
+/// other expression ([`shell_masks`]). `allowed` lists
 /// the `if:` and `needs:` lines (`key: value`, the value as YAML reads it)
 /// a caller accepts, such as the live steps' owner gate.
 fn escapes(workflow: &str, job: &str, step: &str, allowed: &[&str]) -> Vec<String> {
     let mut found = workflow_escapes(workflow);
     found.extend(yaml::split_problems(workflow, job, step));
+    let job = yaml::job_mapping(job);
     let allows = |key: &str, value: &Yaml| {
         let line = format!("{key}: {}", yaml::text(value));
         allowed.iter().any(|allowed| *allowed == line)
@@ -421,9 +431,9 @@ fn escapes(workflow: &str, job: &str, step: &str, allowed: &[&str]) -> Vec<Strin
             "a step YAML cannot read ({e}), so the guard cannot read its keys"
         )),
     }
-    match yaml::job_mapping(job) {
+    match &job {
         Ok(job) => {
-            for (key, value) in &job {
+            for (key, value) in job {
                 let shown = format!("{}: {}", yaml::text(key), yaml::text(value));
                 match yaml::text(key).as_str() {
                     "if" if !allows("if", value) => found.push(format!(
@@ -449,7 +459,7 @@ fn escapes(workflow: &str, job: &str, step: &str, allowed: &[&str]) -> Vec<Strin
             "a job YAML cannot read ({e}), so the guard cannot read its keys"
         )),
     }
-    found.extend(shell_masks(step));
+    found.extend(shell_masks(step, job.as_ref().ok()));
     found
 }
 
@@ -1117,6 +1127,34 @@ fn the_live_step_check_catches_what_it_claims_to() {
             "          set -euo pipefail\n          # Fail on an empty key: every integration test",
             "          set -euo pipefail\n          shopt -s expand_aliases\n          alias cargo=true\n          # Fail on an empty key: every integration test",
         ),
+        // ... the same in POSIX mode, which expands aliases without
+        // `shopt`, with the alias set through `BASH_ALIASES`, or POSIX mode
+        // from the step's env, ...
+        mutated(
+            &all,
+            "release.yml",
+            "          set -euo pipefail\n          # Fail on an empty key: every integration test",
+            "          set -euo pipefail\n          set -o posix\n          BASH_ALIASES[cargo]=true\n          # Fail on an empty key: every integration test",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "          set -euo pipefail\n          # Fail on an empty key: every integration test",
+            "          set -euo pipefail\n          declare \"BASH_ALIASES[cargo]=true\"\n          # Fail on an empty key: every integration test",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n          NEXTEST_RETRIES: 2\n      - name: Check formatting",
+            "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n          NEXTEST_RETRIES: 2\n          POSIXLY_CORRECT: 1\n      - name: Check formatting",
+        ),
+        // ... a mask in an expression the runner splices into the script, ...
+        mutated(
+            &all,
+            "release.yml",
+            "--no-fail-fast --success-output=final 2>&1 | tee /tmp/integration.log",
+            "--no-fail-fast ${{ '|| true' }} --success-output=final 2>&1 | tee /tmp/integration.log",
+        ),
         // ... or `continue-on-error` written so the text never matched it.
         mutated(
             &all,
@@ -1151,9 +1189,7 @@ fn piped_nextest_problems(workflows: &[(String, String)]) -> (usize, Vec<String>
             for step in steps(&body).iter().filter(|step| pipes_nextest(step)) {
                 piped += 1;
                 let script = run_script(step);
-                let turned_off = script
-                    .iter()
-                    .any(|line| turns_checks_off(&blank_quotes(line)));
+                let turned_off = script.iter().any(|line| turns_checks_off(line));
                 if script.first().map(String::as_str) != Some("set -euo pipefail") || turned_off {
                     problems.push(format!("{name} job {job}, step `{}`", step_name(step)));
                 }
@@ -1282,6 +1318,15 @@ fn the_scripted_harness_suite_fails_its_required_check() {
             run,
             &run.replace("run: cargo", "run: >\n          cargo")
                 .replace(")'\n", ")'\n          || true\n"),
+        ),
+        // ... or an expression, which the runner splices in before bash
+        // reads the script.
+        workflow.replace(
+            run,
+            &run.replace(
+                "antigravity_scripted)'\n",
+                "antigravity_scripted)' ${{ '|| true' }}\n",
+            ),
         ),
         // Ignored, skipped, or skipped with a job it needs.
         workflow.replace(run, &format!("        continue-on-error: true\n{run}")),
@@ -1466,6 +1511,11 @@ fn the_failure_escape_check_reads_the_step_and_its_job() {
         ),
         head.replace("  A: b\n", "  BASH_ENV: ./mask.sh\n"),
         format!("{head}  x:\n    steps:\n      - run: echo \"SHELLOPTS=x\" >> \"$GITHUB_ENV\"\n"),
+        // POSIX mode, which expands aliases in a script, from the env.
+        head.replace("  A: b\n", "  POSIXLY_CORRECT: 1\n"),
+        format!(
+            "{head}  x:\n    steps:\n      - run: echo \"POSIXLY_CORRECT=1\" >> \"$GITHUB_ENV\"\n"
+        ),
     ] {
         assert!(!check(&top, job, step, &[]).is_empty(), "{top}");
     }

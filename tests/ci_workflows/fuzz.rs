@@ -87,6 +87,14 @@ fn the_fuzz_run_check_catches_what_it_claims_to() {
     let broken = [
         // K-8: the run's failure masked, or the job's ignored.
         workflow.replace(run_end, &run_end.replace("10\n", "10 || true\n")),
+        // ... the same from an expression the runner splices in, or a
+        // `cargo` that runs `true`: an alias in POSIX mode.
+        workflow.replace(run_end, &run_end.replace("10\n", "10 ${{ '||' }} true\n")),
+        workflow.replace(run_end, &run_end.replace("10\n", "10 ${{ '|| true' }}\n")),
+        workflow.replace(
+            "          set -euo pipefail\n          case \"$SECONDS_PER_TARGET\" in",
+            "          set -euo pipefail\n          set -o posix\n          BASH_ALIASES[cargo]=true\n          case \"$SECONDS_PER_TARGET\" in",
+        ),
         workflow.replace(
             "    name: Fuzz ${{ matrix.target }}\n",
             "    name: Fuzz ${{ matrix.target }}\n    continue-on-error: true\n",

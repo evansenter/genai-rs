@@ -35,7 +35,9 @@ fn push_run_gate_problems(release: &str) -> Vec<String> {
         .find(|line| line.contains("check_release_push_run.sh"))
         .unwrap_or_default()
         .to_owned();
-    if !(call.contains("\"$GITHUB_SHA\"") || call.contains("${{ github.sha }}")) {
+    // `"$GITHUB_SHA"`, not `${{ github.sha }}`: an expression in the script
+    // is spliced in before bash reads it, which `failure_escapes` rejects.
+    if !call.contains("\"$GITHUB_SHA\"") {
         problems.push(format!("the check reads the tagged commit's run: {call}"));
     }
     if !(check.contains("GH_TOKEN: ${{ github.token }}")
@@ -94,6 +96,8 @@ fn the_push_run_gate_check_catches_what_it_claims_to() {
         // P3: an `|| true` YAML joins to the gate's plain `run:` from a
         // deeper continuation line.
         release.replace(gate, &format!("{gate}          || true\n")),
+        // ... or from an expression the runner splices into the script.
+        release.replace(gate, &gate.replace("\"\n", "\" ${{ '|| true' }}\n")),
         // ... or with a key written so the text never matched it.
         release.replace(gate, &format!("        \"continue-on-error\": true\n{gate}")),
         release.replace(

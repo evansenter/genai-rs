@@ -179,6 +179,32 @@ fn the_required_step_check_catches_what_it_claims_to() {
             "      -\n        name: Check formatting\n",
             1,
         ),
+        // A mask in an expression, which the runner splices into the script
+        // before bash reads it, and the guard once read as a quoted string.
+        workflow.replacen(
+            "        run: cargo nextest run --workspace\n      - name: Run doctests (default features)\n",
+            "        run: cargo nextest run --workspace ${{ '|| true' }}\n      - name: Run doctests (default features)\n",
+            1,
+        ),
+        workflow.replacen(
+            "        run: cargo test --workspace --doc\n",
+            "        run: cargo test --workspace --doc ${{ '|| true' }}\n",
+            1,
+        ),
+        // ... or in a matrix value the integration loop splices in.
+        workflow.replacen(
+            "            tests: \"function_calling_tests tool_service_tests\"\n",
+            "            tests: \"function_calling_tests tool_service_tests; true\"\n",
+            1,
+        ),
+        // The smoke loop's exit on an example's third failure dropped, so
+        // the next example's first pass resets `rc` and a later pass ends
+        // the step green.
+        workflow.replacen(
+            "              echo \"::error::$ex failed $attempt times (last exit $rc)\"\n              echo \"::endgroup::\"\n              exit 1\n",
+            "              echo \"::error::$ex failed $attempt times (last exit $rc)\"\n              echo \"::endgroup::\"\n",
+            1,
+        ),
     ];
     for (i, text) in broken.iter().enumerate() {
         assert_ne!(text, &workflow, "mutation {i} did not apply");

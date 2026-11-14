@@ -1,20 +1,25 @@
 //! How `tests/ci_workflows/` reads a step's shell script: [`run_script`]
-//! takes the `run:` value YAML reads (`super::yaml`), the string the
-//! runner hands the shell, and splits it into command lines, and
-//! [`shell_masks`] names what in a guarded step's script lets a failing
-//! command pass the step.
+//! takes the `run:` value YAML reads (`super::yaml`) and splits it into
+//! command lines, and [`shell_masks`] names what in a guarded step's
+//! script lets a failing command pass the step. The runner splices each
+//! `${{ }}` expression's value into that string before bash reads it, so
+//! [`shell_masks`] reads the script with each matrix value it can splice
+//! in, and rejects any other expression ([`spliced`]).
 //!
 //! The script itself is read as text, against the forms named here. That
 //! catches the ways a step is known, or likely, to be weakened; a script
 //! written to compute its status out of the guard's sight (a condition
 //! that reads a variable but never holds, a loop over an empty list, a
-//! variable set by a command it does not read) could still pass it
-//! (D-058).
+//! variable set by a command it does not read, a command word spelled so
+//! the text does not read it as one, such as `"alias"` or `al''ias`)
+//! could still pass it (D-058).
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::OnceLock;
 
 use regex::Regex;
+use yaml_rust2::yaml::Hash;
 
 use super::yaml;
 
@@ -138,9 +143,31 @@ fn backgrounds(bare: &str) -> bool {
 const CHECKS_OFF: &str =
     r"\bset\s[^;&|]*\+(\w*e|o\s+(errexit|pipefail))|\bshopt\s[^;&|]*\b(errexit|pipefail)\b";
 
-/// Whether a line, its quotes blanked, turns `-e` or `pipefail` off.
-pub(super) fn turns_checks_off(bare: &str) -> bool {
-    regex!(CHECKS_OFF).is_match(bare)
+/// Each `set` and `shopt` command in `line` (`blank` is it with its quotes
+/// blanked), with its quotes and backslashes dropped, as the builtin reads
+/// its arguments (`set -o "posix"` is `set -o posix`), joined by `; `.
+fn option_commands(line: &str, blank: &str) -> String {
+    regex!(&format!(r"{AT_COMMAND}((?:set|shopt)\b)"))
+        .captures_iter(blank)
+        .filter_map(|found| found.get(1))
+        .map(|name| {
+            let end = blank[name.end()..]
+                .find([';', '|', '&'])
+                .map_or(blank.len(), |at| name.end() + at);
+            line[name.start()..end]
+                .chars()
+                .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Whether a line turns `-e` or `pipefail` off, its options quoted or not.
+pub(super) fn turns_checks_off(line: &str) -> bool {
+    let blank = blank_quotes(line);
+    regex!(CHECKS_OFF).is_match(&blank)
+        || regex!(CHECKS_OFF).is_match(&option_commands(line, &blank))
 }
 
 /// `$(grep -c .. || true)`: a count whose exit status 1 means zero, the
@@ -156,42 +183,62 @@ pub(super) const SKIP_COUNT: &str = r"^skips=\$\(grep -cE '([^']*)' (\S+) \|\| t
 /// The last statement of a script that fails on a list of failures.
 const FAILED_CHECK: &str = "if [ \"${#failed[@]}\" -gt 0 ]; then";
 
-/// The shell-level masks [`shell_masks`] rejects by pattern, each read on
-/// a line with its quotes blanked.
-fn mask_patterns() -> &'static [(Regex, &'static str)] {
-    static PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+/// What of a line a mask pattern reads.
+#[derive(Clone, Copy)]
+enum Reads {
+    /// The line with its quotes blanked.
+    Bare,
+    /// That, and each `set` or `shopt` command with its quotes dropped
+    /// ([`option_commands`]), as the builtin reads its options.
+    Options,
+    /// The line as written, quotes and all: a name bash reads wherever it
+    /// is assigned, quoted or not (`declare "BASH_ALIASES[x]=y"`).
+    Line,
+}
+
+/// The shell-level masks [`shell_masks`] rejects by pattern, each with
+/// what of a line it reads.
+fn mask_patterns() -> &'static [(Regex, &'static str, Reads)] {
+    static PATTERNS: OnceLock<Vec<(Regex, &'static str, Reads)>> = OnceLock::new();
     PATTERNS.get_or_init(|| {
         [
             (
                 r"(^|;|&&|\|\||\bthen|\bdo|\belse)\s*(true|:)\s*(;|$|\bfi\b|\bdone\b)".to_owned(),
                 "a `true` or `:` command (`; true`), which leaves the step's status 0 when \
                  it runs last",
+                Reads::Bare,
             ),
             (
                 CHECKS_OFF.to_owned(),
                 "`set +e`, `set +o pipefail` or a `shopt` of either, which lets a failing \
                  command pass",
+                Reads::Options,
             ),
             (
                 r"(^|;|&&|\|\|)\s*trap\b".to_owned(),
                 "a `trap`, which can rewrite the step's exit status",
+                Reads::Bare,
             ),
             (
                 r"(^|;|&&|\|\||\bthen|\bdo|\belse)\s*!\s".to_owned(),
                 "a `!`, which inverts a command's status and is exempt from `-e`",
+                Reads::Bare,
             ),
             (
                 r"&&".to_owned(),
                 "a `&&` list, where `-e` passes over a failure before its last command",
+                Reads::Bare,
             ),
             (
                 r"\b(if|elif|while|until)\s+(!\s*)?[^\[\s]".to_owned(),
                 "a command as an `if` or loop condition, where `-e` passes over its \
                  failure (a `[ .. ]` test is the only condition allowed)",
+                Reads::Bare,
             ),
             (
                 format!(r"{AT_COMMAND}exec\b"),
                 "an `exec`, which replaces the script, so nothing after it runs",
+                Reads::Bare,
             ),
             (
                 format!(
@@ -199,25 +246,133 @@ fn mask_patterns() -> &'static [(Regex, &'static str)] {
                 ),
                 "a script the guard cannot read (`eval`, `source`, `bash -c`), which can \
                  hide a mask",
+                Reads::Bare,
             ),
             (
                 format!(r"{AT_COMMAND}(function\s+\w|[\w-]+\s*\(\s*\))"),
                 "a function, whose body the guard does not read as the step's",
+                Reads::Bare,
             ),
             (
-                format!(r"{AT_COMMAND}alias\b|\bshopt\s[^;&|]*\bexpand_aliases\b"),
-                "an `alias`, or `shopt -s expand_aliases`, under which a command the \
-                 guard reads runs another (`alias cargo=true`), as a function would",
+                format!(
+                    r"{AT_COMMAND}alias\b|\b(?:set|shopt)\s[^;&|]*\b(?:expand_aliases|posix)\b"
+                ),
+                "an `alias`, or alias expansion turned on (`shopt -s expand_aliases`, or \
+                 `set -o posix`, whose POSIX mode expands aliases in a script), under which \
+                 a command the guard reads runs another (`alias cargo=true`), as a \
+                 function would",
+                Reads::Options,
+            ),
+            (
+                r"\bBASH_ALIASES\b".to_owned(),
+                "an `alias` set through `BASH_ALIASES`, under which a command the guard \
+                 reads runs another, as a function would",
+                Reads::Line,
             ),
             (
                 format!(r"{AT_COMMAND}(let\s|\(\()"),
                 "arithmetic (`let`, `(( ))`), which can set a status out of the guard's sight",
+                Reads::Bare,
             ),
         ]
         .into_iter()
-        .map(|(pattern, why)| (Regex::new(&pattern).expect("a mask pattern"), why))
+        .map(|(pattern, why, reads)| (Regex::new(&pattern).expect("a mask pattern"), why, reads))
         .collect()
     })
+}
+
+/// A `${{ }}` expression in a `run:` value, which the runner evaluates and
+/// splices into the script before bash reads any of it: `(its text, the
+/// expression within it, trimmed)`. One with no closing `}}` runs to the
+/// value's end.
+fn expressions(run: &str) -> Vec<(&str, &str)> {
+    let mut found = Vec::new();
+    let mut rest = run;
+    while let Some(start) = rest.find("${{") {
+        let after = &rest[start + 3..];
+        let (inner, len) = match after.find("}}") {
+            Some(end) => (&after[..end], 3 + end + 2),
+            None => (after, rest.len() - start),
+        };
+        found.push((&rest[start..start + len], inner.trim()));
+        rest = &rest[start + len..];
+    }
+    found
+}
+
+/// A matrix value the guard splices into a script: plain words, which
+/// hold no shell syntax.
+const PLAIN_WORDS: &str = r"^[\w./,=+-]+(?: +[\w./,=+-]+)*$";
+
+/// What the guard reads in place of an expression it cannot evaluate, so
+/// the rest of the script is still read.
+const UNREAD: &str = "UNREAD_EXPRESSION";
+
+/// The scripts bash may run for the `run:` value `run`, as the runner
+/// splices its expressions in, and the expressions the guard cannot read,
+/// each named. A `${{ matrix.<key> }}` is spliced in with each value
+/// `job`'s matrix gives the key, one script for each, and each value must
+/// be plain words ([`PLAIN_WORDS`]). Any other expression, or a matrix
+/// value the guard cannot read, is rejected: its value, written into the
+/// script, could be any shell (`${{ '|| true' }}` is `|| true` to bash).
+fn spliced(run: &str, job: Option<&Hash>) -> (Vec<String>, Vec<String>) {
+    let mut scripts = vec![run.to_owned()];
+    let mut found = Vec::new();
+    let mut seen = BTreeSet::new();
+    let matrix_key = regex!(r"^matrix\.([A-Za-z_][\w-]*)$");
+    let plain_words = regex!(PLAIN_WORDS);
+    for (text, expression) in expressions(run) {
+        if !seen.insert(text) {
+            continue;
+        }
+        let unread = |why: &str| {
+            format!(
+                "a `{text}` expression, {why}, which the runner splices into the script \
+                 before bash reads it, so bash can run what the guard never read"
+            )
+        };
+        let key = matrix_key.captures(expression).map(|key| key[1].to_owned());
+        let values = match (key, job) {
+            (Some(key), Some(job)) => match yaml::matrix_values(job, &key) {
+                Ok(values) => {
+                    let unplain: Vec<&String> = values
+                        .iter()
+                        .filter(|value| !plain_words.is_match(value))
+                        .collect();
+                    if !unplain.is_empty() {
+                        found.push(unread(&format!(
+                            "whose matrix values {unplain:?} are not plain words"
+                        )));
+                    }
+                    values
+                }
+                Err(e) => {
+                    found.push(unread(&format!(
+                        "whose matrix values the guard cannot read ({e})"
+                    )));
+                    vec![UNREAD.to_owned()]
+                }
+            },
+            (Some(_), None) => {
+                found.push(unread("read without the job whose matrix gives it"));
+                vec![UNREAD.to_owned()]
+            }
+            (None, _) => {
+                found.push(unread("not a matrix value (`${{ matrix.<key> }}`)"));
+                vec![UNREAD.to_owned()]
+            }
+        };
+        scripts = scripts
+            .iter()
+            .flat_map(|script| {
+                values
+                    .iter()
+                    .map(|value| script.replace(text, value))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+    }
+    (scripts, found)
 }
 
 /// What in a step's script lets a failing command pass the step, each
@@ -238,16 +393,19 @@ fn mask_patterns() -> &'static [(Regex, &'static str)] {
 /// - its status variables (`rc`, `failed`, `skips`) set in a form the
 ///   guard does not read, `rc` read after `rc=0` with no capture since, or
 ///   the list of failures emptied after it is first filled
-///   ([`status_problems`]);
+///   ([`status_problems`]), or a loop that resets `rc` and can drop a
+///   pass's failure ([`loop_problems`]);
 /// - a condition that reads no variable, a command substitution anywhere
 ///   but the value of a plain assignment, a background `&`, or any of
-///   [`mask_patterns`].
+///   [`mask_patterns`];
+/// - a `${{ }}` expression but a matrix value of `job`'s, plain words,
+///   which is read spliced in ([`spliced`]).
 ///
 /// The one `|| true` allowed is a count's, `$(grep -c .. || true)`, whose
 /// exit status 1 means zero.
-pub(super) fn shell_masks(step: &str) -> Vec<String> {
-    let script = match yaml::run_value(step) {
-        Ok(Some(run)) => script_lines(&run),
+pub(super) fn shell_masks(step: &str, job: Option<&Hash>) -> Vec<String> {
+    let run = match yaml::run_value(step) {
+        Ok(Some(run)) => run,
         Ok(None) => return Vec::new(),
         Err(e) => {
             return vec![format!(
@@ -255,6 +413,21 @@ pub(super) fn shell_masks(step: &str) -> Vec<String> {
             )];
         }
     };
+    let (scripts, mut found) = spliced(&run, job);
+    for script in &scripts {
+        for mask in script_masks(script) {
+            if !found.contains(&mask) {
+                found.push(mask);
+            }
+        }
+    }
+    found
+}
+
+/// What in the script `run`, a `run:` value with its expressions spliced
+/// in, lets a failing command pass the step, as [`shell_masks`] names it.
+fn script_masks(run: &str) -> Vec<String> {
+    let script = script_lines(run);
     let lines: Vec<&str> = script.iter().map(String::as_str).collect();
     let mut found = Vec::new();
     match lines.as_slice() {
@@ -275,6 +448,7 @@ pub(super) fn shell_masks(step: &str) -> Vec<String> {
         _ => {}
     }
     found.extend(status_problems(&lines));
+    found.extend(loop_problems(&lines));
     let failed_kept = failed_list_exits(&lines);
     let rc_kept = exits_with_rc(&lines) || (lists_failed_rc(&lines) && failed_kept);
     let substitution = regex!(r"\$\((?:[^(]|$)|`|[<>]\(");
@@ -291,8 +465,14 @@ pub(super) fn shell_masks(step: &str) -> Vec<String> {
             ));
         }
         let bare = grep_count().replace_all(&blank, "$$()");
-        for (pattern, why) in mask_patterns() {
-            if pattern.is_match(&bare) {
+        let options = option_commands(line, &blank);
+        for (pattern, why, reads) in mask_patterns() {
+            let hit = match reads {
+                Reads::Bare => pattern.is_match(&bare),
+                Reads::Options => pattern.is_match(&bare) || pattern.is_match(&options),
+                Reads::Line => pattern.is_match(line),
+            };
+            if hit {
                 found.push(format!("{why}: `{line}`"));
             }
         }
@@ -510,13 +690,91 @@ fn status_problems(lines: &[&str]) -> Vec<String> {
     found
 }
 
+/// What may change `rc`: an assignment to it.
+const SETS_RC: &str = r"(?:^|[\s;])rc=";
+
+/// The loops in a script that reset `rc` on each pass and can drop a
+/// pass's failure before the next pass resets it, each named. A loop that
+/// holds an `rc=0`, at any depth, keeps each pass's failure when, at its
+/// own top level after the last line in it that sets `rc`, it exits 1 on
+/// one (`if [ "$rc" -ne 0 ]; then .. exit 1 .. fi`, or
+/// `[ "$rc" -eq 0 ] || exit 1`) or lists it (`[ "$rc" -eq 0 ] ||
+/// failed+=(..)`); or when it is a retry, which leaves on the first pass
+/// that passes (`if [ "$rc" -eq 0 ]; then break; fi`), so a later pass
+/// runs only to replace a failure, and the last one's status stands for
+/// what reads `rc` after the loop.
+fn loop_problems(lines: &[&str]) -> Vec<String> {
+    let depth = depths(lines);
+    let mut loops = BTreeSet::new();
+    for (at, _) in lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| **line == "rc=0")
+    {
+        // Each block that holds it, innermost first.
+        let mut within = depth[at];
+        for open in (0..at).rev() {
+            if depth[open] < within && opens(lines[open]) {
+                within = depth[open];
+                if is_loop(lines[open]) {
+                    loops.insert(open);
+                }
+            }
+        }
+    }
+    loops
+        .into_iter()
+        .filter(|&open| {
+            let close = (open + 1..lines.len())
+                .find(|&at| depth[at] == depth[open])
+                .unwrap_or(lines.len());
+            !keeps_each_pass(&lines[open + 1..close])
+        })
+        .map(|open| {
+            format!(
+                "a loop that resets `rc` each pass but neither exits on a failed pass, lists \
+                 it, nor leaves on a passing one, so a later pass can drop an earlier one's \
+                 failure: `{}`",
+                lines[open]
+            )
+        })
+        .collect()
+}
+
+/// Whether a loop whose body is `body` keeps each pass's failure, as
+/// [`loop_problems`] reads it.
+fn keeps_each_pass(body: &[&str]) -> bool {
+    let depth = depths(body);
+    let top = |at: &usize| depth[*at] == 0;
+    let retry = (0..body.len()).filter(top).any(|at| {
+        body[at] == "if [ \"$rc\" -eq 0 ]; then break; fi"
+            || (body[at] == "if [ \"$rc\" -eq 0 ]; then"
+                && if_branch(body, at) == ["break"]
+                && body.get(at + 2) == Some(&"fi"))
+    });
+    let after = (0..body.len())
+        .rev()
+        .find(|&at| regex!(SETS_RC).is_match(body[at]))
+        .map_or(0, |at| at + 1);
+    let kept = (after..body.len()).filter(top).any(|at| {
+        body[at].starts_with("[ \"$rc\" -eq 0 ] || failed+=(")
+            || body[at] == "[ \"$rc\" -eq 0 ] || exit 1"
+            || (body[at] == "if [ \"$rc\" -ne 0 ]; then"
+                && top_level(&if_branch(body, at)).contains(&"exit 1"))
+    });
+    retry || kept
+}
+
+/// Whether `line` opens a loop: a `for`, `while` or `until`.
+fn is_loop(line: &str) -> bool {
+    ["for ", "while ", "until "]
+        .iter()
+        .any(|keyword| line.starts_with(keyword))
+}
+
 /// Whether `line` opens a block: an `if` or loop not closed on it.
 fn opens(line: &str) -> bool {
-    (line.starts_with("if ") && !line.ends_with("fi"))
-        || (["for ", "while ", "until "]
-            .iter()
-            .any(|keyword| line.starts_with(keyword))
-            && !line.ends_with("done"))
+    (line.starts_with("if ") && !line.ends_with("fi")) || (is_loop(line) && !line.ends_with("done"))
 }
 
 /// How deep in `if`s and loops each line sits, a block's `fi` or `done` at
@@ -612,6 +870,7 @@ pub(super) fn pipes_nextest(step: &str) -> bool {
 /// Each shell-level mask, alone in an otherwise sound step, is named.
 #[test]
 fn the_shell_mask_check_names_each_mask() {
+    let masks = |step: &str| shell_masks(step, None);
     let step = |script: &str| {
         let body: String = script
             .lines()
@@ -622,13 +881,13 @@ fn the_shell_mask_check_names_each_mask() {
         )
     };
     let sound = "set -euo pipefail\nrc=0\ncargo nextest run 2>&1 | tee log || rc=$?\nskips=$(grep -cE 'A|B' log || true)\nif [ \"${skips:-0}\" -gt 3 ]; then\n  echo \"::error::$skips || true\"\n  if [ \"$rc\" -eq 0 ]; then rc=1; fi\nfi\nexit \"$rc\"";
-    assert_eq!(shell_masks(&step(sound)), Vec::<String>::new());
+    assert_eq!(masks(&step(sound)), Vec::<String>::new());
     let failed_list = "set -euo pipefail\nfailed=()\nfor t in a b; do\n  rc=0\n  run \"$t\" || rc=$?\n  [ \"$rc\" -eq 0 ] || failed+=(\"$t\")\ndone\nif [ \"${#failed[@]}\" -gt 0 ]; then\n  echo \"::error::failed: ${failed[*]}\"\n  exit 1\nfi";
-    assert_eq!(shell_masks(&step(failed_list)), Vec::<String>::new());
-    assert!(shell_masks("      - run: cargo check -E 'a | b'\n").is_empty());
-    assert!(shell_masks("      - uses: actions/checkout@v4\n").is_empty());
+    assert_eq!(masks(&step(failed_list)), Vec::<String>::new());
+    assert!(masks("      - run: cargo check -E 'a | b'\n").is_empty());
+    assert!(masks("      - uses: actions/checkout@v4\n").is_empty());
     assert!(
-        shell_masks(&step(
+        masks(&step(
             "set -euo pipefail\ncargo test || exit\ncargo test || exit 2"
         ))
         .is_empty()
@@ -680,6 +939,47 @@ fn the_shell_mask_check_names_each_mask() {
         ),
         ("alias cargo=true", "`alias`"),
         ("shopt -s expand_aliases", "`alias`"),
+        // ... in POSIX mode, which expands aliases in a script, or set
+        // without the word `alias`, its options quoted or not.
+        (
+            "set -o posix\nBASH_ALIASES[cargo]=true\ncargo test",
+            "`BASH_ALIASES`",
+        ),
+        ("set -o posix", "`alias`"),
+        ("set -euo posix", "`alias`"),
+        ("set -o \"posix\"", "`alias`"),
+        ("shopt -so posix", "`alias`"),
+        ("shopt -s 'expand_aliases'", "`alias`"),
+        ("declare \"BASH_ALIASES[cargo]=true\"", "`BASH_ALIASES`"),
+        // `set +o pipefail` with its option quoted is still read.
+        ("set +o \"pipefail\"\ncargo test | tee log", "set +e"),
+        ("set '+e'\ncargo test", "set +e"),
+        // A loop that resets `rc` each pass and lets a later pass drop an
+        // earlier failure: a retry with no exit on its last failure, or a
+        // loop that neither exits on a failure nor lists it.
+        (
+            "for ex in a b; do\n  for attempt in 1 2 3; do\n    rc=0\n    run \"$ex\" || rc=$?\n    if [ \"$rc\" -eq 0 ]; then\n      break\n    fi\n  done\n  if [ \"$rc\" -ne 0 ]; then\n    echo \"::error::$ex failed\"\n  fi\ndone\nexit \"$rc\"",
+            "a loop that resets `rc`",
+        ),
+        (
+            "for t in a b; do\n  rc=0\n  run \"$t\" || rc=$?\ndone\nexit \"$rc\"",
+            "a loop that resets `rc`",
+        ),
+        (
+            "for t in a b; do\n  rc=0\n  [ \"$rc\" -eq 0 ] || exit 1\n  run \"$t\" || rc=$?\ndone\nexit \"$rc\"",
+            "a loop that resets `rc`",
+        ),
+        // An expression, which the runner splices into the script before
+        // bash reads it, wherever it stands, even in a comment.
+        ("cargo test ${{ '|| true' }}", "expression"),
+        ("cargo test ${{ '||' }} true", "expression"),
+        (
+            "cargo test \"${{ github.event.pull_request.title }}\"",
+            "expression",
+        ),
+        ("# ${{ '' }}\ncargo test", "expression"),
+        ("cargo test ${{ matrix.tests }}", "without the job"),
+        ("cargo test ${{ '|| true'", "expression"),
         ("echo \"$(cargo test)\"", "command substitution"),
         ("echo $(cargo test)", "command substitution"),
         ("echo `cargo test`", "command substitution"),
@@ -727,16 +1027,79 @@ fn the_shell_mask_check_names_each_mask() {
             "more than one count",
         ),
     ] {
-        let found = shell_masks(&step(&format!("set -euo pipefail\n{masked}")));
+        let found = masks(&step(&format!("set -euo pipefail\n{masked}")));
         assert!(
             found.iter().any(|escape| escape.contains(names)),
             "`{masked}`: want a mask naming `{names}`, found {found:?}"
         );
     }
+    // A retry loop inside a loop that exits on an example's last failure,
+    // or lists it, keeps every pass's failure.
+    for kept in [
+        "for ex in a b; do\n  for attempt in 1 2 3; do\n    rc=0\n    run \"$ex\" || rc=$?\n    if [ \"$rc\" -eq 0 ]; then\n      break\n    fi\n  done\n  if [ \"$rc\" -ne 0 ]; then\n    echo \"::error::$ex failed\"\n    exit 1\n  fi\ndone\nexit \"$rc\"",
+        "for t in a b; do\n  rc=0\n  run \"$t\" || rc=$?\n  [ \"$rc\" -eq 0 ] || exit 1\ndone\nexit \"$rc\"",
+        "for attempt in 1 2 3; do\n  rc=0\n  run || rc=$?\n  if [ \"$rc\" -eq 0 ]; then break; fi\ndone\nexit \"$rc\"",
+    ] {
+        let found = masks(&step(&format!("set -euo pipefail\n{kept}")));
+        assert_eq!(found, Vec::<String>::new(), "{kept}");
+    }
+    // A matrix value is read spliced in, one script for each, and must be
+    // plain words; a matrix the guard cannot read is named.
+    let matrix_step =
+        step("set -euo pipefail\nfor t in ${{ matrix.tests }}; do\n  run \"$t\"\ndone");
+    let job = |matrix: &str| {
+        yaml::job_mapping(&format!("    strategy:\n      matrix:\n{matrix}"))
+            .expect("a job mapping")
+    };
+    let sound = job("        include:\n          - tests: \"a b\"\n          - tests: c.d/e\n");
+    assert_eq!(
+        shell_masks(&matrix_step, Some(&sound)),
+        Vec::<String>::new()
+    );
+    let one_line = "      - run: run ${{ matrix.cmd }}\n";
+    assert!(shell_masks(one_line, Some(&job("        cmd: [a, b]\n"))).is_empty());
+    for (matrix, names) in [
+        (
+            "        include:\n          - tests: \"a; true\"\n",
+            "plain words",
+        ),
+        ("        tests: [a, \"b || true\"]\n", "plain words"),
+        ("        tests: [a, [b]]\n", "not a scalar"),
+        ("        other: [a]\n", "no value"),
+        (
+            "        include:\n          - <<: {tests: \"a || true\"}\n",
+            "merge key",
+        ),
+    ] {
+        let found = shell_masks(&matrix_step, Some(&job(matrix)));
+        assert!(
+            found.iter().any(|escape| escape.contains(names)),
+            "{matrix}: want a mask naming `{names}`, found {found:?}"
+        );
+    }
+    let from_json =
+        yaml::job_mapping("    strategy:\n      matrix: ${{ fromJSON(needs.a.outputs.m) }}\n")
+            .expect("a job mapping");
+    assert!(
+        shell_masks(&matrix_step, Some(&from_json))
+            .iter()
+            .any(|escape| escape.contains("not a mapping"))
+    );
+    // A value spliced into the command's own place is read there: a `true`
+    // run for the step's command.
+    let found = shell_masks(
+        "      - run: ${{ matrix.cmd }}\n",
+        Some(&job("        cmd: [cargo, \"true\"]\n")),
+    );
+    assert!(
+        found.iter().any(|escape| escape.contains("`true` or `:`")),
+        "{found:?}"
+    );
+
     // A script without the flags, and one-line scripts that are not one
     // command.
-    assert!(!shell_masks(&step("set -eo pipefail\ncargo test")).is_empty());
-    assert!(!shell_masks(&step("cargo test\ncargo doc")).is_empty());
+    assert!(!masks(&step("set -eo pipefail\ncargo test")).is_empty());
+    assert!(!masks(&step("cargo test\ncargo doc")).is_empty());
     for one_line in [
         "cargo test || true",
         "cargo test; true",
@@ -746,7 +1109,7 @@ fn the_shell_mask_check_names_each_mask() {
         "cargo test || exit \"0\"",
     ] {
         assert!(
-            !shell_masks(&format!("      - name: Guarded\n        run: {one_line}\n")).is_empty(),
+            !masks(&format!("      - name: Guarded\n        run: {one_line}\n")).is_empty(),
             "{one_line}"
         );
     }
@@ -754,6 +1117,7 @@ fn the_shell_mask_check_names_each_mask() {
 
 #[test]
 fn the_run_script_reader_reads_what_the_shell_runs() {
+    let masks = |step: &str| shell_masks(step, None);
     let step = "      - name: Live\n        if: always()\n        run: |\n          set -euo pipefail\n          # a comment\n\n          cargo nextest run \\\n            --run-ignored all | tee log\n        env:\n          X: \"run: no\"\n";
     assert_eq!(
         run_script(step),
@@ -788,7 +1152,7 @@ fn the_run_script_reader_reads_what_the_shell_runs() {
         ),
     ] {
         assert_eq!(run_script(step), [script], "{step}");
-        assert!(!shell_masks(step).is_empty(), "{step}");
+        assert!(!masks(step).is_empty(), "{step}");
     }
     assert!(
         run_script("      - uses: actions/checkout@v4\n        with:\n          run: x\n")

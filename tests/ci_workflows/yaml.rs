@@ -1,10 +1,13 @@
 //! The workflows read as YAML, by a YAML parser (`yaml-rust2`): a key is
 //! the key YAML reads, quoted or with a space before its colon, and a
-//! `run:` value is the string the runner hands the shell, a plain value's
-//! deeper continuation lines and a folded block's lines joined as YAML
-//! joins them (D-058). The guards still find a job or a step by its text
-//! (`super::jobs`, `super::steps`); [`split_problems`] checks that each one
-//! they found is one YAML reads, with every key YAML gives it.
+//! `run:` value is the string YAML reads, a plain value's deeper
+//! continuation lines and a folded block's lines joined as YAML joins
+//! them (D-058). The runner splices each `${{ }}` expression's value into
+//! that string before the shell reads it, which `super::shell` reads
+//! ([`matrix_values`] gives it a matrix's values). The guards still find a
+//! job or a step by its text (`super::jobs`, `super::steps`);
+//! [`split_problems`] checks that each one they found is one YAML reads,
+//! with every key YAML gives it.
 
 use yaml_rust2::yaml::Hash;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -71,8 +74,8 @@ pub(super) fn text(value: &Yaml) -> String {
     }
 }
 
-/// The `run:` value of a step, as YAML reads it: `None` for a step with no
-/// `run:`.
+/// The `run:` value of a step, as YAML reads it, before the runner
+/// splices its `${{ }}` expressions in: `None` for a step with no `run:`.
 pub(super) fn run_value(step: &str) -> Result<Option<String>, String> {
     let step = step_mapping(step)?;
     Ok(get(&step, "run").map(text))
@@ -83,6 +86,59 @@ pub(super) fn step_env(step: &str, name: &str) -> Option<String> {
     let step = step_mapping(step).ok()?;
     let env = get(&step, "env")?.as_hash()?;
     get(env, name).map(text)
+}
+
+/// The values `job`'s `strategy.matrix` gives `key`, which the runner
+/// splices in for `${{ matrix.<key> }}`: the key's own list and each
+/// `include` entry's value. An error when the guard cannot read every one:
+/// a matrix that is not a mapping (one an expression builds), a value that
+/// is not a scalar, a merge key (`<<`) whose keys the parser does not merge
+/// in, or no value at all.
+pub(super) fn matrix_values(job: &Hash, key: &str) -> Result<Vec<String>, String> {
+    let matrix = get(job, "strategy")
+        .and_then(Yaml::as_hash)
+        .and_then(|strategy| get(strategy, "matrix"))
+        .ok_or("the job has no `strategy.matrix`")?;
+    let matrix = matrix
+        .as_hash()
+        .ok_or_else(|| format!("a matrix that is not a mapping: {}", text(matrix)))?;
+    let scalar = |value: &Yaml| match value {
+        Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) | Yaml::Boolean(_) => Ok(text(value)),
+        other => Err(format!("a `{key}` that is not a scalar: {}", text(other))),
+    };
+    let merged = |map: &Hash| {
+        get(map, "<<").map_or(Ok(()), |_| {
+            Err("a merge key (`<<`) in the matrix".to_owned())
+        })
+    };
+    merged(matrix)?;
+    let mut values = Vec::new();
+    if let Some(own) = get(matrix, key) {
+        for value in own
+            .as_vec()
+            .ok_or_else(|| format!("a `{key}` that is not a list: {}", text(own)))?
+        {
+            values.push(scalar(value)?);
+        }
+    }
+    if let Some(include) = get(matrix, "include") {
+        for entry in include
+            .as_vec()
+            .ok_or_else(|| format!("an `include` that is not a list: {}", text(include)))?
+        {
+            let entry = entry.as_hash().ok_or_else(|| {
+                format!("an `include` entry that is not a mapping: {}", text(entry))
+            })?;
+            merged(entry)?;
+            if let Some(value) = get(entry, key) {
+                values.push(scalar(value)?);
+            }
+        }
+    }
+    if values.is_empty() {
+        return Err(format!("no value for `{key}` in the job's matrix"));
+    }
+    Ok(values)
 }
 
 /// The jobs of a workflow document, by id.

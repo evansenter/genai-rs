@@ -171,8 +171,10 @@ jobs:
           # so no build runs under the timeout. An example that passed only on
           # a retry prints `EXAMPLE_RETRIED <name> <failed tries>`, which the
           # flakiness report counts (count_retried_flakes.sh). Part of a
-          # required check, so the loop keeps each attempt's status in `rc`,
-          # the form tests/ci_workflows/ reads, and fails at the third.
+          # required check, so in the forms tests/ci_workflows/ reads: the
+          # retry keeps each attempt's status in `rc` and stops at the first
+          # pass, and the step exits 1 at an example's third failure, before
+          # the next example resets `rc`.
           for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn lifecycle_hooks file_watcher command_guard repo_auditor; do
             case "$ex" in
               # 1 turn x 600s.
@@ -765,11 +767,13 @@ jobs:
       # fails the job. The floor sits just under the library's line
       # coverage measured when it was set (D-058): raise it as coverage
       # grows, and lower it only with the reason in the commit. This one
-      # command and nothing else, with no `if:`, `continue-on-error`,
-      # `needs:` or `defaults:` here, on the job or on the workflow:
-      # tests/ci_workflows/ rejects each, and the shell-level masks it knows
-      # (`|| true`, `; true`, `set +e`, `exit "0"`), reading the keys and
-      # this `run:` value as YAML does, so a drop fails the job.
+      # command and nothing else: no key here but `name:` and `run:` (a
+      # step `env:` could redefine COVERAGE_IGNORE), and no `if:`,
+      # `continue-on-error`, `needs:` or `defaults:` on the job or on the
+      # workflow. tests/ci_workflows/ rejects each, and the shell-level
+      # masks it knows (`|| true`, `; true`, `set +e`, `exit "0"`, a
+      # `${{ }}` expression), reading the keys and this `run:` value as
+      # YAML does, so a drop fails the job.
       - name: Enforce the coverage floor
         run: cargo llvm-cov report --workspace --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines 93
       # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,

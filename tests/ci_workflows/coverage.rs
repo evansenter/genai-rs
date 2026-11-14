@@ -3,7 +3,8 @@
 //! alone, and fails under a floor that no `if:`, `continue-on-error`,
 //! `needs:` or `defaults:`, as YAML reads the workflow's keys, nor a
 //! shell-level mask the guards know in the `run:` value YAML reads, skips
-//! or ignores (#504, D-058).
+//! or ignores, from a step that holds its name and its one command and
+//! nothing else (#504, D-058).
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -138,13 +139,14 @@ fn library_files() -> &'static [(String, bool)] {
 /// leaves out the test-only files by one `COVERAGE_IGNORE` pattern, which
 /// matches every module file only a test build compiles and no other (an
 /// inline `#[cfg(test)] mod tests { .. }` in a library file is beyond a
-/// filename pattern, and still counted); and a step after the summary runs
-/// one command, its `run:` value as YAML reads it, that fails under a floor
-/// near the measured value, with nothing the guards know to skip it or pass
-/// its failure ([`failure_escapes`]: an `if:`, `continue-on-error` or
-/// `needs:`, on the step or its job, a `defaults:`, each key as YAML reads
-/// it, or a shell-level mask such as `|| true` or `exit "0"`), as the runs
-/// before it have.
+/// filename pattern, and still counted); and a step after the summary,
+/// with no key but its name and its `run:`, runs one command, its `run:`
+/// value as YAML reads it, that fails under a floor near the measured
+/// value, with nothing the guards know to skip it or pass its failure
+/// ([`failure_escapes`]: an `if:`, `continue-on-error` or `needs:`, on the
+/// step or its job, a `defaults:`, each key as YAML reads it, or a
+/// shell-level mask such as `|| true`, `exit "0"` or one an expression
+/// splices in), as the runs before it have.
 fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
     let (job, all) = coverage_job(workflow);
     let mut problems = Vec::new();
@@ -219,13 +221,14 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
         );
     }
 
-    // Library code only: one pattern, on every report.
-    let pattern = job
-        .lines()
-        .find_map(|line| line.strip_prefix("      COVERAGE_IGNORE: '"))
-        .and_then(|rest| rest.strip_suffix('\''));
-    match pattern.map(Regex::new) {
-        None => problems.push("the job's env sets no COVERAGE_IGNORE: '...' pattern".into()),
+    // Library code only: one pattern, the job's, as YAML reads its env, on
+    // every report.
+    let pattern = yaml::job_mapping(&job).ok().and_then(|job| {
+        let env = yaml::get(&job, "env")?.as_hash()?;
+        yaml::get(env, "COVERAGE_IGNORE").map(yaml::text)
+    });
+    match pattern.as_deref().map(Regex::new) {
+        None => problems.push("the job's env sets no COVERAGE_IGNORE pattern".into()),
         Some(Err(e)) => problems.push(format!("COVERAGE_IGNORE is not a regex: {e}")),
         Some(Ok(ignore)) => {
             // llvm-cov matches the pattern against absolute paths.
@@ -298,6 +301,23 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
         problems.push(format!(
             "the floor step has {escape}: a drop must fail the job on every run"
         ));
+    }
+    // Its name and its one command, and nothing else in the step: a step
+    // `env:` that redefines `COVERAGE_IGNORE`, or any other key, can change
+    // the figure the command reads.
+    if let Ok(step) = yaml::step_mapping(&all[floor_at]) {
+        let others: Vec<String> = step
+            .keys()
+            .map(yaml::text)
+            .filter(|key| key != "name" && key != "run")
+            .collect();
+        if !others.is_empty() {
+            problems.push(format!(
+                "the floor step holds its name and its command and nothing else, but has \
+                 {others:?}: a step `env:` can redefine COVERAGE_IGNORE, and with it the \
+                 figure the floor reads"
+            ));
+        }
     }
     // One command, which reads the packages the runs measured, so its
     // status is the floor's verdict and nothing else's.
@@ -420,6 +440,22 @@ fn the_coverage_check_catches_what_it_claims_to() {
         workflow.replace(
             "    name: Code Coverage\n",
             "    name: Code Coverage\n    continue-on-error : true\n",
+        ),
+        // An env on the floor step that redefines the pattern the floor
+        // reads, so it counts another figure; or the job's pattern moved
+        // out of its env, where the text still found it.
+        workflow.replace(
+            "      - name: Enforce the coverage floor\n",
+            "      - name: Enforce the coverage floor\n        env:\n          COVERAGE_IGNORE: '(src/antigravity|src/interactions)/'\n",
+        ),
+        workflow.replace(
+            "    runs-on: ubuntu-latest\n    env:\n      # Library files only",
+            "    runs-on: ubuntu-latest\n    outputs:\n      # Library files only",
+        ),
+        // A mask in an expression, which the runner splices in.
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93 ${{ '|| true' }}\n",
         ),
         // A failing test in a coverage run passed over.
         workflow.replace(
