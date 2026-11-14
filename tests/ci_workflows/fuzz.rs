@@ -9,7 +9,6 @@
 use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
 
-use super::shell::script_lines;
 use super::{escapes, jobs, read, root, run_script, step_name, steps, workflow_escapes, yaml};
 
 /// What the fuzz job may carry beyond running on every run: it needs the
@@ -147,8 +146,8 @@ fn the_fuzz_run_check_catches_what_it_claims_to() {
 /// crate with its lockfile, and this workflow), and `false` otherwise; on
 /// any other event, or when it cannot tell, `true`. The job's output is
 /// what the fuzz job's `if:` and Fuzz Gate read. A `run:` value is compared
-/// by its command lines ([`script_lines`]: comments dropped), every other
-/// key and value as YAML reads it.
+/// line by line ([`pinned_script`]), every other key and value as YAML
+/// reads it.
 const PATH_CHECK_JOB: &str = r##"
 name: Fuzzed Paths
 runs-on: ubuntu-latest
@@ -220,9 +219,22 @@ steps:
       echo "Every fuzz target ran clean."
 "##;
 
-/// `job` as YAML reads it, each step's `run:` value replaced by its command
-/// lines, so a comment in a script changes nothing and every other change
-/// does.
+/// A pinned `run:` value's lines, as the pin compares them: each trimmed of
+/// spaces and tabs, blank and comment lines dropped, and every other line
+/// kept as written. A `\` continuation is not joined: bash joins
+/// `!=\` and a next line `success` into one word, and a comment after
+/// `exit \` leaves a bare `exit`, so a split line is a change too.
+fn pinned_script(run: &str) -> Vec<String> {
+    run.lines()
+        .map(|line| line.trim_matches([' ', '\t']))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(String::from)
+        .collect()
+}
+
+/// `job` as YAML reads it, each step's `run:` value replaced by its lines
+/// ([`pinned_script`]), so a comment or a blank line in a script changes
+/// nothing and every other change does.
 fn pinned_form(job: &str) -> Result<Hash, String> {
     let mut job = yaml::job_mapping(job)?;
     if let Some(Yaml::Array(steps)) = job.get_mut(&Yaml::String("steps".into())) {
@@ -231,7 +243,7 @@ fn pinned_form(job: &str) -> Result<Hash, String> {
                 .as_mut_hash()
                 .and_then(|step| step.get_mut(&Yaml::String("run".into())))
             {
-                let lines = script_lines(&yaml::text(run));
+                let lines = pinned_script(&yaml::text(run));
                 *run = Yaml::Array(lines.into_iter().map(Yaml::String).collect());
             }
         }
@@ -316,6 +328,17 @@ fn the_fuzz_gate_check_catches_what_it_claims_to() {
         ),
         workflow.replace(gate, &format!("{gate}    continue-on-error: true\n")),
         workflow.replace(gate, &format!("{gate}    \"continue-on-error\": true\n")),
+        // ... or a line split by a continuation: bash joins `!=` and
+        // `success` into one word, an error that skips the branch, and a
+        // comment after `exit \` leaves a bare `exit`, with echo's 0.
+        workflow.replace(
+            "if [ \"$CHANGES_RESULT\" != success ]; then",
+            "if [ \"$CHANGES_RESULT\" !=\\\n          success ]; then",
+        ),
+        workflow.replace(
+            "so whether to fuzz is unknown.\"\n            exit 1\n",
+            "so whether to fuzz is unknown.\"\n            exit \\\n            # The status.\n            1\n",
+        ),
         // ... reads a verdict it was not given, runs only when both jobs
         // passed, or a step before it sets what it reads.
         workflow.replace(

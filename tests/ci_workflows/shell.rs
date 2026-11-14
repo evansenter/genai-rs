@@ -49,7 +49,7 @@ pub(super) fn run_script(step: &str) -> Vec<String> {
 }
 
 /// A `run:` value's command lines, as [`run_script`] gives them.
-pub(super) fn script_lines(run: &str) -> Vec<String> {
+fn script_lines(run: &str) -> Vec<String> {
     let mut script = Vec::new();
     let mut joined = String::new();
     for line in run.lines().map(str::trim) {
