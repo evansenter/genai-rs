@@ -294,8 +294,9 @@ expect_drift "a request body made optional" \
 
 # The rest reduced to the same bytes until #504's K-12: an operation under
 # a method outside the five the crate calls, an operation's `deprecated`,
-# servers, security and callbacks, a body's encoding, and the spec's
-# servers, security schemes, global parameters and retry policy.
+# servers, security and callbacks, a body's encoding, a request body's or
+# a response's own keys, and the spec's servers, security schemes, global
+# parameters and retry policy.
 expect_drift "a HEAD operation added" \
     'spec["paths"]["/{api_version}/things/{id}"]["head"] = {"responses": {"200": {"description": "Exists."}}}' \
     '"HEAD /{api_version}/things/{id}" in d["endpoints"] and d["operations"]["HEAD /{api_version}/things/{id}"]["responses"] == {"200": {"content": {}}}'
@@ -317,6 +318,12 @@ expect_drift "a callback added" \
 expect_drift "a request body given an encoding" \
     'spec["paths"]["/{api_version}/things"]["post"]["requestBody"]["content"]["application/json"]["encoding"] = {"file": {"contentType": "image/png"}}' \
     'd["operations"]["POST /{api_version}/things"]["body"]["media"] == {"application/json": {"encoding": {"file": {"contentType": "image/png"}}}}'
+expect_drift "a request body given a key of its own" \
+    'spec["paths"]["/{api_version}/things"]["post"]["requestBody"]["x-body-wrapper"] = "thing"' \
+    'd["operations"]["POST /{api_version}/things"]["body"]["x-body-wrapper"] == "thing"'
+expect_drift "a response given links" \
+    'spec["paths"]["/{api_version}/things"]["post"]["responses"]["default"]["links"] = {"self": {"operationId": "listThings", "description": "Prose."}}' \
+    'd["operations"]["POST /{api_version}/things"]["responses"]["default"]["links"] == {"self": {"operationId": "listThings"}}'
 expect_drift "the server moved" \
     'spec["servers"][0]["url"] = "https://eu.example.com"' \
     'd["top_level"]["servers"] == [{"url": "https://eu.example.com"}]'
