@@ -7,8 +7,9 @@
 //! escalates, and a stub test with a millisecond timeout runs on the paused
 //! clock. Every live nextest step keeps its skip markers in the log and
 //! fails its step over a budget of them, each budget pinned with its reason
-//! (`SKIP_BUDGETS`), and nextest retries are set in a live nextest step's
-//! env and nowhere else, `.config/nextest.toml` included (`retry_problems`).
+//! (`SKIP_BUDGETS`), and the workflows, the composite actions and
+//! `.config/nextest.toml` write a nextest retry only in a live nextest
+//! step's env (`retry_problems`).
 //! `coverage` checks that the Code Coverage job writes its summary, over
 //! the packages it measured, on every run, measures the
 //! `antigravity` feature with its scripted suite and library files alone,
@@ -113,14 +114,27 @@ fn workflows() -> Vec<(String, String)> {
     found
 }
 
+/// The action files in `dir`'s subdirectories: `action.yml` or
+/// `action.yaml`, each of which GitHub reads as a local action's.
+fn action_files(dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+        .flat_map(|entry| {
+            let action = entry.expect("dir entry").path();
+            ["action.yml", "action.yaml"].map(|name| action.join(name))
+        })
+        .filter(|path| path.is_file())
+        .collect();
+    found.sort();
+    found
+}
+
 /// `(path under .github/, text)` for every composite action in
 /// `.github/actions/`, which a workflow step runs with `uses:`.
 fn actions() -> Vec<(String, String)> {
     let dir = root().join(".github/actions");
-    let mut found: Vec<(String, String)> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
-        .map(|entry| entry.expect("dir entry").path().join("action.yml"))
-        .filter(|path| path.exists())
+    let mut found: Vec<(String, String)> = action_files(&dir)
+        .into_iter()
         .map(|path| {
             let name = path
                 .strip_prefix(root().join(".github"))
@@ -540,22 +554,30 @@ const OTHER_CONFIG: [&str; 2] = ["--config-file", "--tool-config-file"];
 /// (`workflow:job`), given every workflow and composite action (`files`)
 /// and `.config/nextest.toml`.
 ///
-/// The flakiness report counts a step's tests only when the step retries,
-/// which `count_retried_flakes.sh` reads from the step header GitHub
-/// echoes into the log, and only in the jobs it reads (`RETRY_JOBS`, the
-/// jobs with a live step). So a retry is set in one place alone: as
-/// `NEXTEST_RETRIES` in a live nextest step's own `env:` (read as YAML
-/// reads it), which the header always lists, and every live nextest step
-/// sets it. Rejected: `NEXTEST_RETRIES` named anywhere else in a workflow
-/// (another step's env, a job's or the workflow's, which reach every step
-/// under them, a script, `$GITHUB_ENV`) or in a composite action, in any
-/// case, since Windows reads an environment variable's name in any; a
-/// `--retries` flag, or a `--config-file` or `--tool-config-file` that
-/// loads other settings; and a `retries` key in any profile or override
-/// of `.config/nextest.toml`, which every run reads. Each passed every guard, and a test retried to a
-/// pass that way was never counted (the #504 grade of 2026-11-14, L-5).
-/// The check reads the text: a name the script builds at run time is not
-/// read (D-058).
+/// The flakiness report reads `rust.yml`'s runs, and in them the jobs with
+/// a live step (`RETRY_JOBS`), and counts a step's tests only when the
+/// step retries, which `count_retried_flakes.sh` reads from the step
+/// header GitHub echoes into the log. So a retry is written in one place
+/// alone: as `NEXTEST_RETRIES` in a live nextest step's own `env:` (read
+/// as YAML reads it), which the header always lists, and every live
+/// nextest step sets it, so that a capacity 429 or 503 is retried rather
+/// than failing the run. Rejected: `NEXTEST_RETRIES` named anywhere else
+/// in a workflow (another step's env, a job's or the workflow's, which
+/// reach every step under them, a script, `$GITHUB_ENV`) or in a composite
+/// action, in any case, since Windows reads an environment variable's name
+/// in any; a `--retries` flag, or a `--config-file` or
+/// `--tool-config-file` that loads other settings; and a `retries` key in
+/// any profile or override of `.config/nextest.toml`, which every run
+/// reads. Each passed every guard, and a test retried to a pass that way
+/// was never counted (the #504 grade of 2026-11-14, L-5).
+///
+/// Two retries are still not counted. `release.yml`'s two live steps
+/// retry as `rust.yml`'s do, and the report never reads a Release run:
+/// their live tests are the ones `rust.yml`'s live jobs run, whose retries
+/// it counts. And the check reads the text of the workflows, the composite
+/// actions and `.config/nextest.toml`, so a name a script builds at run
+/// time, or a script a step runs (a `.github/scripts/` file, a `make`
+/// target) that writes the name to `$GITHUB_ENV`, is not read (D-058).
 fn retry_problems(files: &[(String, String)], nextest_toml: &str) -> (Vec<String>, Vec<String>) {
     let mut live = Vec::new();
     let mut problems = Vec::new();
@@ -619,8 +641,9 @@ fn retry_problems(files: &[(String, String)], nextest_toml: &str) -> (Vec<String
     (live, problems)
 }
 
-/// Every nextest retry is set where the flakiness report counts it: in a
-/// live nextest step's env, and nowhere else ([`retry_problems`]).
+/// A nextest retry is written in a live nextest step's env, and in no
+/// other text the check reads ([`retry_problems`], which names the retries
+/// the flakiness report still does not count).
 #[test]
 fn nextest_retries_are_set_in_the_step_env() {
     let nextest_toml = read(&root().join(".config/nextest.toml"));
@@ -757,7 +780,15 @@ fn the_retry_check_catches_what_it_claims_to() {
                 "--workspace --config-file .config/ci.toml\n",
             ),
         ),
-        // A live step with no retries, so its job's flakes go uncounted.
+        // A live step with no retries: a flake fails it, and in `rust.yml`
+        // its job's tests drop out of the report, ...
+        mutated(
+            &all,
+            "rust.yml",
+            "          # (count_retried_flakes.sh reads this from the step's echoed env).\n          NEXTEST_RETRIES: 2\n",
+            "          # (count_retried_flakes.sh reads this from the step's echoed env).\n",
+        ),
+        // ... and in `release.yml` one capacity 429 fails a release.
         mutated(
             &all,
             "release.yml",
@@ -771,6 +802,30 @@ fn the_retry_check_catches_what_it_claims_to() {
             "workflow mutation {i} went unnoticed"
         );
     }
+}
+
+/// A composite action saved as `action.yaml` was never read, so a
+/// `NEXTEST_RETRIES` it wrote to `$GITHUB_ENV` passed (a review of L-5);
+/// GitHub reads a local action from either name.
+#[test]
+fn both_action_file_names_are_read() {
+    let dir = tempfile::tempdir().expect("a scratch dir");
+    for (action, file) in [
+        ("long", "action.yaml"),
+        ("short", "action.yml"),
+        ("none", "README.md"),
+    ] {
+        std::fs::create_dir(dir.path().join(action)).unwrap();
+        std::fs::write(dir.path().join(action).join(file), "runs: {}\n").unwrap();
+    }
+    let found: Vec<String> = action_files(dir.path())
+        .iter()
+        .map(|path| {
+            let path = path.strip_prefix(dir.path()).unwrap();
+            path.to_string_lossy().replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(found, ["long/action.yaml", "short/action.yml"]);
 }
 
 /// A live nextest step's skip budget: the number of skip markers past
