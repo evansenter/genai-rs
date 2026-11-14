@@ -29,7 +29,7 @@ record is in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`.
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py`, snapshot for the baseline in `tests/fixtures/api_surface/bindings.json` (written only by `.github/scripts/refresh_api_snapshot.sh`) | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable; found 2026-11-01. It does not always agree with the bindings where both speak. Each lists query parameters the other lacks (five, under [Spec-only query parameters](#spec-only-query-parameters-live-2026-11-09)), and the spec wraps three request bodies the bindings send flat: webhook create (`{webhook: ...}`), webhook update (`{webhook, update_mask, id}`) and trigger update (`{trigger, update_mask, id}`). Each endpoint rejects its wrapper and takes the flat body: webhook create on 2026-11-09, the two updates on 2026-11-13. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`. The copies fetched that day differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. The committed snapshots were fetched on 2026-11-14: what the 2026-11-13 copies held is unchanged, and the rest is what the reducer keeps since. Besides the schemas and endpoints (an operation under any HTTP method), each keeps every operation's path, query and header parameters (each with whether it is required, its schema and its other non-prose keys), its request body (with whether it is required), its responses by status (each with its schema by content type and its headers), each content type's other keys (an event stream's `[DONE]` sentinel), and its other keys (`deprecated`, `servers`, `security`, `callbacks`); the spec's top level (its server, `https://generativelanguage.googleapis.com`, its security, its global parameters and the generated client's retry policy, `x-speakeasy-retries`); and the security schemes. It drops the prose and the names a generated SDK gives its code (`operationId`, `tags`, the Speakeasy names), with the reasons in D-060. The served v1beta gives four header parameters, all on the environment-file upload's start request, which the crate sends. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves the same way and compares it with the snapshot, so a path, query or header parameter added, removed, made required or optional, or retyped, a request body that changes or is made optional, a response that changes, an operation added or deprecated, or a change to the servers, security or retry policy is a drift: it opens an `api-sweep` issue when one drifts or stops serving. Of these, the coverage oracle diffs only query parameter names and required flags (against the bindings) and header parameters (against what the verbs send) offline; the rest is watched, not checked against the crate (D-060). The diff of each request body against its binding class and of each response's schema reference against the type its verb returns is tracked in #558. A parameter's schema and a body's required flag stay watched only, for the reason D-060 gives: every body the spec gives is required and sent, and every parameter a verb sends has the spec's type but the voices list filters, which send one value each where the spec takes several (D-060, `docs/RESOURCES.md`). On 2026-11-14 both URLs served what the snapshots hold. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
+| 1b | **OpenAPI specs** (v1beta and v1), snapshot in `tests/fixtures/api_surface/` | Machine-readable; found 2026-11-01. It does not always agree with the bindings where both speak. Each lists query parameters the other lacks (five, under [Spec-only query parameters](#spec-only-query-parameters-live-2026-11-09)), and the spec wraps three request bodies the bindings send flat: webhook create (`{webhook: ...}`), webhook update (`{webhook, update_mask, id}`) and trigger update (`{trigger, update_mask, id}`). Each endpoint rejects its wrapper and takes the flat body: webhook create on 2026-11-09, the two updates on 2026-11-13. The published URLs (`ai.google.dev/static/api/interactions.openapi.json`, `interactions-v1.openapi.json`) redirect to aistudio.google.com paths, which 404'd from about 2026-11-03 (no new public URL found on 2026-11-04). Since 2026-11-07 both serve OpenAPI 3.0.3 JSON again, from `aistudio.google.com/api-reference/interactions.openapi.json` and `interactions-v1.openapi.json`. The copies fetched that day differed from the 2026-11-01 copies only by surface google-genai 3.0.0 added, which the crate models (the code execution result's string-or-content union, the document MIME types, `source_text`), so the coverage oracle's spec passes needed no new mapping or reason. The committed snapshots were fetched on 2026-11-14: what the 2026-11-13 copies held is unchanged, and the rest is what the reducer keeps since. Besides the schemas and endpoints (an operation under any HTTP method), each keeps every operation's path, query and header parameters (each with whether it is required, its schema and its other non-prose keys), its request body (with whether it is required), its responses by status (each with its schema by content type and its headers), each content type's other keys (an event stream's `[DONE]` sentinel), and its other keys (`deprecated`, `servers`, `security`, `callbacks`); the spec's top level (its server, `https://generativelanguage.googleapis.com`, its security, its global parameters and the generated client's retry policy, `x-speakeasy-retries`); and the security schemes. It drops the prose and the names a generated SDK gives its code (`operationId`, `tags`, the Speakeasy names), with the reasons in D-060. The served v1beta gives four header parameters, all on the environment-file upload's start request, which the crate sends. Each snapshot records its URL. The daily sweep (`watch_spec_urls.sh`) reduces what each URL serves the same way and compares it with the snapshot, so a path, query or header parameter added, removed, made required or optional, or retyped, a request body that changes or is made optional, a response that changes, an operation added or deprecated, or a change to the servers, security or retry policy is a drift: it opens an `api-sweep` issue when one drifts or stops serving. Of these, the coverage oracle diffs only query parameter names and required flags (against the bindings) and header parameters (against what the verbs send) offline; the rest is watched, not checked against the crate (D-060). The diff of each request body against its binding class and of each response's schema reference against the type its verb returns is tracked in #558. A parameter's schema and a body's required flag stay watched only, for the reason D-060 gives: every body the spec gives is required and sent, and every parameter a verb sends has the spec's type but the voices list filters, which send one value each where the spec takes several (D-060, `docs/RESOURCES.md`). On 2026-11-14 both URLs served what the snapshots hold, and neither lists the decisions resource google-genai 3.3.0 adds (`POST /v1beta/decisions`), so the bindings are its one rank-1 source. This is the one record of the URLs' state; `CLAUDE.md` and `docs/TESTING.md` point here. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: Google's, on `aistudio.google.com` (the old `ai.google.dev` URLs redirect there), and this file | Both lag. Neither is evidence of absence. |
 
@@ -163,6 +163,29 @@ from here rather than repeated.
   spelling (`genai-rs` where the plain transcript had `JRS`). On
   `DEFAULT_MODEL` the same `source_text` was accepted with no effect, as
   every transcription setting had been on general models since 2026-09-24.
+- **`thinking_level: "xhigh"`** (google-genai 3.3.0) was accepted on
+  2026-11-14 by `gemini-4-hydrogen` alone among the models tried: it
+  completed a one-word answer with 58 thought tokens, and a stored
+  interaction's `GET` echoes `"thinking_level": "xhigh"`. `DEFAULT_MODEL`,
+  `gemini-4-argon` (`CONTINUATION_MODEL`), `gemini-4-carbon` and
+  `gemini-3.1-pro-preview` answered `400 Thinking level
+  THINKING_LEVEL_XHIGH is not supported for this model.`, and
+  `gemini-omni-1.2-flash` `400 'xhigh' is not a supported thinking level
+  for this model. Allowed values are: low, high.` The value is known to the
+  endpoint everywhere: an unknown level is `400 The value 'ultra' is not
+  supported for 'generation_config.thinking_level'. Supported values:
+  'minimal', 'low', 'medium', 'high', 'xhigh'.`
+- **New model ids in google-genai 3.3.0** (`gemini-4-carbon`,
+  `gemini-4-hydrogen`, `gemini-omni-1.2-flash`) are all served
+  (2026-11-14): `GET /v1beta/models` lists each with `generateContent`, and
+  a plain interaction on `gemini-4-carbon` and on `gemini-omni-1.2-flash`
+  completed (the hydrogen one is the `xhigh` run above). Model ids are open
+  strings, so nothing needed modeling.
+- **The decision model** (2026-11-14): `GET /v1beta/models` lists
+  `models/gemini-decision-1` (`DEFAULT_DECISION_MODEL`) with
+  `createDecision` as its only method, 262,144 input tokens and an
+  `outputTokenLimit` of 1. Its decisions are under
+  [Sweep 3.0.0 → 3.3.0](#sweep-300--330-2026-11-14).
 - **Decoding continuation** runs only on `CONTINUATION_MODEL` (2026-11-01);
   the rules are under [Sweep 2.25.0 → 2.34.0](#sweep-2250--2340-2026-11-01)
   and [Interaction residue](#interaction-residue-2026-11-05).
@@ -324,6 +347,15 @@ from here rather than repeated.
   echoes the agent, and create, get and list serve the same shape. Managed
   agent ids such as `DEFAULT_ANTIGRAVITY_AGENT` are not readable through
   `GET /v1beta/agents/{id}` (404).
+- **`antigravity-preview-09-2026`** (`DEFAULT_ANTIGRAVITY_AGENT`) is in
+  the google-genai 3.3.0 `AgentOption` literal. On 2026-11-14 an
+  interaction naming it with no `environment` was refused with `400 Missing
+  required field 'environment'`, the agent's own requirement, where an
+  unknown id (`antigravity-preview-13-2026`) is `404 Requested model not
+  found`; the retired `antigravity-preview-05-2026`, still in the literal,
+  answered with the same 400, so the check runs before the retirement does.
+  The full agent runs in the live tests that use it (`credentials_tests`,
+  `webhooks_and_agents_tests`), green on main's push run of 2026-11-14.
 - **Environments** do not expire in practice: on 2026-11-01 environments
   created in July and August were still `active`, three months after last
   use.
@@ -665,6 +697,29 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   2026-10-06 3 of 5 returned `500 Internal error encountered`. On 2026-11-01
   all 16 requests answered, 10 of them concurrent, so
   `processing_steps_tests` no longer retries.
+
+## Sweep 3.0.0 → 3.3.0 (2026-11-14)
+
+google-genai 3.3.0 was released 2026-11-12 (3.1.0 and 3.2.0, between
+them, changed nothing the snapshot holds beyond what 3.3.0 has). Every item
+probed live on 2026-11-14; the coverage oracle passes against the 3.3.0
+snapshot with no new exception. The published specs do not list the
+decisions resource yet (see rank 1b above).
+
+### Modeled
+
+| Surface | Where | Live result |
+|---|---|---|
+| The decisions resource: `POST /v1beta/decisions`, `CreateDecisionRequest`, the `Question` union (`ChoiceQuestion`, `NoulQuestion` with `NoulCriteria`, `ScoreQuestion`), `CreateDecisionResponse`, the `Answer` union (`ChoiceAnswer`, `NoulAnswer`, `ScoreAnswer`), `PromptFeedback` and `BlockReason` | `client.decisions().create(&CreateDecisionRequest)` in `src/decisions.rs`, on `DEFAULT_DECISION_MODEL`; `Question`, `NoulCriteria`, `DecisionInput`, `Answer`, `PromptFeedback`, `BlockReason` (D-074) | Served for `gemini-decision-1` (bare or `models/`-prefixed), the one model `GET /v1beta/models` lists with `createDecision`; every other model tried is `404 Requested model not found`: each of the crate's model constants (`DEFAULT_MODEL`, `DEFAULT_IMAGE_MODEL`, `DEFAULT_TTS_MODEL`, `DEFAULT_TRANSCRIPTION_MODEL`, `CONTINUATION_MODEL`) and the three ids new in the 3.3.0 `Model` literal. All three question types answer in one request, each as the answer type of the same name with `type` set; the input as a string, one text block, and a list of a text block and an inline PNG (the image billed as image tokens) all work, as do the instructions as a string, one text block and a list of them. `usage` carries `total_tokens`, `total_input_tokens`, `input_tokens_by_modality` and a `total_output_tokens` of 0. A score's `probabilities` and `legend` are keyed by the level's index as a string. Errors use the Interactions envelope: no questions is `400 Request must contain at least one question.`, a one-option choice `400 * CreateDecisionRequest.questions[q].choice.criteria: must have between 2 and 255 options`, an unknown question type `400 The value 'rank' is not supported for 'type' at 'questions.q'. Supported values: 'choice', 'noul', 'score'.`, an unknown top-level field `400 Unknown parameter 'temperature'.` and no model `400 Model name cannot be empty.`; `/v1/decisions` is a 404 with an empty body. `prompt_feedback` was not served: no probe sent input a filter would block, so it and `BlockReason` are modeled from the bindings |
+| `ThinkingLevel` `xhigh` | `ThinkingLevel::XHigh` | Known to the endpoint; taken by `gemini-4-hydrogen` only of the models tried. See Models above |
+
+### Deliberately not modeled
+
+| Surface | Why |
+|---|---|
+| A question's `instructions` as a text block or a list of them | `Question` sends instructions as a string. A single text block was answered the same way a string is (2026-11-14), and a list of text blocks says nothing a joined string cannot; the string arm is the binding's third. |
+| `AgentOption` `antigravity-preview-09-2026` | Already `DEFAULT_ANTIGRAVITY_AGENT`; agent ids are open strings. See Agents and environments above |
+| New model ids (`gemini-4-carbon`, `gemini-4-hydrogen`, `gemini-omni-1.2-flash`) | Model ids are open strings; all three are served. See Models above |
 
 ## Sweep 2.34.0 → 3.0.0 (2026-11-07)
 
