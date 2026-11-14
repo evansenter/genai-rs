@@ -17,7 +17,17 @@ use thiserror::Error;
 ///     Err(GenaiError::Api { status_code, message, request_id, .. }) => {
 ///         eprintln!("API error {status_code}: {message} (request: {request_id:?})");
 ///     }
-///     Err(other) => eprintln!("{other}"),
+///     Err(other) => {
+///         // `Display` is this error alone: an error it wraps, such as
+///         // `Http`'s transport error, is its `source()`.
+///         let mut text = other.to_string();
+///         let mut cause = std::error::Error::source(&other);
+///         while let Some(e) = cause {
+///             text = format!("{text}: {e}");
+///             cause = e.source();
+///         }
+///         eprintln!("{text}");
+///     }
 ///     Ok(response) => println!("{:?}", response.as_text()),
 /// }
 /// # }
@@ -28,7 +38,11 @@ pub enum GenaiError {
     /// A transport failure before a response arrived: connect (including
     /// the default 30 s connect timeout), TLS, a client-level timeout, or a
     /// non-streamed body that failed while it was read.
-    #[error("HTTP request error: {0}")]
+    ///
+    /// The reqwest error is the [`source`](std::error::Error::source), and
+    /// `Display` does not repeat its text, so a reporter that walks the
+    /// chain prints it once.
+    #[error("HTTP request error")]
     Http(#[from] reqwest::Error),
     /// API error with structured context for debugging and automated handling.
     ///
@@ -366,6 +380,30 @@ impl GenaiError {
     }
 }
 
+/// An error's `Display`, then that of each [`source`](std::error::Error::source)
+/// below it after `": "`, for text that carries no chain of its own: a
+/// [`GenaiError::PollTimeout`]'s or [`GenaiError::Internal`]'s message, or a
+/// log line. `GenaiError::Http`'s `Display` leaves the transport error to
+/// its source (D-049), so the text names it only through this. A source
+/// whose text is already there is not added again.
+pub(crate) struct ErrorChain<'a>(pub(crate) &'a (dyn std::error::Error + 'static));
+
+impl std::fmt::Display for ErrorChain<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut text = self.0.to_string();
+        let mut cause = self.0.source();
+        while let Some(error) = cause {
+            let line = error.to_string();
+            if !text.contains(&line) {
+                text.push_str(": ");
+                text.push_str(&line);
+            }
+            cause = error.source();
+        }
+        f.write_str(&text)
+    }
+}
+
 /// Whether an API error's HTTP status can pass on a retry of the same
 /// request ([`GenaiError::is_retryable`]).
 ///
@@ -607,6 +645,167 @@ mod tests {
         let error = GenaiError::ClientBuild(client_build_error());
         let source = error.source().expect("ClientBuild keeps the reqwest error");
         assert!(source.downcast_ref::<reqwest::Error>().is_some());
+    }
+
+    // =============================================================================
+    // Every variant: Display and source (D-049)
+    // =============================================================================
+
+    /// A `reqwest::Error` from building a request: a scheme-less URL is a
+    /// builder error, `Display`ed as `builder error`.
+    fn request_build_error() -> reqwest::Error {
+        reqwest::Client::new()
+            .get("localhost:8080/v1beta/interactions")
+            .build()
+            .expect_err("a URL without a scheme fails the build")
+    }
+
+    /// One value of every variant, each holding a source where it can.
+    /// [`variant_name`] names each, and
+    /// `test_genai_error_every_variant_is_built` fails on a variant of the
+    /// enum left out here.
+    fn one_of_each_variant() -> Vec<GenaiError> {
+        let duration = std::time::Duration::from_secs(30);
+        vec![
+            GenaiError::Http(request_build_error()),
+            api_error(503),
+            GenaiError::Internal("a body that would not serialize".to_string()),
+            GenaiError::InvalidInput("no input".to_string()),
+            GenaiError::MalformedResponse("not an interaction".to_string()),
+            GenaiError::StreamInterrupted {
+                message: "the connection failed mid-body".to_string(),
+                source: Some(request_build_error()),
+            },
+            GenaiError::Timeout(duration),
+            GenaiError::PollTimeout {
+                timeout: duration,
+                message: "waited for files/x".to_string(),
+            },
+            GenaiError::ProcessingFailed("files/x failed processing".to_string()),
+            GenaiError::Stream {
+                message: "quota exhausted mid-stream".to_string(),
+                code: None,
+            },
+            GenaiError::ClientBuild(client_build_error()),
+        ]
+    }
+
+    /// The variant's name, by a match with no wildcard arm: a variant added
+    /// to `GenaiError` fails to compile here until it is named.
+    fn variant_name(error: &GenaiError) -> &'static str {
+        match error {
+            GenaiError::Http(_) => "Http",
+            GenaiError::Api { .. } => "Api",
+            GenaiError::Internal(_) => "Internal",
+            GenaiError::InvalidInput(_) => "InvalidInput",
+            GenaiError::MalformedResponse(_) => "MalformedResponse",
+            GenaiError::StreamInterrupted { .. } => "StreamInterrupted",
+            GenaiError::Timeout(_) => "Timeout",
+            GenaiError::PollTimeout { .. } => "PollTimeout",
+            GenaiError::ProcessingFailed(_) => "ProcessingFailed",
+            GenaiError::Stream { .. } => "Stream",
+            GenaiError::ClientBuild(_) => "ClientBuild",
+        }
+    }
+
+    /// The variants as this file declares them, each with whether it holds
+    /// a source, as thiserror reads one: a field marked `#[source]` or
+    /// `#[from]`, or one named `source`.
+    fn declared_variants() -> std::collections::BTreeMap<String, bool> {
+        let file = syn::parse_file(include_str!("errors.rs")).expect("errors.rs parses");
+        let genai_error = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(e) if e.ident == "GenaiError" => Some(e),
+                _ => None,
+            })
+            .expect("errors.rs declares GenaiError");
+        genai_error
+            .variants
+            .iter()
+            .map(|variant| {
+                let has_source = variant.fields.iter().any(|field| {
+                    field.ident.as_ref().is_some_and(|name| name == "source")
+                        || field.attrs.iter().any(|attr| {
+                            attr.path().is_ident("source") || attr.path().is_ident("from")
+                        })
+                });
+                (variant.ident.to_string(), has_source)
+            })
+            .collect()
+    }
+
+    /// [`one_of_each_variant`] builds every variant of the enum, each one
+    /// that can hold a source with one, so the check below reads them all.
+    #[test]
+    fn test_genai_error_every_variant_is_built() {
+        use std::error::Error as _;
+        let declared = declared_variants();
+        let built: std::collections::BTreeMap<String, bool> = one_of_each_variant()
+            .iter()
+            .map(|error| (variant_name(error).to_string(), error.source().is_some()))
+            .collect();
+        assert_eq!(
+            built, declared,
+            "one_of_each_variant must build every GenaiError variant, each that can \
+             hold a source with one"
+        );
+        for name in ["Http", "StreamInterrupted", "ClientBuild"] {
+            assert_eq!(declared.get(name), Some(&true), "{name} holds a source");
+        }
+    }
+
+    /// No variant's `Display` repeats its source's text (D-049): the source
+    /// is what `source()` returns, so a reporter that walks the chain
+    /// (anyhow's `{:#}`, eyre) prints it once, not twice.
+    #[test]
+    fn test_genai_error_display_never_repeats_its_source() {
+        use std::error::Error as _;
+        for error in one_of_each_variant() {
+            let Some(source) = error.source() else {
+                continue;
+            };
+            let (display, source) = (error.to_string(), source.to_string());
+            assert!(!source.is_empty(), "{}", variant_name(&error));
+            assert!(
+                !display.contains(&source),
+                "{}'s Display {display:?} repeats its source {source:?}",
+                variant_name(&error)
+            );
+        }
+    }
+
+    /// `ErrorChain` writes the source below a variant whose `Display` leaves
+    /// it out, and does not repeat one whose text is already there.
+    #[test]
+    fn test_error_chain_writes_each_source_once() {
+        let error = GenaiError::Http(request_build_error());
+        let transport = request_build_error().to_string();
+        let chain = ErrorChain(&error).to_string();
+        assert!(
+            chain.starts_with(&format!("HTTP request error: {transport}")),
+            "{chain}"
+        );
+        assert_eq!(chain.matches(&transport).count(), 1, "{chain}");
+
+        /// An error whose `Display` repeats its source, as `Http`'s did.
+        #[derive(Debug)]
+        struct Repeats(std::io::Error);
+        impl std::fmt::Display for Repeats {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "outer: {}", self.0)
+            }
+        }
+        impl std::error::Error for Repeats {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let repeats = Repeats(std::io::Error::other("refused"));
+        assert_eq!(ErrorChain(&repeats).to_string(), "outer: refused");
+        let alone = GenaiError::InvalidInput("no input".to_string());
+        assert_eq!(ErrorChain(&alone).to_string(), alone.to_string());
     }
 
     // =============================================================================

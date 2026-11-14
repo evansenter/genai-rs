@@ -7,16 +7,8 @@ use std::collections::{BTreeSet, HashMap};
 use syn::visit::{self, Visit};
 use syn::{Expr, ImplItem, Item};
 
+use super::source_scan::is_test_gated;
 use super::{Handles, last_ident, macro_stmts, src_files};
-
-/// Whether an item is compiled for tests only (`#[cfg(test)]`).
-fn test_only(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| {
-        a.path().is_ident("cfg")
-            && a.parse_args::<syn::Ident>()
-                .is_ok_and(|ident| ident == "test")
-    })
-}
 
 /// What a function body does: whether it makes a request that can carry a
 /// body (`Method::POST`, `PATCH` or `PUT`, or reqwest's `.post(..)`,
@@ -91,7 +83,9 @@ pub fn body_verbs(handles: &Handles) -> BTreeSet<(String, String)> {
     body_verbs_in(&src_files(), handles)
 }
 
-/// Every non-test function body in the crate, and how calls reach them.
+/// Every non-test function body in the crate (test code is what
+/// `source_scan::is_test_gated` reads as test-gated), and how calls reach
+/// them.
 #[derive(Default)]
 struct Bodies {
     reaches: Vec<Reach>,
@@ -131,19 +125,19 @@ impl Bodies {
     fn collect(&mut self, items: &[Item], handles: &Handles) {
         for item in items {
             match item {
-                Item::Fn(f) if !test_only(&f.attrs) => {
+                Item::Fn(f) if !is_test_gated(&f.attrs) => {
                     self.add(None, &f.sig, &f.block);
                 }
-                Item::Mod(m) if !test_only(&m.attrs) => {
+                Item::Mod(m) if !is_test_gated(&m.attrs) => {
                     if let Some((_, inner)) = &m.content {
                         self.collect(inner, handles);
                     }
                 }
-                Item::Impl(imp) if !test_only(&imp.attrs) => {
+                Item::Impl(imp) if !is_test_gated(&imp.attrs) => {
                     let owner = last_ident(&imp.self_ty).unwrap_or_default();
                     for item in &imp.items {
                         let ImplItem::Fn(f) = item else { continue };
-                        if test_only(&f.attrs) {
+                        if is_test_gated(&f.attrs) {
                             continue;
                         }
                         let at = self.add(Some(&owner), &f.sig, &f.block);
@@ -158,7 +152,7 @@ impl Bodies {
                         }
                     }
                 }
-                Item::Trait(t) if !test_only(&t.attrs) => {
+                Item::Trait(t) if !is_test_gated(&t.attrs) => {
                     for item in &t.items {
                         if let syn::TraitItem::Fn(f) = item
                             && let Some(block) = &f.default

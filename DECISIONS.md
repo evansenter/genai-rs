@@ -1885,6 +1885,23 @@ client` alone, and a `StreamInterrupted` cut off by the transport says
 `the connection failed mid-body` and leaves the `reqwest::Error`'s text to
 `source()`. Neither variant's shape changes.
 
+**Amended 2026-11-14 (#504, K-4).** `GenaiError::Http`, which #554 left
+out, follows too: its `Display` is `HTTP request error` alone, and the
+`reqwest::Error` it holds through `#[from]` stays its `source()`. Breaking,
+with a CHANGELOG migration, since a caller may have read the transport
+error from the top error's text. One test in `src/errors.rs` builds every
+`GenaiError` variant, each that can hold a source with one, and fails when
+a `Display` contains its source's text; a match with no wildcard names
+each variant, and the variants are read from the enum's own source, so a
+new one fails the test until it is built there. Where the crate writes an
+error into a message of its own, which has no source to hold it (a
+`PollTimeout` after failed status reads, the `Internal` error of a failed
+file search import or read-back, and their log lines), it writes the chain
+through `errors::ErrorChain`, so the transport error stays in the text;
+`src/poll_tests.rs` and `src/http/file_search_stores.rs` test both. The
+docs and the retry example that printed an error by `Display` print the
+chain.
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
@@ -3201,6 +3218,28 @@ The wire's walk now holds the Antigravity harness's camelCase keys too
 (D-064's amendment), so `WireEvent`'s `Debug` redacts a harness message
 in either direction.
 
+**Amended 2026-11-14 (#504, K-5).** The sentinel built only
+`Tool::CodeExecution` with a secret in its `extra`, so printing
+`Tool::Function`'s `extra` raw passed every test. It now formats every arm
+of `Tool` with the same secret-bearing `extra` (an `Unknown` tool's in its
+payload): `every_tool_arm` builds each, a match with no wildcard arm names
+it, and `the_sentinel_builds_every_tool_arm` compares the arms built with
+the enum as `src/tools/mod.rs` declares it, so a new arm fails until it is
+built there. The destructuring rule above is now checked too.
+`tests/redaction_guards.rs` reads every hand-written `Debug` that redacts
+(its `fmt` names `redact::..` or `REDACTED`) or is for a type that holds
+one at any depth, as `Client` holds `HttpContext`, and fails on one that
+reads its type with a `..` rest, a catch-all arm (`_`, a binding such as
+`other`, or an or-pattern holding one) in a match on `self`, `*self` or
+`&self`, an `if let` or `let .. else` on `self`, a field read through
+`self`, or no pattern on `Self` at all. A `Webhook` `Debug` that ends its
+pattern with `..` and drops two fields fails it, and so do a `Tool` arm
+turned into `_other =>` and a `Client` `Debug` that uses `..`. Patterns
+inside a macro's arguments are not read. `InteractionBuilder`'s `Debug`,
+which holds `Client` and the tools and reads its fields through `self`, is
+listed as an exception until the owner decides how its `extra` prints.
+Omission is the safe direction, so this holds the convention, not a leak.
+
 ## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
 **Context.** #504's final grade found the recursive `.rs` walker written
@@ -3312,6 +3351,27 @@ predicate's text. Two module resolvers stay. `module_files` walks a crate
 on disk from its root; `test_modules` reads files already parsed, which
 `tests/non_exhaustive_responses.rs`'s own checks feed with made-up trees,
 so a disk walk cannot replace it. Both read the same `cfg`s the same way.
+
+**Amended 2026-11-14 (#504, K-6).** The test-side readers left outside
+moved here too, so the Rust guards read a `cfg` one way, as the amendment
+above says.
+The three `is_test` copies, which read `cfg(test)` by its bare ident
+(`tests/request_wire_oracle/query_literals.rs`, `query_options.rs`, and
+the coverage oracle's type scan in `src/coverage_oracle/request/fills.rs`),
+and `tests/live_verbs/bodies.rs`'s `test_only`, call `is_test_gated`: test
+code under `cfg(all(test, unix))` is left out as under `cfg(test)`, where
+a probe module so gated in `src/http/` read as library code.
+`query_literals` walks `src/http/` with `rust_files`, at any depth, and
+leaves out the test-only files `test_modules` finds, so a file in a
+subdirectory, which passed the guard, fails it as one directly in
+`src/http/` does. `tests/doc_guards/`' `guide_candidates` reads the
+Markdown with `files_with_extensions`, and `tests/module_size.rs` tells a
+test module by `is_test_gated` over its attributes rather than by a line
+that starts `#[cfg(test)]`. The only functions left whose names start
+`is_test` are `tests/common/source_scan.rs`'s. One reader is not Rust and cannot call
+it: `.github/scripts/check_dated_facts.sh` skips an item only below a line
+that is exactly `#[cfg(test)]`, so it checks an item under
+`cfg(all(test, unix))` as library code, which errs toward checking more.
 
 ## D-069 — The retry-loop guard follows what reaches the sleep (2026-11-10)
 

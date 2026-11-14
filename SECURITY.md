@@ -54,13 +54,24 @@ When logging errors, the status code and `request_id` are always safe. Treat
 
 ```rust
 use genai_rs::GenaiError;
+use std::error::Error;
 
 fn log_error(err: &GenaiError) {
     match err {
         GenaiError::Api { status_code, request_id, .. } => {
             eprintln!("API error {status_code} (request_id={request_id:?})");
         }
-        other => eprintln!("error: {other}"),
+        // `Display` is the top error alone: print each `source()` too
+        // (`Http`'s transport error is one).
+        other => {
+            let mut text = other.to_string();
+            let mut cause = other.source();
+            while let Some(e) = cause {
+                text = format!("{text}: {e}");
+                cause = e.source();
+            }
+            eprintln!("error: {text}");
+        }
     }
 }
 # let _ = log_error;

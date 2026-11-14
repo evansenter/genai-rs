@@ -24,7 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::{LIVE_REASON, ignore_reasons, root, test_sources_in};
+use crate::{LIVE_REASON, ignore_reasons, root, source_scan, test_sources_in};
 
 /// What the test-kind table needs to know about one top-level test crate.
 #[derive(Debug, Clone)]
@@ -691,25 +691,25 @@ fn undoctested(lib_rs: &str, files: &[(String, String)], exempt: &[(&str, &str)]
 }
 
 /// The Markdown files a guide could be: every one under `docs/`, at any
-/// depth, and the top level's.
+/// depth, and the top level's, each by its path relative to `root` and
+/// with its text. The walk is `source_scan`'s (D-068).
 fn guide_candidates(root: &Path) -> Vec<(String, String)> {
-    fn markdown(dir: &Path, prefix: &str, deep: bool, out: &mut Vec<(String, String)>) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            if path.is_dir() && deep {
-                markdown(&path, &format!("{prefix}{name}/"), deep, out);
-            } else if path.extension().is_some_and(|ext| ext == "md") && path.is_file() {
-                out.push((
-                    format!("{prefix}{name}"),
-                    std::fs::read_to_string(&path).unwrap(),
-                ));
-            }
-        }
-    }
-    let mut files = Vec::new();
-    markdown(root, "", false, &mut files);
-    markdown(&root.join("docs"), "docs/", true, &mut files);
+    let mut files: Vec<(String, String)> = source_scan::files_with_extensions(root, &["md"], false)
+        .into_iter()
+        .chain(source_scan::files_with_extensions(
+            &root.join("docs"),
+            &["md"],
+            true,
+        ))
+        .map(|path| {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            (rel, std::fs::read_to_string(&path).unwrap())
+        })
+        .collect();
     files.sort();
     files
 }

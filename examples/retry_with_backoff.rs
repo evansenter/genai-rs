@@ -35,6 +35,15 @@ fn next_delay(e: &GenaiError, backoff: Option<Duration>) -> Option<Duration> {
     backoff.map(|d| e.retry_after().unwrap_or(d).min(MAX_DELAY))
 }
 
+/// The error and each `source()` below it: `GenaiError::Http`'s `Display`
+/// leaves the transport error to its source.
+fn chain(e: &(dyn Error + 'static)) -> String {
+    std::iter::successors(Some(e), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
@@ -58,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .retry(backoff)
         .when(GenaiError::is_retryable)
         .adjust(next_delay)
-        .notify(|e, delay| eprintln!("retryable error ({e}); retrying in {delay:?}"))
+        .notify(|e, delay| eprintln!("retryable error ({}); retrying in {delay:?}", chain(e)))
         .await?;
 
     println!("{}", response.as_text().ok_or("no text in response")?);
