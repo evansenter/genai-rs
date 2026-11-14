@@ -28,7 +28,10 @@ mod common;
 #[path = "common/source_scan.rs"]
 mod source_scan;
 
-// The retry recipes the docs and examples show.
+// The retry recipes the docs and examples show, and where they are read
+// from.
+#[path = "reliability_tests/recipe_source.rs"]
+mod recipe_source;
 #[path = "reliability_tests/retry_recipes.rs"]
 mod retry_recipes;
 
