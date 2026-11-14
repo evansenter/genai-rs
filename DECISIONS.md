@@ -2667,9 +2667,10 @@ without `id` and `update_mask`, and the flat bodies the crate sends apply
 (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query parameters"), so the
 crate is unchanged (D-005).
 
-**Amended 2026-11-14 (#504, K-12).** The pointer above named #558 for
-every watched-only item; #558 covers request bodies and response
-references. The other two stay watched only, for this decision's reason:
+**Amended 2026-11-14 (#504, K-12).** The amendment above named #558 for
+all four watched-only items, but #558 covers request bodies and response
+references only, so its pointer now names those two. The other two stay
+watched only, for this decision's reason:
 a request follows its binding class, which leads the spec on requests
 (D-040), and the bindings snapshot gives a query parameter a name and a
 body a class, not a schema or a required flag, so there is nothing
