@@ -298,7 +298,7 @@ while let Some(result) = stream.next().await {
 | `Delta { delta, extra }` | Incremental payload from the model, the same `StepDelta` as basic streaming, with the `step.delta` event's unread keys in `extra` |
 | `ExecutingFunctions { response, pending_calls }` | Calls detected; about to execute |
 | `FunctionResults(Vec<FunctionExecutionResult>)` | Execution finished for this round |
-| `Complete { response, extra }` | Terminal: no more function calls, with the final round's `interaction.completed` unread keys in `extra` |
+| `Complete { response, extra }` | Terminal: no more function calls, with that round's `interaction.completed` unread keys in `extra` |
 | `MaxLoopsReached(response)` | Terminal: the round limit was hit |
 | `Unknown { chunk_type, data }` | An SSE event of a type this crate does not recognize, with its JSON; the round goes on |
 
@@ -307,8 +307,10 @@ their `event_id` is always `None`. Only track ids from API events. The loop
 reads a round's lifecycle events itself (`interaction.created`, status
 updates, `step.start`, `step.stop` and `interaction.completed`); a caller
 that wants them, or their `extra`, streams with `create_stream()` instead.
-The final round's `interaction.completed` is the exception: its
-interaction and its `extra` come on `Complete`.
+The `interaction.completed` of the round that ends the loop with no
+function calls is the exception: its interaction and its `extra` come on
+`Complete`. A loop that ends on `MaxLoopsReached` passes on no round's
+completed-event `extra`.
 
 To end up with the same `AutoFunctionResult` as the non-streaming call, feed
 every chunk to an accumulator:

@@ -255,17 +255,60 @@ mod tests {
         }
     }
 
+    /// One value of every variant, each that can hold an error with one.
+    /// `function_error_every_variant_is_built` fails on a variant of the
+    /// enum left out here.
+    fn one_of_each_variant() -> Vec<FunctionError> {
+        vec![
+            FunctionError::ArgumentMismatch("missing city".to_string()),
+            FunctionError::ExecutionError(Box::new(std::io::Error::other("connection refused"))),
+        ]
+    }
+
+    /// The variant's name, by a match with no wildcard arm: a variant added
+    /// to `FunctionError` fails to compile here until it is named.
+    fn variant_name(error: &FunctionError) -> &'static str {
+        match error {
+            FunctionError::ArgumentMismatch(_) => "ArgumentMismatch",
+            FunctionError::ExecutionError(_) => "ExecutionError",
+        }
+    }
+
+    /// [`one_of_each_variant`] builds every variant this file declares, so
+    /// the check below reads them all.
+    #[test]
+    fn function_error_every_variant_is_built() {
+        let file = syn::parse_file(include_str!("function_calling.rs"))
+            .expect("function_calling.rs parses");
+        let declared: std::collections::BTreeSet<String> = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(e) if e.ident == "FunctionError" => Some(e),
+                _ => None,
+            })
+            .expect("function_calling.rs declares FunctionError")
+            .variants
+            .iter()
+            .map(|variant| variant.ident.to_string())
+            .collect();
+        let built: std::collections::BTreeSet<String> = one_of_each_variant()
+            .iter()
+            .map(|error| variant_name(error).to_string())
+            .collect();
+        assert_eq!(
+            built, declared,
+            "one_of_each_variant must build every FunctionError variant"
+        );
+    }
+
     /// Every variant that holds an error leaves its text to `source()`, so
     /// a reporter that walks the chain prints it once (D-049). The match
     /// names each variant, so a new one fails to compile here until it is
-    /// built.
+    /// named and given its expected `Display`.
     #[test]
     fn function_error_display_does_not_repeat_its_source() {
-        let variants = [
-            FunctionError::ArgumentMismatch("missing city".to_string()),
-            FunctionError::ExecutionError(Box::new(std::io::Error::other("connection refused"))),
-        ];
-        for error in &variants {
+        for error in &one_of_each_variant() {
             let display = error.to_string();
             match error {
                 FunctionError::ArgumentMismatch(_) => {

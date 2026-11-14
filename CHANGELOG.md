@@ -22,10 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `e.to_string()`, which is the text that followed
   `Function execution error: `.
 - **Breaking: `AutoFunctionStreamChunk::Complete` is a struct variant,
-  `Complete { response, extra }`**, and `extra` holds the keys of the final
-  round's `interaction.completed` event that the crate does not read, as
-  `StreamChunk::Completed`'s `extra` does (D-054). The auto-function stream
-  dropped them. The chunk's JSON form writes a non-empty `extra` beside
+  `Complete { response, extra }`**, and `extra` holds the unread keys of
+  the `interaction.completed` event of the round with no function calls,
+  the one that ends the loop, as `StreamChunk::Completed`'s `extra` does
+  (D-054). The auto-function stream dropped them. The chunk's JSON form writes a non-empty `extra` beside
   `data` and reads it back; a chunk written by 0.15.0 reads back with an
   empty one. Migration: a pattern on `Complete(response)` becomes
   `Complete { response, .. }`, and a `Complete` you build takes

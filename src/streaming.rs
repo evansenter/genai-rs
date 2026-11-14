@@ -62,10 +62,12 @@ mod serde_impls;
 /// [`Unknown`](Self::Unknown); the round's other lifecycle events
 /// (`interaction.created`, `status_update`, `step.start`, `step.stop`,
 /// `interaction.completed`) are the loop's to read, and reach a caller of
-/// [`execute_stream()`](crate::Client::execute_stream) only. The final
-/// round's `interaction.completed` is the one exception: its interaction
-/// and the keys beside it that the crate does not read come on
-/// [`Complete`](Self::Complete).
+/// [`execute_stream()`](crate::Client::execute_stream) only. The
+/// `interaction.completed` of the round that ends the loop with no function
+/// calls is the one exception: its interaction and the keys beside it that
+/// the crate does not read come on [`Complete`](Self::Complete). A loop that
+/// ends on [`MaxLoopsReached`](Self::MaxLoopsReached) passes on no round's
+/// completed-event keys.
 ///
 /// # Forward Compatibility
 ///
@@ -126,11 +128,11 @@ pub enum AutoFunctionStreamChunk {
     /// This is the last event in the stream, yielded when the model returns
     /// a response that doesn't request any function calls.
     Complete {
-        /// The final round's response: the
+        /// The response of the round with no function calls: the
         /// [`StreamChunk::Completed`](crate::StreamChunk::Completed)
         /// `interaction`, its steps assembled from the stream.
         response: Box<InteractionResponse>,
-        /// The final round's `interaction.completed` event's keys the crate
+        /// That round's `interaction.completed` event's keys the crate
         /// does not read, as [`StreamChunk::extra`](crate::StreamChunk::extra)
         /// holds them. Empty for every event the API sends today.
         extra: serde_json::Map<String, serde_json::Value>,

@@ -1922,11 +1922,12 @@ the auto-function round (`execute_function` in
 dispatcher (`ToolDispatcher::execute` in `src/antigravity/tools.rs`),
 already wrote it through `function_calling::error_for_model`, which writes
 the chain, so `{"error": ..}` reads as it did. A unit test in
-`src/function_calling.rs` builds every variant, with a match that names
-each, and fails when a `Display` contains its source's text; the
-model-facing text is pinned there, in `src/antigravity/tools.rs`, and
-through the HTTP stub in `tests/http_mock_tests.rs`. Breaking, with a
-CHANGELOG migration.
+`src/function_calling.rs` fails when a variant's `Display` contains its
+source's text, over one value of each variant; a second reads the enum's
+declared variants with `syn`, as `GenaiError`'s guard does, and fails on
+one left out of those values. The model-facing text is pinned there, in
+`src/antigravity/tools.rs`, and through the HTTP stub in
+`tests/http_mock_tests.rs`. Breaking, with a CHANGELOG migration.
 
 ---
 
@@ -2292,8 +2293,9 @@ there. The other events' envelope keys still reach only `execute_stream()`
 (D-034).
 
 *Amended 2026-11-14 (0.16 breaking batch).* On the owner's decision, the
-auto-function stream passes on the final round's `interaction.completed`
-keys too: `AutoFunctionStreamChunk::Complete(response)` becomes
+auto-function stream passes on the `interaction.completed` keys of the
+round that ends the loop with no function calls too:
+`AutoFunctionStreamChunk::Complete(response)` becomes
 `Complete { response, extra }`, the newtype becoming a struct variant for
 the reason `Completed` did above, and the loop moves the round's
 `StreamChunk::Completed` `extra` into it. Its `{chunk_type, data}` form
@@ -2303,7 +2305,8 @@ does, and a 0.15.0 log reads back with an empty one. The guard's
 that calls functions, keeps its `ROUND_VERDICT` row: the owner asked for
 the completion chunk alone, so that round's completed-event keys still
 reach `execute_stream()` only, and carrying them is another breaking
-change, for the owner to ask for.
+change, for the owner to ask for. A loop that ends on `MaxLoopsReached`
+ends on such a round, so it passes on no completed-event keys.
 
 ---
 
