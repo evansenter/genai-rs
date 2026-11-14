@@ -387,6 +387,60 @@ fn the_retry_loop_check_fails_each_broken_recipe() {
                 )],
                 &[],
             ),
+            // A Retry-After passed to `max` or `saturating_add`, as the
+            // receiver or as an argument, is in what the call returns, so
+            // what applies to that is checked as on the Retry-After. Past
+            // a `.min(` it is capped; a `min` with it as the argument
+            // returns no more than its receiver.
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| delay.max(asked).mul_f64(1.5));",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| std::cmp::max(asked, delay).mul_f64(1.5));",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| delay.max(asked) + delay);",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| delay.saturating_add(asked).max(delay).mul_f64(1.5));",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| std::cmp::max(delay, asked));",
+                )],
+                &[],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| delay.max(asked).min(MAX_POLL_DELAY).mul_f64(1.5));",
+                )],
+                &[],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| delay.min(asked).mul_f64(1.5));",
+                )],
+                &[],
+            ),
             // Doubling by addition is growth too.
             (&[(grow, "delay += delay;")], &[UNCAPPED]),
             (&[(grow, "delay = delay + delay;")], &[UNCAPPED]),

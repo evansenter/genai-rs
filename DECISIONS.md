@@ -3592,7 +3592,9 @@ requires:
   `from_secs_f32`, `from_secs_f64`, `from_mins` and `from_hours`), at any
   depth of its statement; and no `checked_add`, `checked_sub` or
   `checked_mul` on its chain, or with it as the whole argument, is
-  followed by `unwrap()` or `expect(`: the same panic.
+  followed by `unwrap()` or `expect(`: the same panic. A `max` or
+  `saturating_add` call with it as a whole argument (`delay.max(asked)`,
+  `cmp::max(asked, delay)`) returns it, so the call is held to the same.
 - **Jitter where a count bounds the loop.** A name that reads as random
   (`rand`, `RandomState`, `fastrand`, an `rng`) or as jitter reaches each
   sleep. A deadline poll of one interaction is not required to jitter: no
@@ -3645,8 +3647,10 @@ awaited or not, and a `return` in the retryable arm counts even under an
 `if` that compares with a bound. A `checked_` call counts
 only on the Retry-After's own chain or with it as its whole argument. The
 calls that panic with a Retry-After in their argument are the ones the
-No-overflow rule names: a Retry-After passed to one it does not name, put
-in a collection (`[asked, delay].iter().sum()`), or in a closure on a
+No-overflow rule names, and the ones whose result holds it are `max` and
+`saturating_add`: a Retry-After passed to a call neither names
+(`Some(asked)`, `Duration::from_secs(asked.as_secs())`), put in a
+collection (`[asked, delay].iter().sum()`), or in a closure on a
 variable's chain (only one on a `retry_after()` call's chain is read) is
 not followed. A method not on its list of safe ones counts as one that
 can panic, however safe; such a recipe is rewritten.
@@ -3698,7 +3702,13 @@ ceiling is the doc's, and `backoff` compares the two. The checks took
 `the_retry_loop_check_finds_each_defect` and
 `the_retry_loop_check_fails_each_broken_recipe`, with their cases and
 helpers, moved to `tests/reliability_tests/retry_guard_cases.rs`, a child
-module of `retry_recipes` that calls its private checks (D-011).
+module of `retry_recipes` that calls its private checks (D-011). A review
+of this amendment found the server's wait passing as `max`'s argument
+rather than its receiver: `delay.max(asked).mul_f64(1.5)`,
+`cmp::max(asked, delay).mul_f64(1.5)` and `delay.max(asked) + delay`
+each panic on that Retry-After and passed. The rule now follows one into
+a `max` or `saturating_add` it is an argument of, as the No-overflow rule
+says; each is a case.
 
 ## D-070 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
 

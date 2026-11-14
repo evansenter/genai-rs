@@ -325,7 +325,9 @@ fn receiver_start(b: &[u8], dot: usize) -> usize {
 /// for an `Instant` and a `Duration` alike, it is in the argument of a call
 /// that panics on one ([`in_overflowing_call`]), or a `checked_add`,
 /// `checked_sub` or `checked_mul` on its chain, or with it as the
-/// argument, has its `None` unwrapped ([`unwraps_checked`]).
+/// argument, has its `None` unwrapped ([`unwraps_checked`]), or it is the
+/// argument of a call that returns it ([`passed_through`]) whose result
+/// can.
 fn overflows(b: &[u8], start: usize, end: usize, methods: &[String]) -> bool {
     let cap = methods.iter().position(|m| m == "min");
     methods[..cap.unwrap_or(methods.len())]
@@ -334,7 +336,60 @@ fn overflows(b: &[u8], start: usize, end: usize, methods: &[String]) -> bool {
         || cap.is_none()
             && (arithmetic_on(b, start, end)
                 || in_overflowing_call(b, start)
-                || unwraps_checked(b, start, end))
+                || unwraps_checked(b, start, end)
+                || passed_through(b, start, end)
+                    .is_some_and(|(start, end, methods)| overflows(b, start, end, &methods)))
+}
+
+/// The calls that can return their argument whole, or more: a
+/// `Retry-After` passed to one (`delay.max(asked)`) is in its result.
+const PASSING_CALLS: [&str; 2] = ["max", "saturating_add"];
+
+/// The call that the operand at `b[start..end]` is a whole argument of,
+/// when [`PASSING_CALLS`] names it, as a method (`delay.max(asked)`) or a
+/// function (`cmp::max(asked, delay)`): its byte range and method chain,
+/// as [`retry_after_operands`] gives an operand's.
+fn passed_through(b: &[u8], start: usize, end: usize) -> Option<(usize, usize, Vec<String>)> {
+    let before = b[..start].iter().rposition(|&c| c != b' ')?;
+    let after = end + b[end..].iter().position(|&c| c != b' ')?;
+    if !matches!(b[before], b'(' | b',') || !matches!(b[after], b')' | b',') {
+        return None;
+    }
+    // The `)` that ends the argument list it is in, not an array's or a
+    // block's.
+    let mut close = after;
+    while b[close] != b')' {
+        close = match b[close] {
+            b'(' | b'[' | b'{' => close_of(b, close)? + 1,
+            b']' | b'}' => return None,
+            _ => close + 1,
+        };
+        if close >= b.len() {
+            return None;
+        }
+    }
+    let open = open_of(b, close)?;
+    let callee = b[..open].trim_ascii_end();
+    let name = callee.len() - callee.iter().rev().take_while(|&&c| ident_byte(c)).count();
+    if !PASSING_CALLS
+        .iter()
+        .any(|call| call.as_bytes() == &callee[name..])
+    {
+        return None;
+    }
+    let mut call_start = name;
+    if b[..name].ends_with(b".") && !b[..name].ends_with(b"..") {
+        call_start = receiver_start(b, name - 1);
+    } else {
+        while b[..call_start].ends_with(b"::") {
+            call_start -= 2;
+            while call_start > 0 && ident_byte(b[call_start - 1]) {
+                call_start -= 1;
+            }
+        }
+    }
+    let (call_end, methods) = postfix(b, close + 1);
+    Some((call_start, call_end, methods))
 }
 
 /// Whether `method` cannot panic on a `Retry-After` however large, called
@@ -1064,10 +1119,10 @@ const GIVES_UP: &str = "ends on the first transient error: a `?` on an awaited c
 const STALLS: &str = "does not bound each request by the time left (timeout(left, ..))";
 const UNCAPPED: &str = "sleeps with no ceiling: growth needs a .min(), and a retry_after() a \
      .min() or a comparison of the wait with the time left";
-const OVERFLOWS: &str = "can panic on a Retry-After too large: calls a method on a retry_after() \
-     that can (mul_f64, add, ...) before any .min() on it, or, on an uncapped one, applies +, - \
-     or *, passes it to a call that can (from_secs_f64, add, ...) or unwraps checked_ \
-     arithmetic on it";
+const OVERFLOWS: &str = "can panic on a Retry-After too large: calls a method on a retry_after(), \
+     or on a max() of one, that can (mul_f64, add, ...) before any .min() on it, or, on an \
+     uncapped one, applies +, - or *, passes it to a call that can (from_secs_f64, add, ...) \
+     or unwraps checked_ arithmetic on it";
 const NO_JITTER: &str = "has no jitter, so clients that failed together retry together";
 
 /// One retry or poll loop in a block: its first line (and that line's
@@ -1111,7 +1166,8 @@ struct RetryLoop {
 ///   but a safe one on its chain before any `.min(`, and, uncapped, no `+`,
 ///   `-` or `*`, no call that overflows with it in its argument
 ///   (`from_secs_f64(`, `add(`, ...), and no `checked_add`, `checked_sub`
-///   or `checked_mul` on one or of one whose `None` is unwrapped;
+///   or `checked_mul` on one or of one whose `None` is unwrapped; a `max`
+///   or `saturating_add` it is an argument of is held to the same;
 /// - when a count bounds it, add a random value that reaches the sleep.
 ///
 /// D-069 records these rules and their limits.
