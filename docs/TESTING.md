@@ -358,9 +358,13 @@ implementation is answered with an error result, not a failure, so a
 
 ### Flakes and retries
 
-Every live nextest step sets `NEXTEST_RETRIES: 2` in its env, never a
-`--retries` flag (`tests/ci_workflows/` checks both), so a test that fails
-and then passes leaves its job green. The example smoke loops retry by
+Every live nextest step sets `NEXTEST_RETRIES: 2` in its env, so a test
+that fails and then passes leaves its job green. Nothing else sets a
+retry, since the report below counts only a live step's: no `--retries`
+flag, no `NEXTEST_RETRIES` on another step, a job or the workflow, in a
+script or through `$GITHUB_ENV`, no other nextest config file, and no
+`retries` key in `.config/nextest.toml`, which every run reads
+(`tests/ci_workflows/` checks each). The example smoke loops retry by
 hand, since `cargo run` has none, and print `EXAMPLE_RETRIED <name> <failed
 tries>` when an example passed only on a retry. The daily
 `ci-flakiness-report.yml` reads the retry jobs' logs from every finished run
@@ -597,7 +601,10 @@ reads it (`${{ '|| true' }}` is `|| true` to bash), but for a matrix value
 of plain words, which the guards read spliced in, once for each value.
 The coverage runs before it are held to the same, as are every `run:`
 step of the checks branch protection requires and the fuzz run, which
-Fuzz Gate reads. The script within a `run:` value is read as text,
+Fuzz Gate reads. Fuzz Gate and the path check that decides whether the
+targets run are pinned whole in `tests/ci_workflows/fuzz.rs`, each job's
+keys as YAML reads them and its script by its command lines, so a change
+to either is a change to its pin. The script within a `run:` value is read as text,
 against the forms D-058 lists: the guards catch the ways a step is known
 to be weakened, not every way a script can compute its status.
 
