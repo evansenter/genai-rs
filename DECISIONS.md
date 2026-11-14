@@ -1329,6 +1329,10 @@ one on send either way), so the entry goes back as it came; the list above
 now says what the code does. Only the string form, `{"allowlist":
 "disabled"}`, is kept whole beside another key.
 
+*Amended 2026-11-14 (0.16 breaking batch).* The owner asked for
+`Complete`'s: it is `Complete { response, extra }` and left the list
+(D-054's amendment of this date). `ExecutingFunctions` keeps its row.
+
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
 
@@ -1936,6 +1940,24 @@ error` (found at the Wave K merge). The
 docs and the retry example that printed an error by `Display` print the
 chain.
 
+**Amended 2026-11-14 (0.16 breaking batch).** `FunctionError::ExecutionError`
+follows too, on the owner's decision: its `Display` is `Function execution
+error` alone, and the error it holds stays its `source()`, so a reporter
+that walks the chain prints it once. `ArgumentMismatch`, the other
+variant, holds a message and no source, so it is unchanged. The model
+loses nothing: both places a `FunctionError` becomes text the model sees,
+the auto-function round (`execute_function` in
+`src/request_builder/auto_functions/round.rs`) and the Antigravity tool
+dispatcher (`ToolDispatcher::execute` in `src/antigravity/tools.rs`),
+already wrote it through `function_calling::error_for_model`, which writes
+the chain, so `{"error": ..}` reads as it did. A unit test in
+`src/function_calling.rs` fails when a variant's `Display` contains its
+source's text, over one value of each variant; a second reads the enum's
+declared variants with `syn`, as `GenaiError`'s guard does, and fails on
+one left out of those values. The model-facing text is pinned there, in
+`src/antigravity/tools.rs`, and through the HTTP stub in
+`tests/http_mock_tests.rs`. Breaking, with a CHANGELOG migration.
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
@@ -2299,6 +2321,22 @@ writes the `"unknown": true` marker when its type is spelled like a known
 there. The other events' envelope keys still reach only `execute_stream()`
 (D-034).
 
+*Amended 2026-11-14 (0.16 breaking batch).* On the owner's decision, the
+auto-function stream passes on the `interaction.completed` keys of the
+round that ends the loop with no function calls too:
+`AutoFunctionStreamChunk::Complete(response)` becomes
+`Complete { response, extra }`, the newtype becoming a struct variant for
+the reason `Completed` did above, and the loop moves the round's
+`StreamChunk::Completed` `extra` into it. Its `{chunk_type, data}` form
+writes a non-empty `extra` beside `data` and reads it back, as `Delta`'s
+does, and a 0.15.0 log reads back with an empty one. The guard's
+`Complete` row is gone. `ExecutingFunctions`, the loop's verdict on a round
+that calls functions, keeps its `ROUND_VERDICT` row: the owner asked for
+the completion chunk alone, so that round's completed-event keys still
+reach `execute_stream()` only, and carrying them is another breaking
+change, for the owner to ask for. A loop that ends on `MaxLoopsReached`
+ends on such a round, so it passes on no completed-event keys.
+
 ---
 
 ## D-055 — The file watch skips a poll it cannot fully read, and follows a symlinked root (2026-11-07)
@@ -2379,6 +2417,19 @@ binary that would not start or of the handshake exchange, or the error
 decoding the reply. A handshake with no reply in time has none. Breaking,
 with a CHANGELOG migration: a pattern listing `{ message, stderr }` adds
 `..`.
+
+*Amended 2026-11-14 (#573).* `ToolDispatch { name, message }` is removed,
+on the owner's decision. Nothing constructed it, from the bridge's first
+commit on: `ToolDispatcher::execute` never fails, since a tool that
+returns an error, or a call to a tool the agent does not have, becomes
+`{"error": ...}` for the model, as the reference SDK does, and the turn
+goes on (a tool that panics re-raises its panic). A variant the crate
+never raises promises a caller an error that never comes, and a variant
+the crate could start raising later would change what a failing tool
+does to a turn, which is its own decision. Breaking, with a CHANGELOG
+migration: delete the match arm. `docs/ANTIGRAVITY.md`'s Errors list now
+says when `Timeout` is raised, which it named beside `ToolDispatch`
+without saying, and that a tool's failure is not an error of the turn.
 
 ---
 
@@ -2958,6 +3009,21 @@ keys, passed `test_snapshot_openapi.sh`. Its fixture now gives a schema
 `x-speakeasy-unknown-values`, `x-google-enum-deprecated` and
 `x-speakeasy-name-override`, and a parameter `x-speakeasy-name-override`,
 and checks that each is kept.
+
+**Amended 2026-11-14 (#551).** `ListAgents::with_parent` is removed, on
+the owner's decision, which the rejection above left to them. A setter
+that sends a parameter the API ignores claims a filter the API does not
+apply (D-010), D-005 removes what the endpoint does not honor, and keeping
+it for parity with Python's `agents.list` bought nothing a caller could
+observe. Breaking (D-007), with a CHANGELOG migration: drop the call, and
+the listing is the same. `parent` on the listing is now unmodeled as the
+other three are: the query test lists it in `NOT_SENT`, a binding
+parameter no verb sends, with this reason, and `SPEC_QUERY` gives the
+spec's `required` flag on it the same. The third bullet's "stays" no
+longer holds; `docs/RESOURCES.md` and `docs/AGENTS_AND_BACKGROUND.md` say
+the builder has no setter for it, and the gap tracker records a re-probe
+on this date that found `parent` still ignored. Should a later probe find
+the API honoring it, a setter comes back with that probe's test.
 
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 

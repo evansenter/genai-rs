@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 executed += results.len();
             }
-            AutoFunctionStreamChunk::Complete(response) => {
+            AutoFunctionStreamChunk::Complete { response, .. } => {
                 eprintln!("\n[complete] status={:?}", response.status);
             }
             AutoFunctionStreamChunk::MaxLoopsReached(_) => {

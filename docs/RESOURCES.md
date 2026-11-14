@@ -60,7 +60,7 @@ become `with_*` setters.
 | `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id, base_agent)...)` |
 | `client.agents.create(..., agent_config={"type": "antigravity", "model": m, "max_total_tokens": n})` | `Agent::new(id, base_agent).with_agent_config(AntigravityConfig::new().with_model(m).with_max_total_tokens(n))` |
 | `client.agents.get(id)` | `client.agents().get(id)` |
-| `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).with_parent(p).send()` |
+| `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).send()` (no `parent`: see below) |
 | (no equivalent) | `client.agents().list().pages()` / `.items()` |
 | `client.agents.delete(id)` | `client.agents().delete(id)` |
 | `client.interactions.create(...)` | `client.interaction()...create()` (the builder) or `client.execute(request)`; unchanged, on `Client` |
@@ -173,9 +173,10 @@ leaves it in place. Its document exists, pending, as soon as the import is
 accepted, so an import that timed out is not retried: the error names the
 operation and the document, and a second import makes a second document.
 
-Python's `agents.list` takes `parent`, and `with_parent` sends it, but the
-API ignores it: a listing lists every agent whatever the value (see the
+Python's `agents.list` takes `parent`, but the API ignores it: a listing
+lists every agent whatever the value (see the
 [gap tracker](INTERACTIONS_API_GAP.md#spec-only-query-parameters-live-2026-11-09)).
+So `ListAgents` has no setter for it; drop the argument.
 
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them. genai-rs sends one value per
@@ -196,7 +197,7 @@ A `None` positional argument becomes an omitted setter.
 |------|-----|
 | `client.create_agent(&agent)` | `client.agents().create(&agent)` |
 | `client.get_agent(id)` | `client.agents().get(id)` |
-| `client.list_agents(size, token, parent)` | `client.agents().list().with_page_size(size).with_page_token(token).with_parent(parent).send()` |
+| `client.list_agents(size, token, parent)` | `client.agents().list().with_page_size(size).with_page_token(token).send()` (`parent` was ignored, and is gone) |
 | `client.delete_agent(id)` | `client.agents().delete(id)` |
 | `client.get_interaction(id)` | `client.interactions().get(id)` |
 | `client.get_interaction_with_input(id)` | `client.interactions().get_with_input(id)` |

@@ -263,7 +263,7 @@ async fn create_stream_can_be_spawned() {
     );
     let auto = tokio::spawn(auto.collect::<Vec<_>>()).await.unwrap();
     assert!(
-        matches!(auto.as_slice(), [Ok(e)] if matches!(e.chunk, AutoFunctionStreamChunk::Complete(_))),
+        matches!(auto.as_slice(), [Ok(e)] if matches!(e.chunk, AutoFunctionStreamChunk::Complete { .. })),
         "{auto:?}"
     );
     assert_eq!(stub.requests().len(), 3);
@@ -1247,23 +1247,22 @@ async fn streaming_auto_functions_surface_in_stream_errors() {
         }
         other => panic!("expected GenaiError::Stream, got {other:?}"),
     }
-    assert!(
-        events.iter().all(
-            |e| !matches!(e, Ok(ev) if matches!(ev.chunk, AutoFunctionStreamChunk::Complete(_)))
-        ),
-    );
+    assert!(events.iter().all(
+        |e| !matches!(e, Ok(ev) if matches!(ev.chunk, AutoFunctionStreamChunk::Complete { .. }))
+    ),);
 }
 
 /// The auto-function stream passes on a `step.delta` event's unread keys
 /// in its `Delta` chunk's `extra`, and an event of a type the crate does
 /// not know as an `Unknown` chunk with its JSON and id, then goes on to the
-/// round's completion (#504 I-11).
+/// round's completion (#504 I-11), whose `interaction.completed` event's
+/// unread keys come on the `Complete` chunk's `extra`.
 #[tokio::test]
-async fn streaming_auto_functions_pass_on_delta_extra_and_unknown_events() {
+async fn streaming_auto_functions_pass_on_unread_keys_and_unknown_events() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"Hi\"},\"future_key\":{\"a\":1},\"event_id\":\"evt-1\"}\n\n",
         "data: {\"event_type\":\"interaction.paused\",\"reason\":\"maintenance\",\"event_id\":\"evt-2\"}\n\n",
-        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n",
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"},\"future_summary\":{\"b\":[2]},\"event_id\":\"evt-3\"}\n\n",
     ])])
     .await;
 
@@ -1293,7 +1292,19 @@ async fn streaming_auto_functions_pass_on_delta_extra_and_unknown_events() {
     assert_eq!(unknown.unknown_chunk_type(), Some("interaction.paused"));
     assert_eq!(unknown.unknown_data().unwrap()["reason"], "maintenance");
     assert_eq!(unknown.event_id.as_deref(), Some("evt-2"));
-    assert!(complete.is_complete(), "{complete:?}");
+    let AutoFunctionStreamChunk::Complete { response, extra } = &complete.chunk else {
+        panic!("{complete:?}");
+    };
+    assert_eq!(response.id.as_deref(), Some("int-1"));
+    assert_eq!(
+        extra,
+        &json!({"future_summary": {"b": [2]}})
+            .as_object()
+            .unwrap()
+            .clone(),
+        "the event's id and type are not in it"
+    );
+    assert_eq!(complete.event_id.as_deref(), Some("evt-3"));
 }
 
 /// The live tests' `consume_auto_function_stream` records an unknown event

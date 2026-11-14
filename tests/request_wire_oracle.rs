@@ -703,6 +703,13 @@ const QUERY_ALLOWED: &[(&str, &str)] = &[
 /// Binding query parameters no verb sends, each with its reason, by site.
 const NOT_SENT: &[(&str, &str)] = &[
     (
+        "GET /{}/agents?parent",
+        "Not modeled: the endpoint takes it and ignores it, so a listing with any value \
+         or none lists every agent (live 2026-11-09, docs/INTERACTIONS_API_GAP.md \
+         \"Spec-only query parameters\"). `ListAgents::with_parent`, which sent it, was \
+         removed (#551, D-060).",
+    ),
+    (
         "GET /{}/triggers?filter",
         "Not modeled: the API parses the filter, but every expression tried is a \
          `400 Invalid filter expression` and the syntax is undocumented (live \
@@ -1132,7 +1139,6 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         .list()
         .with_page_size(5)
         .with_page_token("t")
-        .with_parent("p")
         .send()
         .await
         .expect("agents.list");

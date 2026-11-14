@@ -163,7 +163,7 @@ retry or explain. Each case is logged at `warn`.
 |-----------|---------------------------|
 | The model calls a function that is not registered | `{"error": "Function '<name>' is not available or not found."}` |
 | Arguments missing or of the wrong type (`#[tool]` argument extraction) | `{"error": "Argument mismatch: ..."}` |
-| A `CallableFunction::call` returns `Err(FunctionError::ExecutionError(e))` | `{"error": "Function execution error: <e>"}` |
+| A `CallableFunction::call` returns `Err(FunctionError::ExecutionError(e))` | `{"error": "Function execution error: <e>"}`, with each of `e`'s sources after it |
 
 ### What a `#[tool]` function's return value becomes
 

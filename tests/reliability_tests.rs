@@ -606,7 +606,7 @@ async fn auto_function_stream_survives_late_errors_after_each_round() {
         "{chunks:?}"
     );
     assert!(
-        matches!(chunks.last(), Some(AutoFunctionStreamChunk::Complete(r)) if r.id.as_deref() == Some("int-2")),
+        matches!(chunks.last(), Some(AutoFunctionStreamChunk::Complete { response: r, .. }) if r.id.as_deref() == Some("int-2")),
         "{chunks:?}"
     );
     assert_eq!(stub.requests().len(), 2);
@@ -653,7 +653,7 @@ async fn auto_function_stream_reads_each_round_to_its_end_before_the_next() {
         .map(|event| event.expect("no error reaches the caller").chunk)
         .collect();
     assert!(
-        matches!(chunks.last(), Some(AutoFunctionStreamChunk::Complete(r)) if r.id.as_deref() == Some("int-2")),
+        matches!(chunks.last(), Some(AutoFunctionStreamChunk::Complete { response: r, .. }) if r.id.as_deref() == Some("int-2")),
         "{chunks:?}"
     );
     let arrivals = arrivals.lock().unwrap();
@@ -691,7 +691,7 @@ async fn auto_function_stream_reads_the_final_round_to_its_end() {
         .create_stream_with_auto_functions();
     let mut completed_at = None;
     while let Some(event) = stream.next().await {
-        if let AutoFunctionStreamChunk::Complete(response) = event.unwrap().chunk {
+        if let AutoFunctionStreamChunk::Complete { response, .. } = event.unwrap().chunk {
             assert_eq!(response.id.as_deref(), Some("int-2"));
             completed_at = Some(start.elapsed());
         }
