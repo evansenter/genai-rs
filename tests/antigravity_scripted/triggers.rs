@@ -4,28 +4,71 @@
 //! endpoint with a placeholder key).
 
 use super::*;
-use genai_rs::antigravity::{StopDecision, TurnDecision, triggers};
+use genai_rs::antigravity::{RetryConfig, StopDecision, TurnDecision, triggers};
 
-/// Records every message this client sends the harness.
+/// Records every message this client sends the harness, and the lines the
+/// harness writes to its stderr.
 #[derive(Default)]
-struct WsSendCapture(Mutex<Vec<Value>>);
+struct WireCapture {
+    sends: Mutex<Vec<Value>>,
+    stderr: Mutex<Vec<String>>,
+}
 
-impl genai_rs::wire::WireInspector for WsSendCapture {
+impl genai_rs::wire::WireInspector for WireCapture {
     fn on_event(&self, event: &genai_rs::wire::WireEvent) {
-        if let genai_rs::wire::WireEvent::WsSend { payload, .. } = event {
-            self.0.lock().unwrap().push(payload.clone());
+        match event {
+            genai_rs::wire::WireEvent::WsSend { payload, .. } => {
+                self.sends.lock().unwrap().push(payload.clone());
+            }
+            genai_rs::wire::WireEvent::HarnessStderr { line, .. } => {
+                self.stderr.lock().unwrap().push(line.clone());
+            }
+            _ => {}
         }
     }
 }
 
-impl WsSendCapture {
+impl WireCapture {
     /// The index of the first send carrying `key`.
     fn first(&self, key: &str) -> Option<usize> {
-        self.0
+        self.sends
             .lock()
             .unwrap()
             .iter()
             .position(|p| p.get(key).is_some())
+    }
+
+    /// How many messages this client has sent.
+    fn sent(&self) -> usize {
+        self.sends.lock().unwrap().len()
+    }
+
+    /// How many of the messages this client has sent carry `key`.
+    fn count(&self, key: &str) -> usize {
+        self.sends
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.get(key).is_some())
+            .count()
+    }
+
+    /// Waits up to `timeout` for a stderr line containing `needle`.
+    async fn wait_for_stderr(&self, needle: &str, timeout: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        while !self
+            .stderr
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l.contains(needle))
+        {
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        true
     }
 }
 
@@ -181,7 +224,7 @@ async fn test_scripted_turn_timeout_halts_the_harness_turn() {
         ModelTurn::text("next-turn-3432"),
     ])
     .await;
-    let inspector = Arc::new(WsSendCapture::default());
+    let inspector = Arc::new(WireCapture::default());
     let mut agent = scripted_agent(&fake)
         .with_turn_timeout(Duration::from_secs(1))
         .add_wire_inspector(inspector.clone())
@@ -217,7 +260,7 @@ async fn test_scripted_chat_after_a_trigger_discards_the_trigger_turn() {
         ])
         .await,
     );
-    let inspector = Arc::new(WsSendCapture::default());
+    let inspector = Arc::new(WireCapture::default());
     let mut agent = scripted_agent(&fake)
         .add_trigger(TriggerConfig::new("tick-3440", Duration::from_secs(1)))
         .add_wire_inspector(inspector.clone())
@@ -241,4 +284,120 @@ async fn test_scripted_chat_after_a_trigger_discards_the_trigger_turn() {
         "expected automatedTrigger < haltRequest < userInput"
     );
     agent.shutdown().await.expect("shutdown");
+}
+
+/// A trigger's turn that ends the session, left for the next chat to
+/// discard (K-3, #504): a 400, and a 503 with no retries left. The chat
+/// halts it, then fails with `ConnectionClosed` and the harness's stderr
+/// without sending its message, and so does the chat after it. Both used
+/// to send theirs into the closed connection and fail with a `WebSocket`
+/// error.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_a_trigger_turn_that_ends_the_session_fails_the_next_chat_unsent() {
+    for status in [400, 503] {
+        let fake = FakeGemini::start(vec![ModelTurn::error(status, "scripted-3460")]).await;
+        let inspector = Arc::new(WireCapture::default());
+        let mut agent = scripted_agent(&fake)
+            .add_custom_trigger(|ctx| async move { ctx.send("custom-trigger-3461").await })
+            // No retries, which a 400 never gets: the first 503 ends it.
+            .with_retry(RetryConfig::new().with_max_api_retries(0))
+            .add_wire_inspector(inspector.clone())
+            .spawn()
+            .await
+            .expect("spawn");
+        // The harness's run has failed before the chat halts the turn.
+        assert!(
+            inspector
+                .wait_for_stderr("executor run failed", Duration::from_secs(20))
+                .await,
+            "the trigger's turn never failed (HTTP {status})"
+        );
+        let delivered = inspector.sent();
+        for (n, prompt) in ["first-chat-3462", "second-chat-3463"]
+            .into_iter()
+            .enumerate()
+        {
+            let err = agent.chat(prompt).await.unwrap_err();
+            let AntigravityError::ConnectionClosed { message, stderr } = &err else {
+                panic!("chat {n} after a trigger turn that ended the session: {err:?}");
+            };
+            let cause = format!("ended the session (model backend error, HTTP {status})");
+            assert!(message.contains(&cause), "{message}");
+            assert!(stderr.contains("executor run failed"), "{stderr}");
+        }
+        // The first chat sent only the halt that discarded the turn.
+        assert_eq!(inspector.sent(), delivered + 1);
+        assert_eq!(inspector.first("haltRequest"), Some(delivered));
+        assert_eq!(inspector.first("userInput"), None);
+        assert_eq!(
+            fake.requests().len(),
+            1,
+            "the trigger's turn made the one call"
+        );
+        drop(agent);
+    }
+}
+
+/// As above, with an interval trigger (#504): idle, the agent keeps
+/// delivering after the session ended, into the closed connection, until a
+/// delivery fails on the harness's reset. The chat's halt then fails too;
+/// the chat still reads why the session ended, rather than sending its
+/// message and failing with a `WebSocket` error. Where the reset leaves the
+/// failure unread, the refusal says the harness ended the session.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_an_interval_trigger_into_the_ended_session_fails_the_next_chat_unsent() {
+    let fake = FakeGemini::start(vec![ModelTurn::error(400, "scripted-3470")]).await;
+    let inspector = Arc::new(WireCapture::default());
+    let mut agent = scripted_agent(&fake)
+        .add_trigger(TriggerConfig::new("tick-3471", Duration::from_millis(500)))
+        .add_wire_inspector(inspector.clone())
+        .spawn()
+        .await
+        .expect("spawn");
+    assert!(
+        inspector
+            .wait_for_stderr("executor run failed", Duration::from_secs(20))
+            .await,
+        "the trigger's turn never failed"
+    );
+    // The trigger delivers into the closed connection until a send fails,
+    // then stops.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut seen = inspector.count("automatedTrigger");
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let now = inspector.count("automatedTrigger");
+        if now == seen && now >= 2 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the trigger kept delivering: {now}"
+        );
+        seen = now;
+    }
+    let delivered = inspector.sent();
+    for (n, prompt) in ["first-chat-3472", "second-chat-3473"]
+        .into_iter()
+        .enumerate()
+    {
+        let err = agent.chat(prompt).await.unwrap_err();
+        let AntigravityError::ConnectionClosed { message, stderr } = &err else {
+            panic!("chat {n} after deliveries into the ended session: {err:?}");
+        };
+        assert!(message.contains("ended the session"), "{message}");
+        assert!(stderr.contains("executor run failed"), "{stderr}");
+    }
+    // The first chat's halt was all it tried to send.
+    assert_eq!(inspector.sent(), delivered + 1);
+    assert_eq!(inspector.first("haltRequest"), Some(delivered));
+    assert_eq!(inspector.first("userInput"), None);
+    assert_eq!(
+        fake.requests().len(),
+        1,
+        "the trigger's turn made the one call"
+    );
+    drop(agent);
 }

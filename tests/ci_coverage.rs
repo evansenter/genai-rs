@@ -22,7 +22,9 @@
 //! workflow and every push to main escalates its failures, a PR runs the
 //! Windows leg, the flakiness report reads every retry it claims to count,
 //! Code Coverage writes its summary on every run, and no shell-level mask
-//! or YAML key the guards know lets a guarded step's failure pass. Two
+//! or YAML key the guards know lets a guarded step's failure pass, a
+//! required check's or the fuzz run's among them, each read as YAML reads
+//! it. Two
 //! docs facts are guarded in `tests/doc_guards/`: `docs/TESTING.md`'s
 //! test-kind table places every test file under its kind, and every guide
 //! is doctested.

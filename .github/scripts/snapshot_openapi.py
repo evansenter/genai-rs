@@ -3,21 +3,39 @@
 
 Usage: snapshot_openapi.py <spec.json> <source URL> <fetched YYYY-MM-DD>
 
-Keeps every schema's structure (properties, types, formats, enums, `$ref`,
-`oneOf`, `required`, `deprecated`, `readOnly`), the endpoint list, and each
-endpoint's operation:
-- its path, query and header parameters (`path`, `query`, `header`, and
-  `cookie` if it has one), each with whether it is required, its schema
-  (type, array items, format, default, enum, const) and any other
-  non-prose key it has (`style`, `explode`, ...);
-- its request body (`body`): whether it is required, and its schema by
-  content type (`content`, a `$ref`, or the schema without its prose);
-- its responses by status (`responses`), each with its schema by content
-  type (`content`) and, when it has any, its headers (`headers`).
-Drops the prose (descriptions, examples, code samples), which is most of the
-file and churns on every docs edit. Output is sorted and indented so a
-refreshed copy diffs line by line against the committed one in
-`tests/fixtures/api_surface/`. See `.github/scripts/refresh_api_snapshot.sh`.
+Keeps what the spec says about the wire and drops only its prose
+(descriptions, summaries, examples, code samples), which is most of the
+file and churns on every docs edit, and, outside the schemas and
+parameters, the names a generated SDK gives its code (`NOT_WIRE`). So it
+keeps:
+- every schema's structure (properties, types, formats, enums, `$ref`,
+  `oneOf`, `required`, `deprecated`, `readOnly`, ...);
+- the endpoint list, an operation under any of the eight HTTP methods
+  OpenAPI names, and each endpoint's operation:
+  - its path, query and header parameters (`path`, `query`, `header`, and
+    `cookie` if it has one), each with whether it is required, its schema
+    (type, array items, format, default, enum, const) and any other
+    non-prose key it has (`style`, `explode`, ...);
+  - its request body (`body`): whether it is required, its schema by
+    content type (`content`, a `$ref`, or the schema without its prose),
+    and a content type's other keys (`media`: its `encoding`, ...);
+  - its responses by status (`responses`), each with its schema by
+    content type (`content`), a content type's other keys (`media`: the
+    `x-speakeasy-sse-sentinel` of an event stream, ...) and its headers
+    (`headers`), when it has any;
+  - every other key it has, or its path item has: `deprecated`,
+    `servers`, `security`, `callbacks`, `x-speakeasy-retries`, ...;
+- the spec's top-level keys but `paths` and `components` (`top_level`):
+  its `servers`, `security`, `x-speakeasy-retries` (the reference SDK's
+  retry policy), `x-speakeasy-globals` (the parameters every request may
+  carry), and `info` without its prose;
+- the security schemes (`security_schemes`), which a `security`
+  requirement names.
+Another component is kept where something kept names it: a parameter,
+body, response or header inline where it is used, any other `$ref` but a
+schema's inline too. Output is sorted and indented so a refreshed copy
+diffs line by line against the committed one in `tests/fixtures/api_surface/`.
+See `.github/scripts/refresh_api_snapshot.sh`.
 """
 
 import json
@@ -60,7 +78,60 @@ def strip_names(node):
     return strip(node)
 
 
-METHODS = ("get", "post", "put", "patch", "delete")
+# Every method an OpenAPI path item can hold, so an operation under one the
+# crate never calls (a HEAD or an OPTIONS) is an endpoint like any other.
+METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
+
+# Keys that name generated code or point at prose, not the wire: an
+# operation's `operationId`, `tags`, `summary` and `externalDocs`, the
+# Speakeasy SDK's names for it (`x-speakeasy-group`,
+# `x-speakeasy-name-override`, `x-speakeasy-exports`), and its
+# `x-speakeasy-sse-overload`, which overloads a method on a response the
+# snapshot keeps (`text/event-stream`). Dropped from an operation, its path
+# item, request body, responses and content types, and the spec's top
+# level; a schema or a parameter keeps every key but its prose, these
+# included.
+NOT_WIRE = {
+    "externalDocs",
+    "operationId",
+    "summary",
+    "tags",
+    "x-speakeasy-exports",
+    "x-speakeasy-group",
+    "x-speakeasy-name-override",
+    "x-speakeasy-sse-overload",
+}
+
+# The keys of an operation, request body and response this script reduces
+# itself; the rest are kept as they are, without prose (`rest`).
+OPERATION_KEYS = {"parameters", "requestBody", "responses"}
+
+
+def inline(spec, node, depth=0):
+    """A node with every `$ref` into the components but a schema's replaced
+    by what it names, so the snapshot keeps it without the component."""
+    if depth > 64:
+        sys.exit("a reference cycle outside the schemas")
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/"):
+            kind = ref[len("#/components/"):].split("/", 1)[0]
+            if kind != "schemas":
+                return inline(spec, resolve(spec, node, kind), depth + 1)
+        return {k: inline(spec, v, depth + 1) for k, v in node.items()}
+    if isinstance(node, list):
+        return [inline(spec, v, depth + 1) for v in node]
+    return node
+
+
+def rest(spec, node, handled):
+    """A node's keys but those in `handled`, prose and `NOT_WIRE`, each
+    inlined and without its prose."""
+    return {
+        k: strip(inline(spec, v))
+        for k, v in (node or {}).items()
+        if k not in handled and k not in PROSE and k not in NOT_WIRE
+    }
 
 
 def resolve(spec, node, kind):
@@ -98,11 +169,22 @@ def content(media_types):
     }
 
 
+def media(spec, media_types):
+    """A content map's other keys by content type (`encoding`, ...), for
+    the content types that have any."""
+    kept = {
+        content_type: rest(spec, media_type, {"schema"})
+        for content_type, media_type in (media_types or {}).items()
+    }
+    return {content_type: keys for content_type, keys in kept.items() if keys}
+
+
 def operation(spec, path_item, op):
     """An operation's parameters by location (name -> parameter), its
-    request body (required flag and content type -> schema) and its
-    responses (status -> content and headers). An operation's own parameter
-    replaces the path item's of the same name and location."""
+    request body (required flag and content type -> schema), its responses
+    (status -> content and headers) and its other keys. An operation's own
+    parameter replaces the path item's of the same name and location, and
+    its own key the path item's (`servers`, ...)."""
     params = {}
     for source in (path_item.get("parameters", []), op.get("parameters", [])):
         for param in source:
@@ -117,18 +199,32 @@ def operation(spec, path_item, op):
             "required": bool(body.get("required", False)),
             "content": content(body.get("content")),
         }
+        body_media = media(spec, body.get("content"))
+        if body_media:
+            out["body"]["media"] = body_media
+        out["body"].update(rest(spec, body, {"required", "content"}))
     responses = {}
     for status, response in op.get("responses", {}).items():
         response = resolve(spec, response, "responses")
         entry = {"content": content(response.get("content"))}
+        response_media = media(spec, response.get("content"))
+        if response_media:
+            entry["media"] = response_media
         headers = {
             name: strip(resolve(spec, header, "headers"))
             for name, header in response.get("headers", {}).items()
         }
         if headers:
             entry["headers"] = headers
+        entry.update(rest(spec, response, {"content", "headers"}))
         responses[str(status)] = entry
     out["responses"] = responses
+    others = rest(spec, path_item, set(METHODS) | {"parameters"})
+    others.update(rest(spec, op, OPERATION_KEYS))
+    for key, value in others.items():
+        if key in out:
+            sys.exit(f"an operation key {key!r} would replace the snapshot's own")
+        out[key] = value
     return out
 
 
@@ -154,6 +250,8 @@ def main():
         "endpoints": sorted(operations),
         "operations": operations,
         "schemas": strip_names(schemas),
+        "top_level": rest(spec, spec, {"paths", "components"}),
+        "security_schemes": strip_names(spec["components"].get("securitySchemes", {})),
     }
     print(json.dumps(snapshot, indent=1, sort_keys=True, ensure_ascii=False))
 

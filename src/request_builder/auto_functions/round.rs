@@ -279,11 +279,12 @@ async fn execute_function<'n>(
     // rather than failing the loop.
     let result = match lookup(name) {
         Some(function) => function.call(args).await.unwrap_or_else(|e| {
+            let error = crate::function_calling::error_for_model(&e);
             warn!(
-                "Function execution failed (recoverable): function='{name}', error='{e}'. \
+                "Function execution failed (recoverable): function='{name}', error='{error}'. \
                  The error will be sent to the model, which may retry or adapt."
             );
-            json!({ "error": e.to_string() })
+            json!({ "error": error })
         }),
         None => {
             warn!(

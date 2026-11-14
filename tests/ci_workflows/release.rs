@@ -12,7 +12,8 @@ use super::{command_lines, failure_escapes, jobs, read, root, steps};
 /// be green on every job before anything publishes: `validate` runs
 /// `check_release_push_run.sh` on the tagged commit, with the token able
 /// to read Actions, with nothing the guards know to skip the step or pass
-/// its failure ([`failure_escapes`]), and `publish` needs `validate`.
+/// its failure ([`failure_escapes`], which reads the keys and the `run:`
+/// value as YAML does), and `publish` needs `validate`.
 fn push_run_gate_problems(release: &str) -> Vec<String> {
     let all = jobs(release);
     let job = |id: &str| {
@@ -34,7 +35,9 @@ fn push_run_gate_problems(release: &str) -> Vec<String> {
         .find(|line| line.contains("check_release_push_run.sh"))
         .unwrap_or_default()
         .to_owned();
-    if !(call.contains("\"$GITHUB_SHA\"") || call.contains("${{ github.sha }}")) {
+    // `"$GITHUB_SHA"`, not `${{ github.sha }}`: an expression in the script
+    // is spliced in before bash reads it, which `failure_escapes` rejects.
+    if !call.contains("\"$GITHUB_SHA\"") {
         problems.push(format!("the check reads the tagged commit's run: {call}"));
     }
     if !(check.contains("GH_TOKEN: ${{ github.token }}")
@@ -89,6 +92,17 @@ fn the_push_run_gate_check_catches_what_it_claims_to() {
         release.replace(
             gate,
             "        run: |\n          set +e\n          .github/scripts/check_release_push_run.sh \"$GITHUB_SHA\"\n",
+        ),
+        // P3: an `|| true` YAML joins to the gate's plain `run:` from a
+        // deeper continuation line.
+        release.replace(gate, &format!("{gate}          || true\n")),
+        // ... or from an expression the runner splices into the script.
+        release.replace(gate, &gate.replace("\"\n", "\" ${{ '|| true' }}\n")),
+        // ... or with a key written so the text never matched it.
+        release.replace(gate, &format!("        \"continue-on-error\": true\n{gate}")),
+        release.replace(
+            "    name: Validate Release\n",
+            "    name: Validate Release\n    continue-on-error : true\n",
         ),
         // ... ignored, or skipped, by the step or by its job.
         release.replace(gate, &format!("        continue-on-error: true\n{gate}")),

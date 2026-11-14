@@ -329,16 +329,9 @@ fn untrusted_constructors(
 }
 
 /// The names of the structs, enums and type aliases `files` define, at any
-/// depth outside a `#[cfg(test)]` module: the crate's types.
+/// depth outside a test module (one under a `cfg` that needs `test`,
+/// [`source_scan::is_test_gated`]): the crate's types.
 fn type_names(files: &[syn::File]) -> BTreeSet<String> {
-    fn is_test(attrs: &[syn::Attribute]) -> bool {
-        attrs.iter().any(|attr| {
-            attr.path().is_ident("cfg")
-                && attr
-                    .parse_args::<syn::Meta>()
-                    .is_ok_and(|meta| meta.path().is_ident("test"))
-        })
-    }
     fn collect(items: &[syn::Item], out: &mut BTreeSet<String>) {
         for item in items {
             match item {
@@ -351,7 +344,7 @@ fn type_names(files: &[syn::File]) -> BTreeSet<String> {
                 syn::Item::Type(t) => {
                     out.insert(t.ident.to_string());
                 }
-                syn::Item::Mod(m) if !is_test(&m.attrs) => {
+                syn::Item::Mod(m) if !source_scan::is_test_gated(&m.attrs) => {
                     if let Some((_, inner)) = &m.content {
                         collect(inner, out);
                     }
@@ -572,7 +565,8 @@ fn a_constructor_call_in_the_oracle_is_found() {
 }
 
 /// The type scan reads structs, enums and aliases at any depth, and skips a
-/// test module's.
+/// test module's, under `cfg(all(test, unix))` as under `cfg(test)`; a
+/// module under `cfg(any(test, ..))` builds outside tests, so it is read.
 #[test]
 fn crate_types_are_found_outside_test_modules() {
     let file: syn::File = syn::parse_quote! {
@@ -582,9 +576,13 @@ fn crate_types_are_found_outside_test_modules() {
         mod inner { pub struct Nested; }
         #[cfg(test)]
         mod tests { struct Fixture; }
+        #[cfg(all(test, unix))]
+        mod unix_tests { struct UnixFixture; }
+        #[cfg(any(test, feature = "x"))]
+        mod shipped { pub struct Shipped; }
     };
     assert_eq!(
         type_names(&[file]),
-        BTreeSet::from(["Alias", "Kind", "Nested", "Thing"].map(String::from))
+        BTreeSet::from(["Alias", "Kind", "Nested", "Shipped", "Thing"].map(String::from))
     );
 }

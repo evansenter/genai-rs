@@ -339,8 +339,10 @@ returns once the run has ended: the API holds the request until then, up to
 the trigger's `execution_timeout_seconds` (at most 600), and answers with the
 `TriggerExecution`, whose `status` says how the run ended and, for a
 completed run, whose `interaction_id` names what it stored. A client timeout
-shorter than the run ends the call, not the run; `list_executions` lists
-every firing, one still in progress included. `list_executions` on a trigger
+shorter than the run ends the call, not the run, and a retry fires the
+trigger again; `list_executions` lists every firing, one still in progress
+included, so check it before retrying
+([Reliability](RELIABILITY.md#a-triggers-run)). `list_executions` on a trigger
 ID that does not exist returns an empty list, not a 404. The dated record of
 these rules is under [Triggers](INTERACTIONS_API_GAP.md#triggers) in the
 gap tracker.
@@ -454,7 +456,8 @@ async fn poll_until_done(
     id: &str,
     deadline: Duration,
 ) -> Result<InteractionResponse, Box<dyn std::error::Error>> {
-    let deadline = Instant::now() + deadline;
+    // checked_add, not +, which panics on a deadline too far off.
+    let deadline = Instant::now().checked_add(deadline).ok_or("deadline too far off")?;
     let mut delay = Duration::from_secs(2);
     loop {
         let mut wait = delay;
@@ -495,8 +498,9 @@ async fn poll_until_done(
 }
 ```
 
-`examples/deep_research.rs` runs this loop, returning `None` rather than
-an error at the deadline so it can cancel the run. The crate's own
+`examples/deep_research.rs` runs this loop, returning an `Option`: the
+response in `Some` once the run completes, and `None` rather than an error
+at the deadline, so it can cancel the run. The crate's own
 `wait_until_active` polls a file or document the same way
 ([Reliability](RELIABILITY.md#waiting-for-a-file-or-document)).
 

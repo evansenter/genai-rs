@@ -13,7 +13,7 @@ wildcard arm.
 | Variant | Meaning | `is_retryable()` |
 |---------|---------|------------------|
 | `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 408, 429 and 5xx, except 501, 505, 506, 508, 510 and 511 ([why](RELIABILITY.md#genaierroris_retryable)) |
-| `Http(reqwest::Error)` | Network, connect (including the default 30 s connect timeout), TLS, or a client-level timeout before the response headers | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
+| `Http(reqwest::Error)` | Network, connect (including the default 30 s connect timeout), TLS, or a client-level timeout before the response headers; the reqwest error is the `source()` | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
 | `StreamInterrupted { message, source }` | A stream's body ended before its terminal event: the server closed early, or the transport failed mid-body (`source` holds that `reqwest::Error`). Also an auto-function round that ends on an event this crate doesn't recognize, with `source` `None` ([An unrecognized last event](RELIABILITY.md#an-unrecognized-last-event)) | Yes; see [Cut-off streams](RELIABILITY.md#cut-off-streams) |
 | `InvalidInput(String)` | The builder rejected the request before sending (for example: no input, neither or both of model and agent, or `with_store_disabled()` combined with chaining or background) | No |
@@ -24,8 +24,14 @@ wildcard arm.
 | `Internal(String)` | The client failed in a way that is neither the API's answer nor your input: a request body that would not serialize, or an unexpected failure reading back a document an upload or import already made (the message names it) | No |
 | `ClientBuild(reqwest::Error)` | The HTTP client could not be built (TLS backend init); the reqwest error is the `source()` | No |
 
+A variant's `Display` is its own text. One that wraps another error
+(`Http`, `StreamInterrupted`, `ClientBuild`) leaves that error's text to
+`source()`, so print the chain to see the cause: anyhow's `{:#}` does, or
+walk `source()` as `chain` does below.
+
 ```rust
 use genai_rs::GenaiError;
+use std::error::Error;
 
 fn describe(err: &GenaiError) -> String {
     match err {
@@ -35,8 +41,16 @@ fn describe(err: &GenaiError) -> String {
         GenaiError::Timeout(after) => format!("timed out after {after:?}"),
         GenaiError::Http(e) if e.is_timeout() => "client-level timeout".to_string(),
         GenaiError::InvalidInput(msg) => format!("bad request built locally: {msg}"),
-        other => other.to_string(),
+        other => chain(other),
     }
+}
+
+/// The error and each `source()` below it, joined by `": "`.
+fn chain(err: &(dyn Error + 'static)) -> String {
+    std::iter::successors(Some(err), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 # let _ = describe;
 ```

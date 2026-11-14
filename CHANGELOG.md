@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: `GenaiError::Http`'s `Display` is `HTTP request error` alone**,
+  no longer followed by the `reqwest::Error`'s text, which stays its
+  `source()`. A reporter that walks the chain (anyhow's `{:#}`, eyre)
+  printed the transport error twice; it now prints it once, as it does for
+  `ClientBuild` and `StreamInterrupted` (D-049). Where the crate writes an
+  error into a message of its own (a `PollTimeout` after failed status
+  reads, the `Internal` error of a file search import or read-back that
+  failed, or the `{"error": ...}` a failed tool call sends the model in the
+  auto-function loop and on an Antigravity agent), it writes the whole
+  chain, so the transport error stays in that text. Migration: where you read the transport error from the top error's
+  text, walk `source()` (or use your reporter's chain form, as
+  `docs/ERROR_HANDLING.md` shows), or match `GenaiError::Http(e)` and read
+  `e.to_string()`, which is the text that followed `HTTP request error: `.
+
+### Fixed
+
+- **Breaking: an Antigravity `chat` or `send_streaming` after a turn
+  that ended the session unseen (a trigger's turn it discards, or a turn
+  past its timeout) fails with `AntigravityError::ConnectionClosed`, not
+  `WebSocket`, without sending its message.** A trigger's turn that the model backend failed (a 400, or
+  a 503 with no retries left) and that `next_trigger_turn` did not
+  consume ended the harness's run unseen: the next call halted and
+  discarded it, sent its message into the closed connection, and failed
+  with a `WebSocket` error and no stderr, as did the call after it. That
+  call now fails with `ConnectionClosed`, naming the failure, with the
+  tail of the harness's stderr, and every later `chat`, `send_streaming`
+  and `next_trigger_turn` fails the same way at once, as after a failed
+  turn of your own. So does a call during whose discard the harness
+  closes the connection, and one whose halt fails because an interval
+  trigger has been delivering into the closed connection (it reads what
+  the harness sent before closing). After a turn `Timeout` whose recovery
+  sees the turn fail so, or the harness close the connection, the next
+  call fails the same way, where it too sent its message and failed with
+  a `WebSocket` error. Migration: match `ConnectionClosed { message,
+  stderr }` where you matched a `WebSocket` error from the call after a
+  trigger's turn or a `Timeout`, and spawn a new agent.
+- The background poll in `docs/AGENTS_AND_BACKGROUND.md` added the
+  caller's deadline to the clock with `+`, which panics on a `Duration`
+  too large to add, such as `Duration::MAX`. It uses `checked_add` and
+  returns an error instead, as `examples/deep_research.rs` does. Copy the
+  change into a poll built from it.
+- `Triggers::run`'s rustdoc, `docs/RELIABILITY.md` and
+  `docs/AGENTS_AND_BACKGROUND.md` now say that a retry fires the trigger
+  again: a client timeout ends the call with a retryable error while the
+  run goes on, so check `list_executions` before retrying.
+
 ## [0.14.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.0.0 (swept 2026-11-07;

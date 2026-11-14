@@ -141,8 +141,9 @@ impl ToolDispatcher {
             Ok(Value::Object(map)) => Value::Object(map),
             Ok(other) => json!({ "result": other }),
             Err(err) => {
-                tracing::warn!("Tool '{name}' failed: {err}");
-                json!({ "error": err.to_string() })
+                let error = crate::function_calling::error_for_model(&err);
+                tracing::warn!("Tool '{name}' failed: {error}");
+                json!({ "error": error })
             }
         }
     }

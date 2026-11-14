@@ -351,14 +351,128 @@ cat >"$work/dup_entries.md" <<'EOF'
 - **`a` is a struct.** Released twice.
 EOF
 unreleased_dups="$work/dup_entries.md:17: duplicate entry in ## [Unreleased] (first at line 8): - \`wait()\` polls at most every 10 ms.
-$work/dup_entries.md:20: two entries titled \"\`Delta\` carries \`extra\`.\" in ## [Unreleased] (first at line 7)
-$work/dup_entries.md:22: two entries titled \"\`a\` is a struct.\" in ## [Unreleased] (first at line 11)
+$work/dup_entries.md:20: two entries open alike in ## [Unreleased] (first at line 7): \"\`Delta\` carries \`extra\`.\"
+$work/dup_entries.md:22: two entries open alike in ## [Unreleased] (first at line 11): \"\`a\` is a struct.\"
 $work/dup_entries.md:23: duplicate entry in ## [Unreleased] (first at line 13): - **Same twice.** Body."
 expect "duplicate entries in [Unreleased]" 1 "$unreleased_dups" "$work/dup_entries.md"
 expect "duplicate entries in a named older section" 1 \
     "$unreleased_dups
-$work/dup_entries.md:35: two entries titled \"\`a\` is a struct.\" in ## [0.2.0] (first at line 34)" \
+$work/dup_entries.md:35: two entries open alike in ## [0.2.0] (first at line 34): \"\`a\` is a struct.\"" \
     "$work/dup_entries.md" 0.2.0
+
+# The keep-both shapes rule 6 once let through (#504, K-13), each a real
+# pair from this CHANGELOG with its body trimmed, beside a rewrite: two
+# Breaking entries a rewrite retitled, keeping the subject and most of the
+# words (Changed); three plain Fixed entries promoted to Breaking, whose
+# first sentence is matched with the new title (one reorders its words,
+# and its rewrite's title runs to a second sentence); a pair that differs
+# in case alone, twice, the second where no dropped one-letter word can
+# hide it; and an entry whose bold is only the marker, beside its plain
+# copy.
+cat >"$work/keep_both.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Changed
+
+- **Breaking: `GenerationConfig` has two new public fields, `extra` and
+  `speech_config_extra`.** `speech_config_extra` keeps the keys a
+  `{"speakers": [...]}` form of `speech_config` carries beside the list.
+  Migration: a struct literal needs `extra: Default::default()` and
+  `speech_config_extra: Default::default()`, or `..Default::default()`.
+- **Breaking: `AntigravityError::InitFailed` and `HandshakeFailed` have a
+  `source` field, no Antigravity error repeats its source's text in
+  `Display`, and every failure of `spawn()` after the handshake is
+  `InitFailed`.** Migration: match `InitFailed { message, stderr, .. }`.
+- **Breaking: `GenerationConfig` has a new public field, `extra`.**
+  Migration: a struct literal needs `extra: Default::default()`, or
+  `..Default::default()`.
+- **Breaking: `AntigravityError::InitFailed` has a `source` field, and no
+  Antigravity error repeats its source's text in `Display`.** A WebSocket
+  connect that fails during `spawn()` is `InitFailed`. Migration: match
+  `InitFailed { message, stderr, .. }`.
+
+### Fixed
+
+- **Breaking: no message to the Antigravity harness can wait forever. A
+  failed initialization send fails `spawn()` with `InitFailed`, not
+  `WebSocket`, and a send in a turn with no timeout gives up with
+  `Timeout`.** Migration: match `InitFailed { .. }` where you matched a
+  `WebSocket` error from `spawn()`.
+- **Breaking: an Antigravity harness that dies mid-turn, or while
+  `next_trigger_turn` waits, fails the call with
+  `AntigravityError::ConnectionClosed`, not `WebSocket`.** Migration:
+  match `ConnectionClosed { message, stderr }`.
+- **Breaking: an Antigravity turn whose model call failed after the agent
+  delegated to a subagent fails with `AntigravityError::Turn`, not `Ok`.**
+  Migration: handle `Err(AntigravityError::Turn { kind, .. })`.
+- An Antigravity turn whose model call failed after the agent delegated to
+  a subagent (a 503 with no retries left) fails with
+  `AntigravityError::Turn`, as one without a subagent does. Harness 0.1.23
+  reports that error before the turn's final state.
+- Antigravity: no message to the harness can wait forever. `chat()` and
+  `send_streaming()` start the turn deadline before sending the message.
+- Antigravity: a harness that dies mid-turn, or while `next_trigger_turn`
+  waits, fails the call with `AntigravityError::ConnectionClosed` and the
+  tail of the harness's stderr, as that variant says. A connection that
+  ended without a close frame read as a `WebSocket` error with no stderr.
+- **A bold one.** Its old text.
+- **Breaking: a bold one.** Migration: none.
+- **Streaming keeps media deltas apart.** The old text.
+- **Breaking: streaming keeps media deltas apart.** Migration: none.
+- **Breaking:** `Role` is a plain enum. Migration: drop its serde.
+- `Role` is a plain enum. It was not.
+EOF
+expect "keep-both copies of a retitled or newly bold entry" 1 \
+    "$work/keep_both.md:16: two entries open alike in ## [Unreleased] (first at line 7): \"\`GenerationConfig\` has a new public field, \`extra\`.\"
+$work/keep_both.md:19: two entries open alike in ## [Unreleased] (first at line 12): \"\`AntigravityError::InitFailed\` has a \`source\` field, and no Antigravity error repeats its source's text in \`Display\`.\"
+$work/keep_both.md:38: two entries open alike in ## [Unreleased] (first at line 35): \"An Antigravity turn whose model call failed after the agent delegated to a subagent (a 503 with no retries left) fails with \`AntigravityError::Turn\`, as one without a subagent does.\"
+$work/keep_both.md:42: two entries open alike in ## [Unreleased] (first at line 26): \"Antigravity: no message to the harness can wait forever.\"
+$work/keep_both.md:44: two entries open alike in ## [Unreleased] (first at line 31): \"Antigravity: a harness that dies mid-turn, or while \`next_trigger_turn\` waits, fails the call with \`AntigravityError::ConnectionClosed\` and the tail of the harness's stderr, as that variant says.\"
+$work/keep_both.md:49: two entries open alike in ## [Unreleased] (first at line 48): \"a bold one.\"
+$work/keep_both.md:51: two entries open alike in ## [Unreleased] (first at line 50): \"streaming keeps media deltas apart.\"
+$work/keep_both.md:53: two entries open alike in ## [Unreleased] (first at line 52): \"\`Role\` is a plain enum.\"" \
+    "$work/keep_both.md"
+
+# Look-alikes that are different entries, each a shape from this
+# CHANGELOG: the same sentence about different code (the first code span
+# differs); two that share most words, but not 85% of the shorter's; two
+# short openings whose words a longer one holds, with many more of its own
+# (under 45% of both); an opening of two words beside one that holds both;
+# and an opening that its sub-item, which is not part of it, would make a
+# copy of another.
+cat >"$work/look_alikes.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- `StepDelta` keeps every unmodeled field a delta carries in `extra`.
+- `Annotation` keeps every unmodeled field a delta carries in `extra`.
+- Three more antigravity worked examples.
+- Two antigravity worked examples.
+
+### Fixed
+
+- `Debug` no longer prints the secrets a value holds. Each prints
+  `[REDACTED]` in the secret's place.
+- The `Debug` output of the Antigravity types that hold a secret no longer
+  prints it: the header and environment variable values print as
+  `"[REDACTED]"`, their names kept.
+- `wait_until_active` (files and file-search documents):
+  - It honors the `Retry-After` of a 429 it polls through.
+- `wait_until_active` (files and file-search documents) never runs past its
+  deadline: each status request is cut off at the deadline, and a poll
+  that would start past it is not made.
+- Lone words.
+- Lone words, and many more beside them.
+- `Files` changed:
+  - uploads retry a 503 and resume where they stopped.
+- `Files` uploads retry a 503 and resume where they stopped.
+EOF
+expect "look-alike entries that differ" 0 "" "$work/look_alikes.md"
 
 # A title left open by the end of its entry is abandoned, not carried into
 # the next one, and bold text after an entry's start is no title.

@@ -1885,6 +1885,28 @@ client` alone, and a `StreamInterrupted` cut off by the transport says
 `the connection failed mid-body` and leaves the `reqwest::Error`'s text to
 `source()`. Neither variant's shape changes.
 
+**Amended 2026-11-14 (#504, K-4).** `GenaiError::Http`, which #554 left
+out, follows too: its `Display` is `HTTP request error` alone, and the
+`reqwest::Error` it holds through `#[from]` stays its `source()`. Breaking,
+with a CHANGELOG migration, since a caller may have read the transport
+error from the top error's text. One test in `src/errors.rs` builds every
+`GenaiError` variant, each that can hold a source with one, and fails when
+a `Display` contains its source's text; a match with no wildcard names
+each variant, and the variants are read from the enum's own source, so a
+new one fails the test until it is built there. Where the crate writes an
+error into a message of its own, which has no source to hold it (a
+`PollTimeout` after failed status reads, the `Internal` error of a failed
+file search import or read-back, and their log lines), it writes the chain
+through `errors::ErrorChain`, so the transport error stays in the text;
+`src/poll_tests.rs` and `src/http/file_search_stores.rs` test both. So
+does the error a failed tool call sends the model (`{"error": ..}` in the
+auto-function loop and on an Antigravity agent), through
+`function_calling::error_for_model`: a `#[tool]` that returned a
+`GenaiError::Http` would otherwise have told the model only `HTTP request
+error` (found at the Wave K merge). The
+docs and the retry example that printed an error by `Display` print the
+chain.
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
@@ -2502,6 +2524,88 @@ them `|| exit "0"`, `|| [ -s log ]`, an `rc=0` before `exit "$rc"`, a
 workflow-level `defaults:`, `shopt -u -o pipefail`, `bash -c` and a budget
 written `-gt "300"`; each is now a case in the mutation tests.
 
+**Amended 2026-11-14 (#504, K-7, K-8).** The #504 grade of 2026-11-13 found
+that the guard read the workflows as text, so two claims of the 2026-11-10
+amendment did not hold: that the floor step runs its one command "and
+nothing else", and that a guarded step has no `continue-on-error`. Each of
+these passed every guard: an `|| true` on a deeper line below the floor's
+plain `run:` (P1) or the release gate's (P3), which YAML joins to the
+command; `"continue-on-error": true` or `continue-on-error : true` on the
+floor step, the coverage job or a sweep step (P4, P5, P5b); and
+`shopt -s expand_aliases` then `alias cargo=true` in a live step (P8). So
+did a mask on a required check's own steps, which the guard never read:
+`|| true` on Test Suite's nextest run, on the antigravity unit run or on
+Clippy, and `continue-on-error` on strict-unknown's run. And so did one
+on the fuzz run, or `continue-on-error` on its job, though Fuzz Gate
+passes on that job's result.
+- The guards read the workflows with a YAML parser, `yaml-rust2`, a
+  dev-dependency. It is the maintained fork of `yaml-rust`, which is
+  unmaintained, as `serde_yaml` is archived. It reads YAML 1.2, needs
+  Rust 1.85 (the crate's MSRV is 1.88), and fails on a duplicated key
+  rather than keep its last value. Each key a guard checks, on the
+  workflow, a job or a step, is the key YAML reads, quoted or with a space
+  before its colon. A merge key (`<<`), which the parser does not expand,
+  is rejected. A step's script is its `run:` value as YAML reads it: a
+  plain value's deeper lines and a folded block's lines are joined as
+  YAML joins them before the script is read.
+- The runner splices each `${{ }}` expression's value into a `run:`
+  value before bash reads it, so `${{ '|| true' }}` is `|| true` to bash,
+  where the guard read a quoted string. A guarded `run:` value may hold
+  no expression but `${{ matrix.<key> }}`, anywhere in it, comment lines
+  included; the job's matrix must give the key only values of plain words
+  (letters, digits and `_./,=+-`, between spaces), and the script is read
+  once for each value spliced in. The integration groups'
+  `for test in ${{ matrix.tests }}` is the one guarded step that uses one.
+  The release gate passes `"$GITHUB_SHA"`, not `${{ github.sha }}`.
+- The guards still find a job or a step by its text. Each one `escapes`
+  reads must be a job and a step YAML reads, every key included, and a
+  test holds every workflow's split to YAML's. A comment at a step's
+  indent or less no longer ends the step. An alias to an anchor outside
+  the step does not read in the step alone, so the check flags it; no
+  workflow uses one.
+- `alias` and `BASH_ALIASES` are rejected, as a function is, and so is
+  what turns alias expansion on in a script: `shopt -s expand_aliases`,
+  and POSIX mode, by `set -o posix`, `shopt -so posix` or
+  `POSIXLY_CORRECT` anywhere in the workflow, which joins `BASH_ENV`,
+  `SHELLOPTS` and `BASHOPTS` there. A `set` or `shopt` command's options
+  are read with their quotes dropped, so `set -o "posix"` and
+  `set +o "pipefail"` are read too.
+- A loop that resets `rc` on each pass must keep each pass's failure: at
+  its top level, after the last line in it that sets `rc`, exit 1 on one
+  or list it, or be a retry that leaves on its first passing pass
+  (`if [ "$rc" -eq 0 ]; then break; fi`). Dropping the smoke loop's
+  `exit 1` on an example's third failure once passed: the next example
+  reset `rc`, and the step ended green when the last one passed.
+- The floor step holds its `name:` and its `run:` and no other key: a
+  step `env:` that redefined `COVERAGE_IGNORE` changed the figure the
+  floor read, and passed. The job's pattern is read from its `env:` as
+  YAML reads it, not from a line of its text.
+- Every `run:` step of the jobs whose checks are required on `main` is
+  held to `failure_escapes`. `REQUIRED_JOBS` in
+  `tests/ci_workflows/required.rs` lists the jobs, and a test holds the
+  list to CLAUDE.md's. The only `if:` and `needs:` allowed are the live
+  groups' gate and `needs: check`, and the owner gate on a step that
+  reads the key. Two steps were rewritten into the forms the guard reads,
+  doing what they did: Check's package check counts the test-only files
+  (an empty count, grep's error, fails too), and the antigravity smoke
+  loop keeps each attempt's status in `rc`.
+- The fuzz job's `run:` steps are held to the same, with its
+  `needs: changes` and its path-check `if:` allowed. The fuzz run starts
+  with `set -euo pipefail` and must read `seeds/$TARGET`.
+
+A review of this amendment's first version found that four of its claims
+did not yet hold: an expression on a required step, the release gate, a
+live step or the fuzz run (`${{ '|| true' }}`), `set -o posix` with
+`BASH_ALIASES[cargo]=true`, the smoke loop's `exit 1` dropped, and a step
+`env:` on the floor each passed every guard. Each is now a case in the
+mutation tests.
+
+The script inside a `run:` value is still read as text, against the forms
+the 2026-11-10 amendment names and with the limits it gives, and one
+more: a command word spelled so the text does not read it as that
+command (`"alias"`, `al''ias`, `builtin eval`), which no one writes by
+accident.
+
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
 **Context.** #504's final grade put Docs at A-: five contradictions and
@@ -2644,10 +2748,12 @@ made required or optional, or retyped, wherever it goes, a request body
 changes or is made optional, or a response changes.
 `test_snapshot_openapi.sh` pins each of the three mutations above, and a
 path parameter retyped, made optional or given an enum behind its
-reference, and a body made optional. It still drops the prose, each
+reference, and a body made optional. It still dropped the prose, each
 operation's other keys (`operationId`, `tags`, `deprecated`, the
-`x-speakeasy-*` extensions), and a component no operation names. The
-query test also holds the spec's header parameters to what the verbs send
+`x-speakeasy-*` extensions), and a component no operation names. Since
+the 2026-11-14 amendment below, it keeps those other keys but the names
+a generated SDK gives its code and `x-speakeasy-sse-overload`. The query
+test also holds the spec's header parameters to what the verbs send
 (`spec_header_findings` in `tests/request_wire_oracle/spec_query.rs`): a
 header a request to its endpoint goes without, or one sent with a value
 the spec's `const` or `enum` does not allow (followed through a `$ref`,
@@ -2660,11 +2766,76 @@ path parameter is matched by its position), a request body's required
 flag, a response's schema reference against the type the verb returns
 (the response oracle maps crate types to spec schemas, not to
 operations), and a request body against the binding class the crate sends
-(D-040); that diff is tracked in #558. The two update wrappers (#550)
+(D-040). The diff of the last two is tracked in #558; the first two stay
+watched only (amended 2026-11-14, below). The two update wrappers (#550)
 were probed on 2026-11-13: both are a `400 Unknown parameter`, with or
 without `id` and `update_mask`, and the flat bodies the crate sends apply
 (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query parameters"), so the
 crate is unchanged (D-005).
+
+**Amended 2026-11-14 (#504, K-12).** The amendment above named #558 for
+all four watched-only items, but #558 covers request bodies and response
+references only, so its pointer now names those two. The other two stay
+watched only, for this decision's reason:
+a request follows its binding class, which leads the spec on requests
+(D-040), and the bindings snapshot gives a query parameter a name and a
+body a class, not a schema or a required flag, so there is nothing
+offline to hold either to but the crate itself. A change to either
+changes the reduced snapshot, and the daily watch opens an issue on it,
+for a probe to settle (D-010).
+- **A body's required flag.** The spec marks every request body it gives
+  required, and each verb that calls one of those operations sends its
+  value as the body, so the flag asks nothing the crate does not do. A
+  body made optional asks nothing new; a body given to an operation that
+  had none is a request body, in #558's diff.
+- **A parameter's schema.** Each parameter a verb sends has the type the
+  spec gives it, but for one set: the voices list filters (`accent`,
+  `context`, `gender`, `language_code`, `persona`, `pitch`, `region_code`
+  and `type`), each an array of strings in the v1beta spec (v1 has no
+  voices endpoint) and an iterable in the bindings. The API matches a
+  filter repeated with several values against any of them
+  (`docs/ENUM_WIRE_FORMATS.md`, "Voices"), and `ListVoices` sends one
+  value per filter, a second `with_*` call replacing the first. That stays: the repeat adds no reach, since one
+  listing per value (per combination, with two such filters), merged,
+  finds the same voices, and setters that send several values can come
+  as `add_*` methods beside the `with_*` ones, without a break, when a
+  caller needs them. Rejected: turning the `with_*` filters into list
+  setters, a break for what a merge already gives. `docs/RESOURCES.md`
+  says so.
+
+The same grade found the reducer dropping parts of the spec without
+saying so: an operation under HEAD, OPTIONS or TRACE, an operation's
+`deprecated`, `servers`, `security` and `callbacks`, a body's `encoding`,
+and the spec's servers, security schemes and `x-speakeasy-retries` each
+reduced to the committed bytes. `snapshot_openapi.py` now takes an
+operation under any of the eight methods OpenAPI names, and keeps every
+key of an operation (or its path item), request body, response and
+content type, and of the spec's top level (`top_level`: its servers,
+security, `info`, `x-speakeasy-globals` and `x-speakeasy-retries`), and
+the security schemes (`security_schemes`); both snapshots were refreshed
+with it, and `test_snapshot_openapi.sh` pins each drift above. What it
+still drops, and why:
+- The prose: descriptions, summaries, titles, examples and code samples.
+  It says nothing the wire does, and churns on every docs edit.
+- The names a generated SDK gives its code: an operation's
+  `operationId`, `tags` and `externalDocs`, and the Speakeasy
+  `x-speakeasy-group`, `x-speakeasy-name-override` and
+  `x-speakeasy-exports`. The crate names its own verbs, and
+  `tests/ci_coverage.rs` maps an endpoint to them by method and path. A
+  schema or a parameter keeps the Speakeasy keys it has, as it did.
+- `x-speakeasy-sse-overload`, which gives the SDK a second method for an
+  operation whose `text/event-stream` response the snapshot keeps.
+- A component nothing kept names: it shapes no request or response until
+  something names it, and then it is kept where it is named.
+None of the newly kept keys is diffed against the crate offline, and each
+is watched: each states what the crate fixes in its own code (the server
+`Client` defaults to, the `X-Goog-Api-Key` header, the SSE parser
+skipping `[DONE]`) or does not use (a deprecation, the optional
+`x-goog-user-project` header, the generated client's retry policy), so a
+change to one is for a probe to settle, as a parameter's retyping is. The
+retry policy, `[408, 409, 429, 5XX]` with backoff, is one D-053 already
+weighed: the crate's differs on 409 and six 5xx, for the reasons given
+there.
 
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
@@ -2836,6 +3007,40 @@ session-ending failure, above, is each call that starts or waits for a
 turn (`chat`, `send_streaming`, `next_trigger_turn`), as
 `ConnectionClosed`'s rustdoc now names them; `cancel()` and `shutdown()`
 do not check.
+
+**Amended 2026-11-14 (#504, K-3).** A failure that ended the session in a
+turn this client did not drive went unrecorded. A trigger's turn the model
+backend failed (a 400, or a 503 with no retries left), left for the next
+`chat` to halt and discard, reached `halt_and_drain`, which logged its
+`Turn` error at debug level, then saw the harness close the connection
+and returned; the chat sent its message anyway and failed with
+`WebSocket { message: "send failed", .. }` (tungstenite's
+`SendAfterClosing`), with no stderr, as did the call after it. The drain
+now records, in `session_ended`, a drained failure whose `ends_session()`
+is true, and the harness closing the connection while it reads (a close
+with no failure before it names no kind: "the harness ended the
+session"). `begin_turn` checks after a drain, so the call fails with
+`ConnectionClosed`, naming what ended the session, with the stderr tail,
+before its message is sent; the drain's halt has gone out by then, since
+it is sent before the stale turn's events are read. A halt that cannot be
+sent no longer ends the drain: an interval trigger, idle, goes on
+delivering into the closed connection until a write draws the harness's
+reset, and the halt fails the same way, but what the harness sent before
+closing is still in the socket (on macOS; a reset that discards it reads
+as the close). The drain after a turn timeout records the same, so the
+call after that `Timeout` refuses too. A close seen outside a drain
+(mid-turn, or while `next_trigger_turn` waits) already fails that call
+with `ConnectionClosed` and is not recorded. Rejected: narrowing the guide
+to failures the caller saw, which would leave a caller who uses triggers
+without `next_trigger_turn` to read a `WebSocket` error as "the session
+is over".
+`test_scripted_a_trigger_turn_that_ends_the_session_fails_the_next_chat_unsent`
+runs the 400 and the 503 on the harness, and
+`test_scripted_an_interval_trigger_into_the_ended_session_fails_the_next_chat_unsent`
+the interval trigger's 400; stand-in unit tests hold the drained failure,
+the bare close, the failed halt, the drain after a timeout, and the
+refusal of each of `chat`, `send_streaming` and `next_trigger_turn`
+(K-2), which no test held beyond `chat`'s.
 
 ---
 
@@ -3167,6 +3372,28 @@ The wire's walk now holds the Antigravity harness's camelCase keys too
 (D-064's amendment), so `WireEvent`'s `Debug` redacts a harness message
 in either direction.
 
+**Amended 2026-11-14 (#504, K-5).** The sentinel built only
+`Tool::CodeExecution` with a secret in its `extra`, so printing
+`Tool::Function`'s `extra` raw passed every test. It now formats every arm
+of `Tool` with the same secret-bearing `extra` (an `Unknown` tool's in its
+payload): `every_tool_arm` builds each, a match with no wildcard arm names
+it, and `the_sentinel_builds_every_tool_arm` compares the arms built with
+the enum as `src/tools/mod.rs` declares it, so a new arm fails until it is
+built there. The destructuring rule above is now checked too.
+`tests/redaction_guards.rs` reads every hand-written `Debug` that redacts
+(its `fmt` names `redact::..` or `REDACTED`) or is for a type that holds
+one at any depth, as `Client` holds `HttpContext`, and fails on one that
+reads its type with a `..` rest, a catch-all arm (`_`, a binding such as
+`other`, or an or-pattern holding one) in a match on `self`, `*self` or
+`&self`, an `if let` or `let .. else` on `self`, a field read through
+`self`, or no pattern on `Self` at all. A `Webhook` `Debug` that ends its
+pattern with `..` and drops two fields fails it, and so do a `Tool` arm
+turned into `_other =>` and a `Client` `Debug` that uses `..`. Patterns
+inside a macro's arguments are not read. `InteractionBuilder`'s `Debug`,
+which holds `Client` and the tools and reads its fields through `self`, is
+listed as an exception until the owner decides how its `extra` prints.
+Omission is the safe direction, so this holds the convention, not a leak.
+
 ## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
 **Context.** #504's final grade found the recursive `.rs` walker written
@@ -3279,6 +3506,27 @@ on disk from its root; `test_modules` reads files already parsed, which
 `tests/non_exhaustive_responses.rs`'s own checks feed with made-up trees,
 so a disk walk cannot replace it. Both read the same `cfg`s the same way.
 
+**Amended 2026-11-14 (#504, K-6).** The test-side readers left outside
+moved here too, so the Rust guards read a `cfg` one way, as the amendment
+above says.
+The three `is_test` copies, which read `cfg(test)` by its bare ident
+(`tests/request_wire_oracle/query_literals.rs`, `query_options.rs`, and
+the coverage oracle's type scan in `src/coverage_oracle/request/fills.rs`),
+and `tests/live_verbs/bodies.rs`'s `test_only`, call `is_test_gated`: test
+code under `cfg(all(test, unix))` is left out as under `cfg(test)`, where
+a probe module so gated in `src/http/` read as library code.
+`query_literals` walks `src/http/` with `rust_files`, at any depth, and
+leaves out the test-only files `test_modules` finds, so a file in a
+subdirectory, which passed the guard, fails it as one directly in
+`src/http/` does. `tests/doc_guards/`' `guide_candidates` reads the
+Markdown with `files_with_extensions`, and `tests/module_size.rs` tells a
+test module by `is_test_gated` over its attributes rather than by a line
+that starts `#[cfg(test)]`. The only functions left whose names start
+`is_test` are `tests/common/source_scan.rs`'s. One reader is not Rust and cannot call
+it: `.github/scripts/check_dated_facts.sh` skips an item only below a line
+that is exactly `#[cfg(test)]`, so it checks an item under
+`cfg(all(test, unix))` as library code, which errs toward checking more.
+
 ## D-069 — The retry-loop guard follows what reaches the sleep (2026-11-10)
 
 **Context.** #504's J-6 asked `tests/reliability_tests.rs`'s recipe guard
@@ -3293,7 +3541,8 @@ passing mutation for each.
 **Decision.** The guard reads a loop that calls `is_retryable()`,
 `sleep(` or an awaited `.get(` (a `for` over items only through
 `is_retryable()`), follows each sleep's argument back through the
-assignments it is built from, and requires:
+assignments it is built from, follows the paths through its body, and
+requires:
 - **A ceiling.** Growth (`*`, `<<`, `.pow(`, `_mul(`, or a value built
   from itself with `+` or an `add(`) reaches the sleep only through a
   `.min(` over it. A `retry_after()` needs a `.min(` on its own method
@@ -3304,14 +3553,36 @@ assignments it is built from, and requires:
   ends the poll rather than the sleep.
 - **No overflow.** No `+`, `-` or `*` applies to an uncapped Retry-After:
   a `retry_after()` call with its receiver and chain, a variable assigned
-  one, or a closure parameter along its chain.
+  one, or a closure parameter along its chain. Nor is a `checked_add`,
+  `checked_sub` or `checked_mul` on its chain, or with it as the whole
+  argument, followed by `unwrap()` or `expect(`: the same panic.
 - **Jitter where a count bounds the loop.** A name that reads as random
   (`rand`, `RandomState`, `fastrand`, an `rng`) or as jitter reaches each
   sleep. A deadline poll of one interaction is not required to jitter: no
   crowd of clients failed with it.
-- **No early exit.** A poll checks `is_retryable()`, and no retry or poll
-  loop awaits a request with `?`; a deadline poll bounds each request with
+- **A sleep on every path back to the head.** Read through `if` and
+  `else` chains, `match` arms, `let ... else` and blocks, a `continue`
+  needs a `sleep(` call before it, in its arm or a block around it, and so
+  does each way through to the end of the body that does not return or
+  break first. A nested loop's paths, and a closure's body (in braces or
+  not), are their own.
+- **No early exit.** In every loop the guard reads, no `.await` has a `?`
+  on the chain after it, or after the parentheses around it (`.await?`,
+  `.await.map_err(..)?`, `(fut.await)?`). A poll checks `is_retryable()`,
+  and no `return` or `break` is in the match arm or `if` branch whose
+  guard or condition calls `is_retryable()` without a `!`: a bound goes in
+  the guard (`if e.is_retryable() && attempt < MAX`) or after the match,
+  as both recipes put it. A deadline poll bounds each request with
   `timeout(`.
+- **The example runs the doc's poll.** `docs/AGENTS_AND_BACKGROUND.md`'s
+  poll and `examples/deep_research.rs` make the same decisions, compared as
+  code (comments, string text and prints aside): each arm of the `match` on
+  a status request's outcome and of the `match` on the status, what the
+  arm that holds that `match` does around it, and the comparison of the
+  wait with the deadline, with its body. The one
+  difference allowed is the one the doc states: the example returns
+  `Some` on completion and `None` where the doc's poll returns an error at
+  the deadline. Each builds its deadline with `checked_add`.
 
 Rejected: a `.min(` on the Retry-After in a deadline poll too. J-6 names
 the uncapped `max`, and a cap below the server's ask polls sooner than
@@ -3324,12 +3595,39 @@ passes through a function, a struct field or a shadowed name is not
 followed, and a `.min(` inside a closure on the chain
 (`.map(|a| a.min(MAX))`) reads as no cap; such a recipe is rewritten with
 the `.min(` on the chain. A comparison with the time left that bounds
-nothing still counts.
+nothing still counts. Names, not values, are read: a `.min(` with any
+argument is a cap (`.min(Duration::MAX)` too), and a name that reads as
+random is jitter (`let random = 0.5;` too). The paths read only the forms
+above: a labeled `continue` counts as its innermost loop's, a `?` ends no
+path (the early-exit rule reads an awaited one, but not one after a call
+around the await, `f(fut.await)?`), a `sleep(` counts where it is called,
+awaited or not, and a `return` in the retryable arm counts even under an
+`if` that compares with a bound. A `checked_` call counts
+only on the Retry-After's own chain or with it as its whole argument.
 
 With these checks `tests/reliability_tests.rs` went over D-014's 2,000-line
 bar, so the recipe checks, the backon one and this guard, moved unchanged
 to `tests/reliability_tests/retry_recipes.rs`, a module of the same test
 binary (D-011).
+
+**Amended 2026-11-14 (#504, K-9).** The guard checked only that a sleep,
+a `.await?` or an operator was present, and this section said "no retry
+or poll loop awaits a request with `?`". A review under #504 found
+mutations of the doc's poll and its example that passed: a `continue`
+past the sleep (E1), `checked_add(wait).unwrap()` (E3),
+`.await.map_err(..)?` (E4), the example dropping `Incomplete` from its
+terminal statuses (E7), and a `return` in the `is_retryable()` arm (E9).
+The rules above now say what the guard reads: the sleep and early-exit
+rules follow the paths through the body, the overflow rule reads a
+`checked_` call whose `None` is unwrapped, and the doc's poll and its
+example are compared. Each mutation is a case in
+`the_retry_loop_check_fails_each_broken_recipe`. The doc's poll added the
+caller's deadline to the clock with `+`, which panics on one too far off;
+it uses `checked_add`, as the example does. The checks took
+`retry_recipes.rs` past D-014's bar, so the reading of the recipes'
+sources (the docs' code blocks, an example's file, and what a line of
+code holds) moved unchanged to `tests/reliability_tests/recipe_source.rs`,
+another module of the test binary (D-011).
 
 ## D-070 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
 
@@ -3374,8 +3672,7 @@ comparison; unit tests hold those.
   to the protocol's source). Its proto3 JSON is read as its types read
   it, and only there: an int64 string is its number at the fields read
   through `flex_num` (a test holds the key list to the protocol's source),
-  and a
-  `toolResponse`'s `id`, a proto3 scalar the type writes as `""` when it
+  and a `toolResponse`'s `id`, a proto3 scalar the type writes as `""` when it
   was missing, is absent at its default (the target's first run,
   2026-11-13, found it). Everywhere else a `false`, `0`, `""` or numeric
   string is kept as it came: a oneof member such as `sessionEndResponse`
@@ -3477,3 +3774,41 @@ on another.
 **Consequences.** Breaking for an exhaustive `GenerationConfig` struct
 literal (D-007). The request oracle leaves the field empty: its keys are the
 API's, not the crate's.
+
+## D-073 — The CHANGELOG lint matches a duplicate entry by its opening words, not its exact title (2026-11-14)
+
+**Context.** Rule 6 of `.github/scripts/check_changelog.sh` failed two
+entries in a section that share a first line or a bold title, compared
+exactly. A keep-both merge that puts an entry's old text back beside a
+rewrite passed whenever the rewrite changed that title: three plain Fixed
+entries beside the Breaking entries that replaced them, two Breaking
+entries beside their retitled rewrites, and `**A bold one.**` beside
+`**Breaking: a bold one.**` (#504's 2026-11-13 grade, K-13). Comparing
+titles case-insensitively, and a plain entry's first sentence with a
+title, as the grade proposed, catches only the last: the others reword,
+reorder or extend the title.
+
+**Decision.** An entry opens with the first sentence of its bold title, or
+of its first paragraph when it has none, a `Breaking:` marker aside. Two
+openings in a section match when they name the same code span first (or
+neither names one) and hold the same words, or the shorter holds at least
+3, 85% of them are in the other, and the shared words are 45% of both
+together. A word is case-folded, a code span is one word, and one-letter
+words, a few function words and a plural's `s` are left out. The header of
+the script states the rule; its harness pins each probe, a sentence-case
+pair, and six look-alikes that must pass, and each threshold or condition,
+removed, fails it. Rejected: the exact case-insensitive match, which
+misses five of the six probes; dropping the first-code-span condition,
+which fails two entries that say the same of different types (`A` and `B`
+"have two new public fields"); and a token similarity without the 45%
+share, which fails a short opening whose words a long one holds.
+
+**Consequences.** It is a heuristic. The thresholds were set against the
+CHANGELOG's history: across all 100 versions of the file, every section
+named, no two different entries match; the only duplicates there are
+ones whose first lines match, which the exact rule already reported. A
+rewrite that changes an entry's subject (its first code span, compared as
+written, so reordering two spans or qualifying one's path changes it) or
+most of its words still passes as a new entry, and two genuinely
+different entries that open alike fail: reword one, which a reader needs
+anyway.

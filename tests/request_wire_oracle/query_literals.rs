@@ -13,27 +13,19 @@
 //! - no other query builder: reqwest's `.query(..)`, `Url::set_query` or
 //!   `Url::query_pairs_mut`.
 //!
-//! Macro arguments are read too; test modules and doc comments are left
+//! Every `.rs` file under `src/http/` is read, at any depth. Macro
+//! arguments are read too; test code (a test-only file, or an item under a
+//! test attribute or a `cfg` that needs `test`, as
+//! `tests/common/source_scan.rs` reads them) and doc comments are left
 //! out. The scan finds the usual ways to write a query, not every one: a
 //! separator the code computes (`char::from(38)`) gets past it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::LazyLock;
 
 use syn::visit::{self, Visit};
 
-/// Whether `attrs` mark test-only code: `#[test]`, `#[tokio::test]` or
-/// `#[cfg(test)]`.
-fn is_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        let path = attr.path();
-        path.segments.last().is_some_and(|s| s.ident == "test")
-            || (path.is_ident("cfg")
-                && attr
-                    .parse_args::<syn::Meta>()
-                    .is_ok_and(|meta| meta.path().is_ident("test")))
-    })
-}
+use crate::live_verbs::source_scan::{self, is_test_gated};
 
 /// The expressions a macro's tokens hold, when they parse as expressions
 /// separated by `,` (`format!(..)`, `concat!(..)`, `write!(..)`); nothing
@@ -59,13 +51,13 @@ impl<'ast> Visit<'ast> for Literals {
     fn visit_attribute(&mut self, _: &'ast syn::Attribute) {}
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-        if !is_test(&node.attrs) {
+        if !is_test_gated(&node.attrs) {
             visit::visit_item_mod(self, node);
         }
     }
 
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        if !is_test(&node.attrs) {
+        if !is_test_gated(&node.attrs) {
             let outer = self.in_with_query;
             self.in_with_query = node.sig.ident == "with_query";
             visit::visit_item_fn(self, node);
@@ -74,7 +66,7 @@ impl<'ast> Visit<'ast> for Literals {
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        if !is_test(&node.attrs) {
+        if !is_test_gated(&node.attrs) {
             visit::visit_impl_item_fn(self, node);
         }
     }
@@ -133,37 +125,53 @@ fn query_keys_in(file: &syn::File) -> Vec<String> {
     literals.found
 }
 
-/// `src/http/`'s source files.
-fn http_sources() -> Vec<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/http");
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-        .map(|entry| entry.expect("a directory entry").path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+/// The library's source files under `dir`, at any depth
+/// (`source_scan::rust_files`), parsed and keyed by their path relative to
+/// `base` with `/` separators, without the test-only ones: a file a
+/// test-gated `mod` declares, and every file below it
+/// (`source_scan::test_modules`).
+fn http_sources(base: &Path, dir: &Path) -> Vec<(String, syn::File)> {
+    let parsed: Vec<(String, syn::File)> = source_scan::rust_files(dir)
+        .iter()
+        .map(|path| {
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            (rel, source_scan::parse_file(path))
+        })
         .collect();
-    paths.sort();
-    paths
+    let test_modules =
+        source_scan::test_modules(parsed.iter().map(|(rel, file)| (rel.as_str(), file)));
+    parsed
+        .into_iter()
+        .filter(|(rel, _)| !source_scan::is_test_only_path(rel, &test_modules))
+        .collect()
+}
+
+/// [`query_keys_in`] for each of `files`, as `path: literal`.
+fn query_keys_in_files(files: &[(String, syn::File)]) -> Vec<String> {
+    files
+        .iter()
+        .flat_map(|(rel, file)| {
+            query_keys_in(file)
+                .into_iter()
+                .map(move |literal| format!("{rel}: {literal}"))
+        })
+        .collect()
 }
 
 #[test]
 fn query_keys_are_added_only_through_with_query() {
-    let paths = http_sources();
-    assert!(paths.len() > 10, "read too few files: {paths:?}");
-    let mut found = Vec::new();
-    for path in &paths {
-        let source = std::fs::read_to_string(path).expect("read a source file");
-        let file =
-            syn::parse_file(&source).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        found.extend(
-            query_keys_in(&file)
-                .into_iter()
-                .map(|literal| format!("src/http/{name}: {literal}")),
-        );
-    }
+    let root = source_scan::root();
+    let files = http_sources(&root, &root.join("src/http"));
+    assert!(
+        files.len() > 10,
+        "read too few files: {:?}",
+        files.iter().map(|(rel, _)| rel).collect::<Vec<_>>()
+    );
+    let found = query_keys_in_files(&files);
     assert!(
         found.is_empty(),
         "query keys or separators written outside `with_query`, out of the query checks' \
@@ -175,9 +183,9 @@ fn query_keys_are_added_only_through_with_query() {
 
 /// The verifier's mutation is caught, in a `format!` and in a bare literal,
 /// with the key spelled out or interpolated, and so are a separator held in
-/// a variable and reqwest's own query builder; a test module's literal, a
-/// doc comment, a path, a parsed URL's query read, and `with_query`'s own
-/// separators are not.
+/// a variable and reqwest's own query builder; a test module's literal
+/// (under `cfg(test)` or `cfg(all(test, unix))`), a doc comment, a path, a
+/// parsed URL's query read, and `with_query`'s own separators are not.
 #[test]
 fn a_query_key_in_a_string_is_found() {
     let file: syn::File = syn::parse_quote! {
@@ -206,6 +214,10 @@ fn a_query_key_in_a_string_is_found() {
         mod tests {
             fn url() { let _ = format!("{base}?pageSize=10"); }
         }
+        #[cfg(all(test, unix))]
+        mod unix_tests {
+            fn url() { let _ = format!("{base}?pageSize=10"); }
+        }
         #[test]
         fn alone() { let _ = "x?alt=media"; }
     };
@@ -220,6 +232,63 @@ fn a_query_key_in_a_string_is_found() {
             "'?'",
             r#""&""#,
             ".query(..)",
+        ]
+    );
+}
+
+/// A file nested below `src/http/` is read as one directly in it is, and
+/// test code is left out wherever it is: a module under
+/// `cfg(all(test, unix))` as one under `cfg(test)`, and a test-only file a
+/// test-gated `mod` declares. One under `cfg(any(test, ..))` builds outside
+/// tests, so it is read.
+#[test]
+fn every_library_file_under_src_http_is_read() {
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let http = base.path().join("http");
+    let write = |rel: &str, text: &str| {
+        let path = http.join(rel);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("create a directory");
+        std::fs::write(path, text).expect("write a probe file");
+    };
+    let key = r#"pub fn url(u: &str) -> String { format!("{u}&chunked=true") }"#;
+    write(
+        "mod.rs",
+        "mod files;\nmod flat;\nmod probe;\nmod probe_cfg;\n",
+    );
+    write("flat.rs", key);
+    write("probe/nested.rs", key);
+    write(
+        "probe_cfg.rs",
+        &format!(
+            "#[cfg(all(test, unix))]\nmod tests {{ {key} }}\n\
+             #[cfg(any(test, feature = \"x\"))]\nmod shipped {{ {key} }}\n"
+        ),
+    );
+    write(
+        "files.rs",
+        "#[cfg(test)]\n#[path = \"files_tests.rs\"]\nmod tests;\n",
+    );
+    write("files_tests.rs", key);
+    let files = http_sources(base.path(), &http);
+    assert_eq!(
+        files
+            .iter()
+            .map(|(rel, _)| rel.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "http/files.rs",
+            "http/flat.rs",
+            "http/mod.rs",
+            "http/probe/nested.rs",
+            "http/probe_cfg.rs",
+        ]
+    );
+    assert_eq!(
+        query_keys_in_files(&files),
+        [
+            r#"http/flat.rs: "{u}&chunked=true""#,
+            r#"http/probe/nested.rs: "{u}&chunked=true""#,
+            r#"http/probe_cfg.rs: "{u}&chunked=true""#,
         ]
     );
 }

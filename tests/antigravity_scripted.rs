@@ -590,20 +590,17 @@ async fn test_scripted_model_bad_request_fails_the_turn_and_ends_the_session() {
         // The backend's own message is carried.
         assert!(message.contains("scripted-bad-request-4410"), "{message}");
 
-        // The harness ends the session on a fatal model error, so the next
-        // call fails on the connection (the send, or the read after it)
-        // instead of running a turn, as `ends_session()` says.
+        // The harness ends the session on a fatal model error, so the agent
+        // refuses the next call itself, without sending (D-062), instead of
+        // running a turn, as `ends_session()` says.
         let next = tokio::time::timeout(Duration::from_secs(30), agent.chat("try again"))
             .await
             .expect("the next call must fail promptly, not wait out the turn timeout")
             .unwrap_err();
-        assert!(
-            matches!(
-                next,
-                AntigravityError::WebSocket { .. } | AntigravityError::ConnectionClosed { .. }
-            ),
-            "the call after a fatal {status} must fail on the connection, got {next:?}"
-        );
+        let AntigravityError::ConnectionClosed { message, .. } = &next else {
+            panic!("the call after a fatal {status} must be refused, got {next:?}");
+        };
+        assert!(message.contains("ended the session"), "{message}");
         assert_eq!(
             fake.requests().len(),
             1,

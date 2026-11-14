@@ -2,56 +2,65 @@
 //! pointer check run on every scheduled run, and a failure in either is
 //! seen (#504).
 
-use super::{command_lines, escapes, is_scheduled, jobs, read, root, steps};
+use super::{command_lines, escapes, is_scheduled, jobs, read, root, steps, yaml};
 
-/// The sweep workflow, its sweep job and the job's steps, from a scheduled
-/// `api-surface-sweep.yml` that can write issues.
-fn sweep_job() -> (String, String, Vec<String>) {
-    let workflow = read(&root().join(".github/workflows/api-surface-sweep.yml"));
-    assert!(
-        is_scheduled(&workflow),
-        "api-surface-sweep.yml runs on a schedule"
-    );
-    assert!(
-        workflow.contains("\n  issues: write\n"),
-        "the sweep's token can open and update its issues"
-    );
-    let job = jobs(&workflow)
-        .into_iter()
-        .find(|(id, _)| id == "sweep")
-        .map(|(_, body)| body)
-        .expect("api-surface-sweep.yml has a sweep job");
-    let job_steps = steps(&job);
-    (workflow, job, job_steps)
+/// The `if:` each of the sweep's checks carries, so it runs whatever the
+/// steps before it did.
+const NOT_CANCELLED: &str = "if: ${{ !cancelled() }}";
+
+fn sweep_yml() -> String {
+    read(&root().join(".github/workflows/api-surface-sweep.yml"))
 }
 
-/// The step that runs `script`, checked to run whatever the steps before
-/// it did (`!cancelled()`), to fail the run when the script does (nothing
-/// but that `if:` from `escapes`: no `continue-on-error`, no shell-level
-/// mask such as `|| true`), and to have the job's token for its `gh` calls.
+/// The step of `workflow`'s sweep job that runs `script`, and the problems
+/// with it, empty when it holds: it runs whatever the steps before it did
+/// (`!cancelled()`), fails the run when the script does (nothing but that
+/// `if:` from `escapes`: no `continue-on-error`, on the step or its job, as
+/// YAML reads their keys, no shell-level mask such as `|| true` in the
+/// `run:` value YAML reads), and has the job's token for its `gh` calls,
+/// in a scheduled workflow whose token can write issues.
+fn sweep_step(workflow: &str, script: &str) -> (Option<String>, Vec<String>) {
+    let mut problems = Vec::new();
+    if !is_scheduled(workflow) {
+        problems.push("api-surface-sweep.yml runs on a schedule".to_owned());
+    }
+    if !workflow.contains("\n  issues: write\n") {
+        problems.push("the sweep's token can open and update its issues".to_owned());
+    }
+    let Some((_, job)) = jobs(workflow).into_iter().find(|(id, _)| id == "sweep") else {
+        problems.push("api-surface-sweep.yml has a sweep job".to_owned());
+        return (None, problems);
+    };
+    let Some(step) = steps(&job).into_iter().find(|step| {
+        command_lines(step).any(|line| line.starts_with(&format!(".github/scripts/{script}")))
+    }) else {
+        problems.push(format!("the sweep job has no step that runs {script}"));
+        return (None, problems);
+    };
+    if !command_lines(&step).any(|line| line == NOT_CANCELLED) {
+        problems.push(format!(
+            "{script} runs whatever the steps before it did (`{NOT_CANCELLED}`)"
+        ));
+    }
+    for escape in escapes(workflow, &job, &step, &[NOT_CANCELLED]) {
+        problems.push(format!(
+            "a failing {script} fails the run, which escalates, but its step has {escape}"
+        ));
+    }
+    if yaml::step_env(&step, "GH_TOKEN").as_deref() != Some("${{ secrets.GITHUB_TOKEN }}") {
+        problems.push(format!("{script}'s gh calls need the job's token"));
+    }
+    (Some(step), problems)
+}
+
+/// The step that runs `script`, held to [`sweep_step`], with its harness.
 /// Panics naming what is missing.
-fn step_running((workflow, job, steps): &(String, String, Vec<String>), script: &str) -> String {
-    let step = steps
-        .iter()
-        .find(|step| {
-            command_lines(step).any(|line| line.starts_with(&format!(".github/scripts/{script}")))
-        })
-        .unwrap_or_else(|| panic!("the sweep job has no step that runs {script}"))
-        .clone();
-    let lines: Vec<&str> = command_lines(&step).collect();
+fn step_running(script: &str) -> String {
+    let (step, problems) = sweep_step(&sweep_yml(), script);
     assert!(
-        lines.contains(&"if: ${{ !cancelled() }}"),
-        "{script} runs whatever the steps before it did:\n{step}"
-    );
-    let found = escapes(workflow, job, &step, &["if: ${{ !cancelled() }}"]);
-    assert!(
-        found.is_empty(),
-        "a failing {script} fails the run, which escalates, but its step has \
-         {found:?}:\n{step}"
-    );
-    assert!(
-        lines.contains(&"GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"),
-        "{script}'s gh calls need the job's token:\n{step}"
+        problems.is_empty(),
+        "the sweep's {script} step:\n  {}\n{step:?}",
+        problems.join("\n  ")
     );
     assert!(
         root()
@@ -60,7 +69,7 @@ fn step_running((workflow, job, steps): &(String, String, Vec<String>), script: 
             .exists(),
         "{script} has its harness"
     );
-    step
+    step.expect("a step with no problems")
 }
 
 /// The published OpenAPI specs drift or move without a release of the
@@ -69,7 +78,7 @@ fn step_running((workflow, job, steps): &(String, String, Vec<String>), script: 
 /// nothing else.
 #[test]
 fn the_sweep_watches_both_published_specs() {
-    let step = step_running(&sweep_job(), "watch_spec_urls.sh");
+    let step = step_running("watch_spec_urls.sh");
     for snapshot in [
         "tests/fixtures/api_surface/openapi-v1beta.json",
         "tests/fixtures/api_surface/openapi-v1.json",
@@ -88,13 +97,74 @@ fn the_sweep_watches_both_published_specs() {
 /// names the repository.
 #[test]
 fn the_sweep_flags_pointers_to_closed_issues() {
-    let step = step_running(&sweep_job(), "check_issue_pointers.sh");
+    let step = step_running("check_issue_pointers.sh");
     assert!(
-        command_lines(&step).any(|line| line == "GH_REPO: ${{ github.repository }}"),
+        yaml::step_env(&step, "GH_REPO").as_deref() == Some("${{ github.repository }}"),
         "the pointer check looks issues up in this repository:\n{step}"
     );
     assert!(
         !command_lines(&step).any(|line| line.contains("--print")),
         "the sweep's run updates the rolling issue rather than only printing:\n{step}"
     );
+}
+
+#[test]
+fn the_sweep_step_check_catches_what_it_claims_to() {
+    let workflow = sweep_yml();
+    let watch = "      - name: Compare the published OpenAPI specs with their snapshots\n";
+    let pointers = "          .github/scripts/check_issue_pointers.sh\n";
+    let broken = [
+        // P5b: `continue-on-error` on a sweep step or its job, written so
+        // the text never matched it.
+        (
+            "watch_spec_urls.sh",
+            workflow.replace(
+                watch,
+                &format!("{watch}        \"continue-on-error\": true\n"),
+            ),
+        ),
+        (
+            "watch_spec_urls.sh",
+            workflow.replace(watch, &format!("{watch}        continue-on-error : true\n")),
+        ),
+        (
+            "check_issue_pointers.sh",
+            workflow.replace(
+                "    name: Diff google-genai generated bindings\n",
+                "    name: Diff google-genai generated bindings\n    \"continue-on-error\": true\n",
+            ),
+        ),
+        // ... the failure masked, or the step skipped beyond `!cancelled()`.
+        (
+            "check_issue_pointers.sh",
+            workflow.replace(
+                pointers,
+                "          .github/scripts/check_issue_pointers.sh || true\n",
+            ),
+        ),
+        (
+            "watch_spec_urls.sh",
+            workflow.replace(
+                &format!("{watch}        if: ${{{{ !cancelled() }}}}\n"),
+                &format!("{watch}        if: github.event_name == 'schedule'\n"),
+            ),
+        ),
+        // ... or without the job's token.
+        (
+            "check_issue_pointers.sh",
+            workflow.replacen(
+                "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n          GH_REPO:",
+                "          GH_REPO:",
+                1,
+            ),
+        ),
+    ];
+    assert!(sweep_step(&workflow, "watch_spec_urls.sh").1.is_empty());
+    for (i, (script, text)) in broken.iter().enumerate() {
+        assert_ne!(text, &workflow, "mutation {i} did not apply");
+        assert!(
+            !sweep_step(text, script).1.is_empty(),
+            "mutation {i} went unnoticed"
+        );
+    }
 }

@@ -24,11 +24,24 @@
 #      nor indented. Checked where rule 1 is.
 #   6. No entry appears twice within one `## [...]` section: no two
 #      entries (list items at column 0) share their first line, and no two
-#      share a bold title (the `**...**` an entry opens with, wrapped or
-#      not, a leading `Breaking:` aside, so a copy that lost or gained its
-#      marker still matches). A keep-both merge that re-adds an entry's old
-#      text beside its rewrite leaves a contradictory pair that every other
-#      rule passes. Checked where rule 1 is, across its `###` subsections.
+#      open alike. An entry opens with the first sentence (up to the first
+#      period outside a code span that a space or the end follows) of its
+#      bold title (the `**...**` it opens with, wrapped or not, a leading
+#      `Breaking:` aside), or of its first paragraph when it has none. Two
+#      openings are alike when their first code spans are the same (or
+#      neither has one), and they hold the same words, or the shorter holds
+#      at least 3, the other holds 85% of those, and the words they share
+#      are 45% of all the words of both. Words are case-folded, a code span
+#      is one word, and one-letter words, a few function words (`the`,
+#      `of`, `not`, ...) and a plural's trailing `s` are left out. So a copy
+#      that lost or gained its `Breaking:` marker or its bold, or that a
+#      rewrite retitled but kept the subject and most of the words of,
+#      still matches, while two entries that say the same of different
+#      code, or share a few words, do not: no two different entries in any
+#      section this CHANGELOG has had open alike (D-073). A keep-both
+#      merge that re-adds an entry's old text beside its rewrite leaves a
+#      contradictory pair that every other rule passes. Checked where rule
+#      1 is, across its `###` subsections.
 #
 # Fenced code blocks are skipped for all six. An unclosed fence is itself
 # reported: otherwise everything after it would go unchecked and pass.
@@ -68,31 +81,141 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
         migration = 0
     }
 
-    # Rule 6: a bold title, once its closing `**` is read. `Breaking:` (or
-    # `BREAKING`) and the whitespace a wrap leaves are not part of it; a
-    # title that is only the marker (`**Breaking:** text`) is none.
-    function finish_title(text,    end, title) {
-        end = index(text, "**")
-        if (!end) {
-            return 0
+    # Rule 6: an entry opens with the first sentence of its bold title (a
+    # leading `Breaking:` or `BREAKING` aside), or of its first paragraph
+    # when the title is only that marker or there is none. One whose `**`
+    # does not close in that paragraph opens with nothing.
+    function finish_opening(    text, bold_end, title) {
+        if (!opening_open) {
+            return
         }
-        title = substr(text, 1, end - 1)
-        gsub(/[[:space:]]+/, " ", title)
-        sub(/^ /, "", title)
-        sub(/ $/, "", title)
-        if (tolower(substr(title, 1, 8)) == "breaking") {
-            title = substr(title, 9)
-            sub(/^:? */, "", title)
-        }
-        if (title != "" && !same_line) {
-            if (title in seen_title) {
-                printf "%s:%d: two entries titled \"%s\" in %s (first at line %d)\n", file, title_line, title, section, seen_title[title]
-                bad = 1
+        opening_open = 0
+        text = opening_text
+        gsub(/[[:space:]]+/, " ", text)
+        sub(/^ /, "", text)
+        sub(/ $/, "", text)
+        if (substr(text, 1, 2) == "**") {
+            bold_end = index(substr(text, 3), "**")
+            if (!bold_end) {
+                return
+            }
+            title = substr(text, 3, bold_end - 1)
+            sub(/^ /, "", title)
+            sub(/ $/, "", title)
+            if (tolower(substr(title, 1, 8)) == "breaking") {
+                title = substr(title, 9)
+                sub(/^:? */, "", title)
+            }
+            if (title != "") {
+                text = title
             } else {
-                seen_title[title] = title_line
+                text = substr(text, bold_end + 4)
+                sub(/^ /, "", text)
             }
         }
-        return 1
+        compare_opening(first_sentence(text))
+    }
+
+    # Up to the first period outside a code span that a space or the end
+    # follows.
+    function first_sentence(text,    n, i, ch, tick) {
+        n = length(text)
+        for (i = 1; i <= n; i++) {
+            ch = substr(text, i, 1)
+            if (ch == "`") {
+                tick = !tick
+            } else if (ch == "." && !tick && (i == n || substr(text, i + 1, 1) == " ")) {
+                return substr(text, 1, i)
+            }
+        }
+        return text
+    }
+
+    # The words of an opening, as keys of `words`; returns how many, and
+    # sets opening_span to its first code span ("" when it has none).
+    # Case-folded; a code span is one word; one-letter words, the function
+    # words in `stop` and a plural s are left out.
+    function opening_words(h, words,    s, span, parts, n, i, w, count) {
+        for (w in words) {
+            delete words[w]
+        }
+        s = tolower(h)
+        opening_span = ""
+        count = 0
+        while (match(s, /`[^`]*`/)) {
+            span = substr(s, RSTART, RLENGTH)
+            if (opening_span == "") {
+                opening_span = span
+            }
+            if (!(span in words)) {
+                words[span] = 1
+                count++
+            }
+            s = substr(s, 1, RSTART - 1) " " substr(s, RSTART + RLENGTH)
+        }
+        n = split(s, parts, /[^a-z0-9_]+/)
+        for (i = 1; i <= n; i++) {
+            w = parts[i]
+            if (length(w) < 2 || w in stop) {
+                continue
+            }
+            if (length(w) > 3 && w ~ /[^s]s$/) {
+                w = substr(w, 1, length(w) - 1)
+            }
+            if (!(w in words)) {
+                words[w] = 1
+                count++
+            }
+        }
+        return count
+    }
+
+    # Reports an opening alike an earlier one in the section (the rule in
+    # the header), then records it. The thresholds are in integers: 85% is
+    # 17 in 20, 45% is 9 in 20.
+    function compare_opening(h,    n, i, w, shared, fewer, all) {
+        n = opening_words(h, cur)
+        if (!n) {
+            return
+        }
+        for (i = 1; i <= openings && !opening_dup; i++) {
+            if (span_of[i] != opening_span) {
+                continue
+            }
+            shared = 0
+            for (w in cur) {
+                if ((i, w) in has_word) {
+                    shared++
+                }
+            }
+            fewer = n < word_count[i] ? n : word_count[i]
+            all = n + word_count[i] - shared
+            if (shared == all || (fewer >= 3 && 20 * shared >= 17 * fewer && 20 * shared >= 9 * all)) {
+                printf "%s:%d: two entries open alike in %s (first at line %d): \"%s\"\n", file, opening_line, section, line_of[i], h
+                bad = 1
+                break
+            }
+        }
+        openings++
+        line_of[openings] = opening_line
+        span_of[openings] = opening_span
+        word_count[openings] = n
+        for (w in cur) {
+            has_word[openings, w] = 1
+        }
+    }
+
+    BEGIN {
+        n = split("an and are as at be been by for from in is it its no not of on or that the this to was were which with", list, " ")
+        for (i = 1; i <= n; i++) {
+            stop[list[i]] = 1
+        }
+    }
+
+    # Rule 6: a blank line, a fence, a sub-item or a line that is not
+    # indented ends the paragraph an entry opens in.
+    opening_open && (/^[[:space:]]*$/ || /^[^[:space:]]/ || /^[[:space:]]+[-*+][[:space:]]/ || /^[[:space:]]*```/) {
+        finish_opening()
     }
 
     # Fences toggle on their own line; nothing inside one is structure.
@@ -120,15 +243,10 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
     }
     breaking && /Migration:/ { migration = 1 }
 
-    # Rule 6. A title still open takes each indented line that follows;
-    # anything else abandons it.
-    title_open && /^[[:space:]]+[^[:space:]]/ {
-        title_text = title_text " " $0
-        if (finish_title(title_text)) {
-            title_open = 0
-        }
+    # Rule 6. The opening paragraph takes each indented line that follows.
+    opening_open && /^[[:space:]]+[^[:space:]]/ {
+        opening_text = opening_text " " $0
     }
-    title_open && !/^[[:space:]]+[^[:space:]]/ { title_open = 0 }
     checked && /^- / {
         entry = $0
         sub(/[[:space:]]+$/, "", entry)
@@ -138,11 +256,10 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
         } else {
             seen_entry[entry] = NR
         }
-        if (substr(entry, 1, 4) == "- **") {
-            title_line = NR
-            title_text = substr(entry, 5)
-            title_open = !finish_title(title_text)
-        }
+        opening_open = 1
+        opening_text = substr(entry, 3)
+        opening_line = NR
+        opening_dup = same_line
     }
 
     /^###? / {
@@ -165,8 +282,8 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
         }
         delete seen
         delete seen_entry
-        delete seen_title
-        title_open = 0
+        delete has_word
+        openings = 0
     }
 
     checked && /^### / {
@@ -182,6 +299,7 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
     { prev = $0 }
 
     END {
+        finish_opening()
         finish_entry()
         if (fenced) {
             printf "%s:%d: unclosed code fence; nothing after it was checked\n", file, fence_line

@@ -13,7 +13,7 @@ follow.
 | Offline values | Builders and the macro: `tests/interaction_builder_tests.rs`, `tests/function_declaration_builder_tests.rs`, `tests/macro_tests.rs`. Serde against the documented wire: `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs`, `tests/round_trip_fidelity_tests.rs`, `tests/envelope_extra.rs`, and `tests/strict_unknown_tests.rs` (both modes) | No | `make test` (and `make test-strict`) |
 | Captured responses | `tests/captured_fixtures.rs` over `tests/fixtures/captured/` (see [Captured fixtures](#captured-fixtures)) | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
-| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`, the workflow guards in `tests/ci_workflows/` and the doc guards in `tests/doc_guards/`), `tests/model_literals.rs`, `tests/module_size.rs` (D-014's size bars), `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason), `tests/redaction_guards.rs` (no `"[REDACTED]"` outside `src/redact.rs`, no derived `Debug` over a field the wire redacts; D-067), `tests/setter_convention.rs` (a `with_*` replaces, an `add_*` appends) | No | `make test` |
+| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`, the workflow guards in `tests/ci_workflows/` and the doc guards in `tests/doc_guards/`), `tests/model_literals.rs`, `tests/module_size.rs` (D-014's size bars), `tests/non_exhaustive_responses.rs` (structs: `#[non_exhaustive]` and a flattened `extra`; enums: `#[non_exhaustive]`, an `Unknown` variant, and `extra` on each known variant of a union, each exemption named with its reason), `tests/redaction_guards.rs` (no `"[REDACTED]"` outside `src/redact.rs`, no derived `Debug` over a field the wire redacts, and a hand-written one that redacts, or prints a type whose `Debug` does, destructures its type; D-067), `tests/setter_convention.rs` (a `with_*` replaces, an `add_*` appends) | No | `make test` |
 | CI scripts | `.github/scripts/tests/*.sh`, one harness per script, plus shellcheck, and `check_dated_facts.sh` over the checkout (D-032's homes, a reason above every `ignore` fence, and every Rust block compiled or `ignore`d with its reason, `CHANGELOG.md`'s history aside) | No | `make test-scripts` (bash, jq, python3; PyYAML for the workflow parse check, skipped without it locally) |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | In `tests/`: `api_canary_tests.rs`, `binding_parity_tests.rs`, `credentials_tests.rs`, `environment_files_tests.rs`, `error_handling_tests.rs`, `file_search_stores_tests.rs`, `files_api_tests.rs`, `function_calling_tests.rs`, `interactions_api_tests.rs`, `multimodal_tests.rs`, `multiturn_tests.rs`, `processing_steps_tests.rs`, `streaming_multiturn_tests.rs`, `streaming_resume_tests.rs`, `temp_file_tests.rs`, `tool_service_tests.rs`, `tools_and_config_tests.rs`, `voices_tests.rs`, `webhooks_and_agents_tests.rs`. Each live test is `#[ignore = "Requires API key"]`; a file's offline tests run in `make test` | Yes | `make test-all` |
@@ -63,10 +63,17 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   loop.
 - **`reliability_tests.rs`** covers the default timeouts, how a cut-off
   stream is classified, the read of a stream's tail after its terminal
-  event, and `Retry-After` in a poll. Its `reliability_tests/retry_recipes.rs`
-  checks every retry and poll loop in the docs, rustdoc and `examples/`
-  for a ceiling, jitter where a count bounds it, and no overflow on
-  `Retry-After` (D-069).
+  event, `Retry-After` in a poll, and that a redirect loop is not
+  retryable. Its `reliability_tests/retry_recipes.rs` reads each loop in
+  the docs, rustdoc and `examples/` that calls `is_retryable()`, `sleep(`
+  or an awaited `.get(` (a `for` over a collection only through
+  `is_retryable()`) for a bound, a sleep on every path back to the loop's
+  head, no `?` on an awaited chain, no `return` or `break` in the
+  `is_retryable()` arm, a ceiling, jitter where a count bounds it, and no
+  `+`, `-`, `*` or unwrapped `checked_` arithmetic on an uncapped
+  `Retry-After`, and holds the poll in `AGENTS_AND_BACKGROUND.md` and
+  `examples/deep_research.rs` to the same decisions. It reads the code
+  lexically; D-069 lists what that misses.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
@@ -530,8 +537,11 @@ first, as does a budget written as anything but a bare number. It also
 checks that each live step starts with `set -euo pipefail`, so
 `nextest | tee` keeps nextest's status, and that no shell-level mask it
 knows, `continue-on-error`, `if:` but the fork and owner gate or `needs:`
-but `needs: check` lets its failure pass. The flakiness report adds the
-markers up across the week.
+but `needs: check`, each read as a YAML parser reads it, lets its failure
+pass; nor a `${{ }}` expression, which the runner splices into the script
+before bash reads it, but a matrix value of plain words, which the guard
+reads spliced in. The flakiness report adds the markers up across the
+week.
 
 A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
@@ -572,14 +582,24 @@ coverage grows, and lower it only with the reason in the commit.
 the pattern matches every module only a test build compiles and no
 library file; that the floor step runs `cargo llvm-cov report --workspace
 --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
-nothing else; and that nothing the workflow guards know of skips it or
-passes its failure: an `if:`, `continue-on-error` or `needs:` on the step
-or its job, a `defaults:` on the job or the workflow, a shell other than
-bash, or a shell-level mask such as `|| true`, `; true`, `set +e` or an
-`exit` whose status may be 0 (`exit 0`, `exit "0"`). The coverage runs
-before it are held to the same. The guards read the workflow as text,
-against the forms D-058 lists: they catch the ways a step is known to be
-weakened, not every way a script can compute its status.
+nothing else, with no key but its `name:` and that `run:` (a step `env:`
+could redefine the pattern); and that nothing the workflow guards know
+of skips it or passes its failure: an `if:`, `continue-on-error` or
+`needs:` on the step or its job, a `defaults:` on the job or the
+workflow, a shell other than bash, or a shell-level mask such as
+`|| true`, `; true`, `set +e` or an `exit` whose status may be 0
+(`exit 0`, `exit "0"`). Each key, and the `run:` value, is read as a YAML
+parser reads it, so a quoted or spaced key (`"continue-on-error": true`)
+counts, as does an `|| true` on a deeper line below a plain `run:`, which
+YAML joins to the command. A `${{ }}` expression in a `run:` value is
+rejected, since the runner splices its value into the script before bash
+reads it (`${{ '|| true' }}` is `|| true` to bash), but for a matrix value
+of plain words, which the guards read spliced in, once for each value.
+The coverage runs before it are held to the same, as are every `run:`
+step of the checks branch protection requires and the fuzz run, which
+Fuzz Gate reads. The script within a `run:` value is read as text,
+against the forms D-058 lists: the guards catch the ways a step is known
+to be weakened, not every way a script can compute its status.
 
 ## Coverage oracle
 
@@ -589,7 +609,7 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | File | What it is | Written by |
 |------|------------|------------|
 | `bindings.json` | google-genai's generated classes, every type reference resolved; its endpoints, each with its query parameters; the `Api-Revision` it pins; and from its hand-written Files, File Search Store, Document and Operation modules, their endpoints and the `types.py` classes their methods' signatures name (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
-| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, and each endpoint's path, query and header parameters (each with whether it is required and its schema), request body (with whether it is required) and responses by status (each with its schema by content type and its headers); the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs without their prose or the names a generated SDK gives its code: the schemas, every operation of the eight HTTP methods with its path, query and header parameters (each with whether it is required and its schema), request body (with whether it is required, its keys and its media types) and responses by status (each with its schema and media by content type, and its headers), each operation's other keys (`deprecated`, `x-speakeasy-retries` and the like), and the top-level servers and security schemes (D-060 lists what is dropped and why); the fetch date and the source URL are in the file. The daily sweep compares what that URL serves with the snapshot, and opens an issue on a drift or a dead URL (`watch_spec_urls.sh`; the URL's record is in the [gap tracker](INTERACTIONS_API_GAP.md#how-to-verify-api-surface)) | `snapshot_openapi.py` |
 
 `tests/api_surface/` loads either source into one type model. The
 checks on it:

@@ -31,6 +31,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use syn::visit::{self, Visit};
 
+use crate::live_verbs::source_scan::{is_test_gated, item_attrs};
+
 /// A request type's field a verb sends on the query string, `(type, field)`.
 pub type QueryField = (String, String);
 
@@ -93,30 +95,12 @@ fn value_type(ty: &syn::Type) -> Option<String> {
     }
 }
 
-/// Whether `attrs` mark test code (`#[cfg(test)]`, `#[test]`,
-/// `#[tokio::test]`), which sends nothing a user's call does.
-fn is_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path()
-            .segments
-            .last()
-            .is_some_and(|s| s.ident == "test")
-            || (attr.path().is_ident("cfg")
-                && attr
-                    .parse_args::<syn::Ident>()
-                    .is_ok_and(|arg| arg == "test"))
-    })
-}
-
-/// The items of `items` and of the modules among them, test code left out.
+/// The items of `items` and of the modules among them, test code left out:
+/// an item under a test attribute or a `cfg` that needs `test`
+/// (`source_scan::is_test_gated`), which sends nothing a user's call does.
 fn flatten<'a>(items: &'a [syn::Item], out: &mut Vec<&'a syn::Item>) {
     for item in items {
-        let attrs = match item {
-            syn::Item::Mod(m) => &m.attrs,
-            syn::Item::Fn(f) => &f.attrs,
-            _ => &Vec::new(),
-        };
-        if is_test(attrs) {
+        if is_test_gated(item_attrs(item)) {
             continue;
         }
         if let syn::Item::Mod(m) = item
@@ -1116,4 +1100,35 @@ fn a_query_value_the_trace_cannot_follow_is_reported() {
     );
     let (_, unassigned) = query_options(&src, &trace.fields);
     assert_eq!(unassigned, ["Upload.overwrite"]);
+}
+
+/// Test code is left out of the trace: a module or an item under a `cfg`
+/// that needs `test`, `all(test, unix)` as well as `test`, and a test
+/// function. One under `cfg(any(test, ..))` builds outside tests, so its
+/// query is traced.
+#[test]
+fn test_code_is_left_out_of_the_trace() {
+    let src: syn::File = syn::parse_quote! {
+        #[cfg(all(test, unix))]
+        mod unix_tests {
+            fn probe(ctx: &HttpContext) { let _ = with_query(ctx.url(), &[("probe", made_up)]); }
+        }
+        #[cfg(test)]
+        fn helper(ctx: &HttpContext) { let _ = with_query(ctx.url(), &[("probe", made_up)]); }
+        #[cfg(all(test, unix))]
+        impl Probe {
+            fn probe(&self, ctx: &HttpContext) { let _ = with_query(ctx.url(), &[("probe", made_up)]); }
+        }
+        #[tokio::test]
+        async fn a_test() { let _ = with_query(url(), &[("probe", made_up)]); }
+        #[cfg(any(test, feature = "x"))]
+        fn shipped(ctx: &HttpContext) { let _ = with_query(ctx.url(), &[("probe", shipped_value)]); }
+    };
+    let trace = query_fields(&[src]);
+    assert_eq!(
+        trace.unmodeled,
+        BTreeSet::from([
+            "shipped: `shipped_value`, which no parameter or pattern binds".to_string()
+        ])
+    );
 }
