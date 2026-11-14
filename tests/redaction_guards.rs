@@ -20,15 +20,20 @@
 //!   holds an environment variable's value as a `value` is not found by
 //!   itself; one that derives `Debug` over the `env` holding it is.
 //! - A hand-written `Debug` that redacts (its `fmt` names `redact::..` or
-//!   `REDACTED`) destructures its type: every pattern on `Self` or the
-//!   type, a struct's or a variant's, names each field (`field: _` for one
-//!   it does not print), with no `..` rest, a match on `self` has no `_`
-//!   arm, and no field is read through `self`; else
-//!   `a_redacting_debug_destructures_its_type` fails. So a field or a
+//!   `REDACTED`), or that is for a type holding such a type at any depth
+//!   (`Client`, which prints its key through `HttpContext`'s), destructures
+//!   its type: every pattern on `Self` or the type, a struct's or a
+//!   variant's, names each field (`field: _` for one it does not print),
+//!   with no `..` rest; a match on `self` (or `*self`, `&self`) has no
+//!   catch-all arm (`_`, a binding such as `other`, or an or-pattern
+//!   holding one); there is no `if let` or `let .. else` on `self`; and no
+//!   field is read through `self`. Else
+//!   `a_redacting_debug_destructures_its_type` fails, unless
+//!   `NOT_DESTRUCTURED` names the type with the reason. So a field or a
 //!   variant added to such a type fails to compile until its `Debug` prints
-//!   or redacts it. An impl that redacts nothing is not read, and omission
-//!   is the safe direction: this is the convention D-067 states, not a
-//!   leak check.
+//!   or redacts it. Patterns inside a macro's arguments are not read, and
+//!   omission is the safe direction: this is the convention D-067 states,
+//!   not a leak check.
 //!
 //! All three read the library's own source through
 //! `tests/common/source_scan.rs` (D-068): `src/` without its test-only
@@ -47,7 +52,7 @@
 #[path = "common/source_scan.rs"]
 mod source_scan;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use syn::visit::{self, Visit};
 
 /// The one file that may spell the placeholder.
@@ -423,44 +428,196 @@ fn the_wire_lists_are_read() {
 // A redacting Debug destructures its type
 // =============================================================================
 
+/// Hand-written `Debug` impls the destructure check reads that do not
+/// destructure, by type, each with the reason. One that destructures, or
+/// is no longer read, fails the check until it leaves the list.
+const NOT_DESTRUCTURED: &[(&str, &str)] = &[(
+    "InteractionBuilder",
+    "redacts nothing itself: it prints its tools and environment, whose `Debug` redacts, \
+     through `self`. How its own `extra` prints is the owner's open call, and its `Debug` \
+     is rewritten with it",
+)];
+
 #[test]
 fn a_redacting_debug_destructures_its_type() {
     let sources = source_scan::library_sources();
-    let mut checked = 0;
-    let mut problems = Vec::new();
-    for (rel, file) in &sources {
-        for (ty, found) in redacting_debugs(file) {
-            checked += 1;
-            problems.extend(
-                found
-                    .into_iter()
-                    .map(|problem| format!("{rel}: {ty}: {problem}")),
-            );
-        }
-    }
+    let read = read_debugs(&sources);
+    let redacting = read.iter().filter(|debug| debug.redacts).count();
     // Twenty-five impls redact today; fewer than twenty means the scan
     // stopped finding them.
     assert!(
-        checked >= 20,
-        "found only {checked} hand-written Debug impls that redact"
+        redacting >= 20,
+        "found only {redacting} hand-written Debug impls that redact"
     );
+    // `Client` prints its key through `HttpContext`'s `Debug`, naming no
+    // placeholder itself: the check reads it as one that delegates.
+    assert!(
+        read.iter()
+            .any(|debug| debug.ty == "Client" && !debug.redacts),
+        "the destructure check no longer reads Client's Debug, which redacts through \
+         HttpContext's"
+    );
+    let mut problems = Vec::new();
+    for debug in &read {
+        let exempt = NOT_DESTRUCTURED.iter().any(|(ty, _)| *ty == debug.ty);
+        if !exempt {
+            problems.extend(
+                debug
+                    .problems
+                    .iter()
+                    .map(|problem| format!("{}: {}: {problem}", debug.rel, debug.ty)),
+            );
+        }
+    }
     assert!(
         problems.is_empty(),
-        "a hand-written `Debug` that redacts reads its type without destructuring \
-         every field, so a field added later prints nothing rather than failing to \
-         compile; destructure with `let Self {{ .. }} = self` (or the arm's pattern) \
-         naming every field, `field: _` for one it does not print (D-067):\n  {}",
+        "a hand-written `Debug` that redacts, or prints a type whose `Debug` does, reads \
+         its type without destructuring every field and variant, so one added later \
+         prints nothing rather than failing to compile; destructure with \
+         `let Self {{ .. }} = self` (or each arm's pattern, with no catch-all arm) naming \
+         every field, `field: _` for one it does not print (D-067):\n  {}",
         problems.join("\n  ")
+    );
+    let stale: Vec<&str> = NOT_DESTRUCTURED
+        .iter()
+        .map(|(ty, _)| *ty)
+        .filter(|ty| {
+            !read
+                .iter()
+                .any(|debug| debug.ty == *ty && !debug.problems.is_empty())
+        })
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "NOT_DESTRUCTURED names a type the check no longer reads, or one that \
+         destructures now: {stale:?}"
     );
 }
 
-/// Each hand-written `Debug` in `file` whose `fmt` redacts (names
-/// `redact::..` or `REDACTED`), by the type's name, with what keeps it from
-/// destructuring its type: a pattern on `Self` or the type (a struct, or a
-/// variant) with a `..` rest, a `_` arm in a match on `self`, a field read
-/// through `self`, or no such pattern at all. An impl that redacts nothing
-/// is not read.
-fn redacting_debugs(file: &syn::File) -> Vec<(String, Vec<String>)> {
+/// A hand-written `Debug`, as the destructure check reads it.
+#[derive(Debug, PartialEq)]
+struct ReadDebug {
+    rel: String,
+    ty: String,
+    /// Whether its `fmt` names `redact::..` or `REDACTED` itself.
+    redacts: bool,
+    problems: Vec<String>,
+}
+
+/// Each hand-written `Debug` in `sources` the destructure check reads: one
+/// whose `fmt` redacts, or one for a type that holds, at any depth, a type
+/// whose `Debug` redacts ([`carriers`]), as `Client` holds `HttpContext`.
+/// Each comes with what keeps it from destructuring its type: a pattern on
+/// `Self` or the type (a struct, or a variant) with a `..` rest; a
+/// catch-all arm (`_`, a binding such as `other`, or an or-pattern holding
+/// one) in a match on `self`, `*self` or `&self`; an `if let`, `while let`
+/// or `let .. else` on `self`; a field read through `self`; or no pattern
+/// on the type at all. Patterns inside a macro's arguments are not read.
+fn read_debugs(sources: &[(String, syn::File)]) -> Vec<ReadDebug> {
+    let all: Vec<ReadDebug> = sources
+        .iter()
+        .flat_map(|(rel, file)| hand_written_debugs(rel, file))
+        .collect();
+    let direct = all
+        .iter()
+        .filter(|debug| debug.redacts)
+        .map(|debug| debug.ty.clone())
+        .collect();
+    let carriers = carriers(direct, &field_types(sources));
+    all.into_iter()
+        .filter(|debug| carriers.contains(&debug.ty))
+        .collect()
+}
+
+/// Every struct and enum in `sources`, by name, with the names its fields'
+/// types mention (`Arc<HttpContext>` mentions `Arc` and `HttpContext`).
+/// Types are told apart by name alone, so two of one name share their
+/// fields, which reads more impls, not fewer.
+fn field_types(sources: &[(String, syn::File)]) -> BTreeMap<String, BTreeSet<String>> {
+    #[derive(Default)]
+    struct Names(BTreeSet<String>);
+    impl<'ast> Visit<'ast> for Names {
+        fn visit_path_segment(&mut self, segment: &'ast syn::PathSegment) {
+            self.0.insert(segment.ident.to_string());
+            visit::visit_path_segment(self, segment);
+        }
+    }
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (_, file) in sources {
+        for item in source_scan::all_items(std::slice::from_ref(file)) {
+            let (name, fields): (_, Vec<&syn::Fields>) = match item {
+                syn::Item::Struct(item) => (item.ident.to_string(), vec![&item.fields]),
+                syn::Item::Enum(item) => (
+                    item.ident.to_string(),
+                    item.variants.iter().map(|v| &v.fields).collect(),
+                ),
+                _ => continue,
+            };
+            let mut names = Names::default();
+            for field in fields.into_iter().flatten() {
+                names.visit_type(&field.ty);
+            }
+            out.entry(name).or_default().extend(names.0);
+        }
+    }
+    out
+}
+
+/// `found`, and every type in `fields` that holds one of them, to a fixed
+/// point.
+fn carriers(
+    mut found: BTreeSet<String>,
+    fields: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<String> {
+    loop {
+        let more: Vec<String> = fields
+            .iter()
+            .filter(|(ty, names)| !found.contains(*ty) && names.iter().any(|n| found.contains(n)))
+            .map(|(ty, _)| ty.clone())
+            .collect();
+        if more.is_empty() {
+            return found;
+        }
+        found.extend(more);
+    }
+}
+
+/// Whether `expr` is `self`, through `*`, `&` and parentheses.
+fn is_self(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Path(path) => path.path.is_ident("self"),
+        syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => is_self(&unary.expr),
+        syn::Expr::Reference(reference) => is_self(&reference.expr),
+        syn::Expr::Paren(paren) => is_self(&paren.expr),
+        syn::Expr::Group(group) => is_self(&group.expr),
+        _ => false,
+    }
+}
+
+/// Whether an arm's pattern takes whatever the arms before it left: `_`, a
+/// binding (`other`, `_rest`, `ref x`, `x @ _`), or an or-pattern, a
+/// reference or parentheses holding one. A capitalized bare name is a
+/// unit variant or a constant, not a binding.
+fn catches_all(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::Wild(_) => true,
+        syn::Pat::Ident(binding) => match &binding.subpat {
+            Some((_, sub)) => catches_all(sub),
+            None => binding
+                .ident
+                .to_string()
+                .starts_with(|c: char| c == '_' || c.is_lowercase()),
+        },
+        syn::Pat::Or(or) => or.cases.iter().any(catches_all),
+        syn::Pat::Paren(paren) => catches_all(&paren.pat),
+        syn::Pat::Reference(reference) => catches_all(&reference.pat),
+        _ => false,
+    }
+}
+
+/// Every hand-written `Debug` in `file`, as [`read_debugs`] describes it,
+/// whether it redacts or not.
+fn hand_written_debugs(rel: &str, file: &syn::File) -> Vec<ReadDebug> {
     #[derive(Default)]
     struct Body<'a> {
         ty: &'a str,
@@ -515,27 +672,32 @@ fn redacting_debugs(file: &syn::File) -> Vec<(String, Vec<String>)> {
             visit::visit_pat_tuple_struct(self, pat);
         }
         fn visit_expr_match(&mut self, node: &'ast syn::ExprMatch) {
-            let mut scrutinee = &*node.expr;
-            if let syn::Expr::Unary(unary) = scrutinee
-                && matches!(unary.op, syn::UnOp::Deref(_))
-            {
-                scrutinee = &unary.expr;
-            }
-            if matches!(scrutinee, syn::Expr::Path(p) if p.path.is_ident("self"))
-                && node
-                    .arms
-                    .iter()
-                    .any(|arm| matches!(arm.pat, syn::Pat::Wild(_)))
-            {
+            if is_self(&node.expr) && node.arms.iter().any(|arm| catches_all(&arm.pat)) {
                 self.problems
-                    .push("a `_` arm lets a new variant compile unprinted".to_string());
+                    .push("a catch-all arm lets a new variant compile unprinted".to_string());
             }
             visit::visit_expr_match(self, node);
         }
-        fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
-            if let syn::Expr::Path(base) = &*field.base
-                && base.path.is_ident("self")
+        fn visit_expr_let(&mut self, node: &'ast syn::ExprLet) {
+            if is_self(&node.expr) {
+                self.problems
+                    .push("an `if let` on `self` lets a new variant compile unprinted".to_string());
+            }
+            visit::visit_expr_let(self, node);
+        }
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            if let Some(init) = &local.init
+                && init.diverge.is_some()
+                && is_self(&init.expr)
             {
+                self.problems.push(
+                    "a `let .. else` on `self` lets a new variant compile unprinted".to_string(),
+                );
+            }
+            visit::visit_local(self, local);
+        }
+        fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
+            if is_self(&field.base) {
                 let member = match &field.member {
                     syn::Member::Named(name) => name.to_string(),
                     syn::Member::Unnamed(index) => index.index.to_string(),
@@ -579,23 +741,28 @@ fn redacting_debugs(file: &syn::File) -> Vec<(String, Vec<String>)> {
                 ..Body::default()
             };
             body.visit_block(&fmt.block);
-            if !body.redacts {
-                continue;
-            }
             if body.destructures == 0 {
                 body.problems
                     .push("destructures no `Self` or variant pattern".to_string());
             }
-            out.push((ty.clone(), body.problems));
+            out.push(ReadDebug {
+                rel: rel.to_string(),
+                ty: ty.clone(),
+                redacts: body.redacts,
+                problems: body.problems,
+            });
         }
     }
     out
 }
 
 /// The destructure check flags a `..` rest on a struct or a variant, a
-/// tuple variant's `..`, a `_` arm in a match on `self`, a field read
-/// through `self` and an impl that destructures nothing, and only in an
-/// impl that redacts.
+/// tuple variant's `..`, a catch-all arm in a match on `self` (`_`, a
+/// binding, an or-pattern holding one, through `*self` or `&self`), an
+/// `if let` or `let .. else` on `self`, a field read through `self` and an
+/// impl that destructures nothing. It reads an impl that redacts and one
+/// for a type holding such a type at any depth (`Outer` through a derived
+/// `Middle`), and no other.
 #[test]
 fn the_destructure_check_detects_what_it_claims_to() {
     let source = r#"
@@ -622,6 +789,7 @@ fn the_destructure_check_detects_what_it_claims_to() {
                     Self::Key { key: _, .. } => write!(f, "{}", REDACTED),
                     Choice::Pair(name, ..) => f.debug_tuple("Pair").field(name).finish(),
                     Self::Plain(text) => f.debug_tuple("Plain").field(text).finish(),
+                    Self::Unit | Other => f.write_str("Unit"),
                 }
             }
         }
@@ -631,6 +799,39 @@ fn the_destructure_check_detects_what_it_claims_to() {
                     Self::Key { key: _ } => write!(f, "{}", REDACTED),
                     _ => f.write_str("Wild"),
                 }
+            }
+        }
+        impl Debug for BindArm {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                match self {
+                    Self::Key { key: _ } => write!(f, "{}", REDACTED),
+                    other => f.write_str("BindArm"),
+                }
+            }
+        }
+        impl Debug for RefWild {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                match &self {
+                    Self::Key { key: _ } => write!(f, "{}", REDACTED),
+                    Self::Plain(_) | _ => f.write_str("RefWild"),
+                }
+            }
+        }
+        impl Debug for IfLet {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                if let Self::Key { key: _ } = self {
+                    write!(f, "{}", REDACTED)
+                } else {
+                    f.write_str("IfLet")
+                }
+            }
+        }
+        impl Debug for LetElse {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                let Self::Key { key: _ } = self else {
+                    return f.write_str("LetElse");
+                };
+                write!(f, "{}", REDACTED)
             }
         }
         impl Debug for InMacro {
@@ -649,24 +850,46 @@ fn the_destructure_check_detects_what_it_claims_to() {
                 write!(f, "{}", self.key.map(|_| REDACTED).unwrap_or_default())
             }
         }
+        struct Good { name: String, secret: String }
+        #[derive(Debug)]
+        struct Middle { inner: Option<Arc<Good>> }
+        struct Outer { middle: Vec<Middle>, name: String }
+        impl Debug for Outer {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                let Self { middle, .. } = self;
+                f.debug_struct("Outer").field("middle", middle).finish()
+            }
+        }
+        struct Delegates { good: Good }
+        impl Debug for Delegates {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                let Self { good } = self;
+                f.debug_struct("Delegates").field("good", good).finish()
+            }
+        }
     "#;
-    let found = redacting_debugs(&syn::parse_file(source).unwrap());
-    let found: Vec<(&str, Vec<&str>)> = found
+    let sources = [("src/probe.rs".to_string(), syn::parse_file(source).unwrap())];
+    let read = read_debugs(&sources);
+    let found: Vec<(&str, bool, Vec<&str>)> = read
         .iter()
-        .map(|(ty, problems)| {
+        .map(|debug| {
+            assert_eq!(debug.rel, "src/probe.rs");
             (
-                ty.as_str(),
-                problems.iter().map(String::as_str).collect::<Vec<_>>(),
+                debug.ty.as_str(),
+                debug.redacts,
+                debug.problems.iter().map(String::as_str).collect(),
             )
         })
         .collect();
+    let catch_all = "a catch-all arm lets a new variant compile unprinted";
     assert_eq!(
         found,
         [
-            ("Good", vec![]),
-            ("Rest", vec!["`Self` leaves fields out with `..`"]),
+            ("Good", true, vec![]),
+            ("Rest", true, vec!["`Self` leaves fields out with `..`"]),
             (
                 "Fields",
+                true,
                 vec![
                     "reads `self.name` rather than destructuring",
                     "destructures no `Self` or variant pattern",
@@ -674,16 +897,32 @@ fn the_destructure_check_detects_what_it_claims_to() {
             ),
             (
                 "Choice",
+                true,
                 vec![
                     "`Self::Key` leaves fields out with `..`",
                     "`Choice::Pair` leaves fields out with `..`",
                 ]
             ),
+            ("Wild", true, vec![catch_all]),
+            ("BindArm", true, vec![catch_all]),
+            ("RefWild", true, vec![catch_all]),
             (
-                "Wild",
-                vec!["a `_` arm lets a new variant compile unprinted"]
+                "IfLet",
+                true,
+                vec!["an `if let` on `self` lets a new variant compile unprinted"]
             ),
-            ("InMacro", vec!["destructures no `Self` or variant pattern"]),
+            (
+                "LetElse",
+                true,
+                vec!["a `let .. else` on `self` lets a new variant compile unprinted"]
+            ),
+            (
+                "InMacro",
+                true,
+                vec!["destructures no `Self` or variant pattern"]
+            ),
+            ("Outer", false, vec!["`Self` leaves fields out with `..`"]),
+            ("Delegates", false, vec![]),
         ]
     );
 }

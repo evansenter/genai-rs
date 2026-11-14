@@ -3191,14 +3191,20 @@ of `Tool` with the same secret-bearing `extra` (an `Unknown` tool's in its
 payload): `every_tool_arm` builds each, a match with no wildcard arm names
 it, and `the_sentinel_builds_every_tool_arm` compares the arms built with
 the enum as `src/tools/mod.rs` declares it, so a new arm fails until it is
-built there. The destructuring rule above is now checked too:
-`tests/redaction_guards.rs` fails on a hand-written `Debug` that redacts
-(its `fmt` names `redact::..` or `REDACTED`) and reads its type with a `..`
-rest, a `_` arm in a match on `self`, a field read through `self`, or no
-pattern on `Self` at all. A `Webhook` `Debug` that ends its pattern with
-`..` and drops two fields fails it. Omission is the safe direction, so this
-holds the convention, not a leak; an impl that redacts nothing, such as
-`InteractionBuilder`'s, is not read.
+built there. The destructuring rule above is now checked too.
+`tests/redaction_guards.rs` reads every hand-written `Debug` that redacts
+(its `fmt` names `redact::..` or `REDACTED`) or is for a type that holds
+one at any depth, as `Client` holds `HttpContext`, and fails on one that
+reads its type with a `..` rest, a catch-all arm (`_`, a binding such as
+`other`, or an or-pattern holding one) in a match on `self`, `*self` or
+`&self`, an `if let` or `let .. else` on `self`, a field read through
+`self`, or no pattern on `Self` at all. A `Webhook` `Debug` that ends its
+pattern with `..` and drops two fields fails it, and so do a `Tool` arm
+turned into `_other =>` and a `Client` `Debug` that uses `..`. Patterns
+inside a macro's arguments are not read. `InteractionBuilder`'s `Debug`,
+which holds `Client` and the tools and reads its fields through `self`, is
+listed as an exception until the owner decides how its `extra` prints.
+Omission is the safe direction, so this holds the convention, not a leak.
 
 ## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
