@@ -237,7 +237,7 @@ pub async fn upload_bytes(
     let upload_url = start_upload_session(
         ctx,
         request_id,
-        fields.display_name.or(fields.name).unwrap_or("(unnamed)"),
+        fields.display_name.unwrap_or("(unnamed)"),
         file_size,
         mime_type,
         fields,

@@ -278,8 +278,12 @@ choose, `files/<id>`, and the file is served under it. The API keeps one
 file per name, so a second upload under a name in use fails with a 409
 (`ALREADY_EXISTS`, which `is_retryable()` reports as not retryable) instead
 of making a second file: a retry after a lost response cannot leave a
-duplicate. The 409 comes once the bytes are sent, so `get` the name first
-to save resending a large file. A deleted file's name can be used again.
+duplicate. A 409 says only that a file of that name exists, not that it
+holds these bytes: it is an earlier try's when the name is unique to the
+content, such as one built from the run or from a prefix of the content's
+hash, so choose names that way. The 409 comes once the bytes are sent, so
+`get` the name first to save resending a large file. A deleted file's
+name can be used again.
 
 The ID is up to 40 lowercase letters, digits and dashes, and does not begin
 or end with a dash. A name that is not `files/<id>`, or a longer ID, fails
@@ -289,13 +293,14 @@ with `GenaiError::InvalidInput` before any request; other characters are a
 ```rust,no_run
 use genai_rs::{FileUpload, GenaiError};
 
-# async fn run(client: genai_rs::Client) -> Result<(), GenaiError> {
-let name = "files/q4-sales";
+# async fn run(client: genai_rs::Client, run_id: &str) -> Result<(), GenaiError> {
+// A name unique to this run, so a file under it is this run's.
+let name = format!("files/q4-sales-{run_id}");
 let upload = FileUpload::from_path("q4-sales.csv");
-let file = match client.files().upload_as(name, upload).await {
+let file = match client.files().upload_as(&name, upload).await {
     Ok(file) => file,
-    // An earlier try landed, though its response was lost.
-    Err(GenaiError::Api { status_code: 409, .. }) => client.files().get(name).await?,
+    // This run's earlier try landed, though its response was lost.
+    Err(GenaiError::Api { status_code: 409, .. }) => client.files().get(&name).await?,
     Err(e) => return Err(e),
 };
 # let _ = file;

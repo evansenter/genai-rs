@@ -1436,7 +1436,7 @@ non-string value now returns `<non-string: 7>`, not `7`, and
 `drift_report` keys it the same way. The enum guard checks both macros'
 templates for `#[non_exhaustive]` and an `Unknown` variant.
 
-## D-039 — A chosen Files API upload name stays unmodeled (2026-11-07)
+## D-039 — A chosen Files API upload name stays unmodeled (2026-11-07, superseded 2026-11-14)
 
 **Context.** google-genai's `files.upload(config={"name": ...})` sends a
 chosen `files/<id>` in the upload's start request. Probed live on
