@@ -69,11 +69,16 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   or an awaited `.get(` (a `for` over a collection only through
   `is_retryable()`) for a bound, a sleep on every path back to the loop's
   head, no `?` on an awaited chain, no `return` or `break` in the
-  `is_retryable()` arm, a ceiling, jitter where a count bounds it, and no
-  `+`, `-`, `*` or unwrapped `checked_` arithmetic on an uncapped
-  `Retry-After`, and holds the poll in `AGENTS_AND_BACKGROUND.md` and
-  `examples/deep_research.rs` to the same decisions. It reads the code
-  lexically; D-069 lists what that misses.
+  `is_retryable()` arm, a ceiling, jitter where a count bounds it, and
+  nothing on a `Retry-After` that panics when it is too large: before
+  its first `.min(`, no method but a safe one on its chain (not
+  `mul_f64`, `div_f64`, `add` and the like), and on an uncapped one no
+  `+`, `-`, `*`, unwrapped `checked_` arithmetic or call that overflows
+  with it in its argument (`from_secs_f64`, ...), followed through a
+  `max` it is passed to. It holds the poll in `AGENTS_AND_BACKGROUND.md`
+  and `examples/deep_research.rs` to the same decisions and backoff, and
+  `retry_guard_cases.rs` breaks each recipe one way at a time. It reads
+  the code lexically; D-069 lists what that misses.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'

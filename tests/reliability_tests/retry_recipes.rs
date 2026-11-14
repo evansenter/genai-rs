@@ -317,13 +317,169 @@ fn receiver_start(b: &[u8], dot: usize) -> usize {
     }
 }
 
-/// Whether the operand at `b[start..end]` can overflow: `+`, `-` or `*`
+/// Whether the operand at `b[start..end]`, which holds a `Retry-After` and
+/// whose method chain is `methods`, can panic on one too large: before its
+/// first `.min(`, its chain calls a method [`safe_on_retry_after`] does not
+/// name (`asked.mul_f64(1.5)`); or, with no `.min(` on it, `+`, `-` or `*`
 /// (or `+=`, `-=`, `*=`) applies to it, each of which panics on overflow,
-/// for an `Instant` and a `Duration` alike, or a `checked_add`,
+/// for an `Instant` and a `Duration` alike, it is in the argument of a call
+/// that panics on one ([`in_overflowing_call`]), or a `checked_add`,
 /// `checked_sub` or `checked_mul` on its chain, or with it as the
-/// argument, has its `None` unwrapped ([`unwraps_checked`]).
-fn overflows(b: &[u8], start: usize, end: usize) -> bool {
-    arithmetic_on(b, start, end) || unwraps_checked(b, start, end)
+/// argument, has its `None` unwrapped ([`unwraps_checked`]), or it is the
+/// argument of a call that returns it ([`passed_through`]) whose result
+/// can.
+fn overflows(b: &[u8], start: usize, end: usize, methods: &[String]) -> bool {
+    let cap = methods.iter().position(|m| m == "min");
+    methods[..cap.unwrap_or(methods.len())]
+        .iter()
+        .any(|m| !safe_on_retry_after(m))
+        || cap.is_none()
+            && (arithmetic_on(b, start, end)
+                || in_overflowing_call(b, start)
+                || unwraps_checked(b, start, end)
+                || passed_through(b, start, end)
+                    .is_some_and(|(start, end, methods)| overflows(b, start, end, &methods)))
+}
+
+/// The calls that can return their argument whole, or more: a
+/// `Retry-After` passed to one (`delay.max(asked)`) is in its result.
+const PASSING_CALLS: [&str; 2] = ["max", "saturating_add"];
+
+/// The call that the operand at `b[start..end]` is a whole argument of,
+/// when [`PASSING_CALLS`] names it, as a method (`delay.max(asked)`) or a
+/// function (`cmp::max(asked, delay)`): its byte range and method chain,
+/// as [`retry_after_operands`] gives an operand's.
+fn passed_through(b: &[u8], start: usize, end: usize) -> Option<(usize, usize, Vec<String>)> {
+    let before = b[..start].iter().rposition(|&c| c != b' ')?;
+    let after = end + b[end..].iter().position(|&c| c != b' ')?;
+    if !matches!(b[before], b'(' | b',') || !matches!(b[after], b')' | b',') {
+        return None;
+    }
+    // The `)` that ends the argument list it is in, not an array's or a
+    // block's.
+    let mut close = after;
+    while b[close] != b')' {
+        close = match b[close] {
+            b'(' | b'[' | b'{' => close_of(b, close)? + 1,
+            b']' | b'}' => return None,
+            _ => close + 1,
+        };
+        if close >= b.len() {
+            return None;
+        }
+    }
+    let open = open_of(b, close)?;
+    let callee = b[..open].trim_ascii_end();
+    let name = callee.len() - callee.iter().rev().take_while(|&&c| ident_byte(c)).count();
+    if !PASSING_CALLS
+        .iter()
+        .any(|call| call.as_bytes() == &callee[name..])
+    {
+        return None;
+    }
+    let mut call_start = name;
+    if b[..name].ends_with(b".") && !b[..name].ends_with(b"..") {
+        call_start = receiver_start(b, name - 1);
+    } else {
+        while b[..call_start].ends_with(b"::") {
+            call_start -= 2;
+            while call_start > 0 && ident_byte(b[call_start - 1]) {
+                call_start -= 1;
+            }
+        }
+    }
+    let (call_end, methods) = postfix(b, close + 1);
+    Some((call_start, call_end, methods))
+}
+
+/// Whether `method` cannot panic on a `Retry-After` however large, called
+/// on one: a comparison, a conversion (`as_secs_f64`), saturating or
+/// checked arithmetic (a `checked_` call's `None` unwrapped is
+/// [`unwraps_checked`]'s), or one of `Option`'s adapters but `unwrap` and
+/// `expect`. `Duration`'s `add`, `mul_f64`, `div_f64` and the rest panic
+/// on a result too large; a method this does not name counts as one that
+/// can.
+fn safe_on_retry_after(method: &str) -> bool {
+    const PREFIXES: [&str; 8] = [
+        "as_",
+        "subsec_",
+        "is_",
+        "saturating_",
+        "checked_",
+        "map",
+        "unwrap_or",
+        "ok_or",
+    ];
+    const NAMES: [&str; 19] = [
+        "?",
+        "min",
+        "max",
+        "abs_diff",
+        "and_then",
+        "filter",
+        "or",
+        "or_else",
+        "clone",
+        "copied",
+        "cloned",
+        "cmp",
+        "partial_cmp",
+        "eq",
+        "ne",
+        "lt",
+        "le",
+        "gt",
+        "ge",
+    ];
+    PREFIXES.iter().any(|prefix| method.starts_with(prefix)) || NAMES.contains(&method)
+}
+
+/// The calls that panic when what they compute overflows: the operators'
+/// methods, `Duration`'s float scalings, and its constructors from a float
+/// or from minutes or hours.
+const OVERFLOWING_CALLS: [&str; 14] = [
+    "add",
+    "sub",
+    "mul",
+    "add_assign",
+    "sub_assign",
+    "mul_assign",
+    "mul_f32",
+    "mul_f64",
+    "div_f32",
+    "div_f64",
+    "from_secs_f32",
+    "from_secs_f64",
+    "from_mins",
+    "from_hours",
+];
+
+/// Whether the operand that starts at `b[start]` is in the argument of a
+/// call [`OVERFLOWING_CALLS`] names, however deep within its statement
+/// (`Duration::from_secs_f64(asked.as_secs_f64())`, `now.add(wait)`).
+fn in_overflowing_call(b: &[u8], start: usize) -> bool {
+    let mut depth = 0usize;
+    for k in (0..start).rev() {
+        match b[k] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            // The block or statement it is in ends the call it can be in.
+            b'{' | b';' if depth == 0 => return false,
+            b'(' => {
+                let before = b[..k].trim_ascii_end();
+                let name =
+                    before.len() - before.iter().rev().take_while(|&&c| ident_byte(c)).count();
+                if OVERFLOWING_CALLS
+                    .iter()
+                    .any(|call| call.as_bytes() == &before[name..])
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The `checked_` arithmetic whose `None` panics when unwrapped.
@@ -384,10 +540,11 @@ fn arithmetic_on(b: &[u8], start: usize, end: usize) -> bool {
     assigns || (binary && operand_before) || after
 }
 
-/// The operands in `text` that hold an uncapped `Retry-After`: each
-/// `retry_after()` call, and each name in `held`, with its receiver and
-/// its method chain, unless that chain calls `.min(`. As byte ranges.
-fn uncapped_operands(text: &str, held: &[String]) -> Vec<(usize, usize)> {
+/// The operands in `text` that hold a `Retry-After`: each `retry_after()`
+/// call, with its receiver, and each name in `held`, each with its method
+/// chain. As `(start, end, methods)`: its byte range, and the methods its
+/// chain calls after the call or the name ([`postfix`]).
+fn retry_after_operands(text: &str, held: &[String]) -> Vec<(usize, usize, Vec<String>)> {
     let b = text.as_bytes();
     let mut found = Vec::new();
     for (at, _) in text.match_indices("retry_after") {
@@ -399,9 +556,7 @@ fn uncapped_operands(text: &str, held: &[String]) -> Vec<(usize, usize)> {
             continue;
         };
         let (end, methods) = postfix(b, close + 1);
-        if !methods.iter().any(|m| m == "min") {
-            found.push((receiver_start(b, at - 1), end));
-        }
+        found.push((receiver_start(b, at - 1), end, methods));
     }
     for name in held {
         for (at, _) in text.match_indices(name.as_str()) {
@@ -414,12 +569,20 @@ fn uncapped_operands(text: &str, held: &[String]) -> Vec<(usize, usize)> {
                 continue;
             }
             let (end, methods) = postfix(b, after);
-            if !methods.iter().any(|m| m == "min") {
-                found.push((at, end));
-            }
+            found.push((at, end, methods));
         }
     }
     found
+}
+
+/// The operands in `text` that hold an uncapped `Retry-After`: those of
+/// [`retry_after_operands`] whose chain calls no `.min(`. As byte ranges.
+fn uncapped_operands(text: &str, held: &[String]) -> Vec<(usize, usize)> {
+    retry_after_operands(text, held)
+        .into_iter()
+        .filter(|(.., methods)| !methods.iter().any(|m| m == "min"))
+        .map(|(start, end, _)| (start, end))
+        .collect()
 }
 
 /// The parameters of the closures along each `retry_after()` call's
@@ -956,8 +1119,10 @@ const GIVES_UP: &str = "ends on the first transient error: a `?` on an awaited c
 const STALLS: &str = "does not bound each request by the time left (timeout(left, ..))";
 const UNCAPPED: &str = "sleeps with no ceiling: growth needs a .min(), and a retry_after() a \
      .min() or a comparison of the wait with the time left";
-const OVERFLOWS: &str = "applies +, - or * to an uncapped retry_after(), or unwraps checked_ \
-     arithmetic on one, which panics on a Retry-After too large";
+const OVERFLOWS: &str = "can panic on a Retry-After too large: calls a method on a retry_after(), \
+     or on a max() of one, that can (mul_f64, add, ...) before any .min() on it, or, on an \
+     uncapped one, applies +, - or *, passes it to a call that can (from_secs_f64, add, ...) \
+     or unwraps checked_ arithmetic on it";
 const NO_JITTER: &str = "has no jitter, so clients that failed together retry together";
 
 /// One retry or poll loop in a block: its first line (and that line's
@@ -996,9 +1161,13 @@ struct RetryLoop {
 ///   and so does a `retry_after()`, unless the loop compares the variable
 ///   that holds it with the time left (a line that names the variable and
 ///   a deadline, an `elapsed()` or a value built from one, and compares);
-/// - apply no `+`, `-` or `*` to an uncapped `retry_after()`, inline, in a
-///   variable or in a closure along its chain, and unwrap no `checked_add`,
-///   `checked_sub` or `checked_mul` on one or of one ([`overflows`]);
+/// - call nothing that can panic on a `retry_after()` too large, inline, in
+///   a variable or in a closure along its chain ([`overflows`]): no method
+///   but a safe one on its chain before any `.min(`, and, uncapped, no `+`,
+///   `-` or `*`, no call that overflows with it in its argument
+///   (`from_secs_f64(`, `add(`, ...), and no `checked_add`, `checked_sub`
+///   or `checked_mul` on one or of one whose `None` is unwrapped; a `max`
+///   or `saturating_add` it is an argument of is held to the same;
 /// - when a count bounds it, add a random value that reaches the sleep.
 ///
 /// D-069 records these rules and their limits.
@@ -1128,9 +1297,9 @@ fn retry_loops(block: &DocBlock) -> Vec<RetryLoop> {
             {
                 problems.push(UNCAPPED);
             }
-            if uncapped_operands(&text, &held)
+            if retry_after_operands(&text, &held)
                 .into_iter()
-                .any(|(from, to)| overflows(bytes, from, to))
+                .any(|(from, to, methods)| overflows(bytes, from, to, &methods))
             {
                 problems.push(OVERFLOWS);
             }
@@ -1306,28 +1475,57 @@ fn example_as_doc(decided: Vec<(String, String)>) -> Vec<(String, String)> {
 }
 
 /// Whether `block` builds every `deadline` it assigns with `checked_add`,
-/// so a caller's deadline too far off is an error, not a panic.
+/// its `None` not unwrapped, so a caller's deadline too far off is an
+/// error, not a panic.
 fn checked_deadline(block: &DocBlock) -> bool {
     let deadlines: Vec<String> = assignments(&code_lines(&block.lines))
         .into_iter()
         .filter(|(name, _)| name == "deadline")
         .map(|(_, rhs)| rhs)
         .collect();
-    !deadlines.is_empty() && deadlines.iter().all(|rhs| rhs.contains(".checked_add("))
+    !deadlines.is_empty()
+        && deadlines.iter().all(|rhs| {
+            let b = rhs.as_bytes();
+            let handled: Vec<bool> = rhs
+                .match_indices(".checked_add(")
+                .map(|(at, _)| {
+                    close_of(b, at + ".checked_add".len()).is_some_and(|close| {
+                        !postfix(b, close + 1)
+                            .1
+                            .iter()
+                            .any(|m| m == "unwrap" || m == "expect")
+                    })
+                })
+                .collect();
+            !handled.is_empty() && handled.iter().all(|&ok| ok)
+        })
+}
+
+/// What `block` assigns its backoff, `delay`, in order: its first value,
+/// then its growth with its ceiling.
+fn backoff(block: &DocBlock) -> Vec<String> {
+    assignments(&code_lines(&block.lines))
+        .into_iter()
+        .filter(|(name, _)| name == "delay")
+        .map(|(_, rhs)| rhs)
+        .collect()
 }
 
 /// `docs/AGENTS_AND_BACKGROUND.md`'s poll and `examples/deep_research.rs`,
 /// which the doc says runs it, decide alike: the same terminal statuses,
 /// the same retryable arm and the same comparison with the deadline, with
-/// only the difference the doc states. The example once dropped
-/// statuses the doc's poll ends on, and nothing compared the two. Each
-/// builds its deadline with `checked_add`.
+/// only the difference the doc states, and back off alike. The example
+/// once dropped statuses the doc's poll ends on, and once capped its
+/// backoff at 15 s to the doc's 10 s, and nothing compared the two. Each
+/// builds its deadline with `checked_add`, its `None` not unwrapped.
 #[test]
 fn the_poll_in_agents_and_background_md_matches_its_example() {
     let doc = recipe("docs/AGENTS_AND_BACKGROUND.md", "is_retryable");
     let example = recipe("examples/deep_research.rs", "is_retryable");
     let decided = poll_decisions(&doc);
     assert_eq!(decided, example_as_doc(poll_decisions(&example)));
+    assert_eq!(backoff(&doc), backoff(&example));
+    assert_eq!(backoff(&doc).len(), 2, "{:?}", backoff(&doc));
     for when in [
         "Err(_)",
         "InteractionStatus::Completed",
@@ -1345,151 +1543,6 @@ fn the_poll_in_agents_and_background_md_matches_its_example() {
     }
 }
 
-fn block(text: &str) -> DocBlock {
-    DocBlock {
-        at: "x".into(),
-        lines: text.lines().map(str::to_string).collect(),
-    }
-}
-
-/// The problems of the one retry or poll loop in `text`.
-fn problems(text: &str) -> Vec<&'static str> {
-    let found = retry_loops(&block(text));
-    assert_eq!(found.len(), 1, "{found:?}");
-    found.into_iter().next().unwrap().problems
-}
-
-/// The check flags each defect the old recipes had, and passes a loop
-/// that has none.
-#[test]
-fn the_retry_loop_check_finds_each_defect() {
-    let unbounded = "let response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() => continue,\n        Err(e) => return Err(e.into()),\n    }\n};";
-    assert_eq!(problems(unbounded), [UNBOUNDED, NO_SLEEP, DEAF]);
-    let deaf = "let mut attempts = 0;\nlet response = loop {\n    match client.execute(request.clone()).await {\n        Ok(r) => break r,\n        Err(e) if e.is_retryable() && attempts < 3 => {\n            attempts += 1;\n            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempts))).await;\n        }\n        Err(e) => return Err(e.into()),\n    }\n};";
-    assert_eq!(problems(deaf), [DEAF, UNCAPPED, NO_JITTER]);
-    // A sleep or a retry_after only in a comment, a string or a hidden
-    // line is none.
-    let hidden = "loop {\n    // tokio::time::sleep(e.retry_after()) here\n    /* sleep(e.retry_after()) */ let s = \"sleep(e.retry_after())\";\n    # tokio::time::sleep(d).await;\n    if attempt < MAX && e.is_retryable() {}\n    attempt += 1;\n}";
-    assert_eq!(problems(hidden), [NO_SLEEP, DEAF, NO_JITTER]);
-    let sound = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let jitter = step.mul_f64(random());\n        tokio::time::sleep(e.retry_after().unwrap_or(step + jitter).min(MAX_DELAY)).await;\n    } else {\n        return Err(e);\n    }\n    attempt += 1;\n}";
-    assert_eq!(problems(sound), Vec::<&str>::new());
-    let ranged = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let delay = e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY);\n        tokio::time::sleep(delay).await;\n    } else {\n        return Err(e);\n    }\n}";
-    assert_eq!(problems(ranged), Vec::<&str>::new());
-    // A count that is checked but never incremented bounds nothing.
-    let stuck = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step).min(MAX_DELAY)).await;\n    } else {\n        return Err(e);\n    }\n}";
-    assert_eq!(problems(stuck), [UNBOUNDED]);
-    // A count without jitter, and a server's wait taken whole.
-    let herd = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    } else {\n        return Err(e);\n    }\n}";
-    assert_eq!(problems(herd), [UNCAPPED, NO_JITTER]);
-    // Jitter is a random value that reaches the sleep, not a name that
-    // happens to contain "rand"; growth needs no spaces around its `*`.
-    let named = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let operand = step.mul_f64(0.5);\n        let brand = rand_seed();\n        delay = (delay + operand).min(MAX_DELAY);\n        tokio::time::sleep(e.retry_after().unwrap_or(delay).min(MAX_DELAY)).await;\n    } else {\n        return Err(e);\n    }\n}";
-    assert_eq!(problems(named), [NO_JITTER]);
-    let tight = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        delay = delay*2;\n        tokio::time::sleep(e.retry_after().unwrap_or(jittered(delay)).min(MAX_DELAY) + delay).await;\n    } else {\n        return Err(e);\n    }\n}";
-    assert_eq!(problems(tight), [UNCAPPED]);
-    // A sleep only in a branch leaves the other way to the end of the body
-    // without one, and a `continue` needs one before it, in its arm or
-    // around it, not in another arm.
-    let branch = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY)).await;\n    }\n    attempt += 1;\n}";
-    assert_eq!(problems(branch), [NO_SLEEP]);
-    let arms = |retry: &str| {
-        format!(
-            "for attempt in 1..=MAX_ATTEMPTS {{\n    match client.execute(request.clone()).await {{\n        Ok(r) => return Ok(r),\n{retry}        Err(e) => return Err(e.into()),\n    }}\n}}"
-        )
-    };
-    let wait = "tokio::time::sleep(e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY)).await";
-    let retry = |then: &str| {
-        format!("        Err(e) if e.is_retryable() => {{\n            {wait};\n{then}        }}\n")
-    };
-    assert_eq!(
-        problems(&arms(&retry("            continue;\n"))),
-        Vec::<&str>::new()
-    );
-    assert_eq!(
-        problems(&arms(&format!(
-            "        Err(e) if e.is_retryable() && attempt == 1 => continue,\n        Err(e) if e.is_retryable() => {wait},\n"
-        ))),
-        [NO_SLEEP]
-    );
-    // A `return` or `break` in the arm `is_retryable()` guards gives up on
-    // an error it says to retry; one in a branch that negates it, or after
-    // a `let ... else`, does not.
-    assert_eq!(problems(&arms(&retry("            break;\n"))), [GIVES_UP]);
-    let negated = format!(
-        "for attempt in 1..=MAX_ATTEMPTS {{\n    let Err(e) = client.execute(request.clone()).await else {{\n        break;\n    }};\n    if !e.is_retryable() {{\n        return Err(e.into());\n    }}\n    {wait};\n}}"
-    );
-    assert_eq!(problems(&negated), Vec::<&str>::new());
-    let sleepless = negated.replace(
-        &format!("    {wait};\n"),
-        &format!("    if attempt > 1 {{\n        {wait};\n    }}\n"),
-    );
-    assert_eq!(problems(&sleepless), [NO_SLEEP]);
-    // A poll bounded by its deadline compares with it inside the loop; a
-    // deadline only declared above the loop, or named in an error
-    // message, bounds nothing. A deadline loop may wait as long as the
-    // server asks, but not add that wait to a time.
-    let poll = |check: &str| {
-        format!(
-            "async fn poll(deadline: Duration) {{\n    let deadline = Instant::now() + deadline;\n    loop {{\n        let left = Duration::from_secs(3600);\n        match timeout(left, get()).await {{\n            Err(_) => return Err(\"polling deadline exceeded\".into()),\n            Ok(Err(e)) if e.is_retryable() => wait = e.retry_after().unwrap_or(delay),\n            _ => {{}}\n        }}\n{check}        sleep(wait).await;\n    }}\n}}"
-        )
-    };
-    assert_eq!(problems(&poll("")), [UNBOUNDED, UNCAPPED]);
-    assert_eq!(
-        problems(&poll(
-            "        if wait >= deadline.saturating_duration_since(Instant::now()) {\n            return Err(e);\n        }\n"
-        )),
-        Vec::<&str>::new()
-    );
-    assert_eq!(
-        problems(&poll(
-            "        if Instant::now() + wait >= deadline {\n            return Err(e);\n        }\n"
-        )),
-        [OVERFLOWS]
-    );
-    assert_eq!(
-        problems(&poll(
-            "        if start.elapsed() + wait > max_wait {\n            return Err(e);\n        }\n"
-        )),
-        [OVERFLOWS]
-    );
-    // A poll that sends its status request with `?` ends on the first
-    // transient error, and one bounded by a deadline needs each request
-    // bounded too.
-    let hasty = "loop {\n    let response = client\n        .interactions()\n        .get(&id)\n        .await?;\n    if start.elapsed() > max_wait {\n        return Ok(None);\n    }\n    sleep(Duration::from_secs(5)).await;\n}";
-    assert_eq!(problems(hasty), [DEAF, GIVES_UP, STALLS]);
-    // So does any loop the check reads that awaits with `?`, whatever the
-    // request, and an `.await` in parentheses is awaited all the same.
-    let created = "loop {\n    let r = client.interactions().create().send().await?;\n    if start.elapsed() > max_wait {\n        return Ok(None);\n    }\n    sleep(Duration::from_secs(5)).await;\n}";
-    assert_eq!(problems(created), [GIVES_UP]);
-    let counted = "for attempt in 1..=MAX_ATTEMPTS {\n    let r = client.execute(request.clone()).await?;\n    tokio::time::sleep(jittered(step).min(MAX_DELAY)).await;\n}";
-    assert_eq!(problems(counted), [GIVES_UP]);
-    let grouped = format!(
-        "for attempt in 1..=MAX_ATTEMPTS {{\n    let r = (client.execute(request.clone()).await)?;\n    if e.is_retryable() {{\n        {wait};\n    }} else {{\n        return Err(e);\n    }}\n}}"
-    );
-    assert_eq!(problems(&grouped), [GIVES_UP]);
-    // A closure's body is its own, braces or none: a sleep in one that is
-    // never called is no sleep on the path.
-    let napless = negated.replace(
-        &format!("    {wait};\n"),
-        &format!("    let _nap = || {wait};\n    if attempt > 1 {{\n        continue;\n    }}\n    {wait};\n"),
-    );
-    assert_eq!(problems(&napless), [NO_SLEEP]);
-    // Not retry loops: is_retryable() outside a loop, a map lookup in a
-    // loop, a loop nested in one (the inner loop is), and a `for` over a
-    // collection that paces itself.
-    for text in [
-        "fn f(e: &GenaiError) -> bool { e.is_retryable() }",
-        "loop {\n    if let Some(v) = cache.get(&key) {\n        break v;\n    }\n}",
-        "for item in items {\n    client.send(item).await?;\n    sleep(PACE).await;\n}",
-    ] {
-        assert!(retry_loops(&block(text)).is_empty(), "{text}");
-    }
-    let nested = "for id in ids {\n    let mut attempt = 0;\n    while attempt < MAX {\n        attempt += 1;\n        sleep(e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY)).await;\n        if e.is_retryable() {}\n    }\n}";
-    let found = retry_loops(&block(nested));
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].head, "while attempt < MAX {");
-}
-
 /// The source of a recipe the check reads: the block of `path` that holds
 /// `marker` (an example's whole file).
 fn recipe(path: &str, marker: &str) -> DocBlock {
@@ -1500,318 +1553,5 @@ fn recipe(path: &str, marker: &str) -> DocBlock {
         .unwrap_or_else(|| panic!("{path} has no block with {marker}"))
 }
 
-/// `block` with each `(from, to)` replaced, every `from` required, so a
-/// recipe that changes cannot make the mutation a no-op.
-fn mutated(block: &DocBlock, edits: &[(&str, &str)]) -> DocBlock {
-    let mut text = block.lines.join("\n");
-    for (from, to) in edits {
-        assert!(text.contains(from), "{}: no {from:?} to mutate", block.at);
-        text = text.replace(from, to);
-    }
-    DocBlock {
-        at: block.at.clone(),
-        lines: text.lines().map(str::to_string).collect(),
-    }
-}
-
-/// The `(from, to)` replacements [`mutated`] makes.
-type Edits<'a> = &'a [(&'a str, &'a str)];
-
-/// Each defect found in a shipped recipe fails the check against the real
-/// text: the request recipe without its cap, with the cap on the backoff
-/// alone, or with its jitter dropped or left unused; the doc's poll and
-/// the example's without the cap on their growth (or doubling by
-/// addition), comparing the clock rather than the wait with the deadline,
-/// applying `+` or `-` to a `Retry-After` (in a variable, inline or in a
-/// closure) or unwrapping `checked_` arithmetic on one (E3), going back
-/// to the loop's head without the sleep (E1, also with a sleep in a
-/// closure never called), sending a status request with `?` after any
-/// chain or around its parentheses (E4), or returning or breaking in the
-/// retryable arm (E9); the example deciding other than the doc's poll
-/// does (E7, a terminal status dropped, or a decision beside the `match`
-/// on the status); the doc's deadline added with `+`; and the poll
-/// `examples/deep_research.rs` had, which ended on the first transient
-/// error and never bounded a request by the time left. (E1 to E9 name the
-/// mutations a review under #504 found passing.)
-#[test]
-fn the_retry_loop_check_fails_each_broken_recipe() {
-    let only = |block: &DocBlock| {
-        let found = retry_loops(block);
-        assert_eq!(found.len(), 1, "{}: {found:?}", block.at);
-        found.into_iter().next().unwrap().problems
-    };
-    let request = recipe("src/request/mod.rs", "is_retryable");
-    assert_eq!(only(&request), Vec::<&str>::new());
-    let uncapped = mutated(&request, &[(".min(MAX_DELAY)", "")]);
-    assert_eq!(only(&uncapped), [UNCAPPED]);
-    let herd = mutated(
-        &request,
-        &[
-            (
-                "let backoff = step + step.mul_f64(random);",
-                "let backoff = step;",
-            ),
-            (
-                "let random = RandomState::new().hash_one(attempt) as f64 / u64::MAX as f64;",
-                "",
-            ),
-        ],
-    );
-    assert_eq!(only(&herd), [NO_JITTER]);
-    // Jitter computed but never added to the wait is none.
-    let unused = mutated(
-        &request,
-        &[(
-            "let backoff = step + step.mul_f64(random);",
-            "let backoff = step;",
-        )],
-    );
-    assert_eq!(only(&unused), [NO_JITTER]);
-    // A `.min(` inside the fallback caps the backoff, not the server's
-    // Retry-After.
-    let inner = mutated(
-        &request,
-        &[(
-            ".unwrap_or(backoff).min(MAX_DELAY);",
-            ".unwrap_or(backoff.min(MAX_DELAY));",
-        )],
-    );
-    assert_eq!(only(&inner), [UNCAPPED]);
-
-    let poll = recipe("docs/AGENTS_AND_BACKGROUND.md", "is_retryable");
-    assert_eq!(only(&poll), Vec::<&str>::new());
-    let overflowing = mutated(
-        &poll,
-        &[(
-            "if wait >= deadline.saturating_duration_since(Instant::now()) {",
-            "if Instant::now() + wait >= deadline {",
-        )],
-    );
-    assert_eq!(only(&overflowing), [OVERFLOWS]);
-    let growing = mutated(
-        &poll,
-        &[(
-            "delay = (delay * 2).min(Duration::from_secs(10));",
-            "delay = delay * 2;",
-        )],
-    );
-    assert_eq!(only(&growing), [UNCAPPED]);
-
-    // The doc's poll and the example's, each broken one way at a time.
-    let example = recipe("examples/deep_research.rs", "is_retryable");
-    assert_eq!(only(&example), Vec::<&str>::new());
-    const GUARD: &str = "if wait >= deadline.saturating_duration_since(Instant::now()) {";
-    const WAIT: &str = "wait = e.retry_after().map_or(delay, |asked| asked.max(delay));";
-    for poll in [&poll, &example] {
-        let grow = poll
-            .lines
-            .iter()
-            .map(|line| line.trim())
-            .find(|line| line.starts_with("delay = (delay * 2).min("))
-            .unwrap();
-        let broken: &[(Edits, &[&str])] = &[
-            // Checking the clock, not the wait, against the deadline
-            // leaves a Retry-After of u64::MAX seconds to sleep whole.
-            (&[(GUARD, "if Instant::now() >= deadline {")], &[UNCAPPED]),
-            // Arithmetic on a Retry-After overflows however it is
-            // spelled: inline (here in the retryable arm, which gives up
-            // there too), in a closure, or subtracted.
-            (
-                &[(
-                    WAIT,
-                    "if Instant::now() + e.retry_after().unwrap_or(delay) >= deadline {\n    return Err(e.into());\n}",
-                )],
-                &[GIVES_UP, OVERFLOWS],
-            ),
-            (
-                &[(
-                    WAIT,
-                    "wait = e.retry_after().map_or(delay, |asked| asked + delay);",
-                )],
-                &[OVERFLOWS],
-            ),
-            (
-                &[(GUARD, "if Instant::now() >= deadline - wait {")],
-                &[OVERFLOWS],
-            ),
-            // A `.min(` beside the Retry-After, not on it, caps nothing.
-            (
-                &[
-                    (
-                        WAIT,
-                        "wait = e.retry_after().unwrap_or(delay.min(MAX_POLL_DELAY));",
-                    ),
-                    (GUARD, "if Instant::now() + wait >= deadline {"),
-                ],
-                &[OVERFLOWS],
-            ),
-            // E3: `checked_` arithmetic whose `None` is unwrapped panics as
-            // `+` does, on the wait or with it as the argument; one whose
-            // `None` is handled does not.
-            (
-                &[(
-                    GUARD,
-                    "if Instant::now().checked_add(wait).unwrap() >= deadline {",
-                )],
-                &[OVERFLOWS],
-            ),
-            (
-                &[(
-                    GUARD,
-                    "if Instant::now().checked_add(wait).expect(\"in range\") >= deadline {",
-                )],
-                &[OVERFLOWS],
-            ),
-            (
-                &[(
-                    GUARD,
-                    "if Instant::now() >= deadline.checked_sub(wait).unwrap() {",
-                )],
-                &[OVERFLOWS],
-            ),
-            (
-                &[(
-                    WAIT,
-                    "wait = e.retry_after().map_or(delay, |asked| asked.checked_add(delay).unwrap());",
-                )],
-                &[OVERFLOWS],
-            ),
-            (
-                &[(
-                    GUARD,
-                    "if Instant::now().checked_add(wait).is_none_or(|end| end >= deadline) {",
-                )],
-                &[],
-            ),
-            // Doubling by addition is growth too.
-            (&[(grow, "delay += delay;")], &[UNCAPPED]),
-            (&[(grow, "delay = delay + delay;")], &[UNCAPPED]),
-            // E1: an in-progress status that goes back to the loop's head
-            // skips the sleep, and polls as fast as the server answers.
-            (&[("_ => {}", "_ => continue,")], &[NO_SLEEP]),
-            // A sleep in a closure never called is none on the path.
-            (
-                &[
-                    ("_ => {}", "_ => continue,"),
-                    (
-                        "let mut wait = delay;",
-                        "let mut wait = delay;\nlet _nap = || sleep(wait);",
-                    ),
-                ],
-                &[NO_SLEEP],
-            ),
-            // A status request sent with `?`, after any chain (E4), ends
-            // the poll on its first transient error, whatever else the
-            // loop retries; so does a `return` or `break` in the arm
-            // `is_retryable()` guards (E9).
-            (
-                &[(
-                    "let mut wait = delay;",
-                    "let mut wait = delay;\nlet _s = client.interactions().get(id).await?;",
-                )],
-                &[GIVES_UP],
-            ),
-            (
-                &[(
-                    "let mut wait = delay;",
-                    "let mut wait = delay;\nlet _s = client.interactions().get(id).await.map_err(Box::new)?;",
-                )],
-                &[GIVES_UP],
-            ),
-            (
-                &[(
-                    "let mut wait = delay;",
-                    "let mut wait = delay;\nlet _s = (client.interactions().get(id).await)?;",
-                )],
-                &[GIVES_UP],
-            ),
-            (
-                &[(
-                    WAIT,
-                    "wait = e.retry_after().map_or(delay, |asked| asked.max(delay));\nreturn Err(e.into());",
-                )],
-                &[GIVES_UP],
-            ),
-            (
-                &[(
-                    WAIT,
-                    "wait = e.retry_after().map_or(delay, |asked| asked.max(delay));\nbreak;",
-                )],
-                &[GIVES_UP],
-            ),
-        ];
-        for &(edits, want) in broken {
-            assert_eq!(only(&mutated(poll, edits)), want, "{}: {edits:?}", poll.at);
-        }
-    }
-
-    // The example's poll decides as the doc's does. E7: without
-    // Incomplete among its terminal statuses it polls a finished run to its
-    // budget and cancels it. The stated difference, `None` for an error,
-    // holds only at the deadline.
-    let decided = poll_decisions(&poll);
-    for edits in [
-        &[("| InteractionStatus::Incomplete", "")][..],
-        &[("|asked| asked.max(delay)", "|asked| asked")],
-        &[(
-            GUARD,
-            "if wait > deadline.saturating_duration_since(Instant::now()) {",
-        )],
-        &[(
-            "Ok(Err(e)) => return Err(e.into()),",
-            "Ok(Err(e)) => return Ok(None),",
-        )],
-        // A decision taken beside the `match` on the status counts too.
-        &[(
-            "println!(\"  {:>4}s  {:?}\", start.elapsed().as_secs(), response.status);",
-            "if response.status == InteractionStatus::Incomplete {\n    return Ok(None);\n}",
-        )],
-    ] {
-        let broken = example_as_doc(poll_decisions(&mutated(&example, edits)));
-        assert_ne!(broken, decided, "{edits:?}");
-    }
-    // The doc's poll builds its deadline with `checked_add`; `+` panics
-    // on a caller's deadline too far off.
-    let unchecked = mutated(
-        &poll,
-        &[(
-            ".checked_add(deadline).ok_or(\"deadline too far off\")?",
-            " + deadline",
-        )],
-    );
-    assert!(!checked_deadline(&unchecked));
-
-    assert_eq!(
-        only(&block(OLD_DEEP_RESEARCH_POLL)),
-        [DEAF, GIVES_UP, STALLS]
-    );
-}
-
-/// `examples/deep_research.rs`'s poll before it took the doc's.
-const OLD_DEEP_RESEARCH_POLL: &str = r#"
-async fn poll(
-    client: &Client,
-    mut response: InteractionResponse,
-    max_wait: Duration,
-) -> Result<Option<InteractionResponse>, Box<dyn Error>> {
-    let id = response.id.clone().ok_or("interaction has no ID")?;
-    let start = Instant::now();
-    let mut delay = Duration::from_secs(2);
-    loop {
-        match response.status {
-            InteractionStatus::Completed => return Ok(Some(response)),
-            InteractionStatus::Failed | InteractionStatus::Cancelled => {
-                return Err(format!("research ended with status {:?}", response.status).into());
-            }
-            _ => {}
-        }
-        if start.elapsed() + delay > max_wait {
-            return Ok(None);
-        }
-        tokio::time::sleep(delay).await;
-        delay = (delay * 2).min(MAX_POLL_DELAY);
-        response = client.interactions().get(&id).await?;
-        println!("  {:>4}s  {:?}", start.elapsed().as_secs(), response.status);
-    }
-}
-"#;
+#[path = "retry_guard_cases.rs"]
+mod guard_cases;
