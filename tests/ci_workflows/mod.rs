@@ -549,10 +549,10 @@ const OTHER_CONFIG: [&str; 2] = ["--config-file", "--tool-config-file"];
 /// sets it. Rejected: `NEXTEST_RETRIES` named anywhere else in a workflow
 /// (another step's env, a job's or the workflow's, which reach every step
 /// under them, a script, `$GITHUB_ENV`) or in a composite action, in any
-/// case, since Windows reads an environment variable's name in any; a `--retries` flag, or a
-/// `--config-file` or `--tool-config-file` that loads other settings; and
-/// a `retries` key in any profile or override of `.config/nextest.toml`,
-/// which every run reads. Each passed every guard, and a test retried to a
+/// case, since Windows reads an environment variable's name in any; a
+/// `--retries` flag, or a `--config-file` or `--tool-config-file` that
+/// loads other settings; and a `retries` key in any profile or override
+/// of `.config/nextest.toml`, which every run reads. Each passed every guard, and a test retried to a
 /// pass that way was never counted (the #504 grade of 2026-11-14, L-5).
 /// The check reads the text: a name the script builds at run time is not
 /// read (D-058).

@@ -2644,8 +2644,9 @@ found three gaps, each of whose probes passed all 77 ci_coverage tests.
 - The K-7 amendment said each key a guard checks is the key YAML reads. It
   held for the keys `escapes` checks, and now says so. `coverage.rs` read
   the summary step's `if:` as text, and `builds.rs` the Cross Platform
-  job's and its steps' (and its matrix's `exclude:`), so a quoted or
-  spaced key read as no condition and passed. Every `if:` a guard checks
+  job's, the steps' it checks there and in the macOS PR job, and the
+  matrix's `exclude:`, so a quoted or spaced key read as no condition and
+  passed. Every `if:` a guard checks
   is now read as YAML reads it, the readers that failed safe on a quoted
   key included. A guard that only finds a job or a step, or requires a
   key to hold a value, may still match the text: a key spelled otherwise
