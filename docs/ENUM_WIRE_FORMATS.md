@@ -388,7 +388,7 @@ An `Unknown` whose `chunk_type` is spelled like a known one (a future event
 the parser names `created`, say) also writes `"unknown": true`, and a map
 with that marker reads back as `Unknown`, so the chunk can't turn into the
 known one on a round trip. The marker is written only on such a collision;
-maps written by 0.13.0 and earlier have none and read back as before.
+maps written by 0.12.0 and earlier have none and read back as before.
 
 Every known variant also keeps the SSE event's keys it does not read, in
 its `extra` map: a key no event type models (one the API adds beside the

@@ -145,7 +145,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                     ))
                 })?;
                 // Written only when it has keys; a map without one, such as
-                // 0.13.0's, reads back with an empty one.
+                // 0.12.0's, reads back with an empty one.
                 let extra = match value.get("extra") {
                     Some(serde_json::Value::Object(extra)) => extra.clone(),
                     _ => serde_json::Map::new(),

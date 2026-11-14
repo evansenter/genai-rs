@@ -92,11 +92,11 @@ for what the API accepts and does, and
 
 ```toml
 [dependencies]
-genai-rs = "0.13"
+genai-rs = "0.14"
 tokio = { version = "1.0", features = ["full"] }
 
 # For the #[tool] macro
-genai-rs-macros = "0.13"
+genai-rs-macros = "0.14"
 
 # Optional
 futures-util = "0.3"     # For streaming

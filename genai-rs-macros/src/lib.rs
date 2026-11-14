@@ -6,10 +6,10 @@
 //! `inventory` registration and `serde_json`) and
 //! `genai_rs::function_calling::FunctionFuture`, so this crate requires the
 //! `genai-rs` release it ships with. Being a proc-macro crate it declares no
-//! dependency on `genai-rs`, so Cargo cannot enforce that: a 0.13
+//! dependency on `genai-rs`, so Cargo cannot enforce that: a 0.12
 //! `genai-rs-macros` names `genai_rs::function_calling::submit`, which 0.14
 //! removed, and a 0.14 one names `__private::submit` and `FunctionFuture`,
-//! which 0.13 lacks. Either mismatch fails at every `#[tool]` site. Bump
+//! which 0.12 lacks. Either mismatch fails at every `#[tool]` site. Bump
 //! them together.
 
 // `clippy.toml` exempts a `#[cfg(test)]` module from `unwrap_used`,
