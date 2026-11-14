@@ -12,7 +12,9 @@
 //! round-trips like a string does. A hand-built `Unknown` always serializes
 //! its type string. [`unknown_type`] and [`serialize_wire`] hold that rule,
 //! and the Antigravity harness enums (`src/antigravity/protocol/enums.rs`),
-//! which keep soft typing in strict mode too, share them.
+//! which keep soft typing in strict mode too, share them. The tagged unions
+//! (`Step`, `Content`, `Tool`, ...) type a non-string `type` tag the same
+//! way, through [`unknown_tag`].
 
 macro_rules! wire_enum {
     (
@@ -130,6 +132,20 @@ pub(crate) fn unknown_type(value: &serde_json::Value) -> String {
     value
         .as_str()
         .map_or_else(|| non_string_descriptor(value), str::to_owned)
+}
+
+/// The `Unknown` type a tagged union gives a value with no `type` tag.
+pub(crate) const MISSING_TYPE: &str = "<missing type>";
+
+/// The `Unknown` type of a tagged union's value (D-075): its `type` tag as
+/// [`unknown_type`] types a string enum's value (the string itself, or
+/// `<non-string: ...>`), and [`MISSING_TYPE`] when there is no tag: an
+/// absent or `null` one, or a value that is not an object.
+pub(crate) fn unknown_tag(value: &serde_json::Value) -> String {
+    match value.get("type") {
+        None | Some(serde_json::Value::Null) => MISSING_TYPE.to_owned(),
+        Some(tag) => unknown_type(tag),
+    }
 }
 
 /// The JSON a non-string value was read from, when `wire` and

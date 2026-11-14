@@ -369,11 +369,13 @@ impl<'de> Deserialize<'de> for TranscriptionMode {
         match read_known_mode(&value) {
             Ok(mode) => Ok(mode),
             Err(fallback) => {
-                let mode_type = value
-                    .as_str()
-                    .or_else(|| value.get("type").and_then(serde_json::Value::as_str))
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                // A bare mode is typed as a string enum's value is, and an
+                // object by its tag (D-075).
+                let mode_type = if value.is_object() {
+                    crate::wire_enum::unknown_tag(&value)
+                } else {
+                    crate::wire_enum::unknown_type(&value)
+                };
                 tracing::warn!(
                     "Keeping a transcription mode whole in TranscriptionMode::Unknown: {} \
                      (Evergreen)",

@@ -379,11 +379,7 @@ impl<'de> Deserialize<'de> for ResponseFormat {
             Err(fallback) => {
                 // Unknown/raw shape (the spec also allows a raw schema dict
                 // here) - preserve the data intact.
-                let format_type = value
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                let format_type = crate::wire_enum::unknown_tag(&value);
                 tracing::warn!(
                     "Keeping a response format whole in ResponseFormat::Unknown: {}.",
                     fallback.describe("ResponseFormat", &format_type)

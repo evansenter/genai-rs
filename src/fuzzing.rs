@@ -163,8 +163,9 @@ pub fn stream_event(data: &[u8]) {
 ///   `Some(vec![])` reads back as `None`.
 /// - An `Unknown` is written as its type tag merged with its data (see
 ///   [`unknown_read_back`]). Read from the wire, its data already holds that
-///   tag, so nothing changes; an input with no string `type` is tagged
-///   `"<missing type>"`, and that tag is in its data from then on.
+///   tag, so nothing changes; an input with no `type` is tagged
+///   `"<missing type>"`, one whose `type` is not a string
+///   `"<non-string: ...>"` (D-075), and that tag is in its data from then on.
 /// - A `ToolChoice::Unknown` reads back typed by its data's shape.
 pub(crate) trait Normalize {
     /// Applies the differences the first write makes on purpose.
@@ -424,9 +425,10 @@ trait WireForm {
 }
 
 /// The types that normalize more than [`WireForm::faithful_wire`] can follow:
-/// a missing or non-string type tag becomes `"<missing type>"` on a tagged
-/// union, and the resources read their int64s, timestamps and list elements
-/// leniently, dropping what does not read (D-070).
+/// a type tag that is missing or not a string becomes a string on a tagged
+/// union (`"<missing type>"`, `"<non-string: ...>"`; D-075), and the
+/// resources read their int64s, timestamps and list elements leniently,
+/// dropping what does not read (D-070).
 macro_rules! normalizing {
     ($($ty:ty),+ $(,)?) => {
         $(impl WireForm for $ty {})+

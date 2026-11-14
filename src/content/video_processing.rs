@@ -278,7 +278,7 @@ impl<'de> Deserialize<'de> for VideoProcessing {
         // mistyped modeled field falls through to Unknown, which keeps it.
         if let Some(obj) = value.as_object() {
             let tag = obj.get("type").and_then(serde_json::Value::as_str);
-            let processing_type = tag.unwrap_or("<missing type>").to_string();
+            let processing_type = crate::wire_enum::unknown_tag(&value);
             let cause = if tag == Some("static") {
                 match read_segment(obj) {
                     Ok(segment) => return Ok(segment),
@@ -300,7 +300,7 @@ impl<'de> Deserialize<'de> for VideoProcessing {
             });
         }
 
-        let processing_type = format!("<non-string: {value}>");
+        let processing_type = crate::wire_enum::non_string_descriptor(&value);
         tracing::warn!(
             "VideoProcessing received an unsupported value: {}. \
              Preserving in Unknown variant.",
