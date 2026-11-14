@@ -29,10 +29,6 @@ use std::error::Error;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout};
 
-/// The longest wait between status requests, unless the server asks for
-/// more.
-const MAX_POLL_DELAY: Duration = Duration::from_secs(15);
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
@@ -130,6 +126,6 @@ async fn poll(
             return Ok(None);
         }
         sleep(wait).await;
-        delay = (delay * 2).min(MAX_POLL_DELAY);
+        delay = (delay * 2).min(Duration::from_secs(10));
     }
 }

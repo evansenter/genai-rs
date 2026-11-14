@@ -3551,11 +3551,22 @@ requires:
   value built from one, with a comparison. That is the doc's poll, which
   gives up when the wait would outlast the budget, so a huge Retry-After
   ends the poll rather than the sleep.
-- **No overflow.** No `+`, `-` or `*` applies to an uncapped Retry-After:
-  a `retry_after()` call with its receiver and chain, a variable assigned
-  one, or a closure parameter along its chain. Nor is a `checked_add`,
-  `checked_sub` or `checked_mul` on its chain, or with it as the whole
-  argument, followed by `unwrap()` or `expect(`: the same panic.
+- **No overflow.** Nothing that panics on a Retry-After too large applies
+  to one: a `retry_after()` call with its receiver and chain, a variable
+  assigned one, or a closure parameter along its chain. Before its first
+  `.min(`, its chain calls only methods that cannot panic on it: a
+  comparison (`max`, `cmp`, ...), a conversion (`as_*`, `subsec_*`),
+  `saturating_*` or `checked_*` arithmetic, and `Option`'s adapters but
+  `unwrap` and `expect` (`?`, `map*`, `unwrap_or*`, `ok_or*`,
+  `and_then`, `filter`, `or*`). Any other method counts as one that can,
+  `Duration`'s `mul_f64`, `div_f64` and `add` among them. With no `.min(`
+  on it, no `+`, `-` or `*` applies to it; it is in the argument of no
+  call that panics on overflow (`add`, `sub` and `mul` and their
+  `_assign` forms, `mul_f32`, `mul_f64`, `div_f32`, `div_f64`,
+  `from_secs_f32`, `from_secs_f64`, `from_mins` and `from_hours`), at any
+  depth of its statement; and no `checked_add`, `checked_sub` or
+  `checked_mul` on its chain, or with it as the whole argument, is
+  followed by `unwrap()` or `expect(`: the same panic.
 - **Jitter where a count bounds the loop.** A name that reads as random
   (`rand`, `RandomState`, `fastrand`, an `rng`) or as jitter reaches each
   sleep. A deadline poll of one interaction is not required to jitter: no
@@ -3582,7 +3593,9 @@ requires:
   wait with the deadline, with its body. The one
   difference allowed is the one the doc states: the example returns
   `Some` on completion and `None` where the doc's poll returns an error at
-  the deadline. Each builds its deadline with `checked_add`.
+  the deadline. Each assigns its backoff the same values, its ceiling
+  included, and builds its deadline with `checked_add`, its `None` not
+  unwrapped.
 
 Rejected: a `.min(` on the Retry-After in a deadline poll too. J-6 names
 the uncapped `max`, and a cap below the server's ask polls sooner than
@@ -3591,7 +3604,8 @@ instead. Rejected for now: reading the loops with `syn`. The lexical
 reading catches every mutation the reviews found, each kept as a test.
 
 **Consequences.** The guard reads code, not a type system. A value that
-passes through a function, a struct field or a shadowed name is not
+passes through a function, a struct field, a pattern
+(`if let Some(asked) = e.retry_after()`) or a shadowed name is not
 followed, and a `.min(` inside a closure on the chain
 (`.map(|a| a.min(MAX))`) reads as no cap; such a recipe is rewritten with
 the `.min(` on the chain. A comparison with the time left that bounds
@@ -3603,7 +3617,13 @@ path (the early-exit rule reads an awaited one, but not one after a call
 around the await, `f(fut.await)?`), a `sleep(` counts where it is called,
 awaited or not, and a `return` in the retryable arm counts even under an
 `if` that compares with a bound. A `checked_` call counts
-only on the Retry-After's own chain or with it as its whole argument.
+only on the Retry-After's own chain or with it as its whole argument. The
+calls that panic with a Retry-After in their argument are the ones the
+No-overflow rule names: a Retry-After passed to one it does not name, put
+in a collection (`[asked, delay].iter().sum()`), or in a closure on a
+variable's chain (only one on a `retry_after()` call's chain is read) is
+not followed. A method not on its list of safe ones counts as one that
+can panic, however safe; such a recipe is rewritten.
 
 With these checks `tests/reliability_tests.rs` went over D-014's 2,000-line
 bar, so the recipe checks, the backon one and this guard, moved unchanged
@@ -3628,6 +3648,31 @@ it uses `checked_add`, as the example does. The checks took
 sources (the docs' code blocks, an example's file, and what a line of
 code holds) moved unchanged to `tests/reliability_tests/recipe_source.rs`,
 another module of the test binary (D-011).
+
+**Amended 2026-11-14 (#504, L-7).** The overflow rule read `+`, `-`, `*`
+and an unwrapped `checked_` call, and this section did not list what it
+missed: `Duration`'s methods that panic on a result too large. Mutations
+a review under #504 found passing: `|asked| asked.mul_f64(1.5).max(delay)`
+or `asked.div_f64(0.5)` in the doc's poll and its example, and jitter
+scaled onto the server's wait in `InteractionRequest`'s recipe
+(`asked.mul_f64(1.0 + random)`, before its `.min(`). Each panics on a
+Retry-After of `u64::MAX` seconds, which `parse_retry_after` accepts. The
+rule now reads a Retry-After's chain before its first `.min(` against the
+methods that cannot panic, and the calls that overflow with one in their
+argument, as the No-overflow rule above says. Each of those mutations is
+a case in `the_retry_loop_check_fails_each_broken_recipe`, with `add` as
+a method, the float constructor, and saturating arithmetic, which passes.
+Two neighbouring claims went further than their checks, and are held
+now: a `checked_add` deadline whose `None` is unwrapped (`.expect(..)`
+in the doc, `.unwrap()` in the example) passed the check that said "an
+error, not a panic", and the example capped its backoff at 15 s to the
+doc's 10 s, a second difference the doc did not state. The example's
+ceiling is the doc's, and `backoff` compares the two. The checks took
+`retry_recipes.rs` past D-014's bar, so the guard's two self-tests,
+`the_retry_loop_check_finds_each_defect` and
+`the_retry_loop_check_fails_each_broken_recipe`, with their cases and
+helpers, moved to `tests/reliability_tests/retry_guard_cases.rs`, a child
+module of `retry_recipes` that calls its private checks (D-011).
 
 ## D-070 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
 
