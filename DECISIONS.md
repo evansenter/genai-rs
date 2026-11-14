@@ -2660,11 +2660,70 @@ path parameter is matched by its position), a request body's required
 flag, a response's schema reference against the type the verb returns
 (the response oracle maps crate types to spec schemas, not to
 operations), and a request body against the binding class the crate sends
-(D-040); that diff is tracked in #558. The two update wrappers (#550)
+(D-040). The diff of the last two is tracked in #558; the first two stay
+watched only (amended 2026-11-14, below). The two update wrappers (#550)
 were probed on 2026-11-13: both are a `400 Unknown parameter`, with or
 without `id` and `update_mask`, and the flat bodies the crate sends apply
 (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query parameters"), so the
 crate is unchanged (D-005).
+
+**Amended 2026-11-14 (#504, K-12).** The pointer above named #558 for
+every watched-only item; #558 covers request bodies and response
+references. The other two stay watched only, for this decision's reason:
+a request follows its binding class, which leads the spec on requests
+(D-040), and the bindings snapshot gives a query parameter a name and a
+body a class, not a schema or a required flag, so there is nothing
+offline to hold either to but the crate itself. A change to either
+changes the reduced snapshot, and the daily watch opens an issue on it,
+for a probe to settle (D-010).
+- **A body's required flag.** The spec marks every request body it gives
+  required, and each verb that calls one of those operations sends its
+  value as the body, so the flag asks nothing the crate does not do. A
+  body made optional asks nothing new; a body given to an operation that
+  had none is a request body, in #558's diff.
+- **A parameter's schema.** Each parameter a verb sends has the type the
+  spec gives it, but for one set: the voices list filters (`accent`,
+  `context`, `gender`, `language_code`, `persona`, `pitch`, `region_code`
+  and `type`), each an array of strings in both specs and an iterable in
+  the bindings. The API matches a filter repeated with several values
+  against any of them (`docs/ENUM_WIRE_FORMATS.md`, "Voices"), and
+  `ListVoices` sends one value per filter, a second `with_*` call
+  replacing the first. That stays: the repeat adds no reach, since one
+  listing per value (per combination, with two such filters), merged,
+  finds the same voices, and setters that send several values can come
+  as `add_*` methods beside the `with_*` ones, without a break, when a
+  caller needs them. Rejected: turning the `with_*` filters into list
+  setters, a break for what a merge already gives. `docs/RESOURCES.md`
+  says so.
+
+The same grade found the reducer dropping parts of the spec without
+saying so: an operation under HEAD, OPTIONS or TRACE, an operation's
+`deprecated`, `servers`, `security` and `callbacks`, a body's `encoding`,
+and the spec's servers, security schemes and `x-speakeasy-retries` each
+reduced to the committed bytes. `snapshot_openapi.py` now takes an
+operation under any of the eight methods OpenAPI names, and keeps every
+key of an operation (or its path item), request body, response and
+content type, and of the spec's top level (`top_level`: its servers,
+security, `info`, `x-speakeasy-globals` and `x-speakeasy-retries`), and
+the security schemes (`security_schemes`); both snapshots were refreshed
+with it, and `test_snapshot_openapi.sh` pins each drift above. What it
+still drops, and why:
+- The prose: descriptions, summaries, titles, examples and code samples.
+  It says nothing the wire does, and churns on every docs edit.
+- The names a generated SDK gives its code: an operation's
+  `operationId`, `tags` and `externalDocs`, and the Speakeasy
+  `x-speakeasy-group`, `x-speakeasy-name-override` and
+  `x-speakeasy-exports`. The crate names its own verbs, and
+  `tests/ci_coverage.rs` maps an endpoint to them by method and path. A
+  schema or a parameter keeps the Speakeasy keys it has, as it did.
+- `x-speakeasy-sse-overload`, which gives the SDK a second method for an
+  operation whose `text/event-stream` response the snapshot keeps.
+- A component nothing kept names: it shapes no request or response until
+  something names it, and then it is kept where it is named.
+None of the newly kept keys is diffed against the crate offline: each is
+watched. The retry policy, `[408, 409, 429, 5XX]` with backoff, is the
+generated client's, which D-053 already weighed: the crate's differs on
+409 and six 5xx, for the reasons given there.
 
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
