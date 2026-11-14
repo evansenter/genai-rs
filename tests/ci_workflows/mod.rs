@@ -14,11 +14,16 @@
 //! error. `release` checks that a release publishes only a commit whose
 //! main push run of `rust.yml` is green on every job but the ones a push
 //! skips by design, with every Cross Platform leg. `sweep` requires
-//! `api-surface-sweep`'s spec-watch and issue-pointer steps.
+//! `api-surface-sweep`'s spec-watch and issue-pointer steps. `required`
+//! holds every step of the checks branch protection requires, listed as
+//! CLAUDE.md lists them, and `fuzz` the fuzz run, which Fuzz Gate reads,
+//! and its committed seeds.
 //!
 //! The steps whose failure must fail their job (the coverage floor and the
 //! runs before it, the release gate, every live nextest step, the scripted
-//! harness step, the sweep's two) are read by `escapes`: no `if:` or `needs:` but the ones a caller allows, no
+//! harness step, the sweep's two, every `run:` step of a required check's
+//! job (`required::REQUIRED_JOBS`) and of the fuzz job) are read by
+//! `escapes`: no `if:` or `needs:` but the ones a caller allows, no
 //! `continue-on-error`, on the step or its job, no `defaults:` on the job
 //! or the workflow, no other shell, no merge key, and no shell-level mask
 //! that `shell::shell_masks` knows (`|| true`, `; true`, `set +e`, an
@@ -54,7 +59,9 @@ use yaml_rust2::Yaml;
 
 mod coverage;
 mod flakiness;
+mod fuzz;
 mod release;
+mod required;
 mod shell;
 mod sweep;
 mod yaml;
