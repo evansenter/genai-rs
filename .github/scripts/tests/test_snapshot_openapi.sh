@@ -48,7 +48,7 @@ cat >"$work/spec.json" <<'EOF'
           {"name": "page_size", "in": "query", "required": true,
            "schema": {"type": "integer", "format": "int32", "description": "Prose."}},
           {"$ref": "#/components/parameters/Filter"},
-          {"name": "kind", "in": "query", "explode": true,
+          {"name": "kind", "in": "query", "explode": true, "x-speakeasy-name-override": "kinds",
            "schema": {"type": "array", "items": {"type": "string"}}},
           {"name": "session", "in": "cookie"}
         ],
@@ -100,11 +100,13 @@ cat >"$work/spec.json" <<'EOF'
     "Thing": {
       "type": "object",
       "description": "A thing.",
+      "x-speakeasy-name-override": "Item",
       "required": ["id"],
       "properties": {
         "id": {"type": "string", "readOnly": true, "description": "The id."},
         "size": {"type": "string", "format": "int64", "example": "7"},
-        "kind": {"type": "string", "enum": ["a", "b"], "x-google-enum-descriptions": ["A", "B"]},
+        "kind": {"type": "string", "enum": ["a", "b"], "x-google-enum-descriptions": ["A", "B"],
+                 "x-google-enum-deprecated": [false, true], "x-speakeasy-unknown-values": "allow"},
         "description": {"type": "string", "description": "A field named like a prose keyword."},
         "title": {"type": "object", "properties": {"title": {"type": "string", "title": "T"}}}
       }
@@ -133,6 +135,16 @@ ok = [
     "description" not in thing and "description" not in thing["properties"]["id"],
     "example" not in thing["properties"]["size"],
     "x-google-enum-descriptions" not in thing["properties"]["kind"],
+    # A schema keeps its extension keys, but the prose ones: the generated
+    # names too, which an operation drops (D-060).
+    thing["properties"]["kind"]
+    == {
+        "enum": ["a", "b"],
+        "type": "string",
+        "x-google-enum-deprecated": [False, True],
+        "x-speakeasy-unknown-values": "allow",
+    },
+    thing.get("x-speakeasy-name-override") == "Item",
     thing["properties"]["id"]["readOnly"] is True,
     thing["properties"]["size"]["format"] == "int64",
     thing["required"] == ["id"],
@@ -150,10 +162,12 @@ ok = [
     d["operations"]["GET /{api_version}/things"]["query"]
     == {
         "filter": {"required": False, "schema": {"type": "string"}},
+        # A parameter keeps its extension keys, as a schema does.
         "kind": {
             "explode": True,
             "required": False,
             "schema": {"items": {"type": "string"}, "type": "array"},
+            "x-speakeasy-name-override": "kinds",
         },
         "page_size": {"required": True, "schema": {"format": "int32", "type": "integer"}},
     },

@@ -2829,13 +2829,39 @@ still drops, and why:
   something names it, and then it is kept where it is named.
 None of the newly kept keys is diffed against the crate offline, and each
 is watched: each states what the crate fixes in its own code (the server
-`Client` defaults to, the `X-Goog-Api-Key` header, the SSE parser
-skipping `[DONE]`) or does not use (a deprecation, the optional
+`Client` defaults to, the API key among the security scheme's
+credentials, the SSE parser skipping `[DONE]`) or does not use (a
+deprecation, the scheme's access token and default headers, the optional
 `x-goog-user-project` header, the generated client's retry policy), so a
 change to one is for a probe to settle, as a parameter's retyping is. The
 retry policy, `[408, 409, 429, 5XX]` with backoff, is one D-053 already
 weighed: the crate's differs on 409 and six 5xx, for the reasons given
 there.
+
+**Amended 2026-11-14 (#504, L-9).** #504's 2026-11-14 grade found the
+paragraph above going further than the code twice. It said a kept key
+states the `X-Goog-Api-Key` header. None does: the one security scheme
+both specs give, `googleGenAIAuth`, is a custom `http` scheme whose
+credentials are `apiKey`, `accessToken` and `defaultHeaders`, and it
+names no header. The crate authenticates with the API key alone, sent in
+its own `X-Goog-Api-Key` header (`API_KEY_HEADER`, `src/http/common.rs`),
+and `ClientBuilder` takes no access token and no default headers. That
+stays. Every endpoint a verb calls takes a key, as each verb's live test
+shows (`tests/ci_coverage.rs`), and the live suites run with a key
+alone, so an access-token option could not be tested live (D-010); one
+would also need a token source and its refresh, which the crate would
+carry for no endpoint it models. The one endpoint in the bindings that
+refuses a key, `files.register_files`, stays deferred for it
+(`docs/INTERACTIONS_API_GAP.md`, "Resource residue"). Whether the other
+endpoints take an access token was not probed. Rejected: an access-token
+or default-headers option "for parity" with the scheme, for that D-010
+reason. The paragraph above now names the scheme's credentials. And
+nothing held the keys it says a schema and a parameter keep: a reducer
+that dropped a schema's `x-speakeasy-*` keys, or a parameter's `x-`
+keys, passed `test_snapshot_openapi.sh`. Its fixture now gives a schema
+`x-speakeasy-unknown-values`, `x-google-enum-deprecated` and
+`x-speakeasy-name-override`, and a parameter `x-speakeasy-name-override`,
+and checks that each is kept.
 
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
