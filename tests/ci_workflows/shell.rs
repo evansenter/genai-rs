@@ -1,19 +1,22 @@
 //! How `tests/ci_workflows/` reads a step's shell script: [`run_script`]
-//! reads the `run:` value as the shell does, and [`shell_masks`] names
-//! what in a guarded step's script lets a failing command pass the step.
+//! takes the `run:` value YAML reads (`super::yaml`), the string the
+//! runner hands the shell, and splits it into command lines, and
+//! [`shell_masks`] names what in a guarded step's script lets a failing
+//! command pass the step.
 //!
-//! The reading is textual, against the forms named here. It catches the
-//! ways a step is known, or likely, to be weakened; a script written to
-//! compute its status out of the guard's sight (a condition that reads a
-//! variable but never holds, a loop over an empty list, a variable set by
-//! a command it does not read) could still pass it (D-058).
+//! The script itself is read as text, against the forms named here. That
+//! catches the ways a step is known, or likely, to be weakened; a script
+//! written to compute its status out of the guard's sight (a condition
+//! that reads a variable but never holds, a loop over an empty list, a
+//! variable set by a command it does not read) could still pass it
+//! (D-058).
 
 use std::ops::Range;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::step_key;
+use super::yaml;
 
 /// A regex compiled once, where it is used.
 macro_rules! regex {
@@ -27,45 +30,24 @@ macro_rules! regex {
 /// opening brace or parenthesis, or `then`, `do` or `else`.
 const AT_COMMAND: &str = r"(?:^|[;&|({]|\b(?:then|do|else)\b)\s*";
 
-/// The script of a step's `run:` as the shell reads it, one command line
-/// per entry: a one-line value, or a block's lines, each trimmed, with
+/// The script of a step's `run:`, one command line per entry: the value
+/// YAML reads (a block's lines, a plain value's continuation lines and a
+/// folded block's lines joined as YAML joins them), each line trimmed,
 /// blank and comment lines dropped and `\` continuations joined. Empty for
-/// a step with no `run:`.
+/// a step with no `run:`, or one YAML cannot read ([`shell_masks`] names
+/// that).
 pub(super) fn run_script(step: &str) -> Vec<String> {
-    let lines: Vec<&str> = step.lines().collect();
-    let mut raw: Vec<String> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let Some(value) = step_key(i, line).and_then(|key| key.strip_prefix("run:")) else {
-            continue;
-        };
-        let value = value.trim();
-        if value.starts_with('|') || value.starts_with('>') {
-            raw.extend(
-                lines[i + 1..]
-                    .iter()
-                    .take_while(|line| {
-                        line.trim().is_empty() || line.len() - line.trim_start().len() > 8
-                    })
-                    .map(|line| line.trim().to_string()),
-            );
-        } else if let Some(inner) = value
-            .strip_prefix('\'')
-            .and_then(|rest| rest.strip_suffix('\''))
-        {
-            raw.push(inner.replace("''", "'"));
-        } else if let Some(inner) = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.strip_suffix('"'))
-        {
-            raw.push(inner.to_string());
-        } else {
-            raw.push(value.to_string());
-        }
-        break;
+    match yaml::run_value(step) {
+        Ok(Some(run)) => script_lines(&run),
+        _ => Vec::new(),
     }
+}
+
+/// A `run:` value's command lines, as [`run_script`] gives them.
+fn script_lines(run: &str) -> Vec<String> {
     let mut script = Vec::new();
     let mut joined = String::new();
-    for line in raw {
+    for line in run.lines().map(str::trim) {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
@@ -75,7 +57,7 @@ pub(super) fn run_script(step: &str) -> Vec<String> {
                 joined.push(' ');
             }
             None => {
-                joined.push_str(&line);
+                joined.push_str(line);
                 script.push(std::mem::take(&mut joined));
             }
         }
@@ -223,6 +205,11 @@ fn mask_patterns() -> &'static [(Regex, &'static str)] {
                 "a function, whose body the guard does not read as the step's",
             ),
             (
+                format!(r"{AT_COMMAND}alias\b|\bshopt\s[^;&|]*\bexpand_aliases\b"),
+                "an `alias`, or `shopt -s expand_aliases`, under which a command the \
+                 guard reads runs another (`alias cargo=true`), as a function would",
+            ),
+            (
                 format!(r"{AT_COMMAND}(let\s|\(\()"),
                 "arithmetic (`let`, `(( ))`), which can set a status out of the guard's sight",
             ),
@@ -259,7 +246,15 @@ fn mask_patterns() -> &'static [(Regex, &'static str)] {
 /// The one `|| true` allowed is a count's, `$(grep -c .. || true)`, whose
 /// exit status 1 means zero.
 pub(super) fn shell_masks(step: &str) -> Vec<String> {
-    let script = run_script(step);
+    let script = match yaml::run_value(step) {
+        Ok(Some(run)) => script_lines(&run),
+        Ok(None) => return Vec::new(),
+        Err(e) => {
+            return vec![format!(
+                "a step YAML cannot read ({e}), so the guard cannot read its script"
+            )];
+        }
+    };
     let lines: Vec<&str> = script.iter().map(String::as_str).collect();
     let mut found = Vec::new();
     match lines.as_slice() {
@@ -678,6 +673,13 @@ fn the_shell_mask_check_names_each_mask() {
         ("eval 'cargo test || true'", "cannot read"),
         ("source ./mask.sh\ncargo test", "cannot read"),
         ("run() { cargo test; }\nrun", "function"),
+        // P8: an alias stands in for the command the guard reads.
+        (
+            "shopt -s expand_aliases\nalias cargo=true\ncargo test",
+            "`alias`",
+        ),
+        ("alias cargo=true", "`alias`"),
+        ("shopt -s expand_aliases", "`alias`"),
         ("echo \"$(cargo test)\"", "command substitution"),
         ("echo $(cargo test)", "command substitution"),
         ("echo `cargo test`", "command substitution"),
@@ -768,6 +770,26 @@ fn the_run_script_reader_reads_what_the_shell_runs() {
         run_script("      - name: Q\n        run: 'it''s'\n"),
         ["it's"]
     );
+    // What YAML joins, the reader joins: a plain value's deeper
+    // continuation line (P1, P3), a folded block, a quoted value over two
+    // lines. The shell runs each as one command.
+    for (step, script) in [
+        (
+            "      - name: Floor\n        run: cargo llvm-cov report --fail-under-lines 93\n          || true\n        env:\n          A: b\n",
+            "cargo llvm-cov report --fail-under-lines 93 || true",
+        ),
+        (
+            "      - run: >\n          cargo nextest run\n          || true\n",
+            "cargo nextest run || true",
+        ),
+        (
+            "      - run: \"cargo nextest run\n          || true\"\n",
+            "cargo nextest run || true",
+        ),
+    ] {
+        assert_eq!(run_script(step), [script], "{step}");
+        assert!(!shell_masks(step).is_empty(), "{step}");
+    }
     assert!(
         run_script("      - uses: actions/checkout@v4\n        with:\n          run: x\n")
             .is_empty()

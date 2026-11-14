@@ -1,15 +1,16 @@
 //! The Code Coverage job reports somewhere every run, measures the
 //! `antigravity` feature with its scripted suite, counts library files
 //! alone, and fails under a floor that no `if:`, `continue-on-error`,
-//! `needs:`, `defaults:` or shell-level mask the guards know skips or
-//! ignores (#504, D-058).
+//! `needs:` or `defaults:`, as YAML reads the workflow's keys, nor a
+//! shell-level mask the guards know in the `run:` value YAML reads, skips
+//! or ignores (#504, D-058).
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{command_lines, failure_escapes, jobs, read, root, run_script, steps};
+use super::{command_lines, failure_escapes, jobs, read, root, run_script, steps, yaml};
 use crate::source_scan;
 
 /// The Code Coverage job of `workflow`, and its steps.
@@ -138,11 +139,12 @@ fn library_files() -> &'static [(String, bool)] {
 /// matches every module file only a test build compiles and no other (an
 /// inline `#[cfg(test)] mod tests { .. }` in a library file is beyond a
 /// filename pattern, and still counted); and a step after the summary runs
-/// one command that fails under a floor near the measured value, with
-/// nothing the guards know to skip it or pass its failure
-/// ([`failure_escapes`]: an `if:`, `continue-on-error` or `needs:`, on the
-/// step or its job, a `defaults:`, or a shell-level mask such as
-/// `|| true` or `exit "0"`), as the runs before it have.
+/// one command, its `run:` value as YAML reads it, that fails under a floor
+/// near the measured value, with nothing the guards know to skip it or pass
+/// its failure ([`failure_escapes`]: an `if:`, `continue-on-error` or
+/// `needs:`, on the step or its job, a `defaults:`, each key as YAML reads
+/// it, or a shell-level mask such as `|| true` or `exit "0"`), as the runs
+/// before it have.
 fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
     let (job, all) = coverage_job(workflow);
     let mut problems = Vec::new();
@@ -194,7 +196,7 @@ fn coverage_problems(workflow: &str, files: &[(String, bool)]) -> Vec<String> {
         .iter()
         .find(|step| step.contains("binary(antigravity_scripted)"))
     {
-        Some(scripted) if scripted.contains("GEMINI_API_KEY: \"\"") => {}
+        Some(scripted) if yaml::step_env(scripted, "GEMINI_API_KEY").as_deref() == Some("") => {}
         Some(scripted) => problems.push(format!(
             "the scripted suite runs with the key blanked:\n{scripted}"
         )),
@@ -392,6 +394,32 @@ fn the_coverage_check_catches_what_it_claims_to() {
         workflow.replace(
             "--fail-under-lines 93\n",
             "--fail-under-lines 93 --ignore-filename-regex '.*'\n",
+        ),
+        // P1: an `|| true` YAML joins to the floor's plain `run:` from a
+        // deeper continuation line, or a folded block that runs the floor
+        // as one line with it.
+        workflow.replace(
+            "--fail-under-lines 93\n",
+            "--fail-under-lines 93\n          || true\n",
+        ),
+        workflow.replace(
+            &format!("{floor}93\n"),
+            &format!(
+                "        run: >\n          {}93\n          || true\n",
+                floor.trim_start().trim_start_matches("run: ")
+            ),
+        ),
+        // P4, P5: `continue-on-error` written so the text never matched
+        // it, on the floor step or on the job.
+        workflow.replace(floor, &format!("        \"continue-on-error\": true\n{floor}")),
+        workflow.replace(floor, &format!("        continue-on-error : true\n{floor}")),
+        workflow.replace(
+            "    name: Code Coverage\n",
+            "    name: Code Coverage\n    \"continue-on-error\": true\n",
+        ),
+        workflow.replace(
+            "    name: Code Coverage\n",
+            "    name: Code Coverage\n    continue-on-error : true\n",
         ),
         // A failing test in a coverage run passed over.
         workflow.replace(
