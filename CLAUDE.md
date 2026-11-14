@@ -122,7 +122,7 @@ there (`docs/LOGGING_STRATEGY.md` has the snippet).
 | `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
 | `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
 | `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types (theirs in `streaming/serde_impls.rs`) |
-| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`). Submodules beside three of them: `triggers/list.rs` (the trigger and execution listings), `files/upload.rs` (`FileUpload`), and `file_search_stores/` (`types.rs`, `list.rs`, `document_input.rs`) |
+| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs`, `decisions.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`). Submodules beside three of them: `triggers/list.rs` (the trigger and execution listings), `files/upload.rs` (`FileUpload`), and `file_search_stores/` (`types.rs`, `list.rs`, `document_input.rs`) |
 | `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
 | `src/paging.rs`, `src/poll.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()`, and the `list_builder!` macro that defines the builders; `PollOptions` and the wait behind every `wait_until_active` |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
@@ -205,6 +205,7 @@ literals elsewhere.
 | `DEFAULT_TTS_MODEL` | Text-to-speech |
 | `DEFAULT_TRANSCRIPTION_MODEL` | Speech-to-text, where `TranscriptionConfig` takes effect |
 | `CONTINUATION_MODEL` | Decoding continuation (the only model that supports it) |
+| `DEFAULT_DECISION_MODEL` | `client.decisions()` (the only model the endpoint serves) |
 | `DEFAULT_DEEP_RESEARCH_AGENT`, `DEFAULT_ANTIGRAVITY_AGENT` | `with_agent()` |
 
 Unit tests may use `"test-model"` where the id is filler. Non-test code that

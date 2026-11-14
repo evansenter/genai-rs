@@ -97,7 +97,7 @@ mod thinking_summaries {
 
 // =============================================================================
 // ThinkingLevel Wire Format Tests
-// Per docs: lowercase - "minimal", "low", "medium", "high"
+// Per docs: lowercase - "minimal", "low", "medium", "high", "xhigh"
 // =============================================================================
 
 mod thinking_level {
@@ -115,6 +115,7 @@ mod thinking_level {
             "medium"
         );
         assert_eq!(serde_json::to_value(ThinkingLevel::High).unwrap(), "high");
+        assert_eq!(serde_json::to_value(ThinkingLevel::XHigh).unwrap(), "xhigh");
     }
 
     #[test]
@@ -135,6 +136,10 @@ mod thinking_level {
             serde_json::from_value::<ThinkingLevel>(json!("high")).unwrap(),
             ThinkingLevel::High
         ));
+        assert!(matches!(
+            serde_json::from_value::<ThinkingLevel>(json!("xhigh")).unwrap(),
+            ThinkingLevel::XHigh
+        ));
     }
 
     #[test]
@@ -144,6 +149,7 @@ mod thinking_level {
             ThinkingLevel::Low,
             ThinkingLevel::Medium,
             ThinkingLevel::High,
+            ThinkingLevel::XHigh,
         ] {
             let json = serde_json::to_value(&variant).unwrap();
             let back: ThinkingLevel = serde_json::from_value(json).unwrap();

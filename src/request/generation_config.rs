@@ -26,6 +26,12 @@ wire_enum! {
         Medium = "medium",
         /// Extensive reasoning for complex problems
         High = "high",
+        /// More reasoning than [`High`](Self::High).
+        ///
+        /// Few models support it: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)
+        /// rejects it with a 400. Which models take it is under Models in
+        /// `docs/INTERACTIONS_API_GAP.md`.
+        XHigh = "xhigh",
     }
     unknown(level_type, unknown_level_type)
 }

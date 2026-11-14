@@ -252,6 +252,12 @@ fn test_thinking_level_deserialization() {
         serde_json::from_str::<ThinkingLevel>("\"high\"").unwrap(),
         ThinkingLevel::High
     );
+    // google-genai 3.3.0; echoed by a stored interaction's
+    // generation_config (live 2026-11-14).
+    assert_eq!(
+        serde_json::from_str::<ThinkingLevel>("\"xhigh\"").unwrap(),
+        ThinkingLevel::XHigh
+    );
 
     // Test unknown value deserializes to Unknown with data preserved (Evergreen principle)
     let unknown: ThinkingLevel = serde_json::from_str("\"extreme\"").unwrap();
@@ -281,6 +287,10 @@ fn test_thinking_level_serialization() {
     assert_eq!(
         serde_json::to_string(&ThinkingLevel::High).unwrap(),
         "\"high\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ThinkingLevel::XHigh).unwrap(),
+        "\"xhigh\""
     );
 }
 

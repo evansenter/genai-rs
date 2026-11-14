@@ -2,7 +2,7 @@
 //! interaction body in its model and agent forms, and every resource's
 //! create and update body, plus proptest samples.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::TestRunner;
@@ -14,6 +14,7 @@ use crate::coverage_oracle::api_surface::debug_extra_keys;
 use crate::credentials::{
     CreateCredentialRequest, CredentialConfig, CredentialType, CredentialUpdate, InjectionLocation,
 };
+use crate::decisions::{CreateDecisionRequest, DecisionInput, NoulCriteria, Question};
 use crate::environments::{
     AllowlistEntry, CreateEnvironmentRequest, EnvVar, EnvironmentSource, EnvironmentSpec,
     NetworkConfig, RemoteEnvironment, SourceType,
@@ -625,6 +626,53 @@ pub(super) fn voice_requests() -> Vec<Value> {
             store: Some(false),
         }),
     ]
+}
+
+/// A decision over each input form, with one question of each type (every
+/// field set) under the content input.
+pub(super) fn decision_requests() -> Vec<Value> {
+    let questions = BTreeMap::from([
+        (
+            "positive".to_string(),
+            Question::Noul {
+                instructions: "Is it positive?".into(),
+                criteria: Some(NoulCriteria {
+                    true_description: Some("liked".into()),
+                    false_description: Some("disliked".into()),
+                }),
+            },
+        ),
+        (
+            "topic".to_string(),
+            Question::Choice {
+                instructions: "What is it about?".into(),
+                criteria: BTreeMap::from([
+                    ("food".to_string(), "The food".to_string()),
+                    ("service".to_string(), String::new()),
+                ]),
+            },
+        ),
+        (
+            "stars".to_string(),
+            Question::Score {
+                instructions: "How many stars?".into(),
+                criteria: vec!["zero".into(), "one".into()],
+            },
+        ),
+    ]);
+    [
+        DecisionInput::Text("The soup was cold.".into()),
+        DecisionInput::Content(contents()),
+    ]
+    .into_iter()
+    .map(|input| {
+        to_value(&CreateDecisionRequest {
+            model: "models/m".into(),
+            input,
+            questions: questions.clone(),
+        })
+    })
+    .collect()
 }
 
 pub(super) fn file_search_store_requests() -> Vec<Value> {

@@ -13,6 +13,7 @@ methods are the resource's verbs:
 | `client.environments().files()` | `EnvironmentFiles` | an environment's files |
 | `client.credentials()` | `Credentials` | `/v1beta/credentials` |
 | `client.voices()` | `Voices` | `/v1beta/voices` |
+| `client.decisions()` | `Decisions` | `/v1beta/decisions` |
 | `client.files()` | `Files` | `/v1beta/files` (the Files API) |
 | `client.file_search_stores()` | `FileSearchStores` | `/v1beta/fileSearchStores` |
 | `client.file_search_stores().documents()` | `FileSearchDocuments` | a store's documents |
@@ -33,7 +34,7 @@ stay on `Client`.
 
 A client built with `with_api_version("v1")` reaches interactions, the
 Files API and file search stores; agents, environments, webhooks,
-credentials, voices and triggers answer 404 there
+credentials, voices, triggers and decisions answer 404 there
 ([Client configuration](CONFIGURATION.md#client-configuration)).
 
 ```rust,no_run
@@ -54,7 +55,7 @@ The handles follow the resource groups of the Python SDK (`google-genai`).
 Required arguments are positional, as in Python; optional list arguments
 become `with_*` setters.
 
-| Python (`google-genai` 3.0.0) | genai-rs |
+| Python (`google-genai` 3.3.0) | genai-rs |
 |------------------------------|----------|
 | `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id, base_agent)...)` |
 | `client.agents.create(..., agent_config={"type": "antigravity", "model": m, "max_total_tokens": n})` | `Agent::new(id, base_agent).with_agent_config(AntigravityConfig::new().with_model(m).with_max_total_tokens(n))` |
@@ -113,6 +114,12 @@ become `with_*` setters.
 | `client.voices.list(page_size=, page_token=, search=, type_=, gender=, language_code=, region_code=, accent=, persona=, contexts=, pitch=)` | `client.voices().list().with_page_size(n).with_page_token(t).with_search(q).with_voice_type(v).with_gender(g).with_language_code(l).with_region_code(r).with_accent(a).with_persona(p).with_context(c).with_pitch(p).send()` |
 | (no equivalent) | `client.voices().list().pages()` / `.items()` |
 | `client.voices.delete(id)` | `client.voices().delete(id)` |
+| `client.decisions.create(model=, input=, questions={id: {"type": "noul", ...}, ...})` | `client.decisions().create(&CreateDecisionRequest::new(model, input).add_question(id, Question::noul(instructions)))`, with `model` `DEFAULT_DECISION_MODEL`, the one model the endpoint serves |
+| `questions={id: {"type": "noul", "instructions": i, "criteria": {"true_description": t, "false_description": f}}}` | `Question::noul_with_criteria(i, NoulCriteria::new().with_true_description(t).with_false_description(f))` |
+| `questions={id: {"type": "choice", "instructions": i, "criteria": {option: description, ...}}}` | `Question::choice(i, [(option, description), ...])` |
+| `questions={id: {"type": "score", "instructions": i, "criteria": [level, ...]}}` | `Question::score(i, [level, ...])` |
+| `input=` a string, one content block or a list (text, image, audio, document, video) | `CreateDecisionRequest::new(model, input)` with `input` a `&str`, a `Content` or a `Vec<Content>` (`DecisionInput`) |
+| `instructions=` a text block or a list of them | Not modeled: `instructions` is sent as a string, which says the same as one text block |
 | `client.files.upload(file=path, config={"mime_type": m, "display_name": n})` | `client.files().upload(FileUpload::from_path(path).with_mime_type(m).with_display_name(n))` |
 | `client.files.upload(file=io_object, config={"mime_type": m})` | `client.files().upload(FileUpload::from_bytes(data, m))` |
 | `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled (D-039): the API serves the file under the chosen name, and a second upload under it is a `409`, but `FileUpload` is shared with store uploads, which take no name, so it needs a files-only shape. It is the bindings' `UploadFileConfig.name`, listed with that reason in the coverage oracle's `UNMAPPED` |

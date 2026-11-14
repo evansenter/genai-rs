@@ -207,23 +207,35 @@ async fn test_scripted_model_options_reach_the_model_request() {
     );
     agent.shutdown().await.expect("shutdown");
 
-    // The harness's fifth level, which the Interactions API's ThinkingLevel
-    // does not name, passes through as an unknown value.
-    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
-    let mut agent = scripted_agent(&fake)
-        .with_thinking_level(genai_rs::ThinkingLevel::Unknown {
-            level_type: "extra_high".to_string(),
-            data: json!("extra_high"),
-        })
-        .spawn()
-        .await
-        .expect("spawn");
-    agent.chat("hi").await.expect("turn");
-    assert_eq!(
-        fake.request_json(0).unwrap()["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-        "extra_high"
-    );
-    agent.shutdown().await.expect("shutdown");
+    // The harness forwards both fifth levels unchanged. Python's
+    // `ThinkingLevel.EXTRA_HIGH` is "extra_high", which the Interactions
+    // API's ThinkingLevel does not name, so it passes through as an unknown
+    // value. The API's own "xhigh" (`XHigh`) is a different level to
+    // generateContent: on 2026-11-14 gemini-3.8-flash took "extra_high" and
+    // refused "xhigh" with a 400, so neither is rewritten into the other.
+    for (level, wire) in [
+        (
+            genai_rs::ThinkingLevel::Unknown {
+                level_type: "extra_high".to_string(),
+                data: json!("extra_high"),
+            },
+            "extra_high",
+        ),
+        (genai_rs::ThinkingLevel::XHigh, "xhigh"),
+    ] {
+        let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
+        let mut agent = scripted_agent(&fake)
+            .with_thinking_level(level)
+            .spawn()
+            .await
+            .expect("spawn");
+        agent.chat("hi").await.expect("turn");
+        assert_eq!(
+            fake.request_json(0).unwrap()["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            wire
+        );
+        agent.shutdown().await.expect("shutdown");
+    }
 }
 
 #[tokio::test]

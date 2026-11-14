@@ -170,7 +170,7 @@ let client = Client::builder("api-key".to_string())
 | `with_connect_timeout(Duration)` | 30 s (`DEFAULT_CONNECT_TIMEOUT`) | Connection timeout: DNS, TCP and TLS. `Duration::MAX` turns it off, for tests on a paused tokio clock ([why](RELIABILITY.md#tests-on-a-paused-clock)) |
 | `with_read_timeout(Duration)` | None | Longest wait for the headers or the next chunk, reset by each one: bounds a stalled stream without capping a long one. Set it above the longest a call thinks before answering |
 | `with_base_url(String)` | The Gemini API host | Send requests to a proxy or mock server instead of `generativelanguage.googleapis.com` |
-| `with_api_version(String)` | `"v1beta"` | The version path segment. `"v1"` is the stable endpoint: it serves interactions in full (create, get, delete, cancel, streaming, continuation) and the Files and File Search Store APIs, and answers 404 for agents, environments, webhooks, credentials, voices and triggers ([gap tracker](INTERACTIONS_API_GAP.md#interaction-residue-2026-11-05)) |
+| `with_api_version(String)` | `"v1beta"` | The version path segment. `"v1"` is the stable endpoint: it serves interactions in full (create, get, delete, cancel, streaming, continuation) and the Files and File Search Store APIs, and answers 404 for agents, environments, webhooks, credentials, voices, triggers and decisions ([gap tracker](INTERACTIONS_API_GAP.md#interaction-residue-2026-11-05)) |
 | `add_wire_inspector(Arc<dyn WireInspector>)` | None (`LOUD_WIRE` adds a printer) | Observe raw API traffic; see [Logging Strategy](LOGGING_STRATEGY.md#wire-inspection-api) |
 
 `Client::new(api_key)` is `Client::builder(api_key).build()`, panicking

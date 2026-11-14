@@ -3960,3 +3960,69 @@ written, so reordering two spans or qualifying one's path changes it) or
 most of its words still passes as a new entry, and two genuinely
 different entries that open alike fail: reword one, which a reader needs
 anyway.
+
+## D-074 — The decisions resource is a create-only handle over the crate's `Content` (2026-11-14)
+
+**Context.** google-genai 3.3.0 adds a decisions resource (#463): `POST
+/{version}/decisions` takes a model, an input (a string, one content block
+or a list of text, image, audio, document or video blocks) and a map of
+named questions (`noul`, `choice` or `score`, each with instructions and
+criteria), and returns an answer per question with calibrated
+probabilities, input-filter feedback and usage. The published specs do not
+list it. A first probe with `DEFAULT_MODEL` was a `404 Requested model not
+found`, so whether any model served it was open, and D-010 rules out
+modeling surface that cannot be verified.
+
+**Decision.** Probe first, then model it as a resource (D-016). On
+2026-11-14 `GET /v1beta/models` listed `models/gemini-decision-1` with
+`createDecision` as its only method; it served all three question types in
+one request, the input as a string, one block and a list with an image,
+and the documented 400s, while every other model tried (the crate's model
+constants and the three ids new in 3.3.0) was a 404 (the probes are in
+`docs/INTERACTIONS_API_GAP.md`, "Sweep 3.0.0 → 3.3.0"). So:
+
+1. `DEFAULT_DECISION_MODEL` names it (D-006), and `tests/model_literals.rs`
+   matches `gemini-decision-<digit>` as it matches `gemini-<digit>`.
+2. `client.decisions()` returns a `Decisions` handle with one verb,
+   `create(&CreateDecisionRequest)`, as `Voices::create` and
+   `Credentials::create` take their request types. The request is built
+   with `CreateDecisionRequest::new(model, input)` and
+   `add_question(id, question)` (an `add_*`, as `add_label` adds to a
+   keyed map; a repeated ID replaces). Questions and answers are
+   `BTreeMap`s keyed by ID, so the body is written in a stable order.
+3. The input reuses `Content`: `DecisionInput` is `Text(String)` or
+   `Content(Vec<Content>)`, from `&str`, `String`, `Content` or
+   `Vec<Content>`; one block goes out as a one-item list, which the
+   endpoint reads the same. The API, not the crate, rejects a block of
+   another type.
+4. `Question` is a request-side union (`Noul`, `Choice`, `Score`) with an
+   `Unknown { question_type, data }` that is sent as its data, so a
+   question type the crate does not model yet can still be sent. Its
+   instructions are a `String`: the bindings' text-block and list arms
+   were accepted live but say nothing a string cannot.
+5. `Answer` follows `TranscriptionMode` (D-001, #491): each known variant
+   keeps its unmodeled keys in `extra`, and an unknown type, or a known one
+   with a field of the wrong type, is kept whole as `Answer::Unknown`. An
+   absent field reads as its zero, since protobuf JSON omits zeros, rather
+   than dropping the answer. Strict mode does not reject an unknown answer,
+   as it does not reject an unknown transcription mode; `BlockReason`, a
+   `wire_enum!`, follows strict mode as every string enum does.
+6. `CreateDecisionResponse` and `PromptFeedback` are `#[non_exhaustive]`
+   with a flattened `extra`; `usage` is the interactions' `UsageMetadata`,
+   whose class the bindings reuse.
+
+The coverage oracle maps the request (`decisions.CreateDecisionRequest`)
+and the response (`decisions.CreateDecisionResponse`, with no spec schema
+until the specs list it), `tests/ci_coverage.rs` maps the endpoint to
+`Decisions::create`, and `tests/decisions_tests.rs` (the `tools`
+integration group) calls it live.
+
+**Consequences.** `prompt_feedback` and `BlockReason` were never served
+(no probe sent input a filter would block), so they rest on the bindings
+alone, and the gap tracker lists them as open ("Modeled, not yet served"
+under the 3.3.0 sweep); a reason the API sends that the bindings lack reads
+as `Unknown`. A
+second decision model, or `DEFAULT_DECISION_MODEL`'s retirement, is a
+one-line change to the constant. The resource answers 404 on `/v1`, as
+agents, environments, webhooks, credentials, voices and triggers do; `/v1`
+serves only interactions, files and file search stores.

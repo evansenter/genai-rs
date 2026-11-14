@@ -19,6 +19,7 @@ revision, that reasoning appears in `response.steps` as
 | `Low` | `"low"` | Accepted; the cheapest level this model allows |
 | `Medium` | `"medium"` | Accepted |
 | `High` | `"high"` | Accepted |
+| `XHigh` | `"xhigh"` | **Rejected** with a 400. The endpoint knows the value, but few models take it; which ones is under [Models](INTERACTIONS_API_GAP.md#models) in the gap tracker |
 
 **Omitting `with_thinking_level()` does not turn thinking off.** It sends no
 level, and the model's default applies. `DEFAULT_MODEL` (`gemini-3.8-flash`)

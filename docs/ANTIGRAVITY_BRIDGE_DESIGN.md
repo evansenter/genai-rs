@@ -670,7 +670,7 @@ own:
 | `ModelEndpoint.base_url` | `with_gemini_base_url` | Needs a non-blank `with_api_key`. |
 | `ModelEndpoint.http_headers` | `add_model_header` | |
 | `GeminiAPIEndpoint.options`, `GeminiModelOptions.thinking_level`, `ThinkingLevel.MINIMAL`, `ThinkingLevel.LOW`, `ThinkingLevel.MEDIUM`, `ThinkingLevel.HIGH` | `with_thinking_level(crate::ThinkingLevel)` | Sent as `generationConfig.thinkingConfig.thinkingLevel`. |
-| `ThinkingLevel.EXTRA_HIGH` | `ThinkingLevel::Unknown { level_type: "extra_high", .. }` | The crate's `ThinkingLevel` follows the Interactions API's four levels; the harness forwards this value unchanged. |
+| `ThinkingLevel.EXTRA_HIGH` | `ThinkingLevel::Unknown { level_type: "extra_high", .. }` | The harness forwards the level unchanged, so this sends Python's `"extra_high"`. It is not the crate's `ThinkingLevel::XHigh`, the Interactions API's fifth level, which goes out as `"xhigh"`: `generateContent` reads the two as different levels, and some models take one but not the other (under Models in `docs/INTERACTIONS_API_GAP.md`). |
 | `GeminiModelOptions.service_tier`, `ServiceTier.STANDARD`, `ServiceTier.PRIORITY`, `ServiceTier.FLEX` | `with_service_tier(crate::ServiceTier)` | Sent as the request's `serviceTier`. |
 | `GeminiModelOptions.max_output_tokens` | `with_max_output_tokens` | Harness default 65,535. |
 | `LocalAgentConfig.vertex`, `LocalAgentConfig.project`, `LocalAgentConfig.location`, `VertexEndpoint.api_key`, `VertexEndpoint.project`, `VertexEndpoint.location`, `VertexEndpoint.options` | Not modeled (product decision) | Vertex AI endpoints, out of scope since v1: the supported path is a Gemini API key. The wire types exist (`protocol::VertexEndpoint`). |

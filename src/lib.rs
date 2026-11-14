@@ -37,6 +37,8 @@
 //! - **Resources**: `client.agents()`, `.webhooks()`, `.triggers()`,
 //!   `.environments()`, `.credentials()`, `.voices()`, `.files()` and
 //!   `.file_search_stores()`, with paged `.items()` streams
+//! - **Decisions**: `client.decisions()` answers noul, choice and score
+//!   questions about an input with calibrated probabilities
 //! - **Background agents and decoding continuation**: Deep Research and
 //!   Antigravity agents in the background, and
 //!   [`CONTINUATION_MODEL`] answers resumed past `max_output_tokens`
@@ -140,6 +142,11 @@ pub const DEFAULT_TRANSCRIPTION_MODEL: &str = "gemini-3.5-transcribe";
 /// [`InteractionBuilder::with_continuation_token`].
 pub const CONTINUATION_MODEL: &str = "gemini-4-argon";
 
+/// The model for [`Decisions::create`], the one model the decisions
+/// endpoint serves: every other model answers it with a `404 Requested
+/// model not found`, and this one serves nothing but decisions.
+pub const DEFAULT_DECISION_MODEL: &str = "gemini-decision-1";
+
 /// The Deep Research agent id, for [`with_agent`](InteractionBuilder::with_agent).
 ///
 /// Agent interactions require `background = true`.
@@ -234,6 +241,14 @@ pub use credentials::{
     CreateCredentialRequest, Credential, CredentialConfig, CredentialListResponse,
     CredentialStatus, CredentialType, CredentialUpdate, Credentials, InjectionLocation,
     ListCredentials,
+};
+
+// Decisions resource (/v1beta/decisions) — calibrated answers to
+// structured questions about an input
+pub mod decisions;
+pub use decisions::{
+    Answer, BlockReason, CreateDecisionRequest, CreateDecisionResponse, DecisionInput, Decisions,
+    NoulCriteria, PromptFeedback, Question,
 };
 
 pub mod voices;

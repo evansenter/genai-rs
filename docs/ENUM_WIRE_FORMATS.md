@@ -41,7 +41,7 @@ the shape was a `Content` block rather than a step.
 | 9 | `Tool` | `tool_type` | Tool types |
 | 10 | `FunctionCallingMode` | `mode_type` | auto/any/none/validated |
 | 11 | `ToolChoice` | `choice_type` | Mode string or `allowed_tools` object |
-| 12 | `ThinkingLevel` | `level_type` | minimal/low/medium/high |
+| 12 | `ThinkingLevel` | `level_type` | minimal/low/medium/high/xhigh |
 | 13 | `ThinkingSummaries` | `summaries_type` | auto/none |
 | 14 | `ServiceTier` | `tier_type` | flex/standard/priority/deferred |
 | 15 | `InteractionStatus` | `status_type` | Response status |
@@ -78,6 +78,9 @@ the shape was a `Content` block rather than a step.
 | 46 | `TranscriptionMode` | `mode_type` | smart/verbatim, string or tagged object |
 | 47 | `CodeMenderMode` | `mode_type` | scan/verify (CodeMender is Vertex-only) |
 | 48 | `FileSource` | `source_type` | Files API file origin: UPLOADED/GENERATED/REGISTERED |
+| 49 | `Question` | `question_type` | Decision questions: noul/choice/score (request only; `Unknown` is sent as its data) |
+| 50 | `Answer` | `answer_type` | Decision answers: noul/choice/score |
+| 51 | `BlockReason` | `reason_type` | A decision's `prompt_feedback.block_reason` |
 
 The Antigravity harness enums are listed in their
 [own section](#antigravity-harness-protocol-feature-antigravity).
@@ -182,7 +185,7 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 | `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `web_search` and `image_search` served live 2026-11-07 (`image_search` on some models only); `enterprise_web_search` is Vertex-only. See [SearchType](#searchtype) |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
-| `ThinkingLevel` | lowercase | `"minimal"`, `"low"`, `"medium"`, `"high"` | Which levels `DEFAULT_MODEL` accepts is under Models in `docs/INTERACTIONS_API_GAP.md` |
+| `ThinkingLevel` | lowercase | `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` | Which levels `DEFAULT_MODEL` accepts, and which models take `xhigh`, is under Models in `docs/INTERACTIONS_API_GAP.md` |
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Verified 2026-01-05 (pre-revision) |
 | `VideoProcessing` | string or object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | The window is the cost lever among the `static` forms. Only valid inside a `user_input` step. Measured live 2026-08-18 |
 | `Tool::Function` | object | `{"type": "function", "name": "get_time", "description": "...", "parameters": {...}}` | Only `name` is needed: a function tool sent with just a `name` is accepted and called, and a stored read serves it that way (live 2026-11-05). `description` and `parameters` are left out when `None`; `FunctionParameters` keeps schema keywords it doesn't model. A tool read without its optional fields is still `Tool::Function`, not `Unknown` |
@@ -205,6 +208,10 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 | `Visualization` | lowercase | `"off"`, `"auto"` | Verified live 2026-07 via the validation error |
 | `CodeMenderMode` | lowercase | `"scan"`, `"verify"` | `agent_config.find_request.mode`, from the google-genai 2.34.0 bindings. Unverified: the `code-mender` agent config is Vertex-only (`400 ... allowed on the Gemini Enterprise Agent Platform`, live 2026-11-05) |
 | Audio MIME type (TTS) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent; see [Audio response](#audio-response-tts-output). Live 2026-09-24 |
+| `Question` | tagged by `"type"` | `{"type": "noul", "instructions": "...", "criteria": {"true_description": "..."}}` / `{"type": "choice", ..., "criteria": {"id": "description"}}` / `{"type": "score", ..., "criteria": ["level 0", "level 1"]}` | All three verified live 2026-11-14; see [Decisions](#decisions) |
+| `Answer` | tagged by `"type"` | `{"type": "noul", "noul": 0.97, "confidence": 0.97}` / `{"type": "choice", "choice": "a", ...}` / `{"type": "score", "score": 0.2, ...}` | All three served live 2026-11-14; see [Decisions](#decisions) |
+| `BlockReason` | snake_case | `"safety"`, `"other"`, `"blocklist"`, `"prohibited_content"`, `"image_safety"` | From the google-genai 3.3.0 bindings; never served (no probe sent input a filter would block) |
+| `DecisionInput` | string or `[Content]` | `"text"` / `[{"type": "text", ...}, {"type": "image", ...}]` | Both verified live 2026-11-14. The crate sends one block as a one-item list |
 | `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `prebuilt`/`prompted` verified live 2026-09-24 |
 | `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Verified live 2026-09-24 |
 | `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | Create bodies are tagged by it. The first two verified live 2026-09-24 (`oauth2` create validates that `token_url` is reachable) |
@@ -556,10 +563,11 @@ there. On 2026-08-10, verified live, the reverse:
 
 ### ThinkingLevel
 
-`"minimal"`, `"low"`, `"medium"`, `"high"` in
+`"minimal"`, `"low"`, `"medium"`, `"high"` and `"xhigh"` in
 `generation_config.thinking_level`. Which levels `DEFAULT_MODEL` accepts,
-the error it answers `"minimal"` with, and what omitting the field does are
-under Models in `docs/INTERACTIONS_API_GAP.md`.
+the error it answers `"minimal"` with, which models take `"xhigh"` and what
+omitting the field does are under Models in `docs/INTERACTIONS_API_GAP.md`.
+`"xhigh"` is new in google-genai 3.3.0.
 
 ### InteractionStatus
 
@@ -1117,6 +1125,56 @@ Verified live 2026-11-05: a create's `description`, `language_code`,
 stored, echoed and matched by the list filters. `sample_audio` is output
 only: a value sent is ignored, and the response carries a sample the API
 generated.
+
+### Decisions
+
+`POST /v1beta/decisions` (`client.decisions().create()`, `src/decisions.rs`),
+verified live 2026-11-14 on `DEFAULT_DECISION_MODEL`. The request is flat
+snake_case:
+
+```json
+{"model": "gemini-decision-1",
+ "input": "Review: the soup arrived cold.",
+ "questions": {
+   "positive": {"type": "noul", "instructions": "Is the review positive?",
+                "criteria": {"true_description": "liked", "false_description": "disliked"}},
+   "topic": {"type": "choice", "instructions": "About?",
+             "criteria": {"food": "The food itself", "service": ""}},
+   "stars": {"type": "score", "instructions": "Stars?",
+             "criteria": ["zero stars", "one star", "two stars", "three stars"]}}}
+```
+
+The response keys each answer by its question's ID, with the question's
+type as the answer's `type`:
+
+```json
+{"answers": {
+   "positive": {"type": "noul", "noul": 0.0298, "confidence": 0.9702},
+   "topic": {"type": "choice", "choice": "service", "confidence": 0.6232,
+             "probabilities": {"food": 0.3636, "service": 0.6232, "price": 0.0133}},
+   "stars": {"type": "score", "score": 0.2112, "confidence": 0.8055,
+             "probabilities": {"0": 0.8055, "1": 0.1810, "2": 0.0104, "3": 0.0031},
+             "legend": {"0": "zero stars", "1": "one star", "2": "two stars", "3": "three stars"}}},
+ "usage": {"total_tokens": 249, "total_input_tokens": 249,
+           "input_tokens_by_modality": [{"modality": "text", "tokens": 249}],
+           "total_output_tokens": 0}}
+```
+
+- `noul` is `P(true)`, and its `confidence` is `max(noul, 1 - noul)`. A
+  choice's `confidence` is its `choice`'s probability; a score's is its
+  highest level probability, and `score` is the expected level, each level
+  index times its probability, summed.
+- A score's `probabilities` and `legend` are keyed by the level's index as
+  a string. `Answer` reads an absent field as its zero (protobuf JSON omits
+  zeros); a field of the wrong type, or an unknown `type`, keeps the answer
+  whole as `Answer::Unknown`.
+- `input` is a string, one content block or a list of them, and a
+  question's `instructions` a string, one text block or a list of them (the
+  bindings' arms). The crate sends `input` as a string or a list, and
+  `instructions` as a string. Which forms the endpoint took is under
+  [Sweep 3.0.0 → 3.3.0](INTERACTIONS_API_GAP.md#sweep-300--330-2026-11-14).
+- `prompt_feedback` (`block_reason`, `block_reason_message`) was not
+  served; its shape is the bindings'.
 
 ### ResponseFormat
 

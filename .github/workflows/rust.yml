@@ -239,7 +239,7 @@ jobs:
           - group: core
             tests: "interactions_api_tests multiturn_tests streaming_multiturn_tests streaming_resume_tests error_handling_tests"
           - group: tools
-            tests: "tools_and_config_tests webhooks_and_agents_tests credentials_tests environment_files_tests"
+            tests: "tools_and_config_tests webhooks_and_agents_tests credentials_tests environment_files_tests decisions_tests"
           - group: functions
             tests: "function_calling_tests tool_service_tests"
           - group: multimodal
@@ -336,7 +336,7 @@ jobs:
           # which the flakiness report counts (count_retried_flakes.sh).
           for ex in simple_interaction streaming stateful_interaction explicit_turns \
                     auto_function_calling manual_function_calling structured_output \
-                    pdf_input files_api multi_turn_agent_manual_stateless; do
+                    pdf_input files_api multi_turn_agent_manual_stateless decisions; do
             echo "::group::cargo run --example $ex"
             retried=0
             if ! timeout --kill-after=30s 300s cargo run --example "$ex"; then
