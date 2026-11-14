@@ -510,6 +510,58 @@ fn regression_harness_default_scalar_written_back() {
     );
 }
 
+/// `harness_output_event`, 2026-11-13 (CI on PR #562): a trajectory state
+/// sent by its pre-0.1.10 spelling, `STATE_IDLE`, is read as `Idle` and
+/// written as `STATE_FULLY_IDLE`, a normalization the variant documents,
+/// which the faithfulness check did not know.
+#[cfg(feature = "antigravity")]
+#[test]
+fn regression_harness_enum_alias_written_by_its_new_name() {
+    // The input exactly as the run saved it.
+    harness_output_event(
+        br#"{"trajectoryStateUpdate":{"depth":1,"parentTrajectoryId":"root","state":"STATE_IDLE","trajectoryId":"sub"}}"#,
+    );
+}
+
+/// [`wire::PROTO3_ALIASES`] lists every old spelling a harness enum reads:
+/// each `wire_enum!` arm with more than one wire string in the protocol
+/// source, as `(old, written)`.
+#[cfg(feature = "antigravity")]
+#[test]
+fn proto3_aliases_are_the_old_spellings_the_enums_read() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/antigravity/protocol");
+    let mut found = std::collections::BTreeSet::new();
+    for path in listing(&dir) {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.ends_with(".rs") || name.ends_with("_tests.rs") {
+            continue;
+        }
+        for line in std::fs::read_to_string(&path).unwrap().lines() {
+            let Some((_, wires)) = line.split_once("=> \"") else {
+                continue;
+            };
+            let spellings: Vec<&str> = wires
+                .split('|')
+                .map(|wire| wire.trim().trim_end_matches(',').trim_matches('"'))
+                .collect();
+            if let [written, old @ ..] = spellings.as_slice() {
+                for old in old {
+                    found.insert((old.to_string(), written.to_string()));
+                }
+            }
+        }
+    }
+    let listed: std::collections::BTreeSet<(String, String)> = wire::PROTO3_ALIASES
+        .iter()
+        .map(|(old, written)| (old.to_string(), written.to_string()))
+        .collect();
+    assert!(!found.is_empty(), "no alias found in {}", dir.display());
+    assert_eq!(
+        listed, found,
+        "PROTO3_ALIASES is not the enums' old spellings"
+    );
+}
+
 /// [`wire::PROTO3_INT64_KEYS`] names every harness field that reads an
 /// int64 string, so the canonical form reads one there and nowhere else: the
 /// keys `OutputEvent` reads with `take_i64`, and each field read through
