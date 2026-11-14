@@ -371,9 +371,25 @@ const ENV_FIELD: &str = "env";
 /// A JSON Schema's map of property names to their schemas (a function
 /// declaration's `parameters`, a response format): its keys name
 /// properties, not fields, so a property called `env` or `api_key` holds a
-/// schema, never a secret. Its values are walked as schemas; its keys are
-/// not read as field names.
+/// schema, never a secret. Read so only beside `"type": "object"`, and only
+/// for a value that is itself a schema ([`SCHEMA_KEYWORDS`]); any other
+/// value under it is data, read as any entry is.
 const SCHEMA_PROPERTIES: &str = "properties";
+
+/// The keys one of which a property's schema holds: an object without any
+/// of them under [`SCHEMA_PROPERTIES`] is data (a call's arguments to a
+/// parameter named `properties`, say), not a schema.
+const SCHEMA_KEYWORDS: &[&str] = &[
+    "type",
+    "$ref",
+    "properties",
+    "items",
+    "enum",
+    "const",
+    "anyOf",
+    "oneOf",
+    "allOf",
+];
 
 /// Maximum length before truncation (keep roughly the first 100 bytes,
 /// never splitting a UTF-8 character).
@@ -462,6 +478,10 @@ fn redact_entries(
 ) {
     let redact_value = in_env
         || map.get("type").and_then(serde_json::Value::as_str) == Some("environment_variable");
+    let is_schema = map
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("object"));
     for (key, val) in map.iter_mut() {
         let key = key.as_str();
         if REDACT_VALUES_BENEATH.contains(&key) {
@@ -473,11 +493,10 @@ fn redact_entries(
         } else if key == ENV_FIELD {
             redact_env(val, truncate);
         } else if key == SCHEMA_PROPERTIES
+            && is_schema
             && let serde_json::Value::Object(properties) = val
         {
-            for schema in properties.values_mut() {
-                redact_walk(schema, in_env, truncate);
-            }
+            redact_schema_properties(properties, in_env, truncate);
         } else if TRUNCATE_FIELDS.contains(&key) {
             match val {
                 serde_json::Value::String(s) => {
@@ -494,6 +513,31 @@ fn redact_entries(
         } else {
             redact_walk(val, in_env, truncate);
         }
+    }
+}
+
+/// A schema's [`SCHEMA_PROPERTIES`]: each value that is a schema is walked
+/// as one, its property name not read; every other entry is read as any
+/// object's entry is, so a secret sent as data under the key stays redacted.
+fn redact_schema_properties(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    in_env: bool,
+    truncate: bool,
+) {
+    let mut data = serde_json::Map::new();
+    for (name, value) in properties.iter_mut() {
+        let schema = value
+            .as_object()
+            .is_some_and(|object| SCHEMA_KEYWORDS.iter().any(|key| object.contains_key(*key)));
+        if schema {
+            redact_walk(value, in_env, truncate);
+        } else {
+            data.insert(name.clone(), value.take());
+        }
+    }
+    redact_entries(&mut data, in_env, truncate);
+    for (name, value) in data {
+        properties.insert(name, value);
     }
 }
 

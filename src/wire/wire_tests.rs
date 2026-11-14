@@ -438,6 +438,17 @@ fn test_redact_fields_leaves_a_schemas_property_names_alone() {
         }},
         "arguments": {"api_key": "secret-1", "env": "secret-2"},
         "schema": {"properties": {"a": {"default": {"token": "secret-3"}}}},
+        // Data under a key named `properties` (a call's arguments to a
+        // parameter so named) is read as data: a regression in b4a123f
+        // printed all three raw (#504, K-1).
+        "call": {"properties": {"api_key": "secret-4", "token": "secret-5"}},
+        "extra": {"properties": {"headers": {"Authorization": "secret-6"}}},
+        // Beside `"type": "object"` too, a value with no schema keyword is
+        // data, and a string is never a property's schema.
+        "object": {"type": "object", "properties": {
+            "headers": {"Authorization": "secret-7"},
+            "api_key": "secret-8"
+        }},
     });
     redact_secrets(&mut value);
     let properties = &value["parameters"]["properties"];

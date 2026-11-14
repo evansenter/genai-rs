@@ -2810,9 +2810,10 @@ not the turn's, did the same. For the same reason the `AgentEvent::Error`
 of a 5xx step stays `Transient`: the step arrives before the harness has
 retried or given up, and only its text tells the two apart. Rejected:
 reading that text ("Encountered retryable error from model provider").
-A step without a step index neither records a failure nor clears one,
-since its place in the trajectory is unknown (PR #560 review; 0.1.23
-always sends one). The unit tests feed each sequence;
+An absent step index is index 0, as `process_step` reads it, since proto3
+JSON omits a zero; a review suggestion to skip such a step was taken in
+b4a123f and undone, because it dropped a failure at step 0. The unit
+tests feed each sequence;
 `test_scripted_a_retried_503_is_a_transient_event_and_not_the_turns_failure`
 runs the harness's.
 
@@ -2911,10 +2912,15 @@ wire's walk: `apiKey` joined its `REDACT_FIELDS`, `httpHeaders` its
 `REDACT_VALUES_BENEATH`, and a string directly under an `env` (an MCP
 stdio server's variables) is redacted beside an `env` entry's `value`.
 The keys of a JSON Schema's `properties` map are property names, not
-fields, so the walk reads only their values (PR #560 review): a function
-parameter named `env` or `api_key` printed its own `type` and
-`description` as `[REDACTED]`. A value sent under such a name, a call's
-arguments, is still redacted.
+fields (PR #560 review): a function parameter named `env` or `api_key`
+printed its own `type` and `description` as `[REDACTED]`. The walk skips
+those names only where the map is a schema's, beside `"type": "object"`,
+and only for a value that is itself a schema (it holds `type`, `$ref`,
+`items` or another schema keyword); every other value is read as data.
+The first form of this rule exempted any `properties` key, so a call's
+arguments to a parameter named `properties` printed their secrets raw;
+it reached main in b4a123f, and its regression test is the grader's
+input (#504, K-1).
 So the copy of a sent message the session hands its inspectors goes
 through the same list as an Interactions API body, and `LOUD_WIRE`, the
 `TracingForwarder` and `WireEvent`'s `Debug` redact the harness's own keys

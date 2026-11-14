@@ -1263,7 +1263,8 @@ and this release follows 0.12.0 directly.
   directly under any `env` (an MCP server's variable, or an environment
   `env` the crate could not read) prints as `[REDACTED]`. A JSON Schema's
   property names are not read as fields, so a function parameter named
-  `env` or `api_key` keeps its schema in the output.
+  `env` or `api_key` keeps its schema in the output; a value under a
+  `properties` key that is not a schema is still redacted.
 - On Windows, Antigravity harness discovery finds the wheel's
   `localharness.exe`, in `python3`'s site-packages and on `PATH`, as the
   Python SDK does; it looked only for `localharness`, so a pip-installed
