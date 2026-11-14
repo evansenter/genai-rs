@@ -204,8 +204,12 @@ from here rather than repeated.
   voice that starts with `voicekey_` is read as a replicated voice's key:
   on `gemini-3.8-flash-tts` one that does not parse is a 400
   (`invalid_request`, "Unable to parse Voice Replication Key"), whose
-  message does not repeat it (live 2026-11-14). So the prefix the crate
-  redacts as a key (D-067) is the one the API reads as one.
+  message does not repeat it (live 2026-11-14). A prompted voice's
+  `base_voice` that starts with it is read as one too: `POST /v1beta/voices`
+  with `"base_voice": "voicekey_..."` is a 403 (`PERMISSION_DENIED`,
+  "Editing or remixing a replicated base_voice is currently disabled"),
+  where a prebuilt name is accepted (live 2026-11-14). So the prefix the
+  crate redacts as a key (D-067) is the one the API reads as one.
 
 ### Requests
 

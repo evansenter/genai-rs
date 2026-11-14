@@ -62,16 +62,20 @@ inside them are attributed to the request.
   an `EnvVar`'s plain value, the header values of an MCP server
   (`McpServerConfig`, `Tool::McpServer`) or an allowlist entry's
   `transform`, keeping the header and variable names, and a replicated
-  voice's key (`Voice::key`, and a `SpeechConfig` voice that is one). So
+  voice's key (`Voice::key`, and a `SpeechConfig` voice or a
+  `PromptedVoice` base voice that is one). So
   `dbg!(request)` or `tracing::debug!(?builder)` prints none of them, nor
   does the `Debug` of an `InteractionBuilder`, `InteractionRequest` or
   response that carries one, or of a `wire::WireEvent`. The `extra` map of
   each of these types (a `Tool`, an allowlist entry, an `EnvVar`, a
-  `RemoteEnvironment`, a `Voice`, a `SpeechConfig`), of a webhook and of an
-  `InteractionBuilder` or `InteractionRequest`, and an unknown tool's
-  payload, print such a secret redacted too, and an unknown environment
-  prints every string in it redacted; any other `extra` map or `Unknown`
-  payload, JSON the crate does not model, prints as it is.
+  `RemoteEnvironment`, a `Voice`, a `PromptedVoice`, a `SpeechConfig`), of
+  a webhook and of an `InteractionBuilder` or `InteractionRequest`, and an
+  unknown tool's payload, print such a secret redacted too, and an unknown
+  environment prints every string in it redacted, its type too where that
+  type describes its JSON; any other `extra` map or `Unknown` payload, JSON
+  the crate does not model, prints as it is. A tagged union's type read
+  from a `type` tag that is not a string describes the tag with such a
+  secret redacted.
 - At `debug`, request and response bodies are logged in full: prompts, base64
   media, function arguments and results. Treat debug logs as sensitive, and
   don't enable them in production unless you mean to.

@@ -438,7 +438,7 @@ fn a_redacting_debug_destructures_its_type() {
     let sources = source_scan::library_sources();
     let read = read_debugs(&sources);
     let redacting = read.iter().filter(|debug| debug.redacts).count();
-    // Twenty-nine impls redact today; fewer than twenty means the scan
+    // Thirty impls redact today; fewer than twenty means the scan
     // stopped finding them.
     assert!(
         redacting >= 20,

@@ -2677,11 +2677,12 @@ guarded command can run another program from outside the script text: a
 required check's test step is held to its masks, not to its command, so
 an `--exclude` on it passes.
 
-**Amended 2026-11-14.** The owner keeps both limits named above as they
-are. The flakiness report does not count `release.yml`'s live retries, as
-`docs/TESTING.md` says: their tests are the ones `rust.yml`'s live jobs run,
-whose retries it counts. And a required check's test command is not pinned
-against a flag such as `--exclude`: a stated limit, not a gap to close.
+**Amended 2026-11-14.** The owner keeps two things as they are. The
+flakiness report does not count `release.yml`'s live retries (the retry
+bullet above, and `docs/TESTING.md`): their tests are the ones `rust.yml`'s
+live jobs run, whose retries it counts. And a required check's test
+command is not pinned against a flag such as `--exclude` (the second limit
+above): a stated limit, not a gap to close.
 
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
@@ -3255,6 +3256,10 @@ helpers: `optional`, `values` for a header or environment map, `json`,
 fails on a placeholder spelled anywhere else in the library's non-test
 code, a doc comment aside.
 
+**Amended 2026-11-14.** A `type` makes a value under `properties` a schema
+only when it names a JSON Schema type (or lists such names); D-067's
+amendment of that date (#578).
+
 ---
 
 ## D-065 — The Antigravity session's start and end move to `agent/session_lifecycle.rs` (2026-11-09)
@@ -3519,13 +3524,15 @@ this decision left open, and a leak in the walk's schema exemption closed:
   `[REDACTED]` wherever it appears, under any key, in a list or as a whole
   body. A name rule could not do it: `key` is too common a name to redact
   everywhere (a function's arguments, a schema's properties), and a request
-  sends the key under `voice`, beside prebuilt names that are no secret.
-  `Voice`'s `Debug` is
-  hand-written, printing `key` through `redact::optional` and `extra`
-  through `redact::map`, and so is `SpeechConfig`'s, whose voice prints
-  redacted when it is a key (`redact::voice_name`, on the same prefix);
-  each has its row in the sentinel test. A URL is not walked: the voice
-  verbs take a stored voice's id, which a key is not.
+  sends the key under `voice`, beside prebuilt names that are no secret,
+  and under a prompted voice's `base_voice`, which the API reads as a key
+  too (and refuses). `Voice`'s `Debug` is hand-written, printing `key`
+  through `redact::optional` and `extra` through `redact::map`, and so are
+  `SpeechConfig`'s and `PromptedVoice`'s, whose voice and base voice print
+  redacted when one is a key (`redact::voice_name`, on the same prefix);
+  each has its row in the sentinel test, `PromptedVoice` through a
+  `CreateVoiceRequest` and a `Voice`'s `prompted` echo. A URL is not
+  walked: the voice verbs take a stored voice's id, which a key is not.
   `tests/redaction_guards.rs` reads names, not values, so a new type that
   holds a key under another name needs its row, as any other does.
 - `InteractionBuilder`'s and `InteractionRequest`'s `Debug` print the
@@ -3545,7 +3552,11 @@ this decision left open, and a leak in the walk's schema exemption closed:
   "environment_variable"`, and the names on its lists). A strict `env` on
   the wire would hide the credential IDs that the wire and a read `EnvVar`'s
   `Debug` both print. The promise runs one way, `Debug` redacting at least
-  what the wire does, and holds.
+  what the wire does, and holds. An unknown spec's type that describes its
+  JSON (`<non-string: ...>` for an object whose `type` is not a string,
+  `<unrecognized: ...>` for JSON that is not an object) prints described
+  from the redacted JSON, so no string of it prints there either; a type
+  name prints as it is.
 - Under `properties` beside `"type": "object"`, the walk read a value as a
   schema whenever it held a `SCHEMA_KEYWORDS` key, `type` with any value, so
   `{"type": "object", "properties": {"token": {"type": "bearer", "value":
@@ -4129,16 +4140,22 @@ neither a string nor an object as a string enum types it
 that write their type back (`Step`, `StepDelta`, `Content`, `Annotation`,
 `Tool`) write the new string as the `type`, as they wrote `<missing type>`;
 the fuzz round trip already expects the tag it was given (D-070). Writing
-the original non-string back, as `wire_enum!` does, was not asked for. The
-rule is a `type` tag's: the stream chunks' `chunk_type`, a tag in the
-crate's own serialized form, keeps its markers (`<missing chunk_type>`,
-`<non-string chunk_type>`), and the unions typed by their shape
-(`ToolChoice`, `NetworkConfig`) keep `<unrecognized: ...>`.
+the original non-string back, as `wire_enum!` does, was not asked for. A
+non-string tag is described with the secrets the wire redacts redacted
+(`redact::json`, D-067): the type is printed (`Tool`'s `Debug`, which
+redacts the data beside it, and each read's warning), and the merged
+unions write it back as the tag, a string the wire's walk cannot read
+inside. The tag stays whole in the data. The rule is a `type` tag's: the
+stream chunks' `chunk_type`, a tag in the crate's own serialized form,
+keeps its markers (`<missing chunk_type>`, `<non-string chunk_type>`), and
+the unions typed by their shape (`ToolChoice`, `NetworkConfig`) keep
+`<unrecognized: ...>`.
 
 **Consequences.** `unknown_<context>_type()` of a union read with a
 non-string `type` returns `<non-string: ...>` where it returned
 `<missing type>`, and the written JSON carries that tag. No type changes,
 but a caller that matched `<missing type>` for a non-string tag sees the
-new string. `tests/unknown_variant_tests.rs`'s `type_tags` reads every
-union with both kinds of tag, and the fuzz invariants (`src/fuzzing.rs`,
-`fuzz/README.md`) name both markers.
+new string, with a secret in the tag redacted.
+`tests/unknown_variant_tests.rs`'s `type_tags` reads every union with both
+kinds of tag, and a tag holding a secret, and the fuzz invariants
+(`src/fuzzing.rs`, `fuzz/README.md`) name both markers.

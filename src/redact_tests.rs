@@ -5,11 +5,11 @@
 use super::REDACTED;
 use crate::wire::WireEvent;
 use crate::{
-    Agent, AllowlistEntry, Client, CreateCredentialRequest, CreateTriggerRequest, CredentialConfig,
-    CredentialType, CredentialUpdate, EnvVar, Environment, EnvironmentSpec, ExaAiSearchConfig,
-    InjectionLocation, InteractionResponse, McpServerConfig, NetworkConfig, ParallelAiSearchConfig,
-    RemoteEnvironment, RetrievalConfig, RotateSigningSecretResponse, SpeechConfig, Tool, Trigger,
-    Voice, VoiceListResponse, Webhook,
+    Agent, AllowlistEntry, Client, CreateCredentialRequest, CreateTriggerRequest,
+    CreateVoiceRequest, CredentialConfig, CredentialType, CredentialUpdate, EnvVar, Environment,
+    EnvironmentSpec, ExaAiSearchConfig, InjectionLocation, InteractionResponse, McpServerConfig,
+    NetworkConfig, ParallelAiSearchConfig, RemoteEnvironment, RetrievalConfig,
+    RotateSigningSecretResponse, SpeechConfig, Tool, Trigger, Voice, VoiceListResponse, Webhook,
 };
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -29,15 +29,15 @@ fn header(name: &str) -> HashMap<String, String> {
 /// tool configs into `Tool`, `InteractionBuilder` and `InteractionRequest`
 /// (and on to a trigger and a stored interaction's echo), the environment
 /// pieces into `RemoteEnvironment`, an agent and an environment resource,
-/// and a replicated voice's key on its `Voice` and as a request's voice
-/// name.
+/// and a replicated voice's key on its `Voice`, as a request's voice name
+/// and as a prompted voice's base voice.
 /// The types that redacted before (`Client`, the credential and webhook
 /// secrets) are here too, and so are the JSON values that carry these
 /// secrets: a retrieval config's `custom_config`, an `env` the crate could
 /// not read, the `extra` of every `Tool` arm ([`every_tool_arm`]), of a
 /// webhook, of the environment pieces and of a request and its builder, an
-/// unknown tool's and an unknown environment's payload, and a `WireEvent`'s
-/// bodies and harness messages. Every one shows the
+/// unknown tool's and an unknown environment's payload and the type that
+/// describes it, and a `WireEvent`'s bodies and harness messages. Every one shows the
 /// placeholder where the secret was, and the names around the secret stay.
 #[test]
 fn debug_never_prints_a_secret() {
@@ -103,6 +103,26 @@ fn debug_never_prints_a_secret() {
     }))
     .unwrap();
     assert!(unknown_environment.is_unknown());
+    // An unknown environment's type describes its JSON when that is not an
+    // object, or its `type` not a string: it prints described from the
+    // redacted JSON, as `data` does.
+    let unrecognized_environment: EnvironmentSpec =
+        serde_json::from_value(json!([SECRET])).unwrap();
+    let object_typed_environment: EnvironmentSpec =
+        serde_json::from_value(json!({"type": {"note": SECRET}})).unwrap();
+    // A tool whose `type` is an object holding a secret: its type describes
+    // the tag with the secret redacted (D-075).
+    let object_typed_tool: Tool =
+        serde_json::from_value(json!({"type": {"api_key": SECRET}, "x": 1})).unwrap();
+    // A replicated voice's key as a prompted voice's base voice, sent and
+    // echoed.
+    let base_voice_request =
+        CreateVoiceRequest::prompted("A calm narrator.").with_base_voice(VOICE_KEY);
+    let base_voice_echo: Voice = serde_json::from_value(json!({
+        "id": "voice_1",
+        "prompted": {"input": "A calm narrator.", "base_voice": VOICE_KEY, "auth": {"token": SECRET}},
+    }))
+    .unwrap();
     // Every arm of `Tool` holds this as its `extra` (`every_tool_arm`).
     let tool_extra = json!({"auth": {"headers": {"Authorization": SECRET}}, "token": SECRET})
         .as_object()
@@ -375,6 +395,20 @@ fn debug_never_prints_a_secret() {
             "EnvironmentSpec::Unknown",
             format!("{unknown_environment:?}"),
         ),
+        (
+            "EnvironmentSpec::Unknown (array)",
+            format!("{unrecognized_environment:?}"),
+        ),
+        (
+            "EnvironmentSpec::Unknown (object type)",
+            format!("{object_typed_environment:?}"),
+        ),
+        (
+            "Tool::Unknown (object type)",
+            format!("{object_typed_tool:?}"),
+        ),
+        ("CreateVoiceRequest", format!("{base_voice_request:?}")),
+        ("Voice (base voice)", format!("{base_voice_echo:?}")),
         ("AllowlistEntry's extra", format!("{allowlist_extra:?}")),
         ("EnvVar's extra", format!("{env_var_extra:?}")),
         (
@@ -432,7 +466,7 @@ fn debug_never_prints_a_secret() {
         "auth",
         "en-US",
     ];
-    let kept: [(&str, &[&str]); 12] = [
+    let kept: [(&str, &[&str]); 16] = [
         ("InteractionRequest", &request_names),
         ("WireEvent::Request", &request_names),
         ("WireEvent::WsReceive", &["Authorization", "API_KEY"]),
@@ -448,6 +482,10 @@ fn debug_never_prints_a_secret() {
             "EnvironmentSpec::Unknown",
             &["API_KEY", "OTHER", "setup", "note"],
         ),
+        ("EnvironmentSpec::Unknown (object type)", &["note"]),
+        ("Tool::Unknown (object type)", &["api_key"]),
+        ("CreateVoiceRequest", &["A calm narrator."]),
+        ("Voice (base voice)", &["voice_1", "auth"]),
     ];
     let arm_names: Vec<String> = tool_arms
         .iter()

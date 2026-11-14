@@ -1026,6 +1026,24 @@ mod type_tags {
         }
     }
 
+    /// A non-string tag is described with what the wire redacts redacted:
+    /// the type is printed, and the merged unions write it back as text the
+    /// wire's walk cannot read inside. The data keeps the tag whole.
+    #[test]
+    fn a_non_string_tag_is_described_without_its_secrets() {
+        let wire = json!({"type": {"api_key": "S3CRET", "name": "n"}, "x": 1});
+        let marker = r#"<non-string: {"api_key":"[REDACTED]","name":"n"}>"#;
+        for (name, unknown_type, written) in every_union(&wire) {
+            assert_eq!(unknown_type, marker, "{name}");
+            if let Some(written) = written {
+                assert_eq!(written, json!({"type": marker, "x": 1}), "{name}");
+            }
+        }
+        let tool: Tool = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(tool.unknown_data(), Some(&wire));
+        assert!(!format!("{tool:?}").contains("S3CRET"), "{tool:?}");
+    }
+
     #[test]
     fn a_missing_tag_stays_missing_type() {
         for wire in [json!({"x": 1}), json!({"type": null, "x": 1})] {

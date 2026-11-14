@@ -18,20 +18,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Step`, `StepDelta`, `Content`, `Annotation`, `Tool`) write that string
   as the `type`. A missing or `null` `type` stays `<missing type>`. A bare
   non-string `TranscriptionMode` (`7`) is `<non-string: 7>` too, as a bare
-  `VideoProcessing` already was (D-075).
+  `VideoProcessing` already was. A secret in the tag that `LOUD_WIRE`
+  redacts (an `api_key`, a `token`) is `[REDACTED]` in that string; the
+  `Unknown`'s data keeps the tag as it came (D-075).
 - **`Debug` and `LOUD_WIRE` redact a replicated voice's key.** `Voice::key`
-  prints as `Some("[REDACTED]")`, and a `SpeechConfig` whose voice is a key
-  prints its voice the same way; `LOUD_WIRE`, the `wire` tracing target and
-  `WireEvent`'s `Debug` redact a string that starts with `voicekey_`
-  wherever it appears in a body, a request's voice name included (D-067).
-- **`InteractionBuilder`'s and `InteractionRequest`'s `Debug` print `extra`
-  through the wire's redaction**, so a secret there under a name `LOUD_WIRE`
-  redacts (an `api_key`, a `token`) prints as `[REDACTED]`, as it does in a
-  `Tool`'s or a `RemoteEnvironment`'s `extra` (D-067).
+  prints as `Some("[REDACTED]")`, and a `SpeechConfig` whose voice is a key,
+  or a `PromptedVoice` whose base voice is one, prints it the same way;
+  `LOUD_WIRE`, the `wire` tracing target and `WireEvent`'s `Debug` redact a
+  string that starts with `voicekey_` wherever it appears in a body, a
+  request's voice name included (D-067).
+- **`InteractionBuilder`'s, `InteractionRequest`'s, `Voice`'s,
+  `PromptedVoice`'s and `SpeechConfig`'s `Debug` print `extra` through the
+  wire's redaction**, so a secret there under a name `LOUD_WIRE` redacts (an
+  `api_key`, a `token`) prints as `[REDACTED]`, as it does in a `Tool`'s or
+  a `RemoteEnvironment`'s `extra` (D-067).
 - **An unknown `EnvironmentSpec`'s `Debug` prints every string in its JSON
   as `[REDACTED]`**, keeping the keys, as a `RemoteEnvironment`'s unread
-  `env` prints, rather than only what the wire's redaction reads as a secret
-  (D-067).
+  `env` prints, rather than only what the wire's redaction reads as a secret.
+  A type that describes that JSON (`<non-string: ...>`, `<unrecognized:
+  ...>`) prints described from the redacted JSON (D-067).
 
 ### Fixed
 

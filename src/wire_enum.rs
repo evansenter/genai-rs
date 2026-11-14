@@ -141,10 +141,17 @@ pub(crate) const MISSING_TYPE: &str = "<missing type>";
 /// [`unknown_type`] types a string enum's value (the string itself, or
 /// `<non-string: ...>`), and [`MISSING_TYPE`] when there is no tag: an
 /// absent or `null` one, or a value that is not an object.
+///
+/// A non-string tag is described with the secrets the wire redacts
+/// redacted (`crate::redact::json`): the type is printed (`Debug`, the
+/// warning a read logs), and a union that writes its type back writes it
+/// as the tag, text the wire's walk cannot read inside. The tag stays whole
+/// in the `Unknown`'s data.
 pub(crate) fn unknown_tag(value: &serde_json::Value) -> String {
     match value.get("type") {
         None | Some(serde_json::Value::Null) => MISSING_TYPE.to_owned(),
-        Some(tag) => unknown_type(tag),
+        Some(serde_json::Value::String(tag)) => tag.clone(),
+        Some(tag) => non_string_descriptor(&crate::redact::json(tag)),
     }
 }
 

@@ -94,7 +94,10 @@ impl VoiceAudio {
 }
 
 /// The prompt a prompted voice was designed from.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+///
+/// `Debug` prints a replicated voice's key ([`Voice::key`]) set as the
+/// base voice as `[REDACTED]`, as `LOUD_WIRE` does.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct PromptedVoice {
@@ -102,12 +105,31 @@ pub struct PromptedVoice {
     pub input: String,
     /// A prebuilt voice to start the design from, such as `"achird"`
     /// (google-genai 2.34.0). Accepted, validated (an unknown name is a
-    /// `400 INVALID_ARGUMENT`) and echoed back.
+    /// `400 INVALID_ARGUMENT`) and echoed back. A replicated voice's key
+    /// here is read as a replicated base voice, which the API refuses
+    /// (`docs/INTERACTIONS_API_GAP.md`, Models).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_voice: Option<String>,
     /// Fields the crate does not model yet, preserved for roundtrip.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// A base voice can be a replicated voice's key, a secret (D-067): printed
+// redacted, and `extra` through the wire's walk.
+impl std::fmt::Debug for PromptedVoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            input,
+            base_voice,
+            extra,
+        } = self;
+        f.debug_struct("PromptedVoice")
+            .field("input", input)
+            .field("base_voice", &redact::voice_name(base_voice.as_deref()))
+            .field("extra", &redact::map(extra))
+            .finish()
+    }
 }
 
 impl PromptedVoice {
