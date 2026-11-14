@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Breaking: `ListAgents::with_parent` is removed.** The API takes
+  `parent` on the agents listing and ignores it: a listing with any value,
+  or none, lists every agent the key owns (`docs/INTERACTIONS_API_GAP.md`,
+  "Spec-only query parameters"), so the setter filtered nothing (D-060).
+  Migration: drop the `.with_parent(..)` call; the listing returns the same
+  agents without it.
+
 ## [0.15.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.3.0 (swept 2026-11-14;

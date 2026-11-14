@@ -39,21 +39,13 @@ async fn agent_endpoints_send_the_documented_requests() {
             wire("GET", "/v1beta/agents", None, c.agents().list().send()),
             wire(
                 "GET",
-                "/v1beta/agents?page_size=5&page_token=t&parent=projects%2Fp%201",
+                "/v1beta/agents?page_size=5&page_token=t%2F1",
                 None,
                 c.agents()
                     .list()
                     .with_page_size(5)
-                    .with_page_token("t")
-                    .with_parent("projects/p 1")
+                    .with_page_token("t/1")
                     .send(),
-            ),
-            // With no paging, the filter takes the leading `?`.
-            wire(
-                "GET",
-                "/v1beta/agents?parent=p",
-                None,
-                c.agents().list().with_parent("p").send(),
             ),
             wire(
                 "DELETE",

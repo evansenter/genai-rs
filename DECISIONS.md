@@ -2930,6 +2930,21 @@ keys, passed `test_snapshot_openapi.sh`. Its fixture now gives a schema
 `x-speakeasy-name-override`, and a parameter `x-speakeasy-name-override`,
 and checks that each is kept.
 
+**Amended 2026-11-14 (#551).** `ListAgents::with_parent` is removed, on
+the owner's decision, which the rejection above left to them. A setter
+that sends a parameter the API ignores claims a filter the API does not
+apply (D-010), D-005 removes what the endpoint does not honor, and keeping
+it for parity with Python's `agents.list` bought nothing a caller could
+observe. Breaking (D-007), with a CHANGELOG migration: drop the call, and
+the listing is the same. `parent` on the listing is now unmodeled as the
+other three are: the query test lists it in `NOT_SENT`, a binding
+parameter no verb sends, with this reason, and `SPEC_QUERY` gives the
+spec's `required` flag on it the same. The third bullet's "stays" no
+longer holds; `docs/RESOURCES.md` and `docs/AGENTS_AND_BACKGROUND.md` say
+the builder has no setter for it, and the gap tracker records a re-probe
+on this date that found `parent` still ignored. Should a later probe find
+the API honoring it, a setter comes back with that probe's test.
+
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
 **Context.** #504's 2026-11-08 grade found three holes in the request side
