@@ -19,7 +19,12 @@ fail() {
 cat >"$work/spec.json" <<'EOF'
 {
   "openapi": "3.0.3",
-  "info": {"title": "t", "description": "long prose", "version": "v1beta"},
+  "info": {"title": "t", "description": "long prose", "version": "v1beta", "x-google-revision": "0"},
+  "servers": [{"url": "https://api.example.com", "description": "Prose."}],
+  "security": [{"apiKey": []}],
+  "tags": [{"name": "things", "description": "Prose."}],
+  "x-speakeasy-retries": {"strategy": "backoff", "statusCodes": [408, 429, "5XX"]},
+  "x-speakeasy-globals": {"parameters": [{"$ref": "#/components/parameters/UserProject"}]},
   "paths": {
     "/{api_version}/things": {
       "parameters": [
@@ -36,6 +41,9 @@ cat >"$work/spec.json" <<'EOF'
           "schema": {"$ref": "#/components/schemas/Thing"}}}}}
       },
       "get": {
+        "operationId": "listThings", "tags": ["things"], "summary": "Listing things",
+        "x-speakeasy-group": "things", "x-speakeasy-name-override": "list",
+        "x-speakeasy-sse-overload": true, "deprecated": true,
         "parameters": [
           {"name": "page_size", "in": "query", "required": true,
            "schema": {"type": "integer", "format": "int32", "description": "Prose."}},
@@ -55,6 +63,7 @@ cat >"$work/spec.json" <<'EOF'
       }
     },
     "/{api_version}/things/{id}": {
+      "servers": [{"url": "https://upload.example.com", "description": "Prose."}],
       "parameters": [
         {"$ref": "#/components/parameters/ApiVersion"},
         {"name": "id", "in": "path", "required": true, "description": "Prose.",
@@ -62,6 +71,7 @@ cat >"$work/spec.json" <<'EOF'
       ],
       "patch": {"requestBody": {"$ref": "#/components/requestBodies/Patch"}},
       "put": {
+        "servers": [{"url": "https://put.example.com"}],
         "parameters": [{"$ref": "#/components/parameters/Command"}],
         "responses": {"200": {"description": "Started.",
           "headers": {"X-Upload-URL": {"$ref": "#/components/headers/UploadUrl"}}}}
@@ -74,8 +84,12 @@ cat >"$work/spec.json" <<'EOF'
                    "schema": {"type": "string"}},
     "Filter": {"name": "filter", "in": "query", "description": "Prose.", "schema": {"type": "string"}},
     "Command": {"name": "X-Upload-Command", "in": "header", "required": true, "description": "Prose.",
-                "schema": {"type": "string", "const": "start", "default": "start"}}
+                "schema": {"type": "string", "const": "start", "default": "start"}},
+    "UserProject": {"name": "x-goog-user-project", "in": "header", "description": "Prose.",
+                    "schema": {"type": "string"}}
   },
+  "securitySchemes": {"apiKey": {"type": "apiKey", "in": "header", "name": "x-goog-api-key",
+                                 "description": "Prose."}},
   "headers": {"UploadUrl": {"description": "Prose.", "schema": {"type": "string", "format": "uri"}}},
   "responses": {"Error": {"description": "Prose.", "content": {"application/json": {"schema": {
     "type": "object", "properties": {"error": {"type": "string", "description": "E."}}}}}}},
@@ -177,16 +191,20 @@ ok = [
             "properties": {"thing": {"$ref": "#/components/schemas/Thing"}},
         }}},
         "responses": {},
+        "servers": [{"url": "https://upload.example.com"}],
     },
     # And its responses by status: the schema of each content type without its
-    # prose or examples (a `responses` reference followed), and the
-    # headers of the response when it has any.
+    # prose or examples (a `responses` reference followed), the other keys
+    # of a content type, and the headers of the response when it has any.
     d["operations"]["GET /{api_version}/things"]["responses"]
     == {
-        "200": {"content": {
-            "application/json": {"$ref": "#/components/schemas/Thing"},
-            "text/event-stream": {"$ref": "#/components/schemas/title"},
-        }},
+        "200": {
+            "content": {
+                "application/json": {"$ref": "#/components/schemas/Thing"},
+                "text/event-stream": {"$ref": "#/components/schemas/title"},
+            },
+            "media": {"text/event-stream": {"x-speakeasy-sse-sentinel": "[DONE]"}},
+        },
         "4XX": {"content": {"application/json": {
             "type": "object", "properties": {"error": {"type": "string"}}}}},
     },
@@ -195,6 +213,29 @@ ok = [
     d["operations"]["PUT /{api_version}/things/{id}"]["responses"]
     == {"200": {"content": {}, "headers": {
         "X-Upload-URL": {"schema": {"format": "uri", "type": "string"}}}}},
+    # And every other key of the operation or its path item (the one on
+    # the operation wins), but the prose and the names generated code
+    # takes (operationId, tags, summary, the Speakeasy names and its SSE
+    # overload).
+    {k: v for k, v in d["operations"]["GET /{api_version}/things"].items()
+     if k not in ("path", "query", "header", "cookie", "responses")}
+    == {"deprecated": True},
+    "description" not in d["operations"]["POST /{api_version}/things"],
+    "x-codeSamples" not in d["operations"]["POST /{api_version}/things"],
+    d["operations"]["PUT /{api_version}/things/{id}"].get("servers") == [{"url": "https://put.example.com"}],
+    # The top level of the spec but its paths and components, without
+    # prose or tags, a reference inlined; and the security schemes.
+    d.get("top_level")
+    == {
+        "info": {"version": "v1beta", "x-google-revision": "0"},
+        "openapi": "3.0.3",
+        "security": [{"apiKey": []}],
+        "servers": [{"url": "https://api.example.com"}],
+        "x-speakeasy-globals": {"parameters": [
+            {"in": "header", "name": "x-goog-user-project", "schema": {"type": "string"}}]},
+        "x-speakeasy-retries": {"statusCodes": [408, 429, "5XX"], "strategy": "backoff"},
+    },
+    d.get("security_schemes") == {"apiKey": {"in": "header", "name": "x-goog-api-key", "type": "apiKey"}},
 ]
 print(" ".join("ok" if x else f"fail{i}" for i, x in enumerate(ok)))
 ' <<<"$out")
@@ -250,6 +291,56 @@ expect_drift "a path parameter given an enum behind its reference" \
 expect_drift "a request body made optional" \
     'spec["paths"]["/{api_version}/things"]["post"]["requestBody"]["required"] = False' \
     'd["operations"]["POST /{api_version}/things"]["body"]["required"] is False'
+
+# The rest reduced to the same bytes until #504's K-12: an operation under
+# a method outside the five the crate calls, an operation's `deprecated`,
+# servers, security and callbacks, a body's encoding, and the spec's
+# servers, security schemes, global parameters and retry policy.
+expect_drift "a HEAD operation added" \
+    'spec["paths"]["/{api_version}/things/{id}"]["head"] = {"responses": {"200": {"description": "Exists."}}}' \
+    '"HEAD /{api_version}/things/{id}" in d["endpoints"] and d["operations"]["HEAD /{api_version}/things/{id}"]["responses"] == {"200": {"content": {}}}'
+expect_drift "an OPTIONS and a TRACE operation added" \
+    'spec["paths"]["/{api_version}/things"].update(options={"responses": {}}, trace={"responses": {}})' \
+    '{"OPTIONS /{api_version}/things", "TRACE /{api_version}/things"} <= set(d["endpoints"])'
+expect_drift "an operation deprecated" \
+    'spec["paths"]["/{api_version}/things"]["post"]["deprecated"] = True' \
+    'd["operations"]["POST /{api_version}/things"]["deprecated"] is True'
+expect_drift "an operation given its own servers" \
+    'spec["paths"]["/{api_version}/things"]["post"]["servers"] = [{"url": "https://regional.example.com"}]' \
+    'd["operations"]["POST /{api_version}/things"]["servers"] == [{"url": "https://regional.example.com"}]'
+expect_drift "an operation that needs no credentials" \
+    'spec["paths"]["/{api_version}/things"]["post"]["security"] = []' \
+    'd["operations"]["POST /{api_version}/things"]["security"] == []'
+expect_drift "a callback added" \
+    'spec["paths"]["/{api_version}/things"]["post"]["callbacks"] = {"done": {"{$request.body#/uri}": {"post": {"description": "Prose.", "responses": {}}}}}' \
+    'd["operations"]["POST /{api_version}/things"]["callbacks"] == {"done": {"{$request.body#/uri}": {"post": {"responses": {}}}}}'
+expect_drift "a request body given an encoding" \
+    'spec["paths"]["/{api_version}/things"]["post"]["requestBody"]["content"]["application/json"]["encoding"] = {"file": {"contentType": "image/png"}}' \
+    'd["operations"]["POST /{api_version}/things"]["body"]["media"] == {"application/json": {"encoding": {"file": {"contentType": "image/png"}}}}'
+expect_drift "the server moved" \
+    'spec["servers"][0]["url"] = "https://eu.example.com"' \
+    'd["top_level"]["servers"] == [{"url": "https://eu.example.com"}]'
+expect_drift "a security scheme changed" \
+    'spec["components"]["securitySchemes"]["apiKey"]["in"] = "query"' \
+    'd["security_schemes"]["apiKey"]["in"] == "query"'
+expect_drift "a global parameter made required" \
+    'spec["components"]["parameters"]["UserProject"]["required"] = True' \
+    'd["top_level"]["x-speakeasy-globals"]["parameters"][0]["required"] is True'
+expect_drift "the reference SDK's retry policy changed" \
+    'spec["x-speakeasy-retries"]["statusCodes"].append(501)' \
+    'd["top_level"]["x-speakeasy-retries"]["statusCodes"] == [408, 429, "5XX", 501]'
+
+# What names generated code or is prose does not reach the snapshot, so
+# a rename churns nothing.
+for statement in \
+    'spec["paths"]["/{api_version}/things"]["get"].update(operationId="getThings", tags=["other"], summary="Other prose")' \
+    'spec["paths"]["/{api_version}/things"]["get"].update({"x-speakeasy-group": "other", "x-speakeasy-name-override": "fetch", "x-speakeasy-sse-overload": False})' \
+    'spec["paths"]["/{api_version}/things/{id}"]["servers"][0]["description"] = "Other prose."' \
+    'spec["tags"].append({"name": "more"})'; do
+    if [ "$(mutate "$statement")" != "$out" ]; then
+        fail "a change to prose or generated names changed the snapshot: $statement"
+    fi
+done
 
 # A reference the spec does not resolve fails, rather than dropping what it
 # stood for: a parameter, a response or a response header.
