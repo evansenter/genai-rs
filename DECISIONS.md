@@ -1898,7 +1898,12 @@ error into a message of its own, which has no source to hold it (a
 `PollTimeout` after failed status reads, the `Internal` error of a failed
 file search import or read-back, and their log lines), it writes the chain
 through `errors::ErrorChain`, so the transport error stays in the text;
-`src/poll_tests.rs` and `src/http/file_search_stores.rs` test both. The
+`src/poll_tests.rs` and `src/http/file_search_stores.rs` test both. So
+does the error a failed tool call sends the model (`{"error": ..}` in the
+auto-function loop and on an Antigravity agent), through
+`function_calling::error_for_model`: a `#[tool]` that returned a
+`GenaiError::Http` would otherwise have told the model only `HTTP request
+error` (found at the Wave K merge). The
 docs and the retry example that printed an error by `Display` print the
 chain.
 
@@ -3667,8 +3672,7 @@ comparison; unit tests hold those.
   to the protocol's source). Its proto3 JSON is read as its types read
   it, and only there: an int64 string is its number at the fields read
   through `flex_num` (a test holds the key list to the protocol's source),
-  and a
-  `toolResponse`'s `id`, a proto3 scalar the type writes as `""` when it
+  and a `toolResponse`'s `id`, a proto3 scalar the type writes as `""` when it
   was missing, is absent at its default (the target's first run,
   2026-11-13, found it). Everywhere else a `false`, `0`, `""` or numeric
   string is kept as it came: a oneof member such as `sessionEndResponse`
@@ -3771,7 +3775,7 @@ on another.
 literal (D-007). The request oracle leaves the field empty: its keys are the
 API's, not the crate's.
 
-## D-NEXT-KE — The CHANGELOG lint matches a duplicate entry by its opening words, not its exact title (2026-11-14)
+## D-073 — The CHANGELOG lint matches a duplicate entry by its opening words, not its exact title (2026-11-14)
 
 **Context.** Rule 6 of `.github/scripts/check_changelog.sh` failed two
 entries in a section that share a first line or a bold title, compared

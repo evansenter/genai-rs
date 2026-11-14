@@ -246,7 +246,7 @@ reaches the wire must use a real id.
   holds a secret `LOUD_WIRE` redacts has a hand-written `Debug` printing
   `[REDACTED]` (`src/redact.rs`) and a row in its sentinel test
   (D-067); `tests/redaction_guards.rs` fails on a derived `Debug` over such
-  a field.
+  a field, and on a hand-written one that does not destructure its type.
 - Breaking changes are fine when they simplify the API (D-007); no
   compatibility shims. Pre-1.0.
 

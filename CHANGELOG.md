@@ -15,9 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   printed the transport error twice; it now prints it once, as it does for
   `ClientBuild` and `StreamInterrupted` (D-049). Where the crate writes an
   error into a message of its own (a `PollTimeout` after failed status
-  reads, or the `Internal` error of a file search import or read-back that
-  failed), it writes the whole chain, so the transport error stays in that
-  text. Migration: where you read the transport error from the top error's
+  reads, the `Internal` error of a file search import or read-back that
+  failed, or the `{"error": ...}` a failed tool call sends the model in the
+  auto-function loop and on an Antigravity agent), it writes the whole
+  chain, so the transport error stays in that text. Migration: where you read the transport error from the top error's
   text, walk `source()` (or use your reporter's chain form, as
   `docs/ERROR_HANDLING.md` shows), or match `GenaiError::Http(e)` and read
   `e.to_string()`, which is the text that followed `HTTP request error: `.

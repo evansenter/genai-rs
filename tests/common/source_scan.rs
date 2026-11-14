@@ -4,14 +4,19 @@
 //!
 //! `tests/module_size.rs`, `tests/non_exhaustive_responses.rs`,
 //! `tests/ci_coverage.rs`, `tests/model_literals.rs`,
-//! `tests/temp_file_tests.rs`'s scan of `examples/`, `tests/ci_workflows/`
+//! `tests/temp_file_tests.rs`'s scan of `examples/`, `tests/ci_workflows/`,
+//! `tests/request_wire_oracle/query_literals.rs` (its scan of `src/http/`)
 //! and the coverage oracle (`src/coverage_oracle/request/fills.rs`) walk
-//! the tree with [`rust_files`], and `tests/reliability_tests/` reads the
-//! docs with [`files_with_extensions`]; `tests/live_verbs/` (for
-//! `ci_coverage` and `request_wire_oracle`) and
+//! the tree with [`rust_files`], and `tests/reliability_tests/` and
+//! `tests/doc_guards/` read the docs with [`files_with_extensions`];
+//! `tests/live_verbs/` (for `ci_coverage` and `request_wire_oracle`) and
 //! `tests/http_mock_resources/paging.rs` find the handles with
 //! [`structs`], [`handles`] and [`public_methods`]. Each keeps its own
-//! floor, so a scan that finds nothing fails there.
+//! floor, so a scan that finds nothing fails there. Each guard that tells
+//! test code from library code (`tests/live_verbs/bodies.rs`,
+//! `tests/request_wire_oracle/query_options.rs`, `tests/module_size.rs`
+//! and the oracle's fill scan among them) does it through
+//! [`is_test_gated`].
 //!
 //! Not part of `common/mod.rs`, which every integration test compiles: the
 //! guards that scan include this file by `#[path]`, and nothing else
