@@ -615,9 +615,10 @@ Fuzz Gate reads. Fuzz Gate and the path check that decides whether the
 targets run are pinned whole in `tests/ci_workflows/fuzz.rs`, each job's
 keys as YAML reads them and its script line by line as written (a `\`
 continuation not joined), comment and blank lines dropped, so a change
-to either is a change to its pin. The script within a `run:` value is read as text,
-against the forms D-058 lists: the guards catch the ways a step is known
-to be weakened, not every way a script can compute its status.
+to either is a change to its pin. The script within a `run:` value is
+read as text, against the forms D-058 lists: the guards catch the ways a
+step is known to be weakened, not every way a script can compute its
+status.
 
 ## Coverage oracle
 
