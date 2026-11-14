@@ -3177,6 +3177,22 @@ The wire's walk now holds the Antigravity harness's camelCase keys too
 (D-064's amendment), so `WireEvent`'s `Debug` redacts a harness message
 in either direction.
 
+**Amended 2026-11-14 (#504, K-5).** The sentinel built only
+`Tool::CodeExecution` with a secret in its `extra`, so printing
+`Tool::Function`'s `extra` raw passed every test. It now formats every arm
+of `Tool` with the same secret-bearing `extra` (an `Unknown` tool's in its
+payload): `every_tool_arm` builds each, a match with no wildcard arm names
+it, and `the_sentinel_builds_every_tool_arm` compares the arms built with
+the enum as `src/tools/mod.rs` declares it, so a new arm fails until it is
+built there. The destructuring rule above is now checked too:
+`tests/redaction_guards.rs` fails on a hand-written `Debug` that redacts
+(its `fmt` names `redact::..` or `REDACTED`) and reads its type with a `..`
+rest, a `_` arm in a match on `self`, a field read through `self`, or no
+pattern on `Self` at all. A `Webhook` `Debug` that ends its pattern with
+`..` and drops two fields fails it. Omission is the safe direction, so this
+holds the convention, not a leak; an impl that redacts nothing, such as
+`InteractionBuilder`'s, is not read.
+
 ## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
 **Context.** #504's final grade found the recursive `.rs` walker written

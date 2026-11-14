@@ -10,7 +10,7 @@ use crate::{
     InjectionLocation, InteractionResponse, McpServerConfig, NetworkConfig, ParallelAiSearchConfig,
     RemoteEnvironment, RetrievalConfig, RotateSigningSecretResponse, Tool, Trigger, Webhook,
 };
-use serde_json::json;
+use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
 /// The secret every value below holds, wherever it holds one.
@@ -27,11 +27,10 @@ fn header(name: &str) -> HashMap<String, String> {
 /// The types that redacted before (`Client`, the credential and webhook
 /// secrets) are here too, and so are the JSON values that carry these
 /// secrets: a retrieval config's `custom_config`, an `env` the crate could
-/// not read, the `extra` of a `Tool`, a webhook and the environment pieces
-/// and an unknown tool's payload, and a `WireEvent`'s bodies and harness
-/// messages. Every one
-/// shows the placeholder where the secret was, and the names around the
-/// secret stay.
+/// not read, the `extra` of every `Tool` arm ([`every_tool_arm`]), of a
+/// webhook and of the environment pieces, an unknown tool's payload, and a
+/// `WireEvent`'s bodies and harness messages. Every one shows the
+/// placeholder where the secret was, and the names around the secret stay.
 #[test]
 fn debug_never_prints_a_secret() {
     let exa = ExaAiSearchConfig::new(SECRET);
@@ -83,12 +82,11 @@ fn debug_never_prints_a_secret() {
     }))
     .unwrap();
     assert!(unknown_environment.is_unknown());
-    let tool_extra = Tool::CodeExecution {
-        extra: json!({"auth": {"headers": {"Authorization": SECRET}}, "token": SECRET})
-            .as_object()
-            .unwrap()
-            .clone(),
-    };
+    // Every arm of `Tool` holds this as its `extra` (`every_tool_arm`).
+    let tool_extra = json!({"auth": {"headers": {"Authorization": SECRET}}, "token": SECRET})
+        .as_object()
+        .unwrap()
+        .clone();
     let webhook_extra = json!({"secret": SECRET, "delivery": {"token": SECRET}})
         .as_object()
         .unwrap()
@@ -105,7 +103,7 @@ fn debug_never_prints_a_secret() {
     let mut environment_extra = RemoteEnvironment::new();
     environment_extra.extra = unmodeled.clone();
 
-    let cases = [
+    let mut cases: Vec<(String, String)> = [
         ("ExaAiSearchConfig", format!("{exa:?}")),
         ("ParallelAiSearchConfig", format!("{parallel:?}")),
         ("Tool::Retrieval", format!("{retrieval:?}")),
@@ -313,7 +311,6 @@ fn debug_never_prints_a_secret() {
             "EnvironmentSpec::Unknown",
             format!("{unknown_environment:?}"),
         ),
-        ("Tool's extra", format!("{tool_extra:?}")),
         ("AllowlistEntry's extra", format!("{allowlist_extra:?}")),
         ("EnvVar's extra", format!("{env_var_extra:?}")),
         (
@@ -340,7 +337,17 @@ fn debug_never_prints_a_secret() {
                 }
             ),
         ),
-    ];
+    ]
+    .into_iter()
+    .map(|(what, debug)| (what.to_string(), debug))
+    .collect();
+    let tool_arms = every_tool_arm(&tool_extra);
+    cases.extend(tool_arms.iter().map(|tool| {
+        (
+            format!("Tool::{}'s extra", tool_arm(tool)),
+            format!("{tool:?}"),
+        )
+    }));
 
     for (what, debug) in &cases {
         assert!(
@@ -354,17 +361,25 @@ fn debug_never_prints_a_secret() {
     }
     // The names around a secret stay: the header's, the variable's.
     let request_names = ["Authorization", "X-Api-Key", "API_KEY", "api.example.com"];
-    let kept: [(&str, &[&str]); 9] = [
+    let kept: [(&str, &[&str]); 8] = [
         ("InteractionRequest", &request_names),
         ("WireEvent::Request", &request_names),
         ("WireEvent::WsReceive", &["Authorization", "API_KEY"]),
-        ("Tool's extra", &["Authorization"]),
         ("AllowlistEntry's extra", &["auth"]),
         ("EnvVar's extra", &["auth", "cred-1"]),
         ("RemoteEnvironment's extra", &["auth"]),
         ("Webhook's extra", &["delivery"]),
         ("RotateSigningSecretResponse's extra", &["delivery"]),
     ];
+    let arm_names: Vec<String> = tool_arms
+        .iter()
+        .map(|tool| format!("Tool::{}'s extra", tool_arm(tool)))
+        .collect();
+    let kept = kept.into_iter().chain(
+        arm_names
+            .iter()
+            .map(|what| (what.as_str(), &["auth", "Authorization"] as &[&str])),
+    );
     for (what, names) in kept {
         let (_, debug) = cases.iter().find(|(w, _)| *w == what).unwrap();
         for name in names {
@@ -378,6 +393,117 @@ fn debug_never_prints_a_secret() {
     for name in ["API_KEY", "OTHER"] {
         assert!(unread_debug.contains(name), "{name}: {unread_debug}");
     }
+}
+
+/// One value of every `Tool` arm, each holding `extra` as its `extra` map
+/// (an unknown tool in its payload, beside its `type`), and every other
+/// field empty. [`tool_arm`] names each, and
+/// `the_sentinel_builds_every_tool_arm` fails on an arm of the enum left
+/// out here.
+fn every_tool_arm(extra: &Map<String, Value>) -> Vec<Tool> {
+    let mut data = extra.clone();
+    data.insert("type".to_string(), json!("future_tool"));
+    vec![
+        Tool::Function {
+            name: "get_weather".to_string(),
+            description: None,
+            parameters: None,
+            extra: extra.clone(),
+        },
+        Tool::GoogleSearch {
+            search_types: None,
+            extra: extra.clone(),
+        },
+        Tool::GoogleMaps {
+            enable_widget: None,
+            latitude: None,
+            longitude: None,
+            extra: extra.clone(),
+        },
+        Tool::CodeExecution {
+            extra: extra.clone(),
+        },
+        Tool::UrlContext {
+            extra: extra.clone(),
+        },
+        Tool::ComputerUse {
+            environment: "browser".to_string(),
+            excluded_predefined_functions: Vec::new(),
+            enable_prompt_injection_detection: None,
+            disabled_safety_policies: Vec::new(),
+            extra: extra.clone(),
+        },
+        Tool::McpServer {
+            name: "server".to_string(),
+            url: "https://mcp.example.com".to_string(),
+            allowed_tools: None,
+            headers: None,
+            extra: extra.clone(),
+        },
+        Tool::FileSearch {
+            store_names: Vec::new(),
+            top_k: None,
+            metadata_filter: None,
+            extra: extra.clone(),
+        },
+        Tool::Retrieval {
+            retrieval_types: None,
+            vertex_ai_search_config: None,
+            exa_ai_search_config: None,
+            parallel_ai_search_config: None,
+            rag_store_config: None,
+            extra: extra.clone(),
+        },
+        Tool::Unknown {
+            tool_type: "future_tool".to_string(),
+            data: Value::Object(data),
+        },
+    ]
+}
+
+/// The arm's name, by a match with no wildcard arm: an arm added to `Tool`
+/// fails to compile here until it is named.
+fn tool_arm(tool: &Tool) -> &'static str {
+    match tool {
+        Tool::Function { .. } => "Function",
+        Tool::GoogleSearch { .. } => "GoogleSearch",
+        Tool::GoogleMaps { .. } => "GoogleMaps",
+        Tool::CodeExecution { .. } => "CodeExecution",
+        Tool::UrlContext { .. } => "UrlContext",
+        Tool::ComputerUse { .. } => "ComputerUse",
+        Tool::McpServer { .. } => "McpServer",
+        Tool::FileSearch { .. } => "FileSearch",
+        Tool::Retrieval { .. } => "Retrieval",
+        Tool::Unknown { .. } => "Unknown",
+    }
+}
+
+/// The sentinel formats every arm of `Tool` with a secret in its `extra`:
+/// [`every_tool_arm`] builds each arm `src/tools/mod.rs` declares, once, so
+/// a new arm fails here until it is built there (#555 item 4).
+#[test]
+fn the_sentinel_builds_every_tool_arm() {
+    let file = syn::parse_file(include_str!("tools/mod.rs")).expect("src/tools/mod.rs parses");
+    let declared: Vec<String> = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Enum(e) if e.ident == "Tool" => Some(e),
+            _ => None,
+        })
+        .expect("src/tools/mod.rs declares Tool")
+        .variants
+        .iter()
+        .map(|variant| variant.ident.to_string())
+        .collect();
+    let built: Vec<String> = every_tool_arm(&Map::new())
+        .iter()
+        .map(|tool| tool_arm(tool).to_string())
+        .collect();
+    assert_eq!(
+        built, declared,
+        "every_tool_arm builds each arm of Tool once"
+    );
 }
 
 /// A body with no secret prints as the derive printed it: the walk

@@ -19,10 +19,20 @@
 //!   `env`, and a field so named anywhere else is no secret. So a type that
 //!   holds an environment variable's value as a `value` is not found by
 //!   itself; one that derives `Debug` over the `env` holding it is.
+//! - A hand-written `Debug` that redacts (its `fmt` names `redact::..` or
+//!   `REDACTED`) destructures its type: every pattern on `Self` or the
+//!   type, a struct's or a variant's, names each field (`field: _` for one
+//!   it does not print), with no `..` rest, a match on `self` has no `_`
+//!   arm, and no field is read through `self`; else
+//!   `a_redacting_debug_destructures_its_type` fails. So a field or a
+//!   variant added to such a type fails to compile until its `Debug` prints
+//!   or redacts it. An impl that redacts nothing is not read, and omission
+//!   is the safe direction: this is the convention D-067 states, not a
+//!   leak check.
 //!
-//! Both read the library's own source through `tests/common/source_scan.rs`
-//! (D-068): `src/` without its test-only files and items. Each scan tests
-//! itself on a small source first.
+//! All three read the library's own source through
+//! `tests/common/source_scan.rs` (D-068): `src/` without its test-only
+//! files and items. Each scan tests itself on a small source first.
 
 #![allow(
     clippy::unwrap_used,
@@ -407,4 +417,273 @@ fn the_wire_lists_are_read() {
     for name in ["api_key", "headers", "transform", "env", "http_headers"] {
         assert!(names.contains(name), "{name}: {names:?}");
     }
+}
+
+// =============================================================================
+// A redacting Debug destructures its type
+// =============================================================================
+
+#[test]
+fn a_redacting_debug_destructures_its_type() {
+    let sources = source_scan::library_sources();
+    let mut checked = 0;
+    let mut problems = Vec::new();
+    for (rel, file) in &sources {
+        for (ty, found) in redacting_debugs(file) {
+            checked += 1;
+            problems.extend(
+                found
+                    .into_iter()
+                    .map(|problem| format!("{rel}: {ty}: {problem}")),
+            );
+        }
+    }
+    // Twenty-five impls redact today; fewer than twenty means the scan
+    // stopped finding them.
+    assert!(
+        checked >= 20,
+        "found only {checked} hand-written Debug impls that redact"
+    );
+    assert!(
+        problems.is_empty(),
+        "a hand-written `Debug` that redacts reads its type without destructuring \
+         every field, so a field added later prints nothing rather than failing to \
+         compile; destructure with `let Self {{ .. }} = self` (or the arm's pattern) \
+         naming every field, `field: _` for one it does not print (D-067):\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// Each hand-written `Debug` in `file` whose `fmt` redacts (names
+/// `redact::..` or `REDACTED`), by the type's name, with what keeps it from
+/// destructuring its type: a pattern on `Self` or the type (a struct, or a
+/// variant) with a `..` rest, a `_` arm in a match on `self`, a field read
+/// through `self`, or no such pattern at all. An impl that redacts nothing
+/// is not read.
+fn redacting_debugs(file: &syn::File) -> Vec<(String, Vec<String>)> {
+    #[derive(Default)]
+    struct Body<'a> {
+        ty: &'a str,
+        redacts: bool,
+        destructures: usize,
+        problems: Vec<String>,
+    }
+    impl Body<'_> {
+        /// Whether a pattern's path names the type: `Self`, `Self::Variant`,
+        /// `Type` or `Type::Variant`.
+        fn names_the_type(&self, path: &syn::Path) -> bool {
+            path.segments
+                .first()
+                .is_some_and(|first| first.ident == "Self" || first.ident == self.ty)
+        }
+        fn pattern(&mut self, path: &syn::Path, rest: bool) {
+            if self.names_the_type(path) {
+                self.destructures += 1;
+                if rest {
+                    let path = quote_path(path);
+                    self.problems
+                        .push(format!("`{path}` leaves fields out with `..`"));
+                }
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for Body<'_> {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            if path
+                .segments
+                .iter()
+                .any(|s| s.ident == "redact" || s.ident == "REDACTED")
+            {
+                self.redacts = true;
+            }
+            visit::visit_path(self, path);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            let tokens = mac.tokens.to_string();
+            if tokens.contains("redact ::") || tokens.contains("REDACTED") {
+                self.redacts = true;
+            }
+            visit::visit_macro(self, mac);
+        }
+        fn visit_pat_struct(&mut self, pat: &'ast syn::PatStruct) {
+            self.pattern(&pat.path, pat.rest.is_some());
+            visit::visit_pat_struct(self, pat);
+        }
+        fn visit_pat_tuple_struct(&mut self, pat: &'ast syn::PatTupleStruct) {
+            let rest = pat.elems.iter().any(|p| matches!(p, syn::Pat::Rest(_)));
+            self.pattern(&pat.path, rest);
+            visit::visit_pat_tuple_struct(self, pat);
+        }
+        fn visit_expr_match(&mut self, node: &'ast syn::ExprMatch) {
+            let mut scrutinee = &*node.expr;
+            if let syn::Expr::Unary(unary) = scrutinee
+                && matches!(unary.op, syn::UnOp::Deref(_))
+            {
+                scrutinee = &unary.expr;
+            }
+            if matches!(scrutinee, syn::Expr::Path(p) if p.path.is_ident("self"))
+                && node
+                    .arms
+                    .iter()
+                    .any(|arm| matches!(arm.pat, syn::Pat::Wild(_)))
+            {
+                self.problems
+                    .push("a `_` arm lets a new variant compile unprinted".to_string());
+            }
+            visit::visit_expr_match(self, node);
+        }
+        fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
+            if let syn::Expr::Path(base) = &*field.base
+                && base.path.is_ident("self")
+            {
+                let member = match &field.member {
+                    syn::Member::Named(name) => name.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                };
+                self.problems
+                    .push(format!("reads `self.{member}` rather than destructuring"));
+            }
+            visit::visit_expr_field(self, field);
+        }
+    }
+    fn quote_path(path: &syn::Path) -> String {
+        path.segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+    let mut out = Vec::new();
+    for item in source_scan::all_items(std::slice::from_ref(file)) {
+        let syn::Item::Impl(imp) = item else { continue };
+        let is_debug = imp
+            .trait_
+            .as_ref()
+            .and_then(|(_, path, _)| path.segments.last())
+            .is_some_and(|s| s.ident == "Debug");
+        let syn::Type::Path(self_ty) = &*imp.self_ty else {
+            continue;
+        };
+        let Some(ty) = self_ty.path.segments.last().map(|s| s.ident.to_string()) else {
+            continue;
+        };
+        if !is_debug {
+            continue;
+        }
+        for item in &imp.items {
+            let syn::ImplItem::Fn(fmt) = item else {
+                continue;
+            };
+            let mut body = Body {
+                ty: &ty,
+                ..Body::default()
+            };
+            body.visit_block(&fmt.block);
+            if !body.redacts {
+                continue;
+            }
+            if body.destructures == 0 {
+                body.problems
+                    .push("destructures no `Self` or variant pattern".to_string());
+            }
+            out.push((ty.clone(), body.problems));
+        }
+    }
+    out
+}
+
+/// The destructure check flags a `..` rest on a struct or a variant, a
+/// tuple variant's `..`, a `_` arm in a match on `self`, a field read
+/// through `self` and an impl that destructures nothing, and only in an
+/// impl that redacts.
+#[test]
+fn the_destructure_check_detects_what_it_claims_to() {
+    let source = r#"
+        impl std::fmt::Debug for Good {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let Self { name, secret: _ } = self;
+                f.debug_struct("Good").field("name", name).field("secret", &redact::REDACTED).finish()
+            }
+        }
+        impl std::fmt::Debug for Rest {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let Self { headers, .. } = self;
+                f.debug_struct("Rest").field("headers", &redact::values(headers)).finish()
+            }
+        }
+        impl fmt::Debug for Fields {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("Fields").field("name", &self.name).field("key", &REDACTED).finish()
+            }
+        }
+        impl Debug for Choice {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                match self {
+                    Self::Key { key: _, .. } => write!(f, "{}", REDACTED),
+                    Choice::Pair(name, ..) => f.debug_tuple("Pair").field(name).finish(),
+                    Self::Plain(text) => f.debug_tuple("Plain").field(text).finish(),
+                }
+            }
+        }
+        impl Debug for Wild {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                match *self {
+                    Self::Key { key: _ } => write!(f, "{}", REDACTED),
+                    _ => f.write_str("Wild"),
+                }
+            }
+        }
+        impl Debug for InMacro {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                write!(f, "InMacro({})", crate::redact::REDACTED)
+            }
+        }
+        impl Debug for NoSecret {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                let Self { name, .. } = self;
+                f.debug_struct("NoSecret").field("name", &self.name).finish()
+            }
+        }
+        impl Display for NotDebug {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                write!(f, "{}", self.key.map(|_| REDACTED).unwrap_or_default())
+            }
+        }
+    "#;
+    let found = redacting_debugs(&syn::parse_file(source).unwrap());
+    let found: Vec<(&str, Vec<&str>)> = found
+        .iter()
+        .map(|(ty, problems)| {
+            (
+                ty.as_str(),
+                problems.iter().map(String::as_str).collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("Good", vec![]),
+            ("Rest", vec!["`Self` leaves fields out with `..`"]),
+            (
+                "Fields",
+                vec![
+                    "reads `self.name` rather than destructuring",
+                    "destructures no `Self` or variant pattern",
+                ]
+            ),
+            (
+                "Choice",
+                vec![
+                    "`Self::Key` leaves fields out with `..`",
+                    "`Choice::Pair` leaves fields out with `..`",
+                ]
+            ),
+            (
+                "Wild",
+                vec!["a `_` arm lets a new variant compile unprinted"]
+            ),
+            ("InMacro", vec!["destructures no `Self` or variant pattern"]),
+        ]
+    );
 }
