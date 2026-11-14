@@ -718,6 +718,48 @@ fn closure_body(b: &[u8], open: usize) -> bool {
     before.ends_with(b"|") || before.ends_with(b"move") || before.ends_with(b"async")
 }
 
+/// Where the body of a closure whose parameters open at `b[k]` ends, when
+/// that body is not a block (`|| sleep(wait)`): at the `;` or `,` that
+/// ends it, or the bracket that closes around it. A `|` after an operand
+/// is an or, not a closure; a block body is read as a block
+/// ([`closure_body`]).
+fn bare_closure(b: &[u8], k: usize, end: usize) -> Option<usize> {
+    if b[k] != b'|' {
+        return None;
+    }
+    let before = b[..k].trim_ascii_end();
+    let opens = before.ends_with(b"move")
+        || matches!(
+            before.last(),
+            None | Some(b'=' | b'(' | b',' | b'{' | b'[' | b';' | b'>')
+        );
+    if !opens {
+        return None;
+    }
+    let params = (k + 1..end).find(|&j| b[j] == b'|')?;
+    let body = skip_spaces(b, params + 1);
+    if b.get(body) == Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let close = (body..end)
+        .find(|&j| match b[j] {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                false
+            }
+            b')' | b']' | b'}' if depth == 0 => true,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                false
+            }
+            b';' | b',' => depth == 0,
+            _ => false,
+        })
+        .unwrap_or(end);
+    Some(close)
+}
+
 /// Whether `guard`, a match arm's pattern and guard or an `if`'s
 /// condition, holds only for an error a retry can fix: it calls
 /// `is_retryable()` with no `!` before it.
@@ -766,7 +808,8 @@ impl Paths {
     /// `sleep(` call sleeps; `continue` goes back to the head (so must
     /// have slept); `return` and `break` leave; an `if` or a `match` runs
     /// one branch or arm, each read from the state before it; a nested
-    /// loop's paths, and a closure's body, are their own.
+    /// loop's paths, and a closure's body ([`bare_closure`] when not a
+    /// block), are their own.
     fn walk(
         &mut self,
         b: &[u8],
@@ -782,6 +825,10 @@ impl Paths {
                     slept = self.walk(b, k + 1, close, slept, retrying);
                 }
                 k = close + 1;
+                continue;
+            }
+            if let Some(body_end) = bare_closure(b, k, end) {
+                k = body_end;
                 continue;
             }
             let word = word_at(b, k);
@@ -869,13 +916,34 @@ impl Paths {
 }
 
 /// Whether an `.await` in `text` has a `?` on the chain after it
-/// (`.await?`, `.await.map_err(..)?`): an exit on the first error.
+/// (`.await?`, `.await.map_err(..)?`), or after the parentheses that
+/// group it (`(fut.await)?`): an exit on the first error.
 fn awaits_with_try(text: &str) -> bool {
     let b = text.as_bytes();
     text.match_indices(".await").any(|(at, _)| {
-        let after = at + ".await".len();
-        !b.get(after).is_some_and(|&c| ident_byte(c))
-            && postfix(b, after).1.iter().any(|m| m == "?")
+        let mut after = at + ".await".len();
+        if b.get(after).is_some_and(|&c| ident_byte(c)) {
+            return false;
+        }
+        loop {
+            let (end, methods) = postfix(b, after);
+            if methods.iter().any(|m| m == "?") {
+                return true;
+            }
+            // Out of a grouping `(..)`, not a call's or a tuple's.
+            let close = skip_spaces(b, end);
+            let grouped = b.get(close) == Some(&b')')
+                && open_of(b, close).is_some_and(|open| {
+                    !matches!(
+                        b[..open].trim_ascii_end().last(),
+                        Some(&c) if ident_byte(c) || matches!(c, b')' | b']' | b'>' | b'!')
+                    )
+                });
+            if !grouped {
+                return false;
+            }
+            after = close + 1;
+        }
     })
 }
 
@@ -914,12 +982,14 @@ struct RetryLoop {
 ///   string, is none);
 /// - sleep on every path back to its head ([`Paths`]): no `continue`
 ///   that no sleep comes before, in its arm or a block around it, and no
-///   way through to the end of the body that misses one;
-/// - when it sends requests, read the server's `retry_after()`, and retry
-///   what `is_retryable()` says to rather than end on the first transient
-///   error: no `?` on the chain after an `.await`, and no `return` or
-///   `break` in the arm or `if` branch that `is_retryable()` guards (not
-///   negated);
+///   way through to the end of the body that misses one (a sleep in a
+///   closure, its body in braces or not, is the closure's);
+/// - end on no transient error: no `?` on the chain after an `.await`, or
+///   after the parentheses around one ([`awaits_with_try`]);
+/// - when it calls `is_retryable()` or awaits a `.get(`, read the server's
+///   `retry_after()`, and retry what `is_retryable()` says to: no `return`
+///   or `break` in the arm or `if` branch that `is_retryable()` guards (not
+///   negated), and a poll calls `is_retryable()`;
 /// - when a deadline bounds a poll, bound each request by the time left
 ///   (`timeout(`);
 /// - cap the delay it sleeps: growth reaches the sleep through a `.min(`,
@@ -1046,9 +1116,7 @@ fn retry_loops(block: &DocBlock) -> Vec<RetryLoop> {
             if requests && !has("retry_after()") {
                 problems.push(DEAF);
             }
-            if (calls.polls && !has("is_retryable"))
-                || (requests && (awaits_with_try(&text) || paths.gives_up))
-            {
+            if (calls.polls && !has("is_retryable")) || awaits_with_try(&text) || paths.gives_up {
                 problems.push(GIVES_UP);
             }
             if calls.polls && timed && !has("timeout(") {
@@ -1168,10 +1236,11 @@ fn flat(text: &str) -> String {
 }
 
 /// What the poll in `block` decides, as `(when, then)` in order: each arm
-/// of its `match` on a status request's outcome, with the arms of its
-/// `match` on the status in place of the arm that holds that one, then
-/// the first `if` after them, its comparison with the deadline. Comments,
-/// string text and print statements don't count.
+/// of its `match` on a status request's outcome, with the arm that holds
+/// its `match` on the status split in two (what the arm does around that
+/// `match`, then each of its arms), then the first `if` after them, its
+/// comparison with the deadline. Comments, string text and print
+/// statements don't count.
 fn poll_decisions(block: &DocBlock) -> Vec<(String, String)> {
     let mut code = code_lines(&block.lines).join(" ");
     for print in ["eprintln!(", "println!("] {
@@ -1198,6 +1267,13 @@ fn poll_decisions(block: &DocBlock) -> Vec<(String, String)> {
             continue;
         };
         let (open, close) = block_of(then.start + status);
+        // What else the arm does, around the `match` on the status.
+        let rest = format!(
+            "{} {}",
+            &code[then.start..then.start + status],
+            &code[close + 1..then.end]
+        );
+        decided.push((flat(&code[when.clone()]), flat(&rest)));
         for (when, then) in match_arms(b, open, close) {
             decided.push((flat(&code[when]), flat(&code[then])));
         }
@@ -1381,6 +1457,23 @@ fn the_retry_loop_check_finds_each_defect() {
     // bounded too.
     let hasty = "loop {\n    let response = client\n        .interactions()\n        .get(&id)\n        .await?;\n    if start.elapsed() > max_wait {\n        return Ok(None);\n    }\n    sleep(Duration::from_secs(5)).await;\n}";
     assert_eq!(problems(hasty), [DEAF, GIVES_UP, STALLS]);
+    // So does any loop the check reads that awaits with `?`, whatever the
+    // request, and an `.await` in parentheses is awaited all the same.
+    let created = "loop {\n    let r = client.interactions().create().send().await?;\n    if start.elapsed() > max_wait {\n        return Ok(None);\n    }\n    sleep(Duration::from_secs(5)).await;\n}";
+    assert_eq!(problems(created), [GIVES_UP]);
+    let counted = "for attempt in 1..=MAX_ATTEMPTS {\n    let r = client.execute(request.clone()).await?;\n    tokio::time::sleep(jittered(step).min(MAX_DELAY)).await;\n}";
+    assert_eq!(problems(counted), [GIVES_UP]);
+    let grouped = format!(
+        "for attempt in 1..=MAX_ATTEMPTS {{\n    let r = (client.execute(request.clone()).await)?;\n    if e.is_retryable() {{\n        {wait};\n    }} else {{\n        return Err(e);\n    }}\n}}"
+    );
+    assert_eq!(problems(&grouped), [GIVES_UP]);
+    // A closure's body is its own, braces or none: a sleep in one that is
+    // never called is no sleep on the path.
+    let napless = negated.replace(
+        &format!("    {wait};\n"),
+        &format!("    let _nap = || {wait};\n    if attempt > 1 {{\n        continue;\n    }}\n    {wait};\n"),
+    );
+    assert_eq!(problems(&napless), [NO_SLEEP]);
     // Not retry loops: is_retryable() outside a loop, a map lookup in a
     // loop, a loop nested in one (the inner loop is), and a `for` over a
     // collection that paces itself.
@@ -1430,14 +1523,16 @@ type Edits<'a> = &'a [(&'a str, &'a str)];
 /// the example's without the cap on their growth (or doubling by
 /// addition), comparing the clock rather than the wait with the deadline,
 /// applying `+` or `-` to a `Retry-After` (in a variable, inline or in a
-/// closure) or unwrapping `checked_` arithmetic on one (E3), going back to the
-/// loop's head without the sleep (E1), sending a status request with `?`
-/// after any chain (E4), or returning or breaking in the retryable arm
-/// (E9); the example deciding other than the doc's poll does (E7, a
-/// terminal status dropped); the doc's deadline added with `+`; and the
-/// poll `examples/deep_research.rs` had, which ended on the first
-/// transient error and never bounded a request by the time left. (E1 to
-/// E9 name the mutations a review under #504 found passing.)
+/// closure) or unwrapping `checked_` arithmetic on one (E3), going back
+/// to the loop's head without the sleep (E1, also with a sleep in a
+/// closure never called), sending a status request with `?` after any
+/// chain or around its parentheses (E4), or returning or breaking in the
+/// retryable arm (E9); the example deciding other than the doc's poll
+/// does (E7, a terminal status dropped, or a decision beside the `match`
+/// on the status); the doc's deadline added with `+`; and the poll
+/// `examples/deep_research.rs` had, which ended on the first transient
+/// error and never bounded a request by the time left. (E1 to E9 name the
+/// mutations a review under #504 found passing.)
 #[test]
 fn the_retry_loop_check_fails_each_broken_recipe() {
     let only = |block: &DocBlock| {
@@ -1594,6 +1689,17 @@ fn the_retry_loop_check_fails_each_broken_recipe() {
             // E1: an in-progress status that goes back to the loop's head
             // skips the sleep, and polls as fast as the server answers.
             (&[("_ => {}", "_ => continue,")], &[NO_SLEEP]),
+            // A sleep in a closure never called is none on the path.
+            (
+                &[
+                    ("_ => {}", "_ => continue,"),
+                    (
+                        "let mut wait = delay;",
+                        "let mut wait = delay;\nlet _nap = || sleep(wait);",
+                    ),
+                ],
+                &[NO_SLEEP],
+            ),
             // A status request sent with `?`, after any chain (E4), ends
             // the poll on its first transient error, whatever else the
             // loop retries; so does a `return` or `break` in the arm
@@ -1609,6 +1715,13 @@ fn the_retry_loop_check_fails_each_broken_recipe() {
                 &[(
                     "let mut wait = delay;",
                     "let mut wait = delay;\nlet _s = client.interactions().get(id).await.map_err(Box::new)?;",
+                )],
+                &[GIVES_UP],
+            ),
+            (
+                &[(
+                    "let mut wait = delay;",
+                    "let mut wait = delay;\nlet _s = (client.interactions().get(id).await)?;",
                 )],
                 &[GIVES_UP],
             ),
@@ -1647,6 +1760,11 @@ fn the_retry_loop_check_fails_each_broken_recipe() {
         &[(
             "Ok(Err(e)) => return Err(e.into()),",
             "Ok(Err(e)) => return Ok(None),",
+        )],
+        // A decision taken beside the `match` on the status counts too.
+        &[(
+            "println!(\"  {:>4}s  {:?}\", start.elapsed().as_secs(), response.status);",
+            "if response.status == InteractionStatus::Incomplete {\n    return Ok(None);\n}",
         )],
     ] {
         let broken = example_as_doc(poll_decisions(&mutated(&example, edits)));

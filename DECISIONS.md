@@ -3316,19 +3316,22 @@ requires:
   `else` chains, `match` arms, `let ... else` and blocks, a `continue`
   needs a `sleep(` call before it, in its arm or a block around it, and so
   does each way through to the end of the body that does not return or
-  break first. A nested loop's paths, and a closure's body, are their own.
-- **No early exit.** A poll checks `is_retryable()`. In a loop that sends
-  requests, no `.await` has a `?` on the chain after it (`.await?`,
-  `.await.map_err(..)?`), and no `return` or `break` is in the match arm
-  or `if` branch whose guard or condition calls `is_retryable()` without a
-  `!`: a bound goes in the guard (`if e.is_retryable() && attempt < MAX`)
-  or after the match, as both recipes put it. A deadline poll bounds each
-  request with `timeout(`.
+  break first. A nested loop's paths, and a closure's body (in braces or
+  not), are their own.
+- **No early exit.** In every loop the guard reads, no `.await` has a `?`
+  on the chain after it, or after the parentheses around it (`.await?`,
+  `.await.map_err(..)?`, `(fut.await)?`). A poll checks `is_retryable()`,
+  and no `return` or `break` is in the match arm or `if` branch whose
+  guard or condition calls `is_retryable()` without a `!`: a bound goes in
+  the guard (`if e.is_retryable() && attempt < MAX`) or after the match,
+  as both recipes put it. A deadline poll bounds each request with
+  `timeout(`.
 - **The example runs the doc's poll.** `docs/AGENTS_AND_BACKGROUND.md`'s
   poll and `examples/deep_research.rs` make the same decisions, compared as
   code (comments, string text and prints aside): each arm of the `match` on
-  a status request's outcome and of the `match` on the status, and the
-  comparison of the wait with the deadline, with its body. The one
+  a status request's outcome and of the `match` on the status, what the
+  arm that holds that `match` does around it, and the comparison of the
+  wait with the deadline, with its body. The one
   difference allowed is the one the doc states: the example returns
   `Some` on completion and `None` where the doc's poll returns an error at
   the deadline. Each builds its deadline with `checked_add`.
@@ -3348,9 +3351,10 @@ nothing still counts. Names, not values, are read: a `.min(` with any
 argument is a cap (`.min(Duration::MAX)` too), and a name that reads as
 random is jitter (`let random = 0.5;` too). The paths read only the forms
 above: a labeled `continue` counts as its innermost loop's, a `?` ends no
-path (the early-exit rule reads an awaited one), a `sleep(` counts where
-it is called, awaited or not, and a `return` in the retryable arm counts
-even under an `if` that compares with a bound. A `checked_` call counts
+path (the early-exit rule reads an awaited one, but not one after a call
+around the await, `f(fut.await)?`), a `sleep(` counts where it is called,
+awaited or not, and a `return` in the retryable arm counts even under an
+`if` that compares with a bound. A `checked_` call counts
 only on the Retry-After's own chain or with it as its whole argument.
 
 With these checks `tests/reliability_tests.rs` went over D-014's 2,000-line

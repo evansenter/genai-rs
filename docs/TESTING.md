@@ -64,14 +64,16 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 - **`reliability_tests.rs`** covers the default timeouts, how a cut-off
   stream is classified, the read of a stream's tail after its terminal
   event, `Retry-After` in a poll, and that a redirect loop is not
-  retryable. Its `reliability_tests/retry_recipes.rs` reads every retry and
-  poll loop in the docs, rustdoc and `examples/` for a bound, a sleep on
-  every path back to the loop's head, no `?` after an `.await` and no
-  `return` or `break` in the `is_retryable()` arm, a ceiling, jitter where
-  a count bounds it, and no `+`, `-`, `*` or unwrapped `checked_`
-  arithmetic on an uncapped `Retry-After`, and holds the poll in
-  `AGENTS_AND_BACKGROUND.md` and `examples/deep_research.rs` to the same
-  decisions. It reads the code lexically; D-069 lists what that misses.
+  retryable. Its `reliability_tests/retry_recipes.rs` reads each loop in
+  the docs, rustdoc and `examples/` that calls `is_retryable()`, `sleep(`
+  or an awaited `.get(` (a `for` over a collection only through
+  `is_retryable()`) for a bound, a sleep on every path back to the loop's
+  head, no `?` on an awaited chain, no `return` or `break` in the
+  `is_retryable()` arm, a ceiling, jitter where a count bounds it, and no
+  `+`, `-`, `*` or unwrapped `checked_` arithmetic on an uncapped
+  `Retry-After`, and holds the poll in `AGENTS_AND_BACKGROUND.md` and
+  `examples/deep_research.rs` to the same decisions. It reads the code
+  lexically; D-069 lists what that misses.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
