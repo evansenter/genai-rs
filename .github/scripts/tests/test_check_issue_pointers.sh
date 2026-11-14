@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Exercises check_issue_pointers.sh against a fixture tree and a stubbed
 # `gh` (issue states and the rolling issue), so what it reads, what it
-# leaves to the writer and when it opens, updates, comments on or closes
-# its issue are asserted here rather than on the first morning a pointer
-# goes stale.
+# leaves to the writer, that a run without --update-issue writes nothing,
+# and when --update-issue opens, updates, comments on or closes its issue
+# are asserted here rather than on the first morning a pointer goes stale.
 #
 # Run directly: .github/scripts/tests/test_check_issue_pointers.sh
 set -euo pipefail
@@ -49,14 +49,15 @@ printf '%s\n' 'echo "tracked in #500"' >"$T/.github/scripts/tests/test_x.sh"
 printf '%s\n' 'Untracked: tracked in #500.' >"$T/NOTES.md"
 git -C "$T" add docs src CHANGELOG.md DECISIONS.md tests .github
 
-# A `gh` that answers `api repos/{owner}/{repo}/issues/N` from
-# $WORK/issues/N (a JSON object, `404`, or `fail`), `issue list` from
-# $GH_LIST and `issue view` from $GH_VIEW (either fails when it is `fail`),
-# and logs every other call, with its --body, to $WORK/gh.log.
+# A `gh` that answers `api repos/{owner}/{repo}/issues/N`, a lookup and
+# nothing more, from $WORK/issues/N (a JSON object, `404`, or `fail`),
+# `issue list` from $GH_LIST and `issue view` from $GH_VIEW (either fails
+# when it is `fail`), and logs every other call, with its --body, to
+# $WORK/gh.log: an `api` call with a method or a field is logged too.
 mkdir -p "$WORK/bin" "$WORK/issues"
 cat >"$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-if [ "$1" = api ]; then
+if [ "$1" = api ] && [ $# -eq 2 ]; then
     n=${2##*/}
     answer=$(cat "$GH_ISSUES/$n" 2>/dev/null || echo 404)
     case "$answer" in
@@ -107,11 +108,12 @@ logged() { grep -qF -- "$1" "$WORK/gh.log"; }
 ours() { jq -n --arg t "$TITLE" --arg s "$1" '[{number: 560, title: $t, state: $s}]'; }
 OTHER=$(jq -n '[{number: 7, title: "Issue pointers name closed issues, almost", state: "OPEN"}]')
 
-# --print lists every pointer, wrapped, in any case and in a decision,
+# A bare run lists every pointer, wrapped, in any case and in a decision,
 # with its issue's state, and nothing it should not read; it never touches
-# an issue. It fails on a pointer to a closed or missing issue.
-run --print "$T"
-expect_rc "--print with stale pointers" 1
+# an issue. It fails on a pointer to a closed or missing issue. --print is
+# the same run.
+run "$T"
+expect_rc "a bare run with stale pointers" 1
 for want in 'docs/GUIDE.md:3: "tracked in #535" names #535 (open: Antigravity: consume trigger turns)' \
     'docs/GUIDE.md:4: "until #536" names #536 (open: Antigravity on Windows)' \
     'docs/GUIDE.md:4: "see #500 for" names #500 (closed: Streaming and HTTP robustness follow-ups)' \
@@ -120,13 +122,27 @@ for want in 'docs/GUIDE.md:3: "tracked in #535" names #535 (open: Antigravity: c
     'src/lib.rs:6: "until #404" names #404 (no such issue)' \
     'DECISIONS.md:1: "tracked in #539" names #539 (open: Files API: a chosen upload name)' \
     '7 pointer(s) to 6 issue(s); 3 name a closed one.'; do
-    grep -qF -- "$want" <<<"$out" || fail "--print lacks: $want"$'\n'"$out"
+    grep -qF -- "$want" <<<"$out" || fail "a bare run lacks: $want"$'\n'"$out"
 done
-[ "$(grep -c ' names #' <<<"$out")" = 7 ] || fail "--print lists other than the 7 pointers:"$'\n'"$out"
+[ "$(grep -c ' names #' <<<"$out")" = 7 ] || fail "a bare run lists other than the 7 pointers:"$'\n'"$out"
 for unwanted in '#493' 'CHANGELOG.md' 'fixtures' 'test_x.sh' 'NOTES.md'; do
-    grep -qF -- "$unwanted" <<<"$out" && fail "--print reports $unwanted:"$'\n'"$out"
+    grep -qF -- "$unwanted" <<<"$out" && fail "a bare run reports $unwanted:"$'\n'"$out"
 done
+[ -s "$WORK/gh.log" ] && fail "a bare run called gh issue: $(cat "$WORK/gh.log")"
+bare=$out
+run --print "$T"
+expect_rc "--print with stale pointers" 1
+[ "$out" = "$bare" ] || fail "--print differs from a bare run:"$'\n'"$out"$'\n'"---"$'\n'"$bare"
 [ -s "$WORK/gh.log" ] && fail "--print called gh issue: $(cat "$WORK/gh.log")"
+
+# Read-only by default: with stale pointers and the rolling issue open
+# (or closed, or none yet), a bare run makes no `gh` call but its issue
+# lookups, so a local run cannot open, edit, comment on or close it.
+for list in "$(ours OPEN)" "$(ours CLOSED)" '[]'; do
+    GH_LIST=$list run "$T"
+    expect_rc "a bare run, rolling issue $list" 1
+    [ -s "$WORK/gh.log" ] && fail "a bare run wrote to GitHub: $(cat "$WORK/gh.log")"
+done
 
 # The wrapped pointer, "tracked" then "in #539" on the next comment line,
 # is found on its first line.
@@ -153,7 +169,7 @@ done
 
 # No issue yet: one is filed, labeled, listing each finding, with the
 # marker; an issue with a similar title is not ours.
-GH_LIST=$OTHER run "$T"
+GH_LIST=$OTHER run --update-issue "$T"
 expect_rc "stale, no issue" 0
 [ "$(calls create)" = 1 ] || fail "expected one new issue: $(cat "$WORK/gh.log")"
 logged "--title $TITLE --label documentation" || fail "the issue lacks its title or label: $(cat "$WORK/gh.log")"
@@ -166,14 +182,14 @@ done
 # The same findings on our open issue, whose body carries their marker: the
 # body is refreshed, with no comment.
 marker=$(grep -o '<!-- issue-pointers: [0-9]* -->' "$WORK/gh.log")
-GH_LIST=$(ours OPEN) GH_VIEW=$(jq -n --arg b "old $marker" '{body: $b}') run "$T"
+GH_LIST=$(ours OPEN) GH_VIEW=$(jq -n --arg b "old $marker" '{body: $b}') run --update-issue "$T"
 expect_rc "stale, already reported" 0
 [ "$(calls "edit 560")" = 1 ] || fail "the body was not refreshed: $(cat "$WORK/gh.log")"
 [ "$(calls comment)" = 0 ] || fail "commented on findings already reported: $(cat "$WORK/gh.log")"
 [ "$(calls create)" = 0 ] || fail "filed a duplicate: $(cat "$WORK/gh.log")"
 
 # New findings on a closed issue: reopened, refreshed and commented on.
-GH_LIST=$(ours CLOSED) GH_VIEW=$(jq -n '{body: "old <!-- issue-pointers: 1 -->"}') run "$T"
+GH_LIST=$(ours CLOSED) GH_VIEW=$(jq -n '{body: "old <!-- issue-pointers: 1 -->"}') run --update-issue "$T"
 expect_rc "new findings, issue closed" 0
 [ "$(calls "reopen 560")" = 1 ] || fail "the closed issue was not reopened: $(cat "$WORK/gh.log")"
 [ "$(calls "edit 560")" = 1 ] || fail "the body was not refreshed: $(cat "$WORK/gh.log")"
@@ -185,10 +201,13 @@ issue 500 open "Streaming and HTTP robustness follow-ups"
 issue 12 open "A pull request"
 issue 404 open "An issue"
 GH_LIST=$(ours OPEN) run "$T"
+expect_rc "clean, issue open, a bare run" 0
+[ -s "$WORK/gh.log" ] && fail "a clean bare run wrote to GitHub: $(cat "$WORK/gh.log")"
+GH_LIST=$(ours OPEN) run --update-issue "$T"
 expect_rc "clean, issue open" 0
 [ "$(calls "comment 560")" = 1 ] || fail "no closing comment: $(cat "$WORK/gh.log")"
 [ "$(calls "close 560")" = 1 ] || fail "the issue was not closed: $(cat "$WORK/gh.log")"
-GH_LIST=$(ours CLOSED) run "$T"
+GH_LIST=$(ours CLOSED) run --update-issue "$T"
 expect_rc "clean, issue closed" 0
 [ "$(calls close)" = 0 ] || fail "closed a closed issue: $(cat "$WORK/gh.log")"
 [ "$(calls create)" = 0 ] || fail "filed an issue with nothing to report"
@@ -200,16 +219,22 @@ expect_rc "--print, clean" 0
 echo fail >"$WORK/issues/535"
 run "$T"
 expect_rc "an issue lookup fails" 1
+run --update-issue "$T"
+expect_rc "an issue lookup fails, --update-issue" 1
 issue 535 open "Antigravity: consume trigger turns"
 issue 500 closed "Streaming and HTTP robustness follow-ups"
-GH_LIST=fail run "$T"
+GH_LIST=fail run --update-issue "$T"
 expect_rc "gh issue list fails" 1
-GH_LIST=$(ours OPEN) GH_VIEW=fail run "$T"
+GH_LIST=$(ours OPEN) GH_VIEW=fail run --update-issue "$T"
 expect_rc "gh issue view fails" 1
 
 # Bad usage.
 run "$T" extra
 expect_rc "two roots" 2
+run --print --update-issue "$T"
+expect_rc "--print and --update-issue" 2
+run --update-issue --print "$T"
+expect_rc "--update-issue and --print" 2
 run "$WORK/not-a-tree"
 expect_rc "not a git work tree" 2
 

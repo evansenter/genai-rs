@@ -61,9 +61,15 @@ fn debug_never_prints_a_secret() {
     let request = builder.build().unwrap();
     let request_body = serde_json::to_value(&request).unwrap();
     // One entry is not an `EnvVar`, so the whole map is kept in `extra`.
+    // Every string beneath it prints redacted, not only what the wire's walk
+    // reads as a value: `NOTED`'s `note` (#504, L-3).
     let unread_env: RemoteEnvironment = serde_json::from_value(json!({
         "type": "remote",
-        "env": {"API_KEY": {"value": SECRET}, "OTHER": SECRET},
+        "env": {
+            "API_KEY": {"value": SECRET},
+            "OTHER": SECRET,
+            "NOTED": {"value": SECRET, "note": SECRET},
+        },
     }))
     .unwrap();
     assert!(unread_env.env.is_empty() && unread_env.extra.contains_key("env"));
@@ -390,7 +396,7 @@ fn debug_never_prints_a_secret() {
         .iter()
         .find(|(w, _)| w.starts_with("RemoteEnvironment ("))
         .unwrap();
-    for name in ["API_KEY", "OTHER"] {
+    for name in ["API_KEY", "OTHER", "NOTED", "note"] {
         assert!(unread_debug.contains(name), "{name}: {unread_debug}");
     }
 }

@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // an expired key) is likely to kill the delete too, and the original
     // cause is the more useful of the two errors to surface.
     if let Err(e) = client.file_search_stores().force_delete(&store.name).await {
-        eprintln!("cleanup failed for {}: {e}", store.name);
+        eprintln!("cleanup failed for {}: {}", store.name, chain(&e));
     } else {
         println!("Deleted store: {}", store.name);
     }
@@ -144,7 +144,7 @@ async fn run_example(
         )
         .await;
     if let Err(e) = client.files().delete(&file.name).await {
-        eprintln!("cleanup failed for {}: {e}", file.name);
+        eprintln!("cleanup failed for {}: {}", file.name, chain(&e));
     }
     let imported = imported?;
     println!("Imported {} as document: {}", file.name, imported.name);
@@ -268,4 +268,13 @@ fn print_metadata(metadata: &[CustomMetadata]) {
         };
         println!("  metadata: {} = {value}", entry.key);
     }
+}
+
+/// The error and each `source()` below it: `GenaiError::Http`'s `Display`
+/// leaves the transport error to its source.
+fn chain(e: &(dyn Error + 'static)) -> String {
+    std::iter::successors(Some(e), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }

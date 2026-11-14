@@ -443,6 +443,13 @@ fn test_redact_fields_leaves_a_schemas_property_names_alone() {
         // printed all three raw (#504, K-1).
         "call": {"properties": {"api_key": "secret-4", "token": "secret-5"}},
         "extra": {"properties": {"headers": {"Authorization": "secret-6"}}},
+        // A value with a schema keyword is data too unless `"type":
+        // "object"` sits beside the map: with no `type` there, or with any
+        // other one, such as an unknown tool's or event's (#504, L-2).
+        "untyped": {"properties": {"token": {"type": "bearer", "value": "secret-9"}}},
+        "typed": {"type": "future_tool", "properties": {
+            "token": {"type": "bearer", "value": "secret-10"}
+        }},
         // Beside `"type": "object"` too, a value with no schema keyword is
         // data, and a string is never a property's schema.
         "object": {"type": "object", "properties": {

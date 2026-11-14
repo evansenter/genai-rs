@@ -2036,6 +2036,16 @@ pointer. A bare `(#N)` or "#N item M" stays a provenance tag, as above.
 `--print` lists every pointer it finds with its issue's state, open ones
 included, so a local run shows what the check sees.
 
+**Amended 2026-11-14 (#504, L-11).** A run without `--print` wrote to the
+public tracker: during the #504 grade of 2026-11-14, one grader's local
+run on a mutated tree opened #566, and another's closed it. The script is
+read-only by default now. A bare run, or `--print`, which is the same run,
+lists every pointer with its issue's state, exits 1 when one names a
+closed issue or none, and makes no `gh` call but the issue lookups. Only
+`--update-issue` opens, rewrites, comments on or closes the rolling issue.
+The sweep passes it, `tests/ci_workflows/sweep.rs` pins that command, and
+the script's harness asserts that a bare run writes nothing.
+
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
 **Context.** D-046 made the flakiness report fail on any test that needs a
@@ -2542,7 +2552,7 @@ passes on that job's result.
   dev-dependency. It is the maintained fork of `yaml-rust`, which is
   unmaintained, as `serde_yaml` is archived. It reads YAML 1.2, needs
   Rust 1.85 (the crate's MSRV is 1.88), and fails on a duplicated key
-  rather than keep its last value. Each key a guard checks, on the
+  rather than keep its last value. Each key `escapes` checks, on the
   workflow, a job or a step, is the key YAML reads, quoted or with a space
   before its colon. A merge key (`<<`), which the parser does not expand,
   is rejected. A step's script is its `run:` value as YAML reads it: a
@@ -2605,6 +2615,63 @@ the 2026-11-10 amendment names and with the limits it gives, and one
 more: a command word spelled so the text does not read it as that
 command (`"alias"`, `al''ias`, `builtin eval`), which no one writes by
 accident.
+
+**Amended 2026-11-14 (#504, L-4, L-5, L-6).** The #504 grade of 2026-11-14
+found three gaps, each of whose probes passed all 77 ci_coverage tests.
+- Fuzz Gate's verdict and the path check before it were not guarded. A
+  gate that exits 0 on a failed matrix, one whose test never holds, an
+  `|| true` on its last line, `fuzz=false` written in doubt (so scheduled
+  and manual runs never fuzz), `src/*` or `Cargo.toml` dropped from the
+  case arm, `fuzz=false` forced before the output, and `continue-on-error`
+  on either job each passed. `tests/ci_workflows/fuzz.rs` now pins both
+  jobs whole: each must read, as YAML reads it, as its pin there, with each
+  `run:` value compared line by line as written (comment and blank lines
+  dropped, a `\` continuation not joined, since bash joins `!=\` and a
+  next line `success` into one word), and nothing in the workflow may
+  change how their scripts run. A pin rather than `escapes`: each script
+  ends a branch with `exit 0`, which `escapes` rejects, and a pinned job
+  holds every key and step it may have, so no `if:`, `continue-on-error`,
+  other step or `$GITHUB_ENV` write can join it. A change to either job
+  changes its pin, with the reason.
+- A nextest retry set anywhere but a live step's env passed every guard
+  and was never counted: `retries = 2` in `.config/nextest.toml`'s default
+  profile, an override with `filter = "all()"`, and `NEXTEST_RETRIES: 3` on
+  strict-unknown's unit step. The guard now rejects a line of
+  `.config/nextest.toml` that names `retries` (or holds a TOML `\u`
+  escape, which can spell it), `NEXTEST_RETRIES` named in any case
+  anywhere in a workflow but a live nextest step's own `env:`, or in a
+  composite action (`action.yml` or `action.yaml`), `--retries`, and
+  `--config-file` or `--tool-config-file`. It reads the text of the
+  workflows, the composite actions and `.config/nextest.toml`, so a name
+  a script builds at run time, or a script a step runs (a
+  `.github/scripts/` file, a `make` target) that writes the name to
+  `$GITHUB_ENV`, is not read. And the report reads only `rust.yml`'s
+  runs: `release.yml`'s two live steps retry as `rust.yml`'s do, so that
+  a capacity 429 or 503 does not fail a release, and a test retried to a
+  pass there is not counted. Their live tests are the ones `rust.yml`'s
+  live jobs run, whose retries it counts.
+- The K-7 amendment said each key a guard checks is the key YAML reads. It
+  held for the keys `escapes` checks, and now says so. `coverage.rs` read
+  the summary step's `if:` as text, and `builds.rs` the Cross Platform
+  job's, the steps' it checks there and in the macOS PR job, and the
+  matrix's `exclude:`, so a quoted or spaced key read as no condition and
+  passed. Every `if:` a guard checks is now read as YAML reads it, the
+  readers that failed safe on a quoted key included. A guard that only
+  finds a job or a step, or requires a key to hold a value, may still
+  match the text: a key spelled otherwise there is not found, and fails
+  the guard.
+
+A review of this amendment's first version found two routes it let
+through: a pinned line split by a `\` continuation, which the pin read
+joined as no shell does, and a composite action saved as `action.yaml`,
+which the retry check never read. Each is now a case in the tests.
+
+Two of the grade's suggestions are not taken up, and remain limits. A
+guarded command can run another program from outside the script text: a
+`PATH` or `CARGO_ALIAS_*` in an `env:`, a directory written to
+`$GITHUB_PATH`, or a composite action's own `$GITHUB_ENV` write. And a
+required check's test step is held to its masks, not to its command, so
+an `--exclude` on it passes.
 
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
@@ -2787,7 +2854,7 @@ for a probe to settle (D-010).
   required, and each verb that calls one of those operations sends its
   value as the body, so the flag asks nothing the crate does not do. A
   body made optional asks nothing new; a body given to an operation that
-  had none is a request body, in #558's diff.
+  had none is a request body, which the diff tracked in #558 covers.
 - **A parameter's schema.** Each parameter a verb sends has the type the
   spec gives it, but for one set: the voices list filters (`accent`,
   `context`, `gender`, `language_code`, `persona`, `pitch`, `region_code`
@@ -2829,13 +2896,39 @@ still drops, and why:
   something names it, and then it is kept where it is named.
 None of the newly kept keys is diffed against the crate offline, and each
 is watched: each states what the crate fixes in its own code (the server
-`Client` defaults to, the `X-Goog-Api-Key` header, the SSE parser
-skipping `[DONE]`) or does not use (a deprecation, the optional
+`Client` defaults to, the API key among the security scheme's
+credentials, the SSE parser skipping `[DONE]`) or does not use (a
+deprecation, the scheme's access token and default headers, the optional
 `x-goog-user-project` header, the generated client's retry policy), so a
 change to one is for a probe to settle, as a parameter's retyping is. The
 retry policy, `[408, 409, 429, 5XX]` with backoff, is one D-053 already
 weighed: the crate's differs on 409 and six 5xx, for the reasons given
 there.
+
+**Amended 2026-11-14 (#504, L-9).** #504's 2026-11-14 grade found the
+paragraph above going further than the code twice. It said a kept key
+states the `X-Goog-Api-Key` header. None does: the one security scheme
+both specs give, `googleGenAIAuth`, is a custom `http` scheme whose
+credentials are `apiKey`, `accessToken` and `defaultHeaders`, and it
+names no header. The crate authenticates with the API key alone, sent in
+its own `X-Goog-Api-Key` header (`API_KEY_HEADER`, `src/http/common.rs`),
+and `ClientBuilder` takes no access token and no default headers. That
+stays. Every endpoint a verb calls takes a key, as each verb's live test
+shows (`tests/ci_coverage.rs`), and the live suites run with a key
+alone, so an access-token option could not be tested live (D-010); one
+would also need a token source and its refresh, which the crate would
+carry for no endpoint it models. The one endpoint in the bindings that
+refuses a key, `files.register_files`, stays deferred for it
+(`docs/INTERACTIONS_API_GAP.md`, "Resource residue"). Whether the other
+endpoints take an access token was not probed. Rejected: an access-token
+or default-headers option "for parity" with the scheme, for that D-010
+reason. The paragraph above now names the scheme's credentials. And
+nothing held the keys it says a schema and a parameter keep: a reducer
+that dropped a schema's `x-speakeasy-*` keys, or a parameter's `x-`
+keys, passed `test_snapshot_openapi.sh`. Its fixture now gives a schema
+`x-speakeasy-unknown-values`, `x-google-enum-deprecated` and
+`x-speakeasy-name-override`, and a parameter `x-speakeasy-name-override`,
+and checks that each is kept.
 
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
@@ -3551,11 +3644,24 @@ requires:
   value built from one, with a comparison. That is the doc's poll, which
   gives up when the wait would outlast the budget, so a huge Retry-After
   ends the poll rather than the sleep.
-- **No overflow.** No `+`, `-` or `*` applies to an uncapped Retry-After:
-  a `retry_after()` call with its receiver and chain, a variable assigned
-  one, or a closure parameter along its chain. Nor is a `checked_add`,
-  `checked_sub` or `checked_mul` on its chain, or with it as the whole
-  argument, followed by `unwrap()` or `expect(`: the same panic.
+- **No overflow.** Nothing that panics on a Retry-After too large applies
+  to one: a `retry_after()` call with its receiver and chain, a variable
+  assigned one, or a closure parameter along its chain. Before its first
+  `.min(`, its chain calls only methods that cannot panic on it: a
+  comparison (`max`, `cmp`, ...), a conversion (`as_*`, `subsec_*`),
+  `saturating_*` or `checked_*` arithmetic, and `Option`'s adapters but
+  `unwrap` and `expect` (`?`, `map*`, `unwrap_or*`, `ok_or*`,
+  `and_then`, `filter`, `or*`). Any other method counts as one that can,
+  `Duration`'s `mul_f64`, `div_f64` and `add` among them. With no `.min(`
+  on it, no `+`, `-` or `*` applies to it; it is in the argument of no
+  call that panics on overflow (`add`, `sub` and `mul` and their
+  `_assign` forms, `mul_f32`, `mul_f64`, `div_f32`, `div_f64`,
+  `from_secs_f32`, `from_secs_f64`, `from_mins` and `from_hours`), at any
+  depth of its statement; and no `checked_add`, `checked_sub` or
+  `checked_mul` on its chain, or with it as the whole argument, is
+  followed by `unwrap()` or `expect(`: the same panic. A `max` or
+  `saturating_add` call with it as a whole argument (`delay.max(asked)`,
+  `cmp::max(asked, delay)`) returns it, so the call is held to the same.
 - **Jitter where a count bounds the loop.** A name that reads as random
   (`rand`, `RandomState`, `fastrand`, an `rng`) or as jitter reaches each
   sleep. A deadline poll of one interaction is not required to jitter: no
@@ -3582,7 +3688,9 @@ requires:
   wait with the deadline, with its body. The one
   difference allowed is the one the doc states: the example returns
   `Some` on completion and `None` where the doc's poll returns an error at
-  the deadline. Each builds its deadline with `checked_add`.
+  the deadline. Each assigns its backoff the same values, its ceiling
+  included, and builds its deadline with `checked_add`, its `None` not
+  unwrapped.
 
 Rejected: a `.min(` on the Retry-After in a deadline poll too. J-6 names
 the uncapped `max`, and a cap below the server's ask polls sooner than
@@ -3591,7 +3699,8 @@ instead. Rejected for now: reading the loops with `syn`. The lexical
 reading catches every mutation the reviews found, each kept as a test.
 
 **Consequences.** The guard reads code, not a type system. A value that
-passes through a function, a struct field or a shadowed name is not
+passes through a function, a struct field, a pattern
+(`if let Some(asked) = e.retry_after()`) or a shadowed name is not
 followed, and a `.min(` inside a closure on the chain
 (`.map(|a| a.min(MAX))`) reads as no cap; such a recipe is rewritten with
 the `.min(` on the chain. A comparison with the time left that bounds
@@ -3603,7 +3712,15 @@ path (the early-exit rule reads an awaited one, but not one after a call
 around the await, `f(fut.await)?`), a `sleep(` counts where it is called,
 awaited or not, and a `return` in the retryable arm counts even under an
 `if` that compares with a bound. A `checked_` call counts
-only on the Retry-After's own chain or with it as its whole argument.
+only on the Retry-After's own chain or with it as its whole argument. The
+calls that panic with a Retry-After in their argument are the ones the
+No-overflow rule names, and the ones whose result holds it are `max` and
+`saturating_add`: a Retry-After passed to a call neither names
+(`Some(asked)`, `Duration::from_secs(asked.as_secs())`), put in a
+collection (`[asked, delay].iter().sum()`), or in a closure on a
+variable's chain (only one on a `retry_after()` call's chain is read) is
+not followed. A method not on its list of safe ones counts as one that
+can panic, however safe; such a recipe is rewritten.
 
 With these checks `tests/reliability_tests.rs` went over D-014's 2,000-line
 bar, so the recipe checks, the backon one and this guard, moved unchanged
@@ -3628,6 +3745,37 @@ it uses `checked_add`, as the example does. The checks took
 sources (the docs' code blocks, an example's file, and what a line of
 code holds) moved unchanged to `tests/reliability_tests/recipe_source.rs`,
 another module of the test binary (D-011).
+
+**Amended 2026-11-14 (#504, L-7).** The overflow rule read `+`, `-`, `*`
+and an unwrapped `checked_` call, and this section did not list what it
+missed: `Duration`'s methods that panic on a result too large. Mutations
+a review under #504 found passing: `|asked| asked.mul_f64(1.5).max(delay)`
+or `asked.div_f64(0.5)` in the doc's poll and its example, and jitter
+scaled onto the server's wait in `InteractionRequest`'s recipe
+(`asked.mul_f64(1.0 + random)`, before its `.min(`). Each panics on a
+Retry-After of `u64::MAX` seconds, which `parse_retry_after` accepts. The
+rule now reads a Retry-After's chain before its first `.min(` against the
+methods that cannot panic, and the calls that overflow with one in their
+argument, as the No-overflow rule above says. Each of those mutations is
+a case in `the_retry_loop_check_fails_each_broken_recipe`, with `add` as
+a method, the float constructor, and saturating arithmetic, which passes.
+Two neighbouring claims went further than their checks, and are held
+now: a `checked_add` deadline whose `None` is unwrapped (`.expect(..)`
+in the doc, `.unwrap()` in the example) passed the check that said "an
+error, not a panic", and the example capped its backoff at 15 s to the
+doc's 10 s, a second difference the doc did not state. The example's
+ceiling is the doc's, and `backoff` compares the two. The checks took
+`retry_recipes.rs` past D-014's bar, so the guard's two self-tests,
+`the_retry_loop_check_finds_each_defect` and
+`the_retry_loop_check_fails_each_broken_recipe`, with their cases and
+helpers, moved to `tests/reliability_tests/retry_guard_cases.rs`, a child
+module of `retry_recipes` that calls its private checks (D-011). A review
+of this amendment found the server's wait passing as `max`'s argument
+rather than its receiver: `delay.max(asked).mul_f64(1.5)`,
+`cmp::max(asked, delay).mul_f64(1.5)` and `delay.max(asked) + delay`
+each panic on that Retry-After and passed. The rule now follows one into
+a `max` or `saturating_add` it is an argument of, as the No-overflow rule
+says; each is a case.
 
 ## D-070 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
 

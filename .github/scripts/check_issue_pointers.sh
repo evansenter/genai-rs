@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Flags issue pointers that name a closed issue (D-051), for the daily
-# api-surface-sweep.
+# Flags issue pointers that name a closed issue (D-051): read-only by
+# default, for a local run; with --update-issue, the daily
+# api-surface-sweep's, it keeps a rolling issue.
 #
-# Usage: .github/scripts/check_issue_pointers.sh [--print] [ROOT]
+# Usage: .github/scripts/check_issue_pointers.sh [--print | --update-issue] [ROOT]
 #
 # D-051 tells a pointer from a provenance tag by what the sentence claims,
 # which no script can read. This check is narrower: it finds the pointer
@@ -14,28 +15,31 @@
 # (a released section is not edited, so it holds no pointer), fixtures
 # (any `fixtures/` directory) and the script harnesses'
 # .github/scripts/tests/, whose strings are fixture data. A bare "#N item
-# M" is not matched: D-051 uses that form for provenance tags too. A
+# M" is not matched: D-051 uses that form for provenance tags too. Whether
+# a listed sentence is a stale pointer (state the outcome, drop the
+# pointer) or a provenance tag worded like one (reword it) stays the
+# writer's call.
+#
+# By default (or with --print, the same), it lists every pointer found,
+# with its issue's state, and exits 1 if any names a closed issue or none.
+# It writes nothing: its only `gh` calls read an issue.
+#
+# --update-issue: the sweep's mode, the only one that writes to GitHub. A
 # pointer whose issue is closed, or that names no issue, opens or updates
 # one rolling issue (labeled `documentation`) that lists each; a run that
-# finds none closes it. Whether a listed sentence is a stale pointer (state
-# the outcome, drop the pointer) or a provenance tag worded like one
-# (reword it) stays the writer's call.
+# finds none closes it. The issue is found by its exact title, closed
+# included, so a closed one reopens rather than a duplicate being filed.
+# Its body is rewritten on every run with a finding; a comment is added
+# only when the findings changed (a marker in the body records them).
+# Only the stale pointers are listed.
 #
-# The issue is found by its exact title, closed included, so a closed one
-# reopens rather than a duplicate being filed. Its body is rewritten on
-# every run with a finding; a comment is added only when the findings
-# changed (a marker in the body records them).
+# Exit status: by default, 0 when no pointer names a closed issue or none;
+# with --update-issue, 0 when the check ran, whatever it found. 1 when a
+# `gh` call failed (or, by default, a pointer names a closed issue); 2 on
+# bad usage or when ROOT is not a git work tree.
 #
-# --print: list every pointer found, with its issue's state, and exit 1 if
-# any names a closed issue or none, without touching the rolling issue (a
-# local run). Without it, only those are listed.
-#
-# Exit status: 0 when the check ran, whatever it found (with --print: when
-# no pointer names a closed issue); 1 when a `gh` call failed (or, with
-# --print, a pointer names a closed issue); 2 on bad usage or when ROOT is
-# not a git work tree.
-#
-# Needs python3, git and gh (GH_TOKEN with issues: write).
+# Needs python3, git and gh (GH_TOKEN; with --update-issue, one with
+# issues: write).
 
 set -euo pipefail
 
@@ -43,12 +47,16 @@ usage() {
     awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
 }
 
-print_only=0
-if [ "${1:-}" = --print ]; then
-    print_only=1
-    shift
-fi
-if [ $# -gt 1 ] || [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then
+print_only=1
+case "${1:-}" in
+    --print) shift ;;
+    --update-issue)
+        print_only=0
+        shift
+        ;;
+esac
+if [ $# -gt 1 ] || [ "${1:-}" = -h ] || [ "${1:-}" = --help ] ||
+    [ "${1:-}" = --print ] || [ "${1:-}" = --update-issue ]; then
     usage
     exit 2
 fi

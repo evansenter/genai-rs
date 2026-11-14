@@ -312,6 +312,64 @@ mod tests {
         assert!(result["error"].as_str().unwrap().contains("bad input"));
     }
 
+    /// An error whose `Display` leaves its cause to `source()`, as
+    /// `GenaiError::Http`'s does.
+    #[derive(Debug)]
+    struct Transport(std::io::Error);
+
+    impl std::fmt::Display for Transport {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("HTTP request error")
+        }
+    }
+
+    impl std::error::Error for Transport {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    struct TransportFailure;
+
+    impl CallableFunction for TransportFailure {
+        fn declaration(&self) -> FunctionDeclaration {
+            FunctionDeclaration::new(
+                "antigravity_transport_fails".to_string(),
+                "Fails with a transport error".to_string(),
+                FunctionParameters::new("object".to_string(), json!({}), vec![]),
+            )
+        }
+
+        fn call(&self, _args: Value) -> crate::FunctionFuture<'_> {
+            Box::pin(async move {
+                Err(FunctionError::ExecutionError(Box::new(Transport(
+                    std::io::Error::other("connection refused"),
+                ))))
+            })
+        }
+    }
+
+    struct TransportService;
+
+    impl ToolService for TransportService {
+        fn tools(&self) -> Vec<Arc<dyn CallableFunction>> {
+            vec![Arc::new(TransportFailure)]
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_error_tells_the_model_every_cause() {
+        // The model gets the error and each cause below it (D-049): with the
+        // error's `Display` alone it would read only "HTTP request error".
+        let services: Vec<Arc<dyn ToolService>> = vec![Arc::new(TransportService)];
+        let d = ToolDispatcher::new(vec![], &services);
+        let result = d.execute("antigravity_transport_fails", json!({})).await;
+        assert_eq!(
+            result,
+            json!({"error": "Function execution error: HTTP request error: connection refused"})
+        );
+    }
+
     #[tokio::test]
     async fn test_execute_unknown_tool_returns_error_result() {
         let d = dispatcher();
