@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **A tagged union read with a non-string `type` is typed
+  `<non-string: ...>`, not `<missing type>`.** `Step`, `StepDelta`,
+  `Content`, `Annotation`, `Tool`, `ResponseFormat`, `TranscriptionMode`,
+  `Answer` and `VideoProcessing` now type a `{"type": 5, ...}` as a string
+  enum types a non-string value (`unknown_step_type()` returns
+  `Some("<non-string: 5>")`), and the unions that write their type back
+  (`Step`, `StepDelta`, `Content`, `Annotation`, `Tool`) write that string
+  as the `type`. A missing or `null` `type` stays `<missing type>`. A bare
+  non-string `TranscriptionMode` (`7`) is `<non-string: 7>` too, as a bare
+  `VideoProcessing` already was (D-075).
+- **`Debug` and `LOUD_WIRE` redact a replicated voice's key.** `Voice::key`
+  prints as `Some("[REDACTED]")`, and a `SpeechConfig` whose voice is a key
+  prints its voice the same way; `LOUD_WIRE`, the `wire` tracing target and
+  `WireEvent`'s `Debug` redact a string that starts with `voicekey_`
+  wherever it appears in a body, a request's voice name included (D-067).
+- **`InteractionBuilder`'s and `InteractionRequest`'s `Debug` print `extra`
+  through the wire's redaction**, so a secret there under a name `LOUD_WIRE`
+  redacts (an `api_key`, a `token`) prints as `[REDACTED]`, as it does in a
+  `Tool`'s or a `RemoteEnvironment`'s `extra` (D-067).
+- **An unknown `EnvironmentSpec`'s `Debug` prints every string in its JSON
+  as `[REDACTED]`**, keeping the keys, as a `RemoteEnvironment`'s unread
+  `env` prints, rather than only what the wire's redaction reads as a secret
+  (D-067).
+
+### Fixed
+
+- **`LOUD_WIRE` printed a secret field under a schema's `properties` when its
+  object held a `type` that names no JSON Schema type.** Beside `"type":
+  "object"`, `{"properties": {"token": {"type": "bearer", "value": ...}}}`
+  read the `token` entry as a schema and printed its value. A `type` now makes
+  a value under `properties` a schema only when it names a JSON Schema type
+  (`string`, `number`, `integer`, `boolean`, `object`, `array`, `null`, in any
+  case, as Gemini's upper-case `STRING`) or lists such names, so the entry is
+  read as the secret field it is. `WireEvent`'s `Debug` and the `wire`
+  tracing target share the fix (D-067).
+
 ## [0.15.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.3.0 (swept 2026-11-14;
