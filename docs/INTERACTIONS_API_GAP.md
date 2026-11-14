@@ -723,7 +723,7 @@ decisions resource yet (see rank 1b above).
 ### Modeled, not yet served
 
 Open: each is modeled from the bindings alone, and stays here until a live
-response carries it.
+response carries it. The decision's `prompt_feedback` is tracked in #582.
 
 | Surface | Where | What to retry |
 |---|---|---|
