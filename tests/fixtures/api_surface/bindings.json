@@ -1,5 +1,5 @@
 {
-  "sdk_version": "3.0.0",
+  "sdk_version": "3.3.0",
   "api_revision": "2026-05-20",
   "endpoints": {
     "DELETE /{}/agents/{}": {"query": []},
@@ -43,6 +43,7 @@
     "POST /upload/{}/files": {"query": []},
     "POST /{}/agents": {"query": []},
     "POST /{}/credentials": {"query": []},
+    "POST /{}/decisions": {"query": []},
     "POST /{}/environments": {"query": []},
     "POST /{}/fileSearchStores": {"query": []},
     "POST /{}/fileSearchStores/{}:importFile": {"query": []},
@@ -67,13 +68,21 @@
     "credentials.InjectionLocationEnum": {"kind": "literal", "open": false, "values": ["body", "header", "query"]},
     "credentials.Status": {"kind": "literal", "open": true, "values": ["active", "revoked"]},
     "credentials.Type": {"kind": "literal", "open": true, "values": ["bearer_token", "environment_variable", "oauth2"]},
+    "decisions.Answer": {"arms": [{"kind": "ref", "name": "decisions.ChoiceAnswer"}, {"kind": "ref", "name": "decisions.NoulAnswer"}, {"kind": "ref", "name": "decisions.ScoreAnswer"}], "kind": "union"},
+    "decisions.BlockReason": {"kind": "literal", "open": true, "values": ["blocklist", "image_safety", "other", "prohibited_content", "safety"]},
+    "decisions.ChoiceQuestionInstructions": {"arms": [{"item": {"kind": "ref", "name": "interactions.TextContent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.TextContent"}, {"kind": "str"}], "kind": "union"},
+    "decisions.DecisionInputContent": {"arms": [{"kind": "ref", "name": "interactions.AudioContent"}, {"kind": "ref", "name": "interactions.DocumentContent"}, {"kind": "ref", "name": "interactions.ImageContent"}, {"kind": "ref", "name": "interactions.TextContent"}, {"kind": "ref", "name": "interactions.VideoContent"}], "kind": "union"},
+    "decisions.Input": {"arms": [{"item": {"kind": "ref", "name": "decisions.DecisionInputContent"}, "kind": "list"}, {"kind": "ref", "name": "decisions.DecisionInputContent"}, {"kind": "str"}], "kind": "union"},
+    "decisions.NoulQuestionInstructions": {"arms": [{"item": {"kind": "ref", "name": "interactions.TextContent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.TextContent"}, {"kind": "str"}], "kind": "union"},
+    "decisions.Question": {"arms": [{"kind": "ref", "name": "decisions.ChoiceQuestion"}, {"kind": "ref", "name": "decisions.NoulQuestion"}, {"kind": "ref", "name": "decisions.ScoreQuestion"}], "kind": "union"},
+    "decisions.ScoreQuestionInstructions": {"arms": [{"item": {"kind": "ref", "name": "interactions.TextContent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.TextContent"}, {"kind": "str"}], "kind": "union"},
     "environments.CreateEnvironmentRequestNetworkEnum": {"kind": "literal", "open": false, "values": ["disabled"]},
     "environments.CreateEnvironmentRequestNetworkUnion": {"arms": [{"kind": "ref", "name": "environments.CreateEnvironmentRequestNetworkEnum"}, {"kind": "ref", "name": "interactions.EnvironmentNetworkEgressAllowlist"}], "kind": "union"},
     "environments.EnvironmentNetworkEnum": {"kind": "literal", "open": true, "values": ["disabled"]},
     "environments.EnvironmentNetworkUnion": {"arms": [{"kind": "ref", "name": "environments.EnvironmentNetworkEnum"}, {"kind": "ref", "name": "interactions.EnvironmentNetworkEgressAllowlist"}], "kind": "union"},
     "environments.Status": {"kind": "literal", "open": true, "values": ["active", "expired"]},
     "environments.Type": {"kind": "literal", "open": true, "values": ["directory", "file"]},
-    "interactions.AgentOption": {"kind": "literal", "open": true, "values": ["antigravity-preview-05-2026", "deep-research-max-preview-04-2026", "deep-research-preview-04-2026", "deep-research-pro-preview-12-2025"]},
+    "interactions.AgentOption": {"kind": "literal", "open": true, "values": ["antigravity-preview-05-2026", "antigravity-preview-09-2026", "deep-research-max-preview-04-2026", "deep-research-preview-04-2026", "deep-research-pro-preview-12-2025"]},
     "interactions.Allowlist": {"arms": [{"item": {"kind": "ref", "name": "interactions.AllowlistEntry"}, "kind": "list"}, {"kind": "ref", "name": "interactions.Disabled"}], "kind": "union"},
     "interactions.Annotation": {"arms": [{"kind": "ref", "name": "interactions.FileCitation"}, {"kind": "ref", "name": "interactions.PlaceCitation"}, {"kind": "ref", "name": "interactions.SpeechAnnotation"}, {"kind": "ref", "name": "interactions.URLCitation"}, {"kind": "ref", "name": "interactions.WordInfo"}], "kind": "union"},
     "interactions.AudioContentMimeType": {"kind": "literal", "open": true, "values": ["audio/aac", "audio/aiff", "audio/alaw", "audio/flac", "audio/l16", "audio/m4a", "audio/mp3", "audio/mpeg", "audio/mulaw", "audio/ogg", "audio/opus", "audio/wav", "audio/webm"]},
@@ -122,7 +131,7 @@
     "interactions.MediaResolution": {"kind": "literal", "open": true, "values": ["high", "low", "medium", "ultra_high"]},
     "interactions.Method": {"kind": "literal", "open": true, "values": ["probability", "severity"]},
     "interactions.Mode": {"kind": "literal", "open": true, "values": ["scan", "verify"]},
-    "interactions.Model": {"kind": "literal", "open": true, "values": ["gemini-2.5-flash", "gemini-2.5-flash-image", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-image", "gemini-3.1-flash-tts-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-transcribe", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-4-argon", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-nano-banana-2.1", "gemini-omni-1.1-flash", "gemini-omni-flash-preview", "gemini-pro-latest", "gemini-robotics-er-1.6-preview", "gemini-robotics-er-2-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "lyria-3-clip-preview", "lyria-3-pro-preview", "lyria-3.5", "nano-banana-pro-preview"]},
+    "interactions.Model": {"kind": "literal", "open": true, "values": ["gemini-2.5-flash", "gemini-2.5-flash-image", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-image", "gemini-3.1-flash-tts-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-transcribe", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-nano-banana-2.1", "gemini-omni-1.1-flash", "gemini-omni-1.2-flash", "gemini-omni-flash-preview", "gemini-pro-latest", "gemini-robotics-er-1.6-preview", "gemini-robotics-er-2-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "lyria-3-clip-preview", "lyria-3-pro-preview", "lyria-3.5", "nano-banana-pro-preview"]},
     "interactions.Network": {"arms": [{"kind": "ref", "name": "interactions.EnvironmentNetworkEgressAllowlist"}, {"kind": "ref", "name": "interactions.NetworkEnum"}], "kind": "union"},
     "interactions.NetworkEnum": {"kind": "literal", "open": true, "values": ["disabled"]},
     "interactions.Processing": {"arms": [{"kind": "ref", "name": "interactions.ProcessingEnum"}, {"kind": "ref", "name": "interactions.StaticMediaProcessing"}], "kind": "union"},
@@ -140,7 +149,7 @@
     "interactions.StepDeltaData": {"arms": [{"kind": "ref", "name": "interactions.ArgumentsDelta"}, {"kind": "ref", "name": "interactions.AudioDelta"}, {"kind": "ref", "name": "interactions.CodeExecutionCallDelta"}, {"kind": "ref", "name": "interactions.CodeExecutionResultDelta"}, {"kind": "ref", "name": "interactions.DocumentDelta"}, {"kind": "ref", "name": "interactions.FileSearchCallDelta"}, {"kind": "ref", "name": "interactions.FileSearchResultDelta"}, {"kind": "ref", "name": "interactions.FunctionResultDelta"}, {"kind": "ref", "name": "interactions.GoogleMapsCallDelta"}, {"kind": "ref", "name": "interactions.GoogleMapsResultDelta"}, {"kind": "ref", "name": "interactions.GoogleSearchCallDelta"}, {"kind": "ref", "name": "interactions.GoogleSearchResultDelta"}, {"kind": "ref", "name": "interactions.ImageDelta"}, {"kind": "ref", "name": "interactions.MCPServerToolCallDelta"}, {"kind": "ref", "name": "interactions.MCPServerToolResultDelta"}, {"kind": "ref", "name": "interactions.ProcessingCallDelta"}, {"kind": "ref", "name": "interactions.ProcessingResultDelta"}, {"kind": "ref", "name": "interactions.RetrievalCallDelta"}, {"kind": "ref", "name": "interactions.RetrievalResultDelta"}, {"kind": "ref", "name": "interactions.TextAnnotationDelta"}, {"kind": "ref", "name": "interactions.TextDelta"}, {"kind": "ref", "name": "interactions.ThoughtSignatureDelta"}, {"kind": "ref", "name": "interactions.ThoughtSummaryDelta"}, {"kind": "ref", "name": "interactions.URLContextCallDelta"}, {"kind": "ref", "name": "interactions.URLContextResultDelta"}, {"kind": "ref", "name": "interactions.VideoDelta"}], "kind": "union"},
     "interactions.Task": {"kind": "literal", "open": true, "values": ["edit", "extend", "image_to_video", "reference_to_video", "text_to_video", "upscale"]},
     "interactions.TextResponseFormatMimeType": {"kind": "literal", "open": true, "values": ["application/json", "text/plain"]},
-    "interactions.ThinkingLevel": {"kind": "literal", "open": true, "values": ["high", "low", "medium", "minimal"]},
+    "interactions.ThinkingLevel": {"kind": "literal", "open": true, "values": ["high", "low", "medium", "minimal", "xhigh"]},
     "interactions.ThinkingSummaries": {"kind": "literal", "open": true, "values": ["auto", "none"]},
     "interactions.ThoughtSummaryContent": {"arms": [{"kind": "ref", "name": "interactions.ImageContent"}, {"kind": "ref", "name": "interactions.TextContent"}], "kind": "union"},
     "interactions.Threshold": {"kind": "literal", "open": true, "values": ["block_low_and_above", "block_medium_and_above", "block_none", "block_only_high", "off"]},
@@ -236,6 +245,57 @@
       "scopes": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
       "token_url": {"deprecated": false, "required": false, "type": {"kind": "str"}},
       "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["oauth2"]}}
+    }},
+    "decisions.ChoiceAnswer": {"file": "_gaos/types/decisions/choiceanswer.py", "open": false, "fields": {
+      "choice": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "confidence": {"deprecated": false, "required": true, "type": {"kind": "float"}},
+      "probabilities": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "float"}}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["choice"]}}
+    }},
+    "decisions.ChoiceQuestion": {"file": "_gaos/types/decisions/choicequestion.py", "open": false, "fields": {
+      "criteria": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "str"}}},
+      "instructions": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "decisions.ChoiceQuestionInstructions"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["choice"]}}
+    }},
+    "decisions.CreateDecisionRequest": {"file": "_gaos/types/decisions/createdecisionrequest.py", "open": false, "fields": {
+      "input": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "decisions.Input"}},
+      "model": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "questions": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "ref", "name": "decisions.Question"}}}
+    }},
+    "decisions.CreateDecisionResponse": {"file": "_gaos/types/decisions/createdecisionresponse.py", "open": false, "fields": {
+      "answers": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "ref", "name": "decisions.Answer"}}},
+      "prompt_feedback": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "decisions.PromptFeedback"}},
+      "usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}}
+    }},
+    "decisions.NoulAnswer": {"file": "_gaos/types/decisions/noulanswer.py", "open": false, "fields": {
+      "confidence": {"deprecated": false, "required": true, "type": {"kind": "float"}},
+      "noul": {"deprecated": false, "required": true, "type": {"kind": "float"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["noul"]}}
+    }},
+    "decisions.NoulCriteria": {"file": "_gaos/types/decisions/noulcriteria.py", "open": false, "fields": {
+      "false_description": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "true_description": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "decisions.NoulQuestion": {"file": "_gaos/types/decisions/noulquestion.py", "open": false, "fields": {
+      "criteria": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "decisions.NoulCriteria"}},
+      "instructions": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "decisions.NoulQuestionInstructions"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["noul"]}}
+    }},
+    "decisions.PromptFeedback": {"file": "_gaos/types/decisions/promptfeedback.py", "open": false, "fields": {
+      "block_reason": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "decisions.BlockReason"}},
+      "block_reason_message": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "decisions.ScoreAnswer": {"file": "_gaos/types/decisions/scoreanswer.py", "open": false, "fields": {
+      "confidence": {"deprecated": false, "required": true, "type": {"kind": "float"}},
+      "legend": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "str"}}},
+      "probabilities": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "float"}}},
+      "score": {"deprecated": false, "required": true, "type": {"kind": "float"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["score"]}}
+    }},
+    "decisions.ScoreQuestion": {"file": "_gaos/types/decisions/scorequestion.py", "open": false, "fields": {
+      "criteria": {"deprecated": false, "required": true, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "instructions": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "decisions.ScoreQuestionInstructions"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["score"]}}
     }},
     "environments.CreateEnvironmentRequest": {"file": "_gaos/types/environments/createenvironmentrequest.py", "open": false, "fields": {
       "from_environment": {"deprecated": false, "required": false, "type": {"kind": "str"}},

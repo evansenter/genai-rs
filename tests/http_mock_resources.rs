@@ -33,14 +33,15 @@ use std::time::Duration;
 use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
-    Agent, AllowlistEntry, ChunkingConfig, CreateCredentialRequest, CreateEnvironmentRequest,
-    CreateFileSearchStoreRequest, CreateTriggerRequest, CreateVoiceRequest, CredentialConfig,
-    CredentialType, CredentialUpdate, CustomMetadata, DocumentImport, DocumentState,
-    DocumentUpload, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec, EnvironmentStatus,
-    FileMetadata, FileSearchDocument, FileUpload, GenaiError, InjectionLocation, InteractionInput,
-    InteractionRequest, NetworkConfig, PollOptions, RevocationBehavior, StreamChunk, Tool, Trigger,
-    TriggerExecution, TriggerStatus, TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType,
-    Webhook, WebhookEvent, WebhookState, WebhookUpdate,
+    Agent, AllowlistEntry, Answer, ChunkingConfig, CreateCredentialRequest, CreateDecisionRequest,
+    CreateEnvironmentRequest, CreateFileSearchStoreRequest, CreateTriggerRequest,
+    CreateVoiceRequest, CredentialConfig, CredentialType, CredentialUpdate, CustomMetadata,
+    DocumentImport, DocumentState, DocumentUpload, EnvironmentFileUpload, EnvironmentSource,
+    EnvironmentSpec, EnvironmentStatus, FileMetadata, FileSearchDocument, FileUpload, GenaiError,
+    InjectionLocation, InteractionInput, InteractionRequest, NetworkConfig, NoulCriteria,
+    PollOptions, Question, RevocationBehavior, StreamChunk, Tool, Trigger, TriggerExecution,
+    TriggerStatus, TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType, Webhook, WebhookEvent,
+    WebhookState, WebhookUpdate,
 };
 #[cfg(not(genai_strict_unknown))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
@@ -290,6 +291,18 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
             Nothing,
             call(c.credentials().delete("cred-1")),
         ),
+        (
+            "decisions.create",
+            Resource,
+            call(async move {
+                c.decisions()
+                    .create(
+                        &CreateDecisionRequest::new("m", "x")
+                            .add_question("q", Question::noul("q")),
+                    )
+                    .await
+            }),
+        ),
         ("voices.list", Resource, call(c.voices().list().send())),
         ("voices.get", Resource, call(c.voices().get("voice_1"))),
         (
@@ -438,6 +451,8 @@ fn temp_file(name: &str, contents: &[u8]) -> (tempfile::TempDir, std::path::Path
 mod agents;
 #[path = "http_mock_resources/credentials.rs"]
 mod credentials;
+#[path = "http_mock_resources/decisions.rs"]
+mod decisions;
 #[path = "http_mock_resources/environments.rs"]
 mod environments;
 #[path = "http_mock_resources/errors.rs"]

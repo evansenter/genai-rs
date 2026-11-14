@@ -93,6 +93,7 @@ pub(super) struct Target {
 pub(super) fn targets() -> Vec<Target> {
     use crate::agents::{Agent, AgentListResponse};
     use crate::credentials::{Credential, CredentialListResponse};
+    use crate::decisions::CreateDecisionResponse;
     use crate::environments::{
         Environment, EnvironmentFile, EnvironmentFileListResponse, EnvironmentListResponse,
     };
@@ -232,6 +233,13 @@ pub(super) fn targets() -> Vec<Target> {
             Some("voices.ListVoicesResponse"),
             Some("ListVoicesResponse"),
             probe::<VoiceListResponse>,
+        ),
+        // The published specs do not list the decisions resource yet.
+        t(
+            "CreateDecisionResponse",
+            Some("decisions.CreateDecisionResponse"),
+            None,
+            probe::<CreateDecisionResponse>,
         ),
         t(
             "FileMetadata",

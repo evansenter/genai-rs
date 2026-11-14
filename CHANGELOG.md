@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The decisions resource** (`/v1beta/decisions`, new in google-genai
+  3.3.0): `client.decisions().create(&CreateDecisionRequest)` evaluates
+  noul (yes/no), choice and score questions against one input, a string or
+  content blocks (text, image, audio, document, video), and returns a
+  calibrated `Answer` per question: the probability of `true`, a
+  probability per option, or a probability per rubric level with the
+  expected level, each with a `confidence`. Build the request with
+  `CreateDecisionRequest::new(DEFAULT_DECISION_MODEL, input)` and
+  `add_question(id, Question::noul(..) / choice(..) / score(..))`;
+  `NoulCriteria` describes a noul question's outcomes. The response's
+  `prompt_feedback` carries a `BlockReason` when the input was blocked.
+  `DEFAULT_DECISION_MODEL` (`gemini-decision-1`) is the one model the
+  endpoint serves. `Question`, `Answer` and `BlockReason` keep unknown
+  types (D-074; `examples/decisions.rs`).
 - **`ThinkingLevel::XHigh`** (`"xhigh"`, google-genai 3.3.0), more
   reasoning than `High`. Few models take it: `DEFAULT_MODEL` answers it
   with a 400 (which models do is under Models in

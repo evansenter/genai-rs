@@ -336,7 +336,7 @@ impl ClientBuilder {
     /// and decoding continuation, which the v1 spec leaves out), plus the
     /// Files API (uploads included, under `/upload/v1`) and the File Search
     /// Store API. It answers `404` for agents,
-    /// environments, webhooks, credentials, voices and triggers, so their
+    /// environments, webhooks, credentials, voices, triggers and decisions, so their
     /// handles fail on such a client. An interaction created on one version
     /// can be read on the other. `v1beta` stays the default because it has
     /// every resource.

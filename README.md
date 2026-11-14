@@ -50,6 +50,7 @@ pool), rather than building one per request.
 | **Background + Webhooks** | Background execution, per-request webhook routing, full `/webhooks` resource (CRUD, ping, secret rotation) |
 | **Environments & Agents** | `environment` request field plus full `/environments` (CRUD, live-verified) and `/agents` resource clients |
 | **Resource clients** | `client.agents()`, `.webhooks()`, `.triggers()`, `.environments()`, `.credentials()`, `.voices()`, `.files()`, `.file_search_stores()`, with paged `.items()` streams |
+| **Decisions** | `client.decisions()`: noul (yes/no), choice and score questions about one input (text or media), answered with calibrated probabilities |
 | **Scheduled Triggers** | `/triggers` resource: server-side cron interactions that fire with no client process running (CRUD, run-now, execution history; the interaction must target a custom agent) |
 | **Multi-Speaker TTS** | `speech_config` list form for multi-voice dialogue |
 | **Wire Inspection** | Structured `WireEvent` stream via the `WireInspector` trait; `LOUD_WIRE=1` and `tracing` built-ins |

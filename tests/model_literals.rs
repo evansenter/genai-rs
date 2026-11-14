@@ -49,10 +49,11 @@ fn no_hardcoded_model_ids_outside_the_constants() {
     // keeps it that way.
     //
     // Dated agent ids ("deep-research-preview-04-2026") are covered too: they
-    // are retired on the same schedule as models.
+    // are retired on the same schedule as models, and so is the decision
+    // model ("gemini-decision-1"), whose family name comes before its digit.
     static MODEL_LITERAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(
-            r#""(models/)?gemini-\d|"(deep-research|antigravity)(-[a-z]+)*-\d{2}-\d{4}""#,
+            r#""(models/)?gemini-(decision-)?\d|"(deep-research|antigravity)(-[a-z]+)*-\d{2}-\d{4}""#,
         )
         .unwrap()
     });
@@ -113,7 +114,7 @@ fn no_hardcoded_model_ids_outside_the_constants() {
         hits.is_empty(),
         "hardcoded model id(s) found — use genai_rs::DEFAULT_MODEL (or \
          DEFAULT_IMAGE_MODEL / DEFAULT_TTS_MODEL / DEFAULT_TRANSCRIPTION_MODEL / \
-         CONTINUATION_MODEL / DEFAULT_DEEP_RESEARCH_AGENT / \
+         CONTINUATION_MODEL / DEFAULT_DECISION_MODEL / DEFAULT_DEEP_RESEARCH_AGENT / \
          DEFAULT_ANTIGRAVITY_AGENT) so a bump \
          stays a one-line change:\n  {}",
         hits.join("\n  ")

@@ -747,6 +747,7 @@ const ENDPOINTS: &[(&str, &[&str])] = &[
     ("PATCH /{}/webhooks/{}", &["Webhooks::update"]),
     ("POST /{}/agents", &["Agents::create"]),
     ("POST /{}/credentials", &["Credentials::create"]),
+    ("POST /{}/decisions", &["Decisions::create"]),
     ("POST /{}/environments", &["Environments::create"]),
     ("POST /{}/fileSearchStores", &["FileSearchStores::create"]),
     (

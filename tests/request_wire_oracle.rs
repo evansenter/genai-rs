@@ -52,14 +52,15 @@ use common::http_stub::{Recorded, Reply, Stub};
 use futures_util::StreamExt;
 use genai_rs::{
     Agent, AllowlistEntry, AntigravityConfig, ChunkingConfig, CreateCredentialRequest,
-    CreateEnvironmentRequest, CreateFileSearchStoreRequest, CreateTriggerRequest,
-    CreateVoiceRequest, CredentialConfig, CredentialType, CredentialUpdate, CustomMetadata,
-    DeepResearchConfig, DocumentImport, DocumentUpload, EnvVar, EnvironmentFileUpload,
-    EnvironmentSource, FileUpload, GenerationConfig, HarmCategory, InjectionLocation,
-    InteractionInput, InteractionRequest, NetworkConfig, PollOptions, RemoteEnvironment,
-    ResponseFormat, ResponseFormatSpec, RevocationBehavior, SafetySetting, SafetyThreshold,
-    SigningSecret, SpeechConfig, ThinkingLevel, Tool, TriggerStatus, TriggerUpdate, VoiceAudio,
-    VoicePitch, VoiceType, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
+    CreateDecisionRequest, CreateEnvironmentRequest, CreateFileSearchStoreRequest,
+    CreateTriggerRequest, CreateVoiceRequest, CredentialConfig, CredentialType, CredentialUpdate,
+    CustomMetadata, DeepResearchConfig, DocumentImport, DocumentUpload, EnvVar,
+    EnvironmentFileUpload, EnvironmentSource, FileUpload, GenerationConfig, HarmCategory,
+    InjectionLocation, InteractionInput, InteractionRequest, NetworkConfig, NoulCriteria,
+    PollOptions, Question, RemoteEnvironment, ResponseFormat, ResponseFormatSpec,
+    RevocationBehavior, SafetySetting, SafetyThreshold, SigningSecret, SpeechConfig, ThinkingLevel,
+    Tool, TriggerStatus, TriggerUpdate, VoiceAudio, VoicePitch, VoiceType, Webhook, WebhookConfig,
+    WebhookEvent, WebhookState, WebhookUpdate,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -119,6 +120,7 @@ fn class_for(request: &Recorded) -> Option<(&'static str, Value)> {
         ("POST", ["v1beta", "credentials"]) => "credentials.CredentialCreateParams",
         ("PATCH", ["v1beta", "credentials", _]) => "credentials.CredentialUpdate",
         ("POST", ["v1beta", "voices"]) => "voices.CreateVoiceRequest",
+        ("POST", ["v1beta", "decisions"]) => "decisions.CreateDecisionRequest",
         ("POST", ["v1beta", "fileSearchStores"]) => "legacy.CreateFileSearchStoreConfig",
         ("POST", ["v1beta", "fileSearchStores", id]) if id.ends_with(":importFile") => {
             "legacy.ImportFileConfig"
@@ -395,6 +397,33 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         .await
         .expect("voices.create (replicated)");
     client
+        .decisions()
+        .create(
+            &CreateDecisionRequest::new(
+                "test-model",
+                vec![
+                    genai_rs::Content::text("The soup was cold."),
+                    genai_rs::Content::image_data("AAAA", "image/png"),
+                ],
+            )
+            .add_question(
+                "positive",
+                Question::noul_with_criteria(
+                    "Is it positive?",
+                    NoulCriteria::new()
+                        .with_true_description("liked")
+                        .with_false_description("disliked"),
+                ),
+            )
+            .add_question(
+                "topic",
+                Question::choice("About?", [("food", "The food"), ("service", "")]),
+            )
+            .add_question("stars", Question::score("Stars?", ["zero", "one"])),
+        )
+        .await
+        .expect("decisions.create");
+    client
         .file_search_stores()
         .create(
             &CreateFileSearchStoreRequest::new()
@@ -477,7 +506,7 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
             }
         }
     }
-    assert_eq!(bodies, 21, "one body per call above");
+    assert_eq!(bodies, 22, "one body per call above");
     for (site, _) in ALLOWED {
         if !used.contains(site) {
             problems.push(format!(
@@ -1212,6 +1241,15 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         .await
         .expect("voices.list");
     client.voices().delete("v").await.expect("voices.delete");
+
+    client
+        .decisions()
+        .create(
+            &CreateDecisionRequest::new("test-model", "x")
+                .add_question("q", Question::noul("Is it?")),
+        )
+        .await
+        .expect("decisions.create");
 
     client
         .files()

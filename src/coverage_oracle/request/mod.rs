@@ -41,10 +41,10 @@ use crate::proptest_tests as strategies;
 use crate::steps::Step;
 use bodies::{
     agent_config_types, agent_configs, agent_requests, agents, credential_requests,
-    credential_updates, document_imports, document_uploads, environment_requests,
-    environment_specs, file_search_store_requests, generation_configs, inputs, model_requests,
-    response_formats, safety_settings, samples, to_value, trigger_params, trigger_updates, values,
-    voice_requests, webhook_config, webhook_updates, webhooks,
+    credential_updates, decision_requests, document_imports, document_uploads,
+    environment_requests, environment_specs, file_search_store_requests, generation_configs,
+    inputs, model_requests, response_formats, safety_settings, samples, to_value, trigger_params,
+    trigger_updates, values, voice_requests, webhook_config, webhook_updates, webhooks,
 };
 use content::{contents, steps, tools};
 
@@ -240,6 +240,11 @@ fn cases() -> Vec<Case> {
             "CreateVoiceRequest",
             "voices.CreateVoiceRequest",
             voice_requests(),
+        ),
+        case(
+            "CreateDecisionRequest",
+            "decisions.CreateDecisionRequest",
+            decision_requests(),
         ),
         case(
             "CreateFileSearchStoreRequest",

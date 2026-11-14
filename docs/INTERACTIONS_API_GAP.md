@@ -4,8 +4,8 @@
 >
 > | | |
 > |---|---|
-> | **Last swept against** | `google-genai` **3.0.0** |
-> | **Sweep date** | **2026-11-07** |
+> | **Last swept against** | `google-genai` **3.3.0** |
+> | **Sweep date** | **2026-11-14** |
 > | **Baseline in CI** | `.github/last-swept-sdk-version` |
 >
 > "Done" below means *nothing was missing as of the sweep date*. The SDK
