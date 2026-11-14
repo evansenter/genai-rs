@@ -339,7 +339,14 @@ pub(super) fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunc
             }),
         prop::collection::vec(arb_function_execution_result(), 0..5)
             .prop_map(AutoFunctionStreamChunk::FunctionResults),
-        arb_interaction_response().prop_map(|r| AutoFunctionStreamChunk::Complete(Box::new(r))),
+        (
+            arb_interaction_response(),
+            prop::collection::btree_map("[a-z_]{1,8}", arb_json_value(), 0..3)
+        )
+            .prop_map(|(response, extra)| AutoFunctionStreamChunk::Complete {
+                response: Box::new(response),
+                extra: extra.into_iter().collect(),
+            }),
         arb_interaction_response()
             .prop_map(|r| AutoFunctionStreamChunk::MaxLoopsReached(Box::new(r))),
         // A passed-on SSE event can be named like a known chunk.
@@ -722,5 +729,9 @@ fn recorded_seed_completed_chunk_with_unknown_status_roundtrips() {
         extra: Default::default(),
     })
     .unwrap();
-    assert_value_roundtrip(&AutoFunctionStreamChunk::Complete(Box::new(response))).unwrap();
+    assert_value_roundtrip(&AutoFunctionStreamChunk::Complete {
+        response: Box::new(response),
+        extra: Default::default(),
+    })
+    .unwrap();
 }

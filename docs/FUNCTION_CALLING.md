@@ -182,7 +182,9 @@ println!("{}", result.response.as_text().unwrap_or_default());
 
 For a failure the model should see, return
 `Err(FunctionError::ExecutionError(Box::new(e)))`. The loop sends it as
-`{"error": "Function execution error: ..."}`.
+`{"error": "Function execution error: ..."}`: `e` and each cause below
+it. The `FunctionError`'s own `Display` is `Function execution error`
+alone, with `e` as its `source()`.
 
 ## Manual function handling
 

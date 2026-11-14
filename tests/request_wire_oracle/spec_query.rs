@@ -72,10 +72,11 @@ pub const SPEC_HEADERS: &[(&str, &str)] = &[];
 pub const SPEC_QUERY: &[(&str, &str)] = &[
     (
         "v1beta GET /{}/agents?parent: required",
-        "Optional in the bindings, and on `ListAgents`, whose `with_parent` sends it \
-         only when set: the spec's `parent` (`projects/{project}/locations/{location}`, \
-         required) is ignored, so a listing with any value or none lists every agent \
-         (live 2026-11-09, docs/INTERACTIONS_API_GAP.md \"Spec-only query parameters\").",
+        "Not sent: optional in the bindings, and not modeled, since the spec's `parent` \
+         (`projects/{project}/locations/{location}`, required) is ignored, so a listing with \
+         any value or none lists every agent (live 2026-11-09, docs/INTERACTIONS_API_GAP.md \
+         \"Spec-only query parameters\"). `ListAgents::with_parent`, which sent it, was \
+         removed (#551); the bindings' side is `NOT_SENT` in tests/request_wire_oracle.rs.",
     ),
     ("v1beta POST /{}/agents?parent: spec only", PARENT_IGNORED),
     ("v1beta POST /{}/agents?parent: required", PARENT_IGNORED),

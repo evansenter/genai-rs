@@ -335,10 +335,6 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         LOOP_MADE,
     ),
     (
-        "src/streaming.rs:AutoFunctionStreamChunk::Complete",
-        ROUND_VERDICT,
-    ),
-    (
         "src/streaming.rs:AutoFunctionStreamChunk::MaxLoopsReached",
         LOOP_MADE,
     ),
@@ -367,13 +363,16 @@ const LOOP_MADE: &str = "made by the auto-function loop, with no SSE event behin
      loop's executions, or its verdict once the rounds run out; the results and the response \
      inside keep their own `extra`";
 
-/// Why the loop's verdict on a round keeps no `extra`. `Delta`, passed on
-/// from a `step.delta` event, keeps that event's (D-054).
-const ROUND_VERDICT: &str = "the loop's verdict on a round's `interaction.completed` event: \
-     the interaction keeps its own `extra`, but the keys beside it in the event reach \
-     `execute_stream()` only. A scope line, not a principle: the map is empty on every event \
-     the API sends today, as `step.delta`'s is, and carrying it would make these two variants \
-     take an `extra` too, two breaking changes the owner has not asked for (D-034)";
+/// Why the loop's verdict on a round that calls functions keeps no
+/// `extra`. `Delta`, passed on from a `step.delta` event, keeps that
+/// event's, and `Complete` the final round's `interaction.completed` keys
+/// (D-054).
+const ROUND_VERDICT: &str = "the loop's verdict on a round's `interaction.completed` event \
+     when the round calls functions: the interaction keeps its own `extra`, but the keys \
+     beside it in the event reach `execute_stream()` only. A scope line, not a principle: \
+     the map is empty on every event the API sends today, as `step.delta`'s is, and \
+     carrying it would make this variant take an `extra` too, a breaking change the owner \
+     asked for on `Complete` alone (D-034, D-054)";
 
 /// Why an `InputEvent` arm keeps no `extra`.
 const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \

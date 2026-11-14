@@ -4,7 +4,7 @@
 //! the agents resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{NO_BODY, path_segment, require_id, send_and_read, with_paging, with_query};
+use super::common::{NO_BODY, path_segment, require_id, send_and_read, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::agents::{Agent, AgentListResponse};
@@ -44,16 +44,10 @@ pub async fn list_agents(
     ctx: &HttpContext,
     page_size: Option<u32>,
     page_token: Option<&str>,
-    parent: Option<&str>,
 ) -> Result<AgentListResponse, GenaiError> {
-    tracing::debug!(
-        "Listing agents: page_size={page_size:?}, page_token={page_token:?}, parent={parent:?}"
-    );
+    tracing::debug!("Listing agents: page_size={page_size:?}, page_token={page_token:?}");
 
-    let url = with_query(
-        with_paging(agents_url(ctx), page_size, page_token),
-        &[("parent", parent)],
-    );
+    let url = with_paging(agents_url(ctx), page_size, page_token);
     let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "AgentListResponse")
 }

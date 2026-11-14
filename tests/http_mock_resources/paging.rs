@@ -37,20 +37,20 @@ async fn list_items_follow_every_page_and_resend_the_query() {
         .agents()
         .list()
         .with_page_size(2)
-        .with_parent("projects/p")
         .items()
         .try_collect()
         .await
         .unwrap();
 
     assert_eq!(agent_ids(&agents), ["a1", "a2", "a3"]);
-    // Page size and filter ride on every page; only the token changes.
+    // The page size rides on every page; only the token changes. (A list's
+    // own options do too: environments.rs checks `with_recursive`'s.)
     assert_eq!(
         targets(&stub),
         [
-            "/v1beta/agents?page_size=2&parent=projects%2Fp",
-            "/v1beta/agents?page_size=2&page_token=p2&parent=projects%2Fp",
-            "/v1beta/agents?page_size=2&page_token=p%2F3&parent=projects%2Fp",
+            "/v1beta/agents?page_size=2",
+            "/v1beta/agents?page_size=2&page_token=p2",
+            "/v1beta/agents?page_size=2&page_token=p%2F3",
         ]
     );
 }

@@ -98,12 +98,13 @@ client.agents().delete("customer-sentinel").await?;
 # }
 ```
 
-`list()` returns a builder: `.with_page_size()`, `.with_page_token()` and
-`.with_parent()` configure it, and `.send()`, `.pages()` or `.items()` run it
+`list()` returns a builder: `.with_page_size()` and `.with_page_token()`
+configure it, and `.send()`, `.pages()` or `.items()` run it
 (see [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders)).
-The API ignores `parent`, so `.with_parent()` filters nothing: a listing
-lists every agent whatever the value (see the
-[gap tracker](INTERACTIONS_API_GAP.md#spec-only-query-parameters-live-2026-11-09)).
+A listing lists every agent the key owns. The bindings and the spec give
+it a `parent` parameter, which the API ignores (see the
+[gap tracker](INTERACTIONS_API_GAP.md#spec-only-query-parameters-live-2026-11-09)),
+so the builder has no setter for it.
 
 `Agent::with_agent_config` stores the base agent's configuration, an
 `AntigravityConfig` (its model and token cap), with the agent. The API echoes

@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking: `FunctionError::ExecutionError`'s `Display` is `Function
+  execution error` alone**, no longer followed by the error it holds, which
+  stays its `source()`. A reporter that walks the chain (anyhow's `{:#}`,
+  eyre) printed that error twice; it now prints it once, as it does for
+  `GenaiError::Http` since 0.15.0 (D-049). The `{"error": ...}` a failed
+  tool call sends the model, in the auto-function loop and on an
+  Antigravity agent, is unchanged: it writes the whole chain, so the model
+  still gets the cause. Migration: where you read the tool's error from a
+  `FunctionError`'s text, walk `source()` (or use your reporter's chain
+  form), or match `FunctionError::ExecutionError(e)` and read
+  `e.to_string()`, which is the text that followed
+  `Function execution error: `.
+- **Breaking: `AutoFunctionStreamChunk::Complete` is a struct variant,
+  `Complete { response, extra }`**, and `extra` holds the unread keys of
+  the `interaction.completed` event of the round with no function calls,
+  the one that ends the loop, as `StreamChunk::Completed`'s `extra` does
+  (D-054). The auto-function stream dropped them. The chunk's JSON form writes a non-empty `extra` beside
+  `data` and reads it back; a chunk written by 0.15.0 reads back with an
+  empty one. Migration: a pattern on `Complete(response)` becomes
+  `Complete { response, .. }`, and a `Complete` you build takes
+  `extra: Default::default()` (or a `serde_json::Map` of keys).
+
+### Removed
+
+- **Breaking: `ListAgents::with_parent` is removed.** The API takes
+  `parent` on the agents listing and ignores it: a listing with any value,
+  or none, lists every agent the key owns (`docs/INTERACTIONS_API_GAP.md`,
+  "Spec-only query parameters"), so the setter filtered nothing (D-060).
+  Migration: drop the `.with_parent(..)` call; the listing returns the same
+  agents without it.
+- **Breaking: `AntigravityError::ToolDispatch` is removed.** Nothing raised
+  it: a custom tool that fails, and a call to a tool the agent does not
+  have, go to the model as `{"error": ...}` and the turn goes on, so a match
+  on it never matched (D-056). Migration: delete the match arm. A failing
+  tool's error reaches the model as that result, and the crate logs it at
+  `warn`.
+
 ## [0.15.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.3.0 (swept 2026-11-14;

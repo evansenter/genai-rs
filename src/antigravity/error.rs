@@ -107,14 +107,6 @@ pub enum AntigravityError {
         /// Tail of the harness's stderr.
         stderr: String,
     },
-    /// A custom tool could not be dispatched.
-    #[error("tool dispatch failed for '{name}': {message}")]
-    ToolDispatch {
-        /// The tool name.
-        name: String,
-        /// What went wrong.
-        message: String,
-    },
     /// The agent configuration is invalid.
     #[error("invalid agent configuration: {0}")]
     Config(String),

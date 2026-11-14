@@ -601,8 +601,11 @@ option that changes nothing would claim a feature the API does not have
   `projects/foo/locations/bar`, with `bogus`, with an empty value or with
   none made the same agent, served the same, and a listing with any of
   those `parent` values or none listed every agent. So `parent` on the
-  listing, which the bindings define and `ListAgents::with_parent` sends,
-  filters nothing either.
+  listing, which the bindings define, filters nothing either. Re-probed
+  2026-11-14, unchanged: an agent created then was listed with
+  `parent=projects/bogus/locations/nowhere`, with `parent=bogus` and with
+  none. The crate does not send it (`ListAgents::with_parent`, which did,
+  was removed: #551).
 - **`filter` on a trigger's executions**: ignored. With one execution
   stored, every expression returned it: malformed ones (`(((`,
   `bogus ==`) and ones it does not match (`status = "failed"`,

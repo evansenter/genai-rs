@@ -315,7 +315,7 @@ impl<'a> Agents<'a> {
     /// [`pages`](ListAgents::pages) / [`items`](ListAgents::items) to
     /// stream them all.
     pub fn list(self) -> ListAgents<'a> {
-        ListAgents::new(self.client, None)
+        ListAgents::new(self.client)
     }
 
     /// Deletes an agent by ID.
@@ -333,8 +333,8 @@ paging::list_builder! {
     ///
     /// End it with [`send`](Self::send) for one page, or
     /// [`pages`](Self::pages) / [`items`](Self::items) to follow
-    /// `next_page_token` to the end of the list. The page size and
-    /// `parent` are sent with every page.
+    /// `next_page_token` to the end of the list. The page size is sent with
+    /// every page.
     ///
     /// # Example
     ///
@@ -353,7 +353,6 @@ paging::list_builder! {
     /// # }
     /// ```
     pub struct ListAgents<'a> {
-        parent: Option<String>,
     }
     page: AgentListResponse => Agent;
     label: "agents";
@@ -383,22 +382,7 @@ paging::list_builder! {
         http,
         page_size,
         token.as_deref(),
-        parent.as_deref(),
     ),
-}
-
-impl ListAgents<'_> {
-    /// Sets the `parent` query parameter, the resource to list agents
-    /// from (`projects/{project}/locations/{location}` in the spec). Sent
-    /// with every page.
-    ///
-    /// The API ignores it: a listing with any value, or none, lists every
-    /// agent the key owns (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query
-    /// parameters").
-    pub fn with_parent(mut self, parent: impl Into<String>) -> Self {
-        self.parent = Some(parent.into());
-        self
-    }
 }
 
 #[cfg(test)]
@@ -413,17 +397,14 @@ mod tests {
         let list = client.agents().list();
         assert_eq!(list.page_size, None);
         assert_eq!(list.page_token, None);
-        assert_eq!(list.parent, None);
 
         let list = list
             .with_page_size(5)
             .with_page_token("t1")
-            .with_parent("projects/p")
             // `with_*` replaces.
             .with_page_token("t2");
         assert_eq!(list.page_size, Some(5));
         assert_eq!(list.page_token.as_deref(), Some("t2"));
-        assert_eq!(list.parent.as_deref(), Some("projects/p"));
     }
 
     #[test]
@@ -431,7 +412,7 @@ mod tests {
         let client = Client::new("secret-api-key".to_string());
         for debug in [
             format!("{:?}", client.agents()),
-            format!("{:?}", client.agents().list().with_parent("p")),
+            format!("{:?}", client.agents().list().with_page_token("t")),
         ] {
             assert!(!debug.contains("secret-api-key"), "{debug}");
             assert!(debug.contains("[REDACTED]"), "{debug}");
