@@ -2526,13 +2526,38 @@ passes on that job's result.
   is rejected. A step's script is its `run:` value as YAML reads it: a
   plain value's deeper lines and a folded block's lines are joined as
   YAML joins them before the script is read.
+- The runner splices each `${{ }}` expression's value into a `run:`
+  value before bash reads it, so `${{ '|| true' }}` is `|| true` to bash,
+  where the guard read a quoted string. A guarded `run:` value may hold
+  no expression but `${{ matrix.<key> }}`, anywhere in it, comment lines
+  included; the job's matrix must give the key only values of plain words
+  (letters, digits and `_./,=+-`, between spaces), and the script is read
+  once for each value spliced in. The integration groups'
+  `for test in ${{ matrix.tests }}` is the one guarded step that uses one.
+  The release gate passes `"$GITHUB_SHA"`, not `${{ github.sha }}`.
 - The guards still find a job or a step by its text. Each one `escapes`
   reads must be a job and a step YAML reads, every key included, and a
   test holds every workflow's split to YAML's. A comment at a step's
   indent or less no longer ends the step. An alias to an anchor outside
   the step does not read in the step alone, so the check flags it; no
   workflow uses one.
-- `alias`, and `shopt -s expand_aliases`, are rejected, as a function is.
+- `alias` and `BASH_ALIASES` are rejected, as a function is, and so is
+  what turns alias expansion on in a script: `shopt -s expand_aliases`,
+  and POSIX mode, by `set -o posix`, `shopt -so posix` or
+  `POSIXLY_CORRECT` anywhere in the workflow, which joins `BASH_ENV`,
+  `SHELLOPTS` and `BASHOPTS` there. A `set` or `shopt` command's options
+  are read with their quotes dropped, so `set -o "posix"` and
+  `set +o "pipefail"` are read too.
+- A loop that resets `rc` on each pass must keep each pass's failure: at
+  its top level, after the last line in it that sets `rc`, exit 1 on one
+  or list it, or be a retry that leaves on its first passing pass
+  (`if [ "$rc" -eq 0 ]; then break; fi`). Dropping the smoke loop's
+  `exit 1` on an example's third failure once passed: the next example
+  reset `rc`, and the step ended green when the last one passed.
+- The floor step holds its `name:` and its `run:` and no other key: a
+  step `env:` that redefined `COVERAGE_IGNORE` changed the figure the
+  floor read, and passed. The job's pattern is read from its `env:` as
+  YAML reads it, not from a line of its text.
 - Every `run:` step of the jobs whose checks are required on `main` is
   held to `failure_escapes`. `REQUIRED_JOBS` in
   `tests/ci_workflows/required.rs` lists the jobs, and a test holds the
@@ -2546,8 +2571,18 @@ passes on that job's result.
   `needs: changes` and its path-check `if:` allowed. The fuzz run starts
   with `set -euo pipefail` and must read `seeds/$TARGET`.
 
+A review of this amendment's first version found that four of its claims
+did not yet hold: an expression on a required step, the release gate, a
+live step or the fuzz run (`${{ '|| true' }}`), `set -o posix` with
+`BASH_ALIASES[cargo]=true`, the smoke loop's `exit 1` dropped, and a step
+`env:` on the floor each passed every guard. Each is now a case in the
+mutation tests.
+
 The script inside a `run:` value is still read as text, against the forms
-the 2026-11-10 amendment names and with the limits it gives.
+the 2026-11-10 amendment names and with the limits it gives, and one
+more: a command word spelled so the text does not read it as that
+command (`"alias"`, `al''ias`, `builtin eval`), which no one writes by
+accident.
 
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 

@@ -394,20 +394,22 @@ wheel's protos with `python3`).
   checks both, along with fail-fast, beta, the Windows PR leg and the
   cross-platform steps, the macOS PR job, the skip-marker budget (whose
   over-budget branch must fail its step, each budget pinned with its
-  reason), the coverage floor (one command, nothing else in its step) and
-  its library-only pattern, the steps the flakiness report counts (no
-  offline test of the retry helper runs in them), that no `if:` or `needs:`
-  (but the live steps' owner gate and `needs: check`), `continue-on-error`,
-  `defaults:`, other shell or shell-level mask it knows (`|| true`,
-  `; true`, `set +e`, an `exit` whose status may be 0, an `alias`;
-  `set -euo pipefail` first in a longer script, and wherever nextest is
-  piped), each key and `run:` value read as a YAML parser reads it, lets
-  the floor, a coverage run, the release gate, a live nextest step, the
-  scripted harness step, any `run:` step of a required check's job or the
-  fuzz run pass a failure (D-058 lists what it reads), and release's
-  push-run gate, which lets only the jobs a push skips by design be skipped
-  and wants all six Cross Platform legs, and `api-surface-sweep`'s
-  spec-watch and issue-pointer steps.
+  reason), the coverage floor (one command, and no key in its step but
+  `name:` and `run:`) and its library-only pattern, the steps the
+  flakiness report counts (no offline test of the retry helper runs in
+  them), that no `if:` or `needs:` (but the live steps' owner gate and
+  `needs: check`), `continue-on-error`, `defaults:`, other shell or
+  shell-level mask it knows (`|| true`, `; true`, `set +e`, an `exit`
+  whose status may be 0, an `alias` or alias expansion turned on, a loop
+  that drops a pass's failure, a `${{ }}` expression but a matrix value of
+  plain words, read spliced in; `set -euo pipefail` first in a longer
+  script, and wherever nextest is piped), each key and `run:` value read as
+  a YAML parser reads it, lets the floor, a coverage run, the release gate,
+  a live nextest step, the scripted harness step, any `run:` step of a
+  required check's job or the fuzz run pass a failure (D-058 lists what it
+  reads), and release's push-run gate, which lets only the jobs a push skips
+  by design be skipped and wants all six Cross Platform legs, and
+  `api-surface-sweep`'s spec-watch and issue-pointer steps.
   `.gitattributes` checks text files out with LF on every OS.
 - Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the

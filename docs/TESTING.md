@@ -531,7 +531,10 @@ checks that each live step starts with `set -euo pipefail`, so
 `nextest | tee` keeps nextest's status, and that no shell-level mask it
 knows, `continue-on-error`, `if:` but the fork and owner gate or `needs:`
 but `needs: check`, each read as a YAML parser reads it, lets its failure
-pass. The flakiness report adds the markers up across the week.
+pass; nor a `${{ }}` expression, which the runner splices into the script
+before bash reads it, but a matrix value of plain words, which the guard
+reads spliced in. The flakiness report adds the markers up across the
+week.
 
 A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
@@ -572,19 +575,24 @@ coverage grows, and lower it only with the reason in the commit.
 the pattern matches every module only a test build compiles and no
 library file; that the floor step runs `cargo llvm-cov report --workspace
 --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines <N>` and
-nothing else; and that nothing the workflow guards know of skips it or
-passes its failure: an `if:`, `continue-on-error` or `needs:` on the step
-or its job, a `defaults:` on the job or the workflow, a shell other than
-bash, or a shell-level mask such as `|| true`, `; true`, `set +e` or an
-`exit` whose status may be 0 (`exit 0`, `exit "0"`). Each key, and the
-`run:` value, is read as a YAML parser reads it, so a quoted or spaced key
-(`"continue-on-error": true`) counts, as does an `|| true` on a deeper
-line below a plain `run:`, which YAML joins to the command. The coverage
-runs before it are held to the same, as are every `run:` step of the
-checks branch protection requires and the fuzz run, which Fuzz Gate
-reads. The script within a `run:` value is read as text, against the
-forms D-058 lists: the guards catch the ways a step is known to be
-weakened, not every way a script can compute its status.
+nothing else, with no key but its `name:` and that `run:` (a step `env:`
+could redefine the pattern); and that nothing the workflow guards know
+of skips it or passes its failure: an `if:`, `continue-on-error` or
+`needs:` on the step or its job, a `defaults:` on the job or the
+workflow, a shell other than bash, or a shell-level mask such as
+`|| true`, `; true`, `set +e` or an `exit` whose status may be 0
+(`exit 0`, `exit "0"`). Each key, and the `run:` value, is read as a YAML
+parser reads it, so a quoted or spaced key (`"continue-on-error": true`)
+counts, as does an `|| true` on a deeper line below a plain `run:`, which
+YAML joins to the command. A `${{ }}` expression in a `run:` value is
+rejected, since the runner splices its value into the script before bash
+reads it (`${{ '|| true' }}` is `|| true` to bash), but for a matrix value
+of plain words, which the guards read spliced in, once for each value.
+The coverage runs before it are held to the same, as are every `run:`
+step of the checks branch protection requires and the fuzz run, which
+Fuzz Gate reads. The script within a `run:` value is read as text,
+against the forms D-058 lists: the guards catch the ways a step is known
+to be weakened, not every way a script can compute its status.
 
 ## Coverage oracle
 
