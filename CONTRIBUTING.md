@@ -161,6 +161,8 @@ conflict markers, a missing blank line before a heading, an unclosed code
 fence, a breaking entry in either section with no `Migration:`, and two
 entries in either section that share a first line or a bold title, which
 it matches across a dropped or added `Breaking:` marker or bold, a change
-of case and a retitling that keeps most of the words) via
-`.github/scripts/check_changelog.sh`; it cannot tell whether an
-entry sits under the *right* heading.
+of case and a retitling that keeps most of the words and names the same
+code span first) via `.github/scripts/check_changelog.sh`. It cannot tell
+whether an entry sits under the *right* heading, and a retitling that
+reorders or qualifies the code span an entry names first
+(`config::GenerationConfig` for `GenerationConfig`) passes as a new entry.

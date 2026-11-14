@@ -173,10 +173,11 @@ API ignores it: a listing lists every agent whatever the value (see the
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them. genai-rs sends one value per
 filter, and a second `with_*` call replaces the first. To match any of
-several values, list once per value and merge the results: a filter
+several values, list once per value (once per combination of values,
+when two filters each take several) and merge the results: a filter
 repeated with several values finds no voice the separate listings miss.
-Setters that send
-several values could come as `add_*` methods without a break (D-060).
+Setters that send several values could come as `add_*` methods without a
+break (D-060).
 Python's `contexts` argument is the `context` query parameter, set by
 `with_context`.
 

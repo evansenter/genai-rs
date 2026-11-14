@@ -2644,10 +2644,12 @@ made required or optional, or retyped, wherever it goes, a request body
 changes or is made optional, or a response changes.
 `test_snapshot_openapi.sh` pins each of the three mutations above, and a
 path parameter retyped, made optional or given an enum behind its
-reference, and a body made optional. It still drops the prose, each
+reference, and a body made optional. It still dropped the prose, each
 operation's other keys (`operationId`, `tags`, `deprecated`, the
-`x-speakeasy-*` extensions), and a component no operation names. The
-query test also holds the spec's header parameters to what the verbs send
+`x-speakeasy-*` extensions), and a component no operation names. Since
+the 2026-11-14 amendment below, it keeps those other keys but the names
+a generated SDK gives its code and `x-speakeasy-sse-overload`. The query
+test also holds the spec's header parameters to what the verbs send
 (`spec_header_findings` in `tests/request_wire_oracle/spec_query.rs`): a
 header a request to its endpoint goes without, or one sent with a value
 the spec's `const` or `enum` does not allow (followed through a `$ref`,
@@ -2685,11 +2687,11 @@ for a probe to settle (D-010).
 - **A parameter's schema.** Each parameter a verb sends has the type the
   spec gives it, but for one set: the voices list filters (`accent`,
   `context`, `gender`, `language_code`, `persona`, `pitch`, `region_code`
-  and `type`), each an array of strings in both specs and an iterable in
-  the bindings. The API matches a filter repeated with several values
-  against any of them (`docs/ENUM_WIRE_FORMATS.md`, "Voices"), and
-  `ListVoices` sends one value per filter, a second `with_*` call
-  replacing the first. That stays: the repeat adds no reach, since one
+  and `type`), each an array of strings in the v1beta spec (v1 has no
+  voices endpoint) and an iterable in the bindings. The API matches a
+  filter repeated with several values against any of them
+  (`docs/ENUM_WIRE_FORMATS.md`, "Voices"), and `ListVoices` sends one
+  value per filter, a second `with_*` call replacing the first. That stays: the repeat adds no reach, since one
   listing per value (per combination, with two such filters), merged,
   finds the same voices, and setters that send several values can come
   as `add_*` methods beside the `with_*` ones, without a break, when a
@@ -3574,7 +3576,9 @@ share, which fails a short opening whose words a long one holds.
 **Consequences.** It is a heuristic. The thresholds were set against the
 CHANGELOG's history: across all 100 versions of the file, every section
 named, no two different entries match; the only duplicates there are
-ones whose first lines match, which the exact rule already reported. A rewrite that changes an entry's subject (its first code
-span) or most of its words still passes as a new entry, and two genuinely
+ones whose first lines match, which the exact rule already reported. A
+rewrite that changes an entry's subject (its first code span, compared as
+written, so reordering two spans or qualifying one's path changes it) or
+most of its words still passes as a new entry, and two genuinely
 different entries that open alike fail: reword one, which a reader needs
 anyway.
