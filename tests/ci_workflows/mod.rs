@@ -7,17 +7,21 @@
 //! escalates, and a stub test with a millisecond timeout runs on the paused
 //! clock. Every live nextest step keeps its skip markers in the log and
 //! fails its step over a budget of them, each budget pinned with its reason
-//! (`SKIP_BUDGETS`). `coverage` checks that the Code Coverage job writes its
-//! summary, over the packages it measured, on every run, measures the
+//! (`SKIP_BUDGETS`), and nextest retries are set in a live nextest step's
+//! env and nowhere else, `.config/nextest.toml` included (`retry_problems`).
+//! `coverage` checks that the Code Coverage job writes its summary, over
+//! the packages it measured, on every run, measures the
 //! `antigravity` feature with its scripted suite and library files alone,
 //! fails under a floor, and that a Codecov upload fails the job on an
 //! error. `release` checks that a release publishes only a commit whose
 //! main push run of `rust.yml` is green on every job but the ones a push
 //! skips by design, with every Cross Platform leg. `sweep` requires
-//! `api-surface-sweep`'s spec-watch and issue-pointer steps. `required`
-//! holds every step of the checks branch protection requires, listed as
-//! CLAUDE.md lists them, and `fuzz` the fuzz run, which Fuzz Gate reads,
-//! and its committed seeds.
+//! `api-surface-sweep`'s spec-watch and issue-pointer steps, the latter in
+//! the one mode that writes to its rolling issue. `required` holds every
+//! step of the checks branch protection requires, listed as CLAUDE.md
+//! lists them, and `fuzz` the fuzz run, which Fuzz Gate reads, and its
+//! committed seeds, and pins Fuzz Gate and the path check before it
+//! whole.
 //!
 //! The steps whose failure must fail their job (the coverage floor and the
 //! runs before it, the release gate, every live nextest step, the scripted
@@ -45,8 +49,12 @@
 //! by whoever last committed it (`escalation`). What CI builds beyond Linux
 //! and all features is in `builds`. These tests find a job or a step by its
 //! text (the jobs are the two-space-indented keys under `jobs:`), and read
-//! what YAML decides, the keys and the `run:` values, with a YAML parser
-//! (`yaml`), which also checks that each job and step they split from the
+//! with a YAML parser (`yaml`) what decides whether a step runs or its
+//! failure counts: every `if:` a guard checks, the keys `escapes` reads,
+//! a pinned job's keys and the `run:` values. A guard that only finds a
+//! job or a step, or requires a key to hold a value, may still match the
+//! text: a key spelled otherwise there is not found, and fails the guard.
+//! `yaml` also checks that each job and step the guards split from the
 //! text is one YAML reads.
 //!
 //! Not a test target itself: Cargo only builds `tests/*.rs` and
@@ -487,38 +495,112 @@ fn is_live_nextest_step(step: &str) -> bool {
         && reads_the_key(step)
 }
 
+/// Whether a line of `.config/nextest.toml` that is not a comment can set
+/// retries: it names `retries`, in any case, or holds a TOML escape
+/// (`\u`, `\U`), which can spell the key in quotes.
+fn sets_retries(line: &str) -> bool {
+    let line = line.trim_start();
+    !line.starts_with('#')
+        && (line.to_ascii_lowercase().contains("retries")
+            || line.contains("\\u")
+            || line.contains("\\U"))
+}
+
+/// The nextest options that load a config file other than
+/// `.config/nextest.toml`, which could set retries the check never reads.
+const OTHER_CONFIG: [&str; 2] = ["--config-file", "--tool-config-file"];
+
+/// Problems with how nextest's retries are set, and the live nextest steps
+/// (`workflow:job`), given every workflow and `.config/nextest.toml`.
+///
 /// The flakiness report counts a step's tests only when the step retries,
 /// which `count_retried_flakes.sh` reads from the step header GitHub
-/// echoes into the log. Retries are set as `NEXTEST_RETRIES` in the step's
-/// env, which the header always lists, never as `--retries`, so the
-/// command's layout cannot hide them; and every live nextest step sets
-/// them, so the jobs the report reads keep being counted (#504).
-#[test]
-fn nextest_retries_are_set_in_the_step_env() {
+/// echoes into the log, and only in the jobs it reads (`RETRY_JOBS`, the
+/// jobs with a live step). So a retry is set in one place alone: as
+/// `NEXTEST_RETRIES` in a live nextest step's own `env:` (read as YAML
+/// reads it), which the header always lists, and every live nextest step
+/// sets it. Rejected: `NEXTEST_RETRIES` named anywhere else in a workflow
+/// (another step's env, a job's or the workflow's, which reach every step
+/// under them, a script, `$GITHUB_ENV`), in any case, since Windows reads
+/// an environment variable's name in any; a `--retries` flag, or a
+/// `--config-file` or `--tool-config-file` that loads other settings; and
+/// a `retries` key in any profile or override of `.config/nextest.toml`,
+/// which every run reads. Each passed every guard, and a test retried to a
+/// pass that way was never counted (the #504 grade of 2026-11-14, L-5).
+/// The check reads the text: a name the script builds at run time is not
+/// read (D-058).
+fn retry_problems(
+    workflows: &[(String, String)],
+    nextest_toml: &str,
+) -> (Vec<String>, Vec<String>) {
     let mut live = Vec::new();
     let mut problems = Vec::new();
-    for (name, text) in workflows() {
-        for line in command_lines(&text) {
+    for (at, line) in nextest_toml.lines().enumerate() {
+        if sets_retries(line) {
+            problems.push(format!(
+                ".config/nextest.toml:{}: `{}`: retries in the config every run reads, which \
+                 the flakiness report never counts (set NEXTEST_RETRIES in a live step's env)",
+                at + 1,
+                line.trim()
+            ));
+        }
+    }
+    let names_retries = |line: &&str| line.to_ascii_uppercase().contains("NEXTEST_RETRIES");
+    for (name, text) in workflows {
+        for line in command_lines(text) {
             if line.contains("--retries") && !line.starts_with("NEXTEST_RETRIES") {
                 problems.push(format!("{name}: `{line}` (set NEXTEST_RETRIES instead)"));
             }
-        }
-        for (job, body) in jobs(&text) {
-            for step in steps(&body)
-                .iter()
-                .filter(|step| is_live_nextest_step(step))
-            {
-                let title = step.lines().next().unwrap_or("").trim().to_string();
-                if !command_lines(step).any(|line| line.starts_with("NEXTEST_RETRIES:")) {
-                    problems.push(format!(
-                        "{name} job {job}, step `{title}`: a live nextest step with no \
-                         NEXTEST_RETRIES in its env"
-                    ));
-                }
-                live.push(format!("{name}:{job}"));
+            if let Some(option) = OTHER_CONFIG.iter().find(|option| line.contains(*option)) {
+                problems.push(format!(
+                    "{name}: `{line}`: {option} loads nextest settings beside \
+                     .config/nextest.toml, which could set retries no check reads"
+                ));
             }
         }
+        let mut in_steps = 0;
+        for (job, body) in jobs(text) {
+            for step in steps(&body) {
+                let named = command_lines(&step).filter(names_retries).count();
+                in_steps += named;
+                let is_live = is_live_nextest_step(&step);
+                let set = yaml::step_env(&step, "NEXTEST_RETRIES").is_some();
+                if is_live {
+                    live.push(format!("{name}:{job}"));
+                    if !set {
+                        problems.push(format!(
+                            "{name} job {job}, step `{}`: a live nextest step with no \
+                             NEXTEST_RETRIES in its env",
+                            step_name(&step)
+                        ));
+                    }
+                }
+                if named > usize::from(is_live && set) {
+                    problems.push(format!(
+                        "{name} job {job}, step `{}`: NEXTEST_RETRIES named outside a live \
+                         nextest step's own env, where the flakiness report never counts \
+                         the retries",
+                        step_name(&step)
+                    ));
+                }
+            }
+        }
+        if command_lines(text).filter(names_retries).count() > in_steps {
+            problems.push(format!(
+                "{name}: NEXTEST_RETRIES in a workflow or job `env:`, or another key outside \
+                 a step, which sets retries for every step under it"
+            ));
+        }
     }
+    (live, problems)
+}
+
+/// Every nextest retry is set where the flakiness report counts it: in a
+/// live nextest step's env, and nowhere else ([`retry_problems`]).
+#[test]
+fn nextest_retries_are_set_in_the_step_env() {
+    let nextest_toml = read(&root().join(".config/nextest.toml"));
+    let (live, problems) = retry_problems(&workflows(), &nextest_toml);
     // rust.yml's integration groups and harness step, and release.yml's two
     // live steps: the parser must still find them.
     for expected in [
@@ -538,9 +620,123 @@ fn nextest_retries_are_set_in_the_step_env() {
     );
     assert!(
         problems.is_empty(),
-        "nextest retries must be set through NEXTEST_RETRIES in each live step's env:\n  {}",
+        "nextest retries must be set through NEXTEST_RETRIES in each live step's env, and \
+         nowhere else:\n  {}",
         problems.join("\n  ")
     );
+}
+
+#[test]
+fn the_retry_check_catches_what_it_claims_to() {
+    let all = workflows();
+    let config = read(&root().join(".config/nextest.toml"));
+    assert!(retry_problems(&all, &config).1.is_empty());
+    let strict = "          RUSTFLAGS: --cfg genai_strict_unknown\n        run: cargo nextest run --workspace\n";
+    let broken_config = [
+        // L-5: retries in the profile every CI run reads, or an override
+        // that matches every test, ...
+        config.replace("fail-fast = false\n", "fail-fast = false\nretries = 2\n"),
+        format!("{config}\n[[profile.default.overrides]]\nfilter = \"all()\"\nretries = 2\n"),
+        // ... spelt as a quoted key, a dotted one, a table, or an escape.
+        config.replace(
+            "fail-fast = false\n",
+            "fail-fast = false\n\"retries\" = 2\n",
+        ),
+        format!("{config}\nprofile.default.Retries = 2\n"),
+        format!("{config}\n[profile.default.retries]\nbackoff = \"fixed\"\ncount = 2\n"),
+        config.replace(
+            "fail-fast = false\n",
+            "fail-fast = false\n\"re\\u0074ries\" = 2\n",
+        ),
+    ];
+    for (i, config) in broken_config.iter().enumerate() {
+        assert!(
+            !retry_problems(&all, config).1.is_empty(),
+            "config mutation {i} went unnoticed"
+        );
+    }
+    let broken = [
+        // L-5: retries on an offline step, the required strict-unknown
+        // unit run, ...
+        mutated(
+            &all,
+            "rust.yml",
+            strict,
+            &strict.replace("        run:", "          NEXTEST_RETRIES: 3\n        run:"),
+        ),
+        // ... with its key quoted, or in lower case, which Windows reads
+        // as the same name, ...
+        mutated(
+            &all,
+            "rust.yml",
+            strict,
+            &strict.replace(
+                "        run:",
+                "          \"NEXTEST_RETRIES\": 3\n        run:",
+            ),
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "        run: cargo nextest run --workspace --cargo-profile release -E \"$NEXTEST_FILTER\"\n",
+            "          nextest_retries: 2\n        run: cargo nextest run --workspace --cargo-profile release -E \"$NEXTEST_FILTER\"\n",
+        ),
+        // ... on the job or the workflow, which reach every step, ...
+        mutated(
+            &all,
+            "rust.yml",
+            "    name: Test Suite (strict-unknown)\n    runs-on: ubuntu-latest\n",
+            "    name: Test Suite (strict-unknown)\n    runs-on: ubuntu-latest\n    env:\n      NEXTEST_RETRIES: 2\n",
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "  CARGO_TERM_COLOR: always\n",
+            "  CARGO_TERM_COLOR: always\n  NEXTEST_RETRIES: 2\n",
+        ),
+        // ... in a script, or through `$GITHUB_ENV` for the steps after, ...
+        mutated(
+            &all,
+            "rust.yml",
+            strict,
+            &strict.replace("run: cargo", "run: NEXTEST_RETRIES=2 cargo"),
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            "      - name: Run unit tests in strict mode\n",
+            "      - run: echo \"NEXTEST_RETRIES=2\" >> \"$GITHUB_ENV\"\n      - name: Run unit tests in strict mode\n",
+        ),
+        // ... as a flag, or from another config file.
+        mutated(
+            &all,
+            "rust.yml",
+            strict,
+            &strict.replace("--workspace\n", "--workspace --retries 2\n"),
+        ),
+        mutated(
+            &all,
+            "rust.yml",
+            strict,
+            &strict.replace(
+                "--workspace\n",
+                "--workspace --config-file .config/ci.toml\n",
+            ),
+        ),
+        // A live step with no retries, so its job's flakes go uncounted.
+        mutated(
+            &all,
+            "release.yml",
+            "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n          NEXTEST_RETRIES: 2\n      - name: Check formatting",
+            "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n      - name: Check formatting",
+        ),
+    ];
+    for (i, workflows) in broken.iter().enumerate() {
+        assert!(
+            !retry_problems(workflows, &config).1.is_empty(),
+            "workflow mutation {i} went unnoticed"
+        );
+    }
 }
 
 /// A live nextest step's skip budget: the number of skip markers past
