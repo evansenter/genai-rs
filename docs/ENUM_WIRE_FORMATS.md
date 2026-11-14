@@ -41,7 +41,7 @@ the shape was a `Content` block rather than a step.
 | 9 | `Tool` | `tool_type` | Tool types |
 | 10 | `FunctionCallingMode` | `mode_type` | auto/any/none/validated |
 | 11 | `ToolChoice` | `choice_type` | Mode string or `allowed_tools` object |
-| 12 | `ThinkingLevel` | `level_type` | minimal/low/medium/high |
+| 12 | `ThinkingLevel` | `level_type` | minimal/low/medium/high/xhigh |
 | 13 | `ThinkingSummaries` | `summaries_type` | auto/none |
 | 14 | `ServiceTier` | `tier_type` | flex/standard/priority/deferred |
 | 15 | `InteractionStatus` | `status_type` | Response status |
@@ -182,7 +182,7 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 | `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `web_search` and `image_search` served live 2026-11-07 (`image_search` on some models only); `enterprise_web_search` is Vertex-only. See [SearchType](#searchtype) |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
-| `ThinkingLevel` | lowercase | `"minimal"`, `"low"`, `"medium"`, `"high"` | Which levels `DEFAULT_MODEL` accepts is under Models in `docs/INTERACTIONS_API_GAP.md` |
+| `ThinkingLevel` | lowercase | `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` | Which levels `DEFAULT_MODEL` accepts, and which models take `xhigh`, is under Models in `docs/INTERACTIONS_API_GAP.md`. `xhigh` is echoed as sent by a stored interaction (live 2026-11-14) |
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Verified 2026-01-05 (pre-revision) |
 | `VideoProcessing` | string or object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | The window is the cost lever among the `static` forms. Only valid inside a `user_input` step. Measured live 2026-08-18 |
 | `Tool::Function` | object | `{"type": "function", "name": "get_time", "description": "...", "parameters": {...}}` | Only `name` is needed: a function tool sent with just a `name` is accepted and called, and a stored read serves it that way (live 2026-11-05). `description` and `parameters` are left out when `None`; `FunctionParameters` keeps schema keywords it doesn't model. A tool read without its optional fields is still `Tool::Function`, not `Unknown` |
@@ -556,10 +556,13 @@ there. On 2026-08-10, verified live, the reverse:
 
 ### ThinkingLevel
 
-`"minimal"`, `"low"`, `"medium"`, `"high"` in
+`"minimal"`, `"low"`, `"medium"`, `"high"` and `"xhigh"` in
 `generation_config.thinking_level`. Which levels `DEFAULT_MODEL` accepts,
-the error it answers `"minimal"` with, and what omitting the field does are
-under Models in `docs/INTERACTIONS_API_GAP.md`.
+the error it answers `"minimal"` with, which models take `"xhigh"` and what
+omitting the field does are under Models in `docs/INTERACTIONS_API_GAP.md`.
+`"xhigh"` is new in google-genai 3.3.0; on 2026-11-14 the endpoint's error
+for an unknown level listed it among the supported values, and a stored
+interaction's `GET` echoed it as sent.
 
 ### InteractionStatus
 

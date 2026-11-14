@@ -13,6 +13,7 @@ pub(super) fn arb_thinking_level() -> impl Strategy<Value = ThinkingLevel> {
         Just(ThinkingLevel::Low),
         Just(ThinkingLevel::Medium),
         Just(ThinkingLevel::High),
+        Just(ThinkingLevel::XHigh),
         // Unknown variant with preserved data
         unknown_or(ThinkingLevel::Minimal, |level_type, data| {
             ThinkingLevel::Unknown { level_type, data }

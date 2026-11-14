@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ThinkingLevel::XHigh`** (`"xhigh"`, google-genai 3.3.0), more
+  reasoning than `High`. Few models take it: `DEFAULT_MODEL` answers it
+  with a 400 (which models do is under Models in
+  `docs/INTERACTIONS_API_GAP.md`). A stored interaction's
+  `generation_config` echoing it now reads as `XHigh`, where it read as
+  `ThinkingLevel::Unknown`.
+
 ### Changed
 
 - **Breaking: `GenaiError::Http`'s `Display` is `HTTP request error`
