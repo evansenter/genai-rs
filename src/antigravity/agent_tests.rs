@@ -85,7 +85,7 @@ fn timed_out_at<T>(result: &Result<T, AntigravityError>, turn_timeout: Duration)
 /// stops reading once it has answered the initialization.
 struct Stalled {
     agent: AntigravityAgent,
-    release: tokio::sync::oneshot::Sender<()>,
+    release: Option<tokio::sync::oneshot::Sender<()>>,
     peer: tokio::task::JoinHandle<()>,
     _dir: tempfile::TempDir,
 }
@@ -128,18 +128,31 @@ impl Stalled {
         tokio::time::pause();
         Self {
             agent,
-            release,
+            release: Some(release),
             peer,
             _dir: dir,
         }
     }
 
+    /// Lets the peer go mid-test: it drops the connection, as a harness
+    /// that ended its run does once it has sent its last events.
+    async fn hang_up(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        while !self.peer.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    }
+
     /// Lets the peer go and resumes the clock, so a next spawn runs on
     /// real time.
-    async fn finish(self) {
+    async fn finish(mut self) {
         tokio::time::resume();
         drop(self.agent);
-        let _ = self.release.send(());
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
         self.peer.await.unwrap();
     }
 }
@@ -274,13 +287,18 @@ async fn test_initialization_and_session_end_count_their_send_against_their_budg
     stalled.finish().await;
 }
 
-/// A harness request whose answer goes out mid-turn: a post-tool callback
-/// with no post-tool hook set, answered with an empty result.
-fn hook_request() -> OutputEvent {
-    serde_json::from_value(serde_json::json!({
+/// A harness request whose answer goes out mid-turn: a post-tool callback,
+/// answered with an empty result (after the post-tool hook, when one is
+/// set).
+fn post_tool_request() -> serde_json::Value {
+    serde_json::json!({
         "callHookRequest": {"requestId": "r-3470", "postToolArgs": {"toolName": "view_file"}}
-    }))
-    .unwrap()
+    })
+}
+
+/// [`post_tool_request`] as the agent reads it.
+fn hook_request() -> OutputEvent {
+    serde_json::from_value(post_tool_request()).unwrap()
 }
 
 #[tokio::test]
@@ -518,6 +536,103 @@ async fn test_a_turn_that_ends_the_session_while_drained_fails_the_next_turn_uns
         let second = TurnCall::Chat.make(agent).await;
         assert_refused(&second, cause);
         assert_eq!(sends.take(), Vec::<String>::new());
+        stalled.finish().await;
+    }
+}
+
+/// The main trajectory's idle state with the error of a failed run, as
+/// harness 0.1.23 sends it after the error step.
+fn failed_idle() -> serde_json::Value {
+    serde_json::json!({"trajectoryStateUpdate": {
+        "trajectoryId": "stalled", "state": "STATE_FULLY_IDLE", "error": "Error 400"
+    }})
+}
+
+#[tokio::test]
+async fn test_a_halt_that_cannot_be_sent_still_reads_that_the_session_ended() {
+    // #504: an interval trigger keeps delivering while the agent is idle,
+    // into the connection of a harness that ended its run, until a write
+    // draws the reset. The chat's halt then failed, and the drain gave up
+    // without reading the failure: the chat sent its message and failed
+    // with a WebSocket error, as did every chat after it.
+    let then = vec![
+        text(&backend_error_step(400)),
+        text(&failed_idle()),
+        Message::Close(None),
+    ];
+    let sends = Arc::new(Sends::default());
+    let builder = AntigravityAgent::builder().add_wire_inspector(sends.clone());
+    let mut stalled = Stalled::spawn_then(builder, then).await;
+    stalled.hang_up().await;
+    let agent = &mut stalled.agent;
+    let deliver = agent.trigger_delivery();
+    let mut refused = false;
+    for _ in 0..200 {
+        if deliver("tick".to_string()).await.is_err() {
+            refused = true;
+            break;
+        }
+        // Real time, for the peer's reset to come back.
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(refused, "no delivery into the closed connection failed");
+    sends.take();
+    // The halt fails, and the chat reads on: the failure, or, where the
+    // reset discarded it, the connection's end.
+    let first = TurnCall::Chat.make(agent).await;
+    assert_refused(&first, "ended the session");
+    assert_eq!(sends.take(), ["haltRequest"], "the message was not sent");
+    let second = TurnCall::Chat.make(agent).await;
+    assert_refused(&second, "ended the session");
+    assert_eq!(sends.take(), Vec::<String>::new());
+    stalled.finish().await;
+}
+
+#[tokio::test]
+async fn test_a_turn_timeout_whose_drain_sees_the_session_end_fails_the_next_turn_unsent() {
+    // #504: the drain after a turn timeout records what ended the session
+    // as begin_turn's does: the turn's own failure, which came after its
+    // deadline, or the harness closing the connection. The next call
+    // refuses at once, where it would halt again and send its message.
+    let turn_timeout = Duration::from_secs(10);
+    let cases = [
+        (
+            vec![
+                text(&backend_error_step(400)),
+                text(&failed_idle()),
+                Message::Close(None),
+            ],
+            "an earlier turn ended the session (model backend error, HTTP 400)",
+        ),
+        (vec![Message::Close(None)], "the harness ended the session"),
+    ];
+    for (rest, cause) in cases {
+        // The turn runs a post-tool hook that outlasts its deadline (it
+        // returns once `release` drops); what the harness sends after that
+        // request is left to the drain.
+        let mut then = vec![text(&running_update()), text(&post_tool_request())];
+        then.extend(rest);
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let released = std::sync::Mutex::new(released);
+        let sends = Arc::new(Sends::default());
+        let builder = AntigravityAgent::builder()
+            .with_turn_timeout(turn_timeout)
+            .on_post_tool(move |_| {
+                let _ = released.lock().unwrap().recv();
+            })
+            .add_wire_inspector(sends.clone());
+        let mut stalled = Stalled::spawn_then(builder, then).await;
+        let agent = &mut stalled.agent;
+        sends.take();
+        let first = TurnCall::Chat.make(agent).await;
+        assert!(timed_out_at(&first, turn_timeout), "{first:?}");
+        assert_eq!(sends.take(), ["userInput", "haltRequest"]);
+        for call in TurnCall::ALL {
+            let result = call.make(agent).await;
+            assert_refused(&result, cause);
+            assert_eq!(sends.take(), Vec::<String>::new(), "{call:?} sent");
+        }
+        drop(release);
         stalled.finish().await;
     }
 }

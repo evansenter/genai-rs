@@ -264,10 +264,11 @@ impl AntigravityAgent {
     /// not take; with no turn timeout, each send gives up after 30 seconds);
     /// [`AntigravityError::ConnectionClosed`] or
     /// [`AntigravityError::WebSocket`] when the connection to the harness
-    /// fails, and `ConnectionClosed`, without sending the message, once an
-    /// earlier turn ended the session (a trigger's turn this call discards
-    /// included); and [`AntigravityError::Protocol`] when the turn ends
-    /// without a `Finished` event.
+    /// fails, and `ConnectionClosed`, without sending the message, once the
+    /// session has ended: a turn's failure ended it (a trigger's turn this
+    /// call discards included), or the harness closed the connection while
+    /// a call discarded a turn; and [`AntigravityError::Protocol`] when the
+    /// turn ends without a `Finished` event.
     ///
     /// [`Media`]: super::Media
     pub async fn chat(
@@ -317,13 +318,13 @@ impl AntigravityAgent {
     ///
     /// [`AntigravityError::Config`] for an empty [`Prompt`],
     /// [`AntigravityError::ConnectionClosed`], without sending the message,
-    /// once an earlier turn ended the session (a trigger's turn this call
-    /// discards included), [`AntigravityError::WebSocket`] when
-    /// the message cannot be sent, and [`AntigravityError::Timeout`] when
-    /// the turn timeout passes before the harness takes it, or the harness
-    /// does not take it within 30 seconds and the turn has no timeout (it
-    /// stopped reading). The turn's own failures, as listed for
-    /// [`chat`](Self::chat), arrive as the stream's items.
+    /// once the session has ended (as for `chat`),
+    /// [`AntigravityError::WebSocket`] when the message cannot be sent, and
+    /// [`AntigravityError::Timeout`] when the turn timeout passes before the
+    /// harness takes it, or the harness does not take it within 30 seconds
+    /// and the turn has no timeout (it stopped reading). The turn's own
+    /// failures, as listed for [`chat`](Self::chat), arrive as the stream's
+    /// items.
     pub async fn send_streaming(
         &mut self,
         prompt: impl Into<Prompt>,
@@ -400,9 +401,9 @@ impl AntigravityAgent {
     /// # Errors
     ///
     /// [`AntigravityError::ConnectionClosed`] when the harness closes the
-    /// connection while this waits, and at once, without waiting, once an
-    /// earlier turn ended the session; and a failed turn's errors, as for
-    /// [`chat`](Self::chat).
+    /// connection while this waits, and at once, without waiting, once the
+    /// session has ended (as for `chat`); and a failed turn's errors, as
+    /// for [`chat`](Self::chat).
     ///
     /// ```rust,no_run
     /// # use std::time::Duration;
@@ -662,20 +663,21 @@ impl AntigravityAgent {
     /// its per-turn timeout, one its caller abandoned, or one started by an
     /// automated trigger.
     ///
-    /// Sends a halt, then drains events into a throwaway state — answering
-    /// protocol-required requests (confirmations, hooks) so the harness
-    /// never deadlocks, discarding everything surfaced — until the stream
-    /// stays silent for [`HALT_DRAIN_SILENCE`] or [`HALT_DRAIN_BUDGET`],
-    /// which the halt's send counts against, runs out. Stale-turn errors
-    /// (including the halt's own cancellation) are logged and swallowed,
-    /// but one that ends the session, or the harness closing the
-    /// connection, sets `session_ended`.
+    /// Sends a halt, then (even when that fails) drains events into a
+    /// throwaway state — answering protocol-required requests
+    /// (confirmations, hooks) so the harness never deadlocks, discarding
+    /// everything surfaced — until the stream stays silent for
+    /// [`HALT_DRAIN_SILENCE`] or [`HALT_DRAIN_BUDGET`], which the halt's
+    /// send counts against, runs out. Stale-turn errors (including the
+    /// halt's own cancellation) are logged and swallowed, but one that ends
+    /// the session, or the harness closing the connection, sets
+    /// `session_ended`.
     ///
     /// `limit`, the deadline of the turn about to start, cuts the budget
     /// short when it comes first.
     ///
-    /// Returns whether the stream went silent: `false` when the budget ran
-    /// out or the transport failed first.
+    /// Returns whether the stream went silent after the halt: `false` when
+    /// the halt failed, the budget ran out or the transport failed first.
     async fn halt_and_drain(&mut self, why: &str, limit: Option<tokio::time::Instant>) -> bool {
         // tests/antigravity_scripted/cancel.rs counts halts by this line.
         tracing::debug!("Halting and draining the harness turn ({why}).");
@@ -684,11 +686,13 @@ impl AntigravityAgent {
         let budget = tokio::time::Instant::now() + HALT_DRAIN_BUDGET;
         let deadline = limit.map_or(budget, |limit| limit.min(budget));
         let halt = InputEvent::HaltRequest(true);
-        match self.session.send_before(&halt, deadline).await {
-            Ok(Ok(())) => {}
+        let halted = match self.session.send_before(&halt, deadline).await {
+            Ok(Ok(())) => true,
             Ok(Err(e)) => {
+                // Read on: a harness that ended its run, so the write drew
+                // its reset, may have left why, and a close, in the socket.
                 tracing::warn!("Failed to send halt request while {why}: {e}");
-                return false;
+                false
             }
             Err(_) if deadline < budget => {
                 tracing::warn!(
@@ -704,7 +708,7 @@ impl AntigravityAgent {
                 );
                 return false;
             }
-        }
+        };
         let mut state = TurnState::draining();
         loop {
             let silence = tokio::time::Instant::now() + HALT_DRAIN_SILENCE;
@@ -720,7 +724,7 @@ impl AntigravityAgent {
                         );
                         return false;
                     }
-                    return true;
+                    return halted;
                 }
                 Ok(Ok(Some(event))) => {
                     // Bounded like the wait: answering a request can run a

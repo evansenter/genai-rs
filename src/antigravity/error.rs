@@ -84,11 +84,12 @@ pub enum AntigravityError {
     /// waits for a turn ([`chat`](super::AntigravityAgent::chat),
     /// [`send_streaming`](super::AntigravityAgent::send_streaming),
     /// `next_trigger_turn`) once the session has ended: after a turn whose
-    /// failure ended it ([`TurnFailure::ends_session`]), a trigger's turn
-    /// that the call halted and discarded included, or after the harness
-    /// closed the connection while a call discarded an earlier turn. A
-    /// trigger's [`TriggerContext::send`](super::TriggerContext::send)
-    /// fails with it, with an empty `stderr`, once the agent is gone.
+    /// failure ended it ([`TurnFailure::ends_session`]), a turn the agent
+    /// halted and discarded (a trigger's, or one that timed out) included,
+    /// or after the harness closed the connection while the agent discarded
+    /// a turn. A trigger's
+    /// [`TriggerContext::send`](super::TriggerContext::send) fails with it,
+    /// with an empty `stderr`, once the agent is gone.
     #[error("harness connection closed: {message}\nharness stderr:\n{stderr}")]
     ConnectionClosed {
         /// What went wrong.
@@ -137,7 +138,9 @@ pub enum AntigravityError {
     /// message. A trigger's turn that fails so, unconsumed, never comes
     /// back as this error: the `chat` or `send_streaming` that halts and
     /// discards it fails with `ConnectionClosed` instead, naming the
-    /// failure. Spawn a new agent after one.
+    /// failure. Nor does a turn that fails so past its deadline: the call
+    /// gets the [`Timeout`](Self::Timeout), and the one after it
+    /// `ConnectionClosed`. Spawn a new agent after one.
     #[error("agent turn failed ({kind}): {message}")]
     Turn {
         /// Why the turn failed.

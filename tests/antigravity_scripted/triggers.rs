@@ -43,6 +43,16 @@ impl WireCapture {
         self.sends.lock().unwrap().len()
     }
 
+    /// How many of the messages this client has sent carry `key`.
+    fn count(&self, key: &str) -> usize {
+        self.sends
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.get(key).is_some())
+            .count()
+    }
+
     /// Waits up to `timeout` for a stderr line containing `needle`.
     async fn wait_for_stderr(&self, needle: &str, timeout: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + timeout;
@@ -327,4 +337,67 @@ async fn test_scripted_a_trigger_turn_that_ends_the_session_fails_the_next_chat_
         );
         drop(agent);
     }
+}
+
+/// As above, with an interval trigger (#504): idle, the agent keeps
+/// delivering after the session ended, into the closed connection, until a
+/// delivery fails on the harness's reset. The chat's halt then fails too;
+/// the chat still reads why the session ended, rather than sending its
+/// message and failing with a `WebSocket` error. Where the reset leaves the
+/// failure unread, the refusal says the harness ended the session.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_an_interval_trigger_into_the_ended_session_fails_the_next_chat_unsent() {
+    let fake = FakeGemini::start(vec![ModelTurn::error(400, "scripted-3470")]).await;
+    let inspector = Arc::new(WireCapture::default());
+    let mut agent = scripted_agent(&fake)
+        .add_trigger(TriggerConfig::new("tick-3471", Duration::from_millis(500)))
+        .add_wire_inspector(inspector.clone())
+        .spawn()
+        .await
+        .expect("spawn");
+    assert!(
+        inspector
+            .wait_for_stderr("executor run failed", Duration::from_secs(20))
+            .await,
+        "the trigger's turn never failed"
+    );
+    // The trigger delivers into the closed connection until a send fails,
+    // then stops.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut seen = inspector.count("automatedTrigger");
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let now = inspector.count("automatedTrigger");
+        if now == seen && now >= 2 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the trigger kept delivering: {now}"
+        );
+        seen = now;
+    }
+    let delivered = inspector.sent();
+    for (n, prompt) in ["first-chat-3472", "second-chat-3473"]
+        .into_iter()
+        .enumerate()
+    {
+        let err = agent.chat(prompt).await.unwrap_err();
+        let AntigravityError::ConnectionClosed { message, stderr } = &err else {
+            panic!("chat {n} after deliveries into the ended session: {err:?}");
+        };
+        assert!(message.contains("ended the session"), "{message}");
+        assert!(stderr.contains("executor run failed"), "{stderr}");
+    }
+    // The first chat's halt was all it tried to send.
+    assert_eq!(inspector.sent(), delivered + 1);
+    assert_eq!(inspector.first("haltRequest"), Some(delivered));
+    assert_eq!(inspector.first("userInput"), None);
+    assert_eq!(
+        fake.requests().len(),
+        1,
+        "the trigger's turn made the one call"
+    );
+    drop(agent);
 }

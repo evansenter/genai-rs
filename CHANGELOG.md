@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Breaking: an Antigravity `chat` or `send_streaming` that discards a
-  turn whose failure ended the session fails with
-  `AntigravityError::ConnectionClosed`, not `WebSocket`, without sending
-  its message.** A trigger's turn that the model backend failed (a 400, or
+- **Breaking: an Antigravity `chat` or `send_streaming` after a turn
+  that ended the session unseen (a trigger's turn it discards, or a turn
+  past its timeout) fails with `AntigravityError::ConnectionClosed`, not
+  `WebSocket`, without sending its message.** A trigger's turn that the model backend failed (a 400, or
   a 503 with no retries left) and that `next_trigger_turn` did not
   consume ended the harness's run unseen: the next call halted and
   discarded it, sent its message into the closed connection, and failed
@@ -21,9 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tail of the harness's stderr, and every later `chat`, `send_streaming`
   and `next_trigger_turn` fails the same way at once, as after a failed
   turn of your own. So does a call during whose discard the harness
-  closes the connection. Migration: match `ConnectionClosed { message,
+  closes the connection, and one whose halt fails because an interval
+  trigger has been delivering into the closed connection (it reads what
+  the harness sent before closing). After a turn `Timeout` whose recovery
+  sees the turn fail so, or the harness close the connection, the next
+  call fails the same way, where it too sent its message and failed with
+  a `WebSocket` error. Migration: match `ConnectionClosed { message,
   stderr }` where you matched a `WebSocket` error from the call after a
-  trigger's turn, and spawn a new agent.
+  trigger's turn or a `Timeout`, and spawn a new agent.
 
 ## [0.14.0] - 2026-11-14
 

@@ -2851,18 +2851,25 @@ with no failure before it names no kind: "the harness ended the
 session"). `begin_turn` checks after a drain, so the call fails with
 `ConnectionClosed`, naming what ended the session, with the stderr tail,
 before its message is sent; the drain's halt has gone out by then, since
-it is sent before the stale turn's events are read. The drain after a
-turn timeout records the same, so the call after that `Timeout` refuses
-too. A close seen outside a drain (mid-turn, or while `next_trigger_turn`
-waits) already fails that call with `ConnectionClosed` and is not
-recorded. Rejected: narrowing the guide to failures the caller saw, which
-would leave a caller who uses triggers without `next_trigger_turn` to
-read a `WebSocket` error as "the session is over".
+it is sent before the stale turn's events are read. A halt that cannot be
+sent no longer ends the drain: an interval trigger, idle, goes on
+delivering into the closed connection until a write draws the harness's
+reset, and the halt fails the same way, but what the harness sent before
+closing is still in the socket (on macOS; a reset that discards it reads
+as the close). The drain after a turn timeout records the same, so the
+call after that `Timeout` refuses too. A close seen outside a drain
+(mid-turn, or while `next_trigger_turn` waits) already fails that call
+with `ConnectionClosed` and is not recorded. Rejected: narrowing the guide
+to failures the caller saw, which would leave a caller who uses triggers
+without `next_trigger_turn` to read a `WebSocket` error as "the session
+is over".
 `test_scripted_a_trigger_turn_that_ends_the_session_fails_the_next_chat_unsent`
-runs the 400 and the 503 on the harness; stand-in unit tests hold the
-drained failure, the bare close, and the refusal of each of `chat`,
-`send_streaming` and `next_trigger_turn` (K-2), which no test held
-beyond `chat`'s.
+runs the 400 and the 503 on the harness, and
+`test_scripted_an_interval_trigger_into_the_ended_session_fails_the_next_chat_unsent`
+the interval trigger's 400; stand-in unit tests hold the drained failure,
+the bare close, the failed halt, the drain after a timeout, and the
+refusal of each of `chat`, `send_streaming` and `next_trigger_turn`
+(K-2), which no test held beyond `chat`'s.
 
 ---
 

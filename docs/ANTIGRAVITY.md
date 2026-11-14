@@ -1428,9 +1428,9 @@ variants, never on message text. Key variants:
   and `next_trigger_turn` fails with it without sending its message. So
   does a `chat` or `send_streaming` that first halts and discards such a
   turn (a trigger's that nothing consumed), or that sees the harness close
-  the connection while it discards one. A trigger's
-  `TriggerContext::send` gets it, with an empty `stderr`, once the agent is
-  shut down or dropped.
+  the connection while it discards one, and every call after a `Timeout`
+  whose recovery saw either. A trigger's `TriggerContext::send` gets it,
+  with an empty `stderr`, once the agent is shut down or dropped.
 - `HarnessExited`: a failed exit on `shutdown()`, with `stderr`.
 - `Config`: spawn-time validation, including the safety gate.
 - `Turn { kind, message }`: a failed turn (below).
@@ -1468,7 +1468,14 @@ one more message before it closes its WebSocket and answer it with an
 empty turn. A failure you never saw counts too. When a trigger's turn
 fails so and nothing consumes it, the next `chat` or `send_streaming`
 halts and discards it, then fails with `ConnectionClosed`, naming the
-failure, without sending its message.
+failure, without sending its message. An interval trigger goes on
+delivering into the closed connection until a delivery fails, and then
+the halt fails too; the call still reads what the harness sent before it
+closed, and fails the same way (where the connection's reset discarded
+that, its message says only that the harness ended the session). A turn
+that times out is halted and discarded as well, and when that discard
+sees the turn fail so, or the harness close the connection, the call
+after the `Timeout` fails the same way.
 
 ```rust,no_run
 use genai_rs::antigravity::{AntigravityAgent, AntigravityError, TurnFailure};
