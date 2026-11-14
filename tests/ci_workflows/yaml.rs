@@ -81,6 +81,20 @@ pub(super) fn run_value(step: &str) -> Result<Option<String>, String> {
     Ok(get(&step, "run").map(text))
 }
 
+/// The value of the step's own `key` (its `if:`, say), as YAML reads it:
+/// `None` when the step has no such key, an error when YAML cannot read
+/// the text as one step.
+pub(super) fn step_value(step: &str, key: &str) -> Result<Option<String>, String> {
+    Ok(get(&step_mapping(step)?, key).map(text))
+}
+
+/// The value of the job's own `key` (its `if:`, say, not a step's), as
+/// YAML reads it: `None` when the job has no such key, an error when YAML
+/// cannot read the text as a job.
+pub(super) fn job_value(job: &str, key: &str) -> Result<Option<String>, String> {
+    Ok(get(&job_mapping(job)?, key).map(text))
+}
+
 /// The value the step's `env:` gives `name`, as YAML reads it.
 pub(super) fn step_env(step: &str, name: &str) -> Option<String> {
     let step = step_mapping(step).ok()?;

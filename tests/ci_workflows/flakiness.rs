@@ -5,7 +5,7 @@
 //! which it publishes and then fails, and the offline tests that would
 //! otherwise flake on a loaded runner.
 
-use super::{command_lines, is_live_nextest_step, jobs, read, reads_the_key, root, steps};
+use super::{command_lines, is_live_nextest_step, jobs, read, reads_the_key, root, steps, yaml};
 use crate::source_scan;
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -486,7 +486,8 @@ fn the_report_publishes_then_fails_then_escalates() {
         all[generate]
     );
     assert!(
-        all[fail].contains("if: steps.report.outputs.breach == 'true'")
+        yaml::step_value(&all[fail], "if").ok().flatten().as_deref()
+            == Some("steps.report.outputs.breach == 'true'")
             && command_lines(&all[fail]).any(|line| line == "exit 1"),
         "the failing step must run on a breach and fail:\n{}",
         all[fail]

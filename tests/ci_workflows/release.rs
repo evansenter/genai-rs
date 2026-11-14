@@ -4,7 +4,7 @@ use regex::Regex;
 
 use super::builds::event_matrix;
 use super::flakiness::display_names;
-use super::{command_lines, failure_escapes, jobs, read, root, steps};
+use super::{command_lines, failure_escapes, jobs, read, root, steps, yaml};
 
 /// Problems with release.yml's push-run gate, empty when it holds.
 /// release.yml validates on Ubuntu only, so the tagged commit's push run of
@@ -163,7 +163,7 @@ fn skips_every_push(condition: &str) -> bool {
 
 /// Problems with `check_release_push_run.sh`'s two values against
 /// `rust.yml`, empty when they agree. `SKIPPED_ON_PUSH` names exactly the
-/// jobs whose `if:` leaves pushes out, so the gate lets those skip and no
+/// jobs whose `if:`, as YAML reads it, leaves pushes out, so the gate lets those skip and no
 /// other; `CROSS_PLATFORM_LEGS` is the number of Cross Platform legs off a
 /// PR, every OS times every toolchain.
 fn release_gate_problems(rust: &str, script: &str) -> Vec<String> {
@@ -173,9 +173,10 @@ fn release_gate_problems(rust: &str, script: &str) -> Vec<String> {
     let mut expected: Vec<String> = jobs(rust)
         .into_iter()
         .filter(|(_, body)| {
-            body.lines()
-                .find_map(|line| line.strip_prefix("    if: "))
-                .is_some_and(skips_every_push)
+            yaml::job_value(body, "if")
+                .ok()
+                .flatten()
+                .is_some_and(|condition| skips_every_push(&condition))
         })
         .flat_map(|(id, body)| display_names(&id, &body))
         .collect();
