@@ -3368,9 +3368,13 @@ comparison; unit tests hold those.
   above, an unknown tool's tag merged in, a retrieval tool's backend
   configs as their types write them, since D-034 keeps no `extra` on
   those), and the harness's `OutputEvent` (both usage spellings as one
-  `usageUpdate`). Its proto3 JSON is read as its types read it, and only
-  there: an int64 string is its number at the fields read through
-  `flex_num` (a test holds the key list to the protocol's source), and a
+  `usageUpdate`, and a trajectory state's pre-0.1.10 spelling,
+  `STATE_IDLE`, as the `STATE_FULLY_IDLE` it is written as: the one alias a
+  harness enum reads, which the target found on 2026-11-13 and a test holds
+  to the protocol's source). Its proto3 JSON is read as its types read
+  it, and only there: an int64 string is its number at the fields read
+  through `flex_num` (a test holds the key list to the protocol's source),
+  and a
   `toolResponse`'s `id`, a proto3 scalar the type writes as `""` when it
   was missing, is absent at its default (the target's first run,
   2026-11-13, found it). Everywhere else a `false`, `0`, `""` or numeric
