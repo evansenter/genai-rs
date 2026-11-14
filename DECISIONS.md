@@ -2787,7 +2787,7 @@ for a probe to settle (D-010).
   required, and each verb that calls one of those operations sends its
   value as the body, so the flag asks nothing the crate does not do. A
   body made optional asks nothing new; a body given to an operation that
-  had none is a request body, in #558's diff.
+  had none is a request body, which the diff tracked in #558 covers.
 - **A parameter's schema.** Each parameter a verb sends has the type the
   spec gives it, but for one set: the voices list filters (`accent`,
   `context`, `gender`, `language_code`, `persona`, `pitch`, `region_code`
