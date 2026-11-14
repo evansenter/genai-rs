@@ -15,6 +15,12 @@ use crate::FunctionDeclaration;
 
 /// Represents an error that can occur during function execution.
 ///
+/// A variant that holds an error returns it from
+/// [`source()`](std::error::Error::source) and leaves its text out of
+/// `Display`, so a reporter that walks the chain prints each cause once.
+/// The `{"error": ..}` a failed call sends the model carries the whole
+/// chain.
+///
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
 /// New error variants may be added in future versions.
 #[derive(Debug)]
@@ -23,7 +29,9 @@ pub enum FunctionError {
     /// The model's arguments did not fit the function: one is missing, or
     /// does not deserialize into its parameter's type.
     ArgumentMismatch(String),
-    /// The function ran and failed, or its result did not serialize.
+    /// The function ran and failed, or its result did not serialize. The
+    /// error is this one's `source()`; `Display` is
+    /// `Function execution error` alone.
     ExecutionError(Box<dyn Error + Send + Sync>),
 }
 
@@ -31,7 +39,9 @@ impl std::fmt::Display for FunctionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ArgumentMismatch(msg) => write!(f, "Argument mismatch: {msg}"),
-            Self::ExecutionError(err) => write!(f, "Function execution error: {err}"),
+            // The error is the source; repeating its text here would print
+            // it twice in a reporter that walks the chain (D-049).
+            Self::ExecutionError(_) => f.write_str("Function execution error"),
         }
     }
 }
@@ -47,9 +57,10 @@ impl Error for FunctionError {
 
 /// What a failed call sends the model, `{"error": ..}`, and what its log
 /// line names: the error and each cause below it
-/// ([`ErrorChain`](crate::errors::ErrorChain)). A tool that fails with a
-/// `GenaiError::Http` gives the model the transport error too, which that
-/// variant's `Display` leaves to `source()` (D-049).
+/// ([`ErrorChain`](crate::errors::ErrorChain)). `ExecutionError`'s
+/// `Display` leaves the tool's error to `source()`, as `GenaiError::Http`'s
+/// leaves the transport error (D-049), so the chain is what tells the model
+/// why the call failed, through every level.
 pub(crate) fn error_for_model(error: &FunctionError) -> String {
     crate::errors::ErrorChain(error).to_string()
 }
@@ -244,8 +255,42 @@ mod tests {
         }
     }
 
+    /// Every variant that holds an error leaves its text to `source()`, so
+    /// a reporter that walks the chain prints it once (D-049). The match
+    /// names each variant, so a new one fails to compile here until it is
+    /// built.
+    #[test]
+    fn function_error_display_does_not_repeat_its_source() {
+        let variants = [
+            FunctionError::ArgumentMismatch("missing city".to_string()),
+            FunctionError::ExecutionError(Box::new(std::io::Error::other("connection refused"))),
+        ];
+        for error in &variants {
+            let display = error.to_string();
+            match error {
+                FunctionError::ArgumentMismatch(_) => {
+                    assert!(error.source().is_none());
+                    assert_eq!(display, "Argument mismatch: missing city");
+                }
+                FunctionError::ExecutionError(_) => {
+                    let source = error.source().expect("the error it holds").to_string();
+                    assert_eq!(source, "connection refused");
+                    assert_eq!(display, "Function execution error");
+                    assert!(!display.contains(&source), "{display:?} repeats {source:?}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_failed_tool_tells_the_model_every_cause() {
+        // The tool's own error, which `Display` leaves to `source()`.
+        let plain = FunctionError::ExecutionError(Box::new(std::io::Error::other("disk full")));
+        assert_eq!(
+            error_for_model(&plain),
+            "Function execution error: disk full"
+        );
+        // And each cause below it.
         let error = FunctionError::ExecutionError(Box::new(Outer(std::io::Error::other(
             "connection refused",
         ))));

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: `FunctionError::ExecutionError`'s `Display` is `Function
+  execution error` alone**, no longer followed by the error it holds, which
+  stays its `source()`. A reporter that walks the chain (anyhow's `{:#}`,
+  eyre) printed that error twice; it now prints it once, as it does for
+  `GenaiError::Http` since 0.15.0 (D-049). The `{"error": ...}` a failed
+  tool call sends the model, in the auto-function loop and on an
+  Antigravity agent, is unchanged: it writes the whole chain, so the model
+  still gets the cause. Migration: where you read the tool's error from a
+  `FunctionError`'s text, walk `source()` (or use your reporter's chain
+  form), or match `FunctionError::ExecutionError(e)` and read
+  `e.to_string()`, which is the text that followed
+  `Function execution error: `.
+
 ### Removed
 
 - **Breaking: `ListAgents::with_parent` is removed.** The API takes

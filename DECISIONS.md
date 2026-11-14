@@ -1907,6 +1907,23 @@ error` (found at the Wave K merge). The
 docs and the retry example that printed an error by `Display` print the
 chain.
 
+**Amended 2026-11-14 (0.16 breaking batch).** `FunctionError::ExecutionError`
+follows too, on the owner's decision: its `Display` is `Function execution
+error` alone, and the error it holds stays its `source()`, so a reporter
+that walks the chain prints it once. `ArgumentMismatch`, the other
+variant, holds a message and no source, so it is unchanged. The model
+loses nothing: both places a `FunctionError` becomes text the model sees,
+the auto-function round (`execute_function` in
+`src/request_builder/auto_functions/round.rs`) and the Antigravity tool
+dispatcher (`ToolDispatcher::execute` in `src/antigravity/tools.rs`),
+already wrote it through `function_calling::error_for_model`, which writes
+the chain, so `{"error": ..}` reads as it did. A unit test in
+`src/function_calling.rs` builds every variant, with a match that names
+each, and fails when a `Display` contains its source's text; the
+model-facing text is pinned there, in `src/antigravity/tools.rs`, and
+through the HTTP stub in `tests/http_mock_tests.rs`. Breaking, with a
+CHANGELOG migration.
+
 ---
 
 ## D-050 — On Windows, discovery tries `localharness.exe` first and keeps the bare name (2026-11-07)
