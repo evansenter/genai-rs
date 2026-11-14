@@ -29,7 +29,8 @@ it came. Each type's own normalizations are applied to the input first
 echo written in its request form, an empty allowlist `domain` not written
 (one read as `""` included), an unknown tool's tag merged in, a retrieval
 tool's backend configs written as their types write them (they keep no
-`extra`), and an event's two usage spellings written as one `usageUpdate`.
+`extra`), an event's two usage spellings written as one `usageUpdate`,
+and a trajectory state's old `STATE_IDLE` written as `STATE_FULLY_IDLE`.
 
 The entry points live in the library, in `src/fuzzing.rs` (`genai_rs::__fuzz`,
 compiled only under `cfg(fuzzing)` and in tests), so the targets here are one

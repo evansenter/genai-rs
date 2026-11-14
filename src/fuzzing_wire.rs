@@ -261,12 +261,28 @@ fn to_value<T: serde::Serialize>(config: &Option<T>) -> Option<Value> {
         .map(|config| serde_json::to_value(config).expect("a config serializes"))
 }
 
+/// The old spellings the harness enums still read, each with the one they
+/// write (`wire_enum!`'s `Variant => "WRITTEN" | "OLD"`): reading an old
+/// one writes the new, as the variant's rustdoc says. Only
+/// `TrajectoryState::Idle` has one, harness 0.1.10's rename, and a
+/// `trajectoryStateUpdate`'s `state` is the one field of that type (a test
+/// holds this list to the protocol source).
+#[cfg(feature = "antigravity")]
+pub(super) const PROTO3_ALIASES: &[(&str, &str)] = &[("STATE_IDLE", "STATE_FULLY_IDLE")];
+
 /// What an Antigravity `OutputEvent` read from `input` writes back: with
 /// both spellings of its usage, the flat `usageMetadata` is the total of
-/// the `usageUpdate` it is written as.
+/// the `usageUpdate` it is written as, and a trajectory state read by an
+/// old spelling ([`PROTO3_ALIASES`]) is written by its new one.
 #[cfg(feature = "antigravity")]
 pub(super) fn output_event(input: &Value) -> Value {
     let mut object = input.as_object().cloned().unwrap_or_default();
+    if let Some(Value::Object(update)) = object.get_mut("trajectoryStateUpdate")
+        && let Some(Value::String(state)) = update.get_mut("state")
+        && let Some((_, written)) = PROTO3_ALIASES.iter().find(|(old, _)| old == state)
+    {
+        *state = (*written).to_string();
+    }
     let flat = object
         .get("usageMetadata")
         .filter(|flat| !flat.is_null())
