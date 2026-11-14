@@ -44,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `WebSocket` error. Migration: match `ConnectionClosed { message,
   stderr }` where you matched a `WebSocket` error from the call after a
   trigger's turn or a `Timeout`, and spawn a new agent.
+- The background poll in `docs/AGENTS_AND_BACKGROUND.md` added the
+  caller's deadline to the clock with `+`, which panics on a `Duration`
+  too large to add, such as `Duration::MAX`. It uses `checked_add` and
+  returns an error instead, as `examples/deep_research.rs` does. Copy the
+  change into a poll built from it.
+- `Triggers::run`'s rustdoc, `docs/RELIABILITY.md` and
+  `docs/AGENTS_AND_BACKGROUND.md` now say that a retry fires the trigger
+  again: a client timeout ends the call with a retryable error while the
+  run goes on, so check `list_executions` before retrying.
 
 ## [0.14.0] - 2026-11-14
 

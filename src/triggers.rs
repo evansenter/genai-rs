@@ -731,9 +731,11 @@ impl<'a> Triggers<'a> {
     /// A client [timeout](crate::ClientBuilder::with_timeout) shorter than
     /// the run ends the call with an error, not the run:
     /// [`list_executions`](Self::list_executions) lists it, in progress or
-    /// ended. Every field of the execution stays optional, since the API
-    /// once answered `{}`; the record is under Triggers in
-    /// `docs/INTERACTIONS_API_GAP.md`.
+    /// ended. That error is [retryable](GenaiError::is_retryable), but a
+    /// retry fires the trigger again, starting a second run, so check
+    /// `list_executions` before retrying. Every field of the execution
+    /// stays optional, since the API once answered `{}`; the record is
+    /// under Triggers in `docs/INTERACTIONS_API_GAP.md`.
     ///
     /// # Errors
     ///

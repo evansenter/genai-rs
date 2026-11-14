@@ -155,6 +155,15 @@ a retry. Otherwise drive the loop manually (see
 [Function Calling](FUNCTION_CALLING.md#manual-function-handling)) so you can
 retry only the API call.
 
+### A trigger's run
+
+`client.triggers().run(id)` holds the request until the run ends, up to
+the trigger's `execution_timeout_seconds` (at most 600). A client timeout
+shorter than that ends the call with a retryable `Http` error, but the run
+is still running, and a retry fires the trigger again: a second run. Check
+`client.triggers().list_executions(id)`, which lists a run in progress,
+before retrying.
+
 ### Streams
 
 A stream cannot be retried mid-flight: re-sending the request starts a new
