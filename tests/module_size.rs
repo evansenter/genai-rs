@@ -111,8 +111,8 @@ fn measured_lines(kind: Kind, text: &str) -> usize {
 /// of that module's last line: its `mod` line when declared out of line,
 /// its column-0 closing brace when inline. Other test-gated items, such as
 /// a helper or a test-support child module like `test_subscriber`, count
-/// as the module's own code, and so does a module whose attributes span
-/// lines (none does; rustfmt keeps a `cfg` on one).
+/// as the module's own code, and so does a test module whose attribute
+/// spans lines (none does today), which errs toward counting more.
 fn test_module_end(lines: &[&str], start: usize) -> Option<usize> {
     if !lines[start].starts_with("#[") {
         return None;
