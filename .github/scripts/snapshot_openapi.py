@@ -173,8 +173,8 @@ def media(spec, media_types):
     """A content map's other keys by content type (`encoding`, ...), for
     the content types that have any."""
     kept = {
-        content_type: rest(spec, media, {"schema"})
-        for content_type, media in (media_types or {}).items()
+        content_type: rest(spec, media_type, {"schema"})
+        for content_type, media_type in (media_types or {}).items()
     }
     return {content_type: keys for content_type, keys in kept.items() if keys}
 
@@ -199,15 +199,17 @@ def operation(spec, path_item, op):
             "required": bool(body.get("required", False)),
             "content": content(body.get("content")),
         }
-        if media(spec, body.get("content")):
-            out["body"]["media"] = media(spec, body.get("content"))
+        body_media = media(spec, body.get("content"))
+        if body_media:
+            out["body"]["media"] = body_media
         out["body"].update(rest(spec, body, {"required", "content"}))
     responses = {}
     for status, response in op.get("responses", {}).items():
         response = resolve(spec, response, "responses")
         entry = {"content": content(response.get("content"))}
-        if media(spec, response.get("content")):
-            entry["media"] = media(spec, response.get("content"))
+        response_media = media(spec, response.get("content"))
+        if response_media:
+            entry["media"] = response_media
         headers = {
             name: strip(resolve(spec, header, "headers"))
             for name, header in response.get("headers", {}).items()
