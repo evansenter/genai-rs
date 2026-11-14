@@ -126,9 +126,11 @@ frame.
   variables); and every header value under `headers` (MCP servers),
   `transform` (environment allowlist entries) or `httpHeaders` (a harness
   model endpoint), keeping the header and variable names. A JSON Schema's
-  property names (the keys of a `properties` map, such as a function
-  declaration's `env` or `api_key` parameter) are not read as fields, so
-  the schema under one prints. The `wire` tracing target redacts the same
+  property names (the keys of a `properties` map beside `"type":
+  "object"`, such as a function declaration's `env` or `api_key`
+  parameter) are not read as fields when the value under one is a schema,
+  so that schema prints; any other value under a `properties` key is read
+  as data and redacted as usual. The `wire` tracing target redacts the same
   fields, in harness messages too.
 - **Uploads** print as `>>> UPLOAD "video.mp4" (video/mp4, 150.25 MB)`.
 
