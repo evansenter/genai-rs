@@ -123,6 +123,63 @@ fn a_delta_chunk_keeps_its_extra() {
     assert!(read.is_empty());
 }
 
+/// A completion's `extra`, the final `interaction.completed` event's unread
+/// keys, is written beside `data` and read back; an empty one is not
+/// written, and a map without one (0.15.0's) reads back with an empty one.
+#[test]
+fn a_complete_chunk_keeps_its_extra() {
+    let mut extra = serde_json::Map::new();
+    extra.insert("future_key".to_string(), json!({"nested": [1, "two"]}));
+    let response = InteractionResponse {
+        id: Some("int-1".to_string()),
+        status: crate::InteractionStatus::Completed,
+        ..Default::default()
+    };
+    let chunk = AutoFunctionStreamChunk::Complete {
+        response: Box::new(response.clone()),
+        extra: extra.clone(),
+    };
+
+    let value = serde_json::to_value(&chunk).unwrap();
+    assert_eq!(value["chunk_type"], "complete");
+    assert_eq!(value["data"]["id"], "int-1");
+    assert_eq!(
+        value["extra"],
+        json!({"future_key": {"nested": [1, "two"]}})
+    );
+    let AutoFunctionStreamChunk::Complete {
+        response: read_response,
+        extra: read,
+    } = serde_json::from_value(value.clone()).unwrap()
+    else {
+        panic!("expected a Complete");
+    };
+    assert_eq!(read, extra);
+    assert_eq!(read_response.id.as_deref(), Some("int-1"));
+    // And the written form again, unchanged.
+    assert_eq!(
+        serde_json::to_value(AutoFunctionStreamChunk::Complete {
+            response: read_response,
+            extra: read,
+        })
+        .unwrap(),
+        value
+    );
+
+    let empty = AutoFunctionStreamChunk::Complete {
+        response: Box::new(response),
+        extra: Default::default(),
+    };
+    let value = serde_json::to_value(&empty).unwrap();
+    assert!(value.get("extra").is_none(), "{value}");
+    let AutoFunctionStreamChunk::Complete { extra: read, .. } =
+        serde_json::from_value(value).unwrap()
+    else {
+        panic!("expected a Complete");
+    };
+    assert!(read.is_empty());
+}
+
 /// An unknown chunk spelled like a known one (an SSE event named `delta`,
 /// passed on as `Unknown`) is marked, so it reads back unknown rather than
 /// as the known chunk, which would fail on its data.

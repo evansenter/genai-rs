@@ -1,7 +1,8 @@
 //! The JSON form of [`AutoFunctionStreamChunk`] and [`AutoFunctionStreamEvent`]:
 //! a `chunk_type` tag with its payload under `data`, and an event's `chunk`
-//! beside its optional `event_id`. A `Delta`'s non-empty `extra` is written
-//! beside `data`, as `extra`, as `StreamChunk`'s form writes one.
+//! beside its optional `event_id`. A `Delta`'s or a `Complete`'s non-empty
+//! `extra` is written beside `data`, as `extra`, as `StreamChunk`'s form
+//! writes one.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,10 +46,13 @@ impl Serialize for AutoFunctionStreamChunk {
                 map.serialize_entry("data", results)?;
                 map.end()
             }
-            Self::Complete(response) => {
+            Self::Complete { response, extra } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("chunk_type", "complete")?;
                 map.serialize_entry("data", response)?;
+                if !extra.is_empty() {
+                    map.serialize_entry("extra", extra)?;
+                }
                 map.end()
             }
             Self::MaxLoopsReached(response) => {
@@ -129,6 +133,14 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
         // Written by an `Unknown` whose type collides with a known one.
         let marked_unknown = value.get("unknown") == Some(&serde_json::Value::Bool(true));
 
+        // A `Delta`'s or a `Complete`'s `extra`, written only when it has
+        // keys; a chunk without one (a `Delta` 0.12.0 wrote, a `Complete`
+        // 0.15.0 wrote) reads back with an empty one.
+        let extra = || match value.get("extra") {
+            Some(serde_json::Value::Object(extra)) => extra.clone(),
+            _ => serde_json::Map::new(),
+        };
+
         match chunk_type {
             chunk_type if marked_unknown => Ok(Self::Unknown {
                 chunk_type: chunk_type.to_string(),
@@ -144,13 +156,10 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                         "Failed to deserialize AutoFunctionStreamChunk::Delta data: {e}"
                     ))
                 })?;
-                // Written only when it has keys; a map without one, such as
-                // 0.12.0's, reads back with an empty one.
-                let extra = match value.get("extra") {
-                    Some(serde_json::Value::Object(extra)) => extra.clone(),
-                    _ => serde_json::Map::new(),
-                };
-                Ok(Self::Delta { delta, extra })
+                Ok(Self::Delta {
+                    delta,
+                    extra: extra(),
+                })
             }
             "executing_functions" => {
                 let data = extract_data_field(&value, "ExecutingFunctions");
@@ -199,7 +208,10 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                             "Failed to deserialize AutoFunctionStreamChunk::Complete data: {e}"
                         ))
                     })?;
-                Ok(Self::Complete(response))
+                Ok(Self::Complete {
+                    response,
+                    extra: extra(),
+                })
             }
             "max_loops_reached" => {
                 let data = extract_data_field(&value, "MaxLoopsReached");

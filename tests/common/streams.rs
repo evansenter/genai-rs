@@ -220,7 +220,9 @@ pub async fn consume_auto_function_stream(
                     record(&mut result.executed_function_names, &r.name);
                 }
             }
-            AutoFunctionStreamChunk::Complete(response) => result.final_response = Some(*response),
+            AutoFunctionStreamChunk::Complete { response, .. } => {
+                result.final_response = Some(*response);
+            }
             AutoFunctionStreamChunk::MaxLoopsReached(response) => {
                 result.reached_max_loops = true;
                 result.final_response = Some(*response);

@@ -1329,6 +1329,10 @@ one on send either way), so the entry goes back as it came; the list above
 now says what the code does. Only the string form, `{"allowlist":
 "disabled"}`, is kept whole beside another key.
 
+*Amended 2026-11-14 (0.16 breaking batch).* The owner asked for
+`Complete`'s: it is `Complete { response, extra }` and left the list
+(D-054's amendment of this date). `ExecutingFunctions` keeps its row.
+
 
 ## D-035 — A code execution result is a string or content blocks (2026-11-07)
 
@@ -2286,6 +2290,20 @@ writes the `"unknown": true` marker when its type is spelled like a known
 `StreamChunk` variant, with no wildcard, so a new one fails to compile
 there. The other events' envelope keys still reach only `execute_stream()`
 (D-034).
+
+*Amended 2026-11-14 (0.16 breaking batch).* On the owner's decision, the
+auto-function stream passes on the final round's `interaction.completed`
+keys too: `AutoFunctionStreamChunk::Complete(response)` becomes
+`Complete { response, extra }`, the newtype becoming a struct variant for
+the reason `Completed` did above, and the loop moves the round's
+`StreamChunk::Completed` `extra` into it. Its `{chunk_type, data}` form
+writes a non-empty `extra` beside `data` and reads it back, as `Delta`'s
+does, and a 0.15.0 log reads back with an empty one. The guard's
+`Complete` row is gone. `ExecutingFunctions`, the loop's verdict on a round
+that calls functions, keeps its `ROUND_VERDICT` row: the owner asked for
+the completion chunk alone, so that round's completed-event keys still
+reach `execute_stream()` only, and carrying them is another breaking
+change, for the owner to ask for.
 
 ---
 
