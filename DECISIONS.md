@@ -3319,7 +3319,8 @@ subdirectory, which passed the guard, fails it as one directly in
 `src/http/` does. `tests/doc_guards/`' `guide_candidates` reads the
 Markdown with `files_with_extensions`, and `tests/module_size.rs` tells a
 test module by `is_test_gated` over its attributes rather than by a line
-that starts `#[cfg(test)]`. `git grep 'fn is_test'` finds only this file.
+that starts `#[cfg(test)]`. `git grep 'fn is_test'` finds only
+`tests/common/source_scan.rs`.
 
 ## D-069 — The retry-loop guard follows what reaches the sleep (2026-11-10)
 

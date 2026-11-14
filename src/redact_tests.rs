@@ -396,8 +396,9 @@ fn debug_never_prints_a_secret() {
 }
 
 /// One value of every `Tool` arm, each holding `extra` as its `extra` map
-/// (an unknown tool in its payload, beside its `type`), and every other
-/// field empty. [`tool_arm`] names each, and
+/// (an unknown tool in its payload, beside its `type`) and no other secret,
+/// so the arm's own `extra` is what the sentinel reads. [`tool_arm`] names
+/// each, and
 /// `the_sentinel_builds_every_tool_arm` fails on an arm of the enum left
 /// out here.
 fn every_tool_arm(extra: &Map<String, Value>) -> Vec<Tool> {
