@@ -114,7 +114,11 @@ async fn poll(
             // A transient failure does not end the run: poll on, waiting at
             // least as long as the server asked.
             Ok(Err(e)) if e.is_retryable() => {
-                println!("  {:>4}s  {e}; polling on", start.elapsed().as_secs());
+                println!(
+                    "  {:>4}s  {}; polling on",
+                    start.elapsed().as_secs(),
+                    chain(&e)
+                );
                 wait = e.retry_after().map_or(delay, |asked| asked.max(delay));
             }
             Ok(Err(e)) => return Err(e.into()),
@@ -128,4 +132,13 @@ async fn poll(
         sleep(wait).await;
         delay = (delay * 2).min(Duration::from_secs(10));
     }
+}
+
+/// The error and each `source()` below it: `GenaiError::Http`'s `Display`
+/// leaves the transport error to its source.
+fn chain(e: &(dyn Error + 'static)) -> String {
+    std::iter::successors(Some(e), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }
