@@ -2743,10 +2743,12 @@ made required or optional, or retyped, wherever it goes, a request body
 changes or is made optional, or a response changes.
 `test_snapshot_openapi.sh` pins each of the three mutations above, and a
 path parameter retyped, made optional or given an enum behind its
-reference, and a body made optional. It still drops the prose, each
+reference, and a body made optional. It still dropped the prose, each
 operation's other keys (`operationId`, `tags`, `deprecated`, the
-`x-speakeasy-*` extensions), and a component no operation names. The
-query test also holds the spec's header parameters to what the verbs send
+`x-speakeasy-*` extensions), and a component no operation names. Since
+the 2026-11-14 amendment below, it keeps those other keys but the names
+a generated SDK gives its code and `x-speakeasy-sse-overload`. The query
+test also holds the spec's header parameters to what the verbs send
 (`spec_header_findings` in `tests/request_wire_oracle/spec_query.rs`): a
 header a request to its endpoint goes without, or one sent with a value
 the spec's `const` or `enum` does not allow (followed through a `$ref`,
@@ -2759,11 +2761,76 @@ path parameter is matched by its position), a request body's required
 flag, a response's schema reference against the type the verb returns
 (the response oracle maps crate types to spec schemas, not to
 operations), and a request body against the binding class the crate sends
-(D-040); that diff is tracked in #558. The two update wrappers (#550)
+(D-040). The diff of the last two is tracked in #558; the first two stay
+watched only (amended 2026-11-14, below). The two update wrappers (#550)
 were probed on 2026-11-13: both are a `400 Unknown parameter`, with or
 without `id` and `update_mask`, and the flat bodies the crate sends apply
 (`docs/INTERACTIONS_API_GAP.md`, "Spec-only query parameters"), so the
 crate is unchanged (D-005).
+
+**Amended 2026-11-14 (#504, K-12).** The amendment above named #558 for
+all four watched-only items, but #558 covers request bodies and response
+references only, so its pointer now names those two. The other two stay
+watched only, for this decision's reason:
+a request follows its binding class, which leads the spec on requests
+(D-040), and the bindings snapshot gives a query parameter a name and a
+body a class, not a schema or a required flag, so there is nothing
+offline to hold either to but the crate itself. A change to either
+changes the reduced snapshot, and the daily watch opens an issue on it,
+for a probe to settle (D-010).
+- **A body's required flag.** The spec marks every request body it gives
+  required, and each verb that calls one of those operations sends its
+  value as the body, so the flag asks nothing the crate does not do. A
+  body made optional asks nothing new; a body given to an operation that
+  had none is a request body, in #558's diff.
+- **A parameter's schema.** Each parameter a verb sends has the type the
+  spec gives it, but for one set: the voices list filters (`accent`,
+  `context`, `gender`, `language_code`, `persona`, `pitch`, `region_code`
+  and `type`), each an array of strings in the v1beta spec (v1 has no
+  voices endpoint) and an iterable in the bindings. The API matches a
+  filter repeated with several values against any of them
+  (`docs/ENUM_WIRE_FORMATS.md`, "Voices"), and `ListVoices` sends one
+  value per filter, a second `with_*` call replacing the first. That stays: the repeat adds no reach, since one
+  listing per value (per combination, with two such filters), merged,
+  finds the same voices, and setters that send several values can come
+  as `add_*` methods beside the `with_*` ones, without a break, when a
+  caller needs them. Rejected: turning the `with_*` filters into list
+  setters, a break for what a merge already gives. `docs/RESOURCES.md`
+  says so.
+
+The same grade found the reducer dropping parts of the spec without
+saying so: an operation under HEAD, OPTIONS or TRACE, an operation's
+`deprecated`, `servers`, `security` and `callbacks`, a body's `encoding`,
+and the spec's servers, security schemes and `x-speakeasy-retries` each
+reduced to the committed bytes. `snapshot_openapi.py` now takes an
+operation under any of the eight methods OpenAPI names, and keeps every
+key of an operation (or its path item), request body, response and
+content type, and of the spec's top level (`top_level`: its servers,
+security, `info`, `x-speakeasy-globals` and `x-speakeasy-retries`), and
+the security schemes (`security_schemes`); both snapshots were refreshed
+with it, and `test_snapshot_openapi.sh` pins each drift above. What it
+still drops, and why:
+- The prose: descriptions, summaries, titles, examples and code samples.
+  It says nothing the wire does, and churns on every docs edit.
+- The names a generated SDK gives its code: an operation's
+  `operationId`, `tags` and `externalDocs`, and the Speakeasy
+  `x-speakeasy-group`, `x-speakeasy-name-override` and
+  `x-speakeasy-exports`. The crate names its own verbs, and
+  `tests/ci_coverage.rs` maps an endpoint to them by method and path. A
+  schema or a parameter keeps the Speakeasy keys it has, as it did.
+- `x-speakeasy-sse-overload`, which gives the SDK a second method for an
+  operation whose `text/event-stream` response the snapshot keeps.
+- A component nothing kept names: it shapes no request or response until
+  something names it, and then it is kept where it is named.
+None of the newly kept keys is diffed against the crate offline, and each
+is watched: each states what the crate fixes in its own code (the server
+`Client` defaults to, the `X-Goog-Api-Key` header, the SSE parser
+skipping `[DONE]`) or does not use (a deprecation, the optional
+`x-goog-user-project` header, the generated client's retry policy), so a
+change to one is for a probe to settle, as a parameter's retyping is. The
+retry policy, `[408, 409, 429, 5XX]` with backoff, is one D-053 already
+weighed: the crate's differs on 409 and six 5xx, for the reasons given
+there.
 
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
@@ -3703,3 +3770,41 @@ on another.
 **Consequences.** Breaking for an exhaustive `GenerationConfig` struct
 literal (D-007). The request oracle leaves the field empty: its keys are the
 API's, not the crate's.
+
+## D-NEXT-KE — The CHANGELOG lint matches a duplicate entry by its opening words, not its exact title (2026-11-14)
+
+**Context.** Rule 6 of `.github/scripts/check_changelog.sh` failed two
+entries in a section that share a first line or a bold title, compared
+exactly. A keep-both merge that puts an entry's old text back beside a
+rewrite passed whenever the rewrite changed that title: three plain Fixed
+entries beside the Breaking entries that replaced them, two Breaking
+entries beside their retitled rewrites, and `**A bold one.**` beside
+`**Breaking: a bold one.**` (#504's 2026-11-13 grade, K-13). Comparing
+titles case-insensitively, and a plain entry's first sentence with a
+title, as the grade proposed, catches only the last: the others reword,
+reorder or extend the title.
+
+**Decision.** An entry opens with the first sentence of its bold title, or
+of its first paragraph when it has none, a `Breaking:` marker aside. Two
+openings in a section match when they name the same code span first (or
+neither names one) and hold the same words, or the shorter holds at least
+3, 85% of them are in the other, and the shared words are 45% of both
+together. A word is case-folded, a code span is one word, and one-letter
+words, a few function words and a plural's `s` are left out. The header of
+the script states the rule; its harness pins each probe, a sentence-case
+pair, and six look-alikes that must pass, and each threshold or condition,
+removed, fails it. Rejected: the exact case-insensitive match, which
+misses five of the six probes; dropping the first-code-span condition,
+which fails two entries that say the same of different types (`A` and `B`
+"have two new public fields"); and a token similarity without the 45%
+share, which fails a short opening whose words a long one holds.
+
+**Consequences.** It is a heuristic. The thresholds were set against the
+CHANGELOG's history: across all 100 versions of the file, every section
+named, no two different entries match; the only duplicates there are
+ones whose first lines match, which the exact rule already reported. A
+rewrite that changes an entry's subject (its first code span, compared as
+written, so reordering two spans or qualifying one's path changes it) or
+most of its words still passes as a new entry, and two genuinely
+different entries that open alike fail: reword one, which a reader needs
+anyway.
