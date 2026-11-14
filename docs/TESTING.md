@@ -63,7 +63,8 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   loop.
 - **`reliability_tests.rs`** covers the default timeouts, how a cut-off
   stream is classified, the read of a stream's tail after its terminal
-  event, and `Retry-After` in a poll. Its `reliability_tests/retry_recipes.rs` reads every retry and
+  event, `Retry-After` in a poll, and that a redirect loop is not
+  retryable. Its `reliability_tests/retry_recipes.rs` reads every retry and
   poll loop in the docs, rustdoc and `examples/` for a bound, a sleep on
   every path back to the loop's head, no `?` after an `.await` and no
   `return` or `break` in the `is_retryable()` arm, a ceiling, jitter where

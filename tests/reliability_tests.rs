@@ -1,8 +1,8 @@
 //! Offline reliability tests against the local HTTP stub: the default
 //! timeouts, how a cut-off stream is classified, the read of a stream's tail
-//! after its terminal event, and `Retry-After` and the retryable statuses in
-//! a poll. See `docs/RELIABILITY.md`. `retry_recipes` checks the recipes
-//! the docs and examples show.
+//! after its terminal event, `Retry-After` and the retryable statuses in a
+//! poll, and a redirect loop. See `docs/RELIABILITY.md`. `retry_recipes`
+//! checks the recipes the docs and examples show, read by `recipe_source`.
 //!
 //! The paused-clock tests do real localhost I/O. Tokio advances a paused
 //! clock to the next timer whenever the runtime is idle, even while I/O is
@@ -832,4 +832,35 @@ async fn wait_until_active_ends_at_a_501() {
         "{err:?}"
     );
     assert_eq!(stub.requests().len(), 1);
+}
+
+// =============================================================================
+// A redirect loop
+// =============================================================================
+
+/// A redirect loop is an `Http` error that is not retryable: reqwest's
+/// default policy follows ten redirects and then gives up, and the same
+/// request loops the same way on every attempt, so a retry only burns the
+/// budget (`docs/RELIABILITY.md`).
+#[tokio::test]
+async fn a_redirect_loop_is_not_retryable() {
+    let stub = Stub::start(|request, _| {
+        Reply::text(302, "").header("location", &format!("{{base}}{}", request.target))
+    })
+    .await;
+
+    let err = stub.client().interactions().get("loop").await.unwrap_err();
+
+    let GenaiError::Http(source) = &err else {
+        panic!("{err:?}");
+    };
+    assert!(source.is_redirect(), "{source:?}");
+    assert!(!err.is_retryable(), "{err:?}");
+    // The client followed the redirects, each back to the same place.
+    let requests = stub.requests();
+    assert!(requests.len() > 1, "{requests:?}");
+    assert!(
+        requests.iter().all(|r| r.target == requests[0].target),
+        "{requests:?}"
+    );
 }

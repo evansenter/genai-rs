@@ -339,8 +339,10 @@ returns once the run has ended: the API holds the request until then, up to
 the trigger's `execution_timeout_seconds` (at most 600), and answers with the
 `TriggerExecution`, whose `status` says how the run ended and, for a
 completed run, whose `interaction_id` names what it stored. A client timeout
-shorter than the run ends the call, not the run; `list_executions` lists
-every firing, one still in progress included. `list_executions` on a trigger
+shorter than the run ends the call, not the run, and a retry fires the
+trigger again; `list_executions` lists every firing, one still in progress
+included, so check it before retrying
+([Reliability](RELIABILITY.md#a-triggers-run)). `list_executions` on a trigger
 ID that does not exist returns an empty list, not a 404. The dated record of
 these rules is under [Triggers](INTERACTIONS_API_GAP.md#triggers) in the
 gap tracker.

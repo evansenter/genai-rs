@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too large to add, such as `Duration::MAX`. It uses `checked_add` and
   returns an error instead, as `examples/deep_research.rs` does. Copy the
   change into a poll built from it.
+- `Triggers::run`'s rustdoc, `docs/RELIABILITY.md` and
+  `docs/AGENTS_AND_BACKGROUND.md` now say that a retry fires the trigger
+  again: a client timeout ends the call with a retryable error while the
+  run goes on, so check `list_executions` before retrying.
 
 ## [0.14.0] - 2026-11-14
 
