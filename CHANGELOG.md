@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Spec-only query parameters"), so the setter filtered nothing (D-060).
   Migration: drop the `.with_parent(..)` call; the listing returns the same
   agents without it.
+- **Breaking: `AntigravityError::ToolDispatch` is removed.** Nothing raised
+  it: a custom tool that fails, and a call to a tool the agent does not
+  have, go to the model as `{"error": ...}` and the turn goes on, so a match
+  on it never matched (D-056). Migration: delete the match arm. A failing
+  tool's error reaches the model as that result, and the crate logs it at
+  `warn`.
 
 ## [0.15.0] - 2026-11-14
 

@@ -1434,7 +1434,9 @@ variants, never on message text. Key variants:
 - `HarnessExited`: a failed exit on `shutdown()`, with `stderr`.
 - `Config`: spawn-time validation, including the safety gate.
 - `Turn { kind, message }`: a failed turn (below).
-- `Timeout` and `ToolDispatch`.
+- `Timeout { operation, timeout }`: a turn past its `with_turn_timeout`
+  budget, or a message to the harness past its own bound; `operation`
+  names what was still running (a custom tool, a hook, the send).
 - `WebSocket`: a read or send on the connection that failed, with the
   transport error as its source.
 - `Protocol`: a harness message this client could not parse, with the
@@ -1448,6 +1450,11 @@ An error's `Display` never repeats its source's text, so a reporter that
 walks `source()` prints each cause once; one that prints only the top
 error shows the step that failed, not the cause. No variant converts from
 another error type with `?`: map your own I/O and JSON errors yourself.
+
+A custom tool that fails is not an error of the turn: the model gets
+`{"error": ...}` as the call's result, the error and each cause below it,
+and the turn goes on (see the custom tools section above). So does a call
+to a tool the agent does not have.
 
 A failed turn is `Turn { kind, message }`, where `kind` is a
 `TurnFailure` (`#[non_exhaustive]`):

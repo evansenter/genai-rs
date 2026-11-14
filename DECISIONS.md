@@ -2351,6 +2351,19 @@ decoding the reply. A handshake with no reply in time has none. Breaking,
 with a CHANGELOG migration: a pattern listing `{ message, stderr }` adds
 `..`.
 
+*Amended 2026-11-14 (#573).* `ToolDispatch { name, message }` is removed,
+on the owner's decision. Nothing constructed it, from the bridge's first
+commit on: `ToolDispatcher::execute` never fails, since a tool that
+returns an error, or a call to a tool the agent does not have, becomes
+`{"error": ...}` for the model, as the reference SDK does, and the turn
+goes on (a tool that panics re-raises its panic). A variant the crate
+never raises promises a caller an error that never comes, and a variant
+the crate could start raising later would change what a failing tool
+does to a turn, which is its own decision. Breaking, with a CHANGELOG
+migration: delete the match arm. `docs/ANTIGRAVITY.md`'s Errors list now
+says when `Timeout` is raised, which it named beside `ToolDispatch`
+without saying, and that a tool's failure is not an error of the turn.
+
 ---
 
 ## D-057 — Each harness WebSocket connect attempt times out after 5 s (2026-11-07)
