@@ -184,6 +184,9 @@ backon = "1.6"
 sha2 = "0.11"
 # tests/non_exhaustive_responses.rs parses src/ to check struct attributes.
 syn = { workspace = true, features = ["full", "visit"] }
+# tests/ci_workflows/ reads the workflows as YAML: each step's keys and its
+# `run:` value as a YAML parser reads them (D-058).
+yaml-rust2 = { version = "0.13", default-features = false }
 
 [features]
 default = ["wire-color", "http2", "system-proxy", "charset"]

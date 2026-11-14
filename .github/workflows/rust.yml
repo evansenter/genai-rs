@@ -36,15 +36,22 @@ jobs:
       # sources out of the crate; this fails if one ships again, then builds
       # the packaged crates the way crates.io would, so an include list that
       # leaves out a file the library needs fails here, not at publish time.
+      # A required check, so tests/ci_workflows/ holds the script to the
+      # forms its status is read in: the test-only files are counted, and
+      # any count but 0 (an empty one is grep's own error) fails.
       - name: Package contents
         run: |
           set -euo pipefail
           cargo package --list -p genai-rs > package-files.txt
-          if grep -nE '^(\.github|tests|scripts|fuzz|\.config|\.cargo|proptest-regressions)/|^(Makefile|CLAUDE\.md|examples/CLAUDE\.md)$|_tests\.rs$|(^|/)tests\.rs$|^src/(proptest_|test_subscriber\.rs|coverage_oracle/)' package-files.txt; then
+          test_only='^(\.github|tests|scripts|fuzz|\.config|\.cargo|proptest-regressions)/|^(Makefile|CLAUDE\.md|examples/CLAUDE\.md)$|_tests\.rs$|(^|/)tests\.rs$|^src/(proptest_|test_subscriber\.rs|coverage_oracle/)'
+          shipped=$(grep -cE "$test_only" package-files.txt || true)
+          if [ "$shipped" != 0 ]; then
+            grep -nE "$test_only" package-files.txt
             echo "::error::cargo package would ship the test-only files above; exclude them in Cargo.toml's include list"
             exit 1
           fi
-          echo "$(wc -l < package-files.txt) files would ship"
+          files=$(wc -l < package-files.txt)
+          echo "$files files would ship"
           cargo package --workspace
 
   test:
@@ -150,7 +157,7 @@ jobs:
         # runs last so a hang there cannot cost the others their coverage.
         timeout-minutes: 30
         run: |
-          set -eo pipefail
+          set -euo pipefail
           # Fail on an empty key: every example self-skips without one.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every example would self-skip and this step would pass having verified nothing"
@@ -163,7 +170,11 @@ jobs:
           # by the example itself. Already compiled by the nextest step above,
           # so no build runs under the timeout. An example that passed only on
           # a retry prints `EXAMPLE_RETRIED <name> <failed tries>`, which the
-          # flakiness report counts (count_retried_flakes.sh).
+          # flakiness report counts (count_retried_flakes.sh). Part of a
+          # required check, so in the forms tests/ci_workflows/ reads: the
+          # retry keeps each attempt's status in `rc` and stops at the first
+          # pass, and the step exits 1 at an example's third failure, before
+          # the next example resets `rc`.
           for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn lifecycle_hooks file_watcher command_guard repo_auditor; do
             case "$ex" in
               # 1 turn x 600s.
@@ -181,26 +192,31 @@ jobs:
               *) budget=300 ;;
             esac
             echo "::group::cargo run --example $ex (budget ${budget}s)"
-            attempt=1
-            until timeout --signal=TERM --kill-after=30s "${budget}s" cargo run --features antigravity --example "$ex"; do
-              rc=$?
-              if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-                echo "::warning::$ex timed out after ${budget}s (attempt $attempt)"
+            for attempt in 1 2 3; do
+              rc=0
+              timeout --signal=TERM --kill-after=30s "${budget}s" cargo run --features antigravity --example "$ex" || rc=$?
+              if [ "$rc" -eq 0 ]; then
+                break
               fi
-              if [ "$attempt" -ge 3 ]; then
-                echo "::error::$ex failed $attempt times (last exit $rc)"
-                echo "::endgroup::"
-                exit 1
+              case "$rc" in
+                124|137) echo "::warning::$ex timed out after ${budget}s (attempt $attempt)" ;;
+              esac
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning::$ex failed (attempt $attempt, exit $rc), retrying"
+                sleep 5
               fi
-              echo "::warning::$ex failed (attempt $attempt, exit $rc), retrying"
-              attempt=$((attempt + 1))
-              sleep 5
             done
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::$ex failed $attempt times (last exit $rc)"
+              echo "::endgroup::"
+              exit 1
+            fi
             echo "::endgroup::"
             if [ "$attempt" -gt 1 ]; then
               echo "EXAMPLE_RETRIED $ex $((attempt - 1))"
             fi
           done
+          exit "$rc"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
@@ -751,10 +767,13 @@ jobs:
       # fails the job. The floor sits just under the library's line
       # coverage measured when it was set (D-058): raise it as coverage
       # grows, and lower it only with the reason in the commit. This one
-      # command and nothing else, with no `if:`, `continue-on-error`,
-      # `needs:` or `defaults:` here, on the job or on the workflow:
-      # tests/ci_workflows/ rejects each, and the shell-level masks it knows
-      # (`|| true`, `; true`, `set +e`, `exit "0"`), so a drop fails the job.
+      # command and nothing else: no key here but `name:` and `run:` (a
+      # step `env:` could redefine COVERAGE_IGNORE), and no `if:`,
+      # `continue-on-error`, `needs:` or `defaults:` on the job or on the
+      # workflow. tests/ci_workflows/ rejects each, and the shell-level
+      # masks it knows (`|| true`, `; true`, `set +e`, `exit "0"`, a
+      # `${{ }}` expression), reading the keys and this `run:` value as
+      # YAML does, so a drop fails the job.
       - name: Enforce the coverage floor
         run: cargo llvm-cov report --workspace --ignore-filename-regex "$COVERAGE_IGNORE" --fail-under-lines 93
       # The upload needs the CODECOV_TOKEN secret. Without one it is skipped,

@@ -5,7 +5,7 @@
 //! which it publishes and then fails, and the offline tests that would
 //! otherwise flake on a loaded runner.
 
-use super::{command_lines, is_live_nextest_step, jobs, read, root, steps};
+use super::{command_lines, is_live_nextest_step, jobs, read, reads_the_key, root, steps};
 use crate::source_scan;
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -87,7 +87,7 @@ pub(super) fn display_names(id: &str, job: &str) -> Vec<String> {
 /// against the live API.
 fn is_live_example_step(step: &str) -> bool {
     command_lines(step).any(|line| line.contains("cargo run") && line.contains("--example"))
-        && step.contains("GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}")
+        && reads_the_key(step)
 }
 
 /// The report fetches retry jobs' logs by display name (`RETRY_JOBS`), so a

@@ -113,6 +113,10 @@ jobs:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: fuzz-corpus-${{ matrix.target }}-
+      # Fuzz Gate passes on this job's result, so nothing here may pass a
+      # failing target: tests/ci_workflows/ holds every `run:` step of this
+      # job to the escapes it knows (no `continue-on-error`, `|| true` or
+      # other mask), and the run to the committed seeds.
       - name: Fuzz for a bounded time
         working-directory: fuzz
         env:
@@ -122,6 +126,7 @@ jobs:
           # through the environment and checked to be a number.
           SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || '60' }}
         run: |
+          set -euo pipefail
           case "$SECONDS_PER_TARGET" in
             ''|*[!0-9]*) echo "::error::seconds must be a whole number, got '$SECONDS_PER_TARGET'"; exit 1 ;;
           esac

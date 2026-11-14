@@ -14,27 +14,40 @@
 //! error. `release` checks that a release publishes only a commit whose
 //! main push run of `rust.yml` is green on every job but the ones a push
 //! skips by design, with every Cross Platform leg. `sweep` requires
-//! `api-surface-sweep`'s spec-watch and issue-pointer steps.
+//! `api-surface-sweep`'s spec-watch and issue-pointer steps. `required`
+//! holds every step of the checks branch protection requires, listed as
+//! CLAUDE.md lists them, and `fuzz` the fuzz run, which Fuzz Gate reads,
+//! and its committed seeds.
 //!
 //! The steps whose failure must fail their job (the coverage floor and the
 //! runs before it, the release gate, every live nextest step, the scripted
-//! harness step, the sweep's two) are read by `escapes`: no `if:` or
-//! `needs:` but the ones a caller allows, no `continue-on-error`, on the
-//! step or its job, no `defaults:` on the job or the workflow, no other
-//! shell, and no shell-level mask that `shell::shell_masks` knows (`|| true`,
-//! `; true`, `set +e`, an `exit` whose status may be 0 and the others it
-//! lists; a script of more than one line starts with `set -euo pipefail`,
-//! and every step that pipes nextest does). It reads the script as text,
-//! so a status computed out of its sight could still pass it (D-058).
+//! harness step, the sweep's two, every `run:` step of a required check's
+//! job (`required::REQUIRED_JOBS`) and of the fuzz job) are read by
+//! `escapes`: no `if:` or `needs:` but the ones a caller allows, no
+//! `continue-on-error`, on the step or its job, no `defaults:` on the job
+//! or the workflow, no other shell, no merge key, and no shell-level mask
+//! that `shell::shell_masks` knows (`|| true`, `; true`, `set +e`, an
+//! `exit` whose status may be 0, an `alias` or alias expansion turned on,
+//! a loop that drops a pass's failure, and the others it lists; a script
+//! of more than one line starts with `set -euo pipefail`, and every step
+//! that pipes nextest does). Each key, and the `run:` value, is read as
+//! YAML reads it (`yaml`), so a quoted or spaced key and a continuation
+//! line YAML joins to the command are read too. The runner splices a
+//! `${{ }}` expression into the script before bash reads it, so the script
+//! is read with each matrix value spliced in, and any other expression is
+//! rejected. The script is read as text, so a status computed out of its
+//! sight could still pass it (D-058).
 //!
 //! The workflows are YAML that only runs in CI, so a regression in how they
 //! run tests surfaces late: a fail-fast run hides how far a break reaches, a
 //! beta toolchain rewords the diagnostics trybuild pins, and a scheduled
 //! workflow or a push to main that fails without escalating is noticed only
 //! by whoever last committed it (`escalation`). What CI builds beyond Linux
-//! and all features is in `builds`. These tests read the files as text (the
-//! crate has no YAML dependency); the jobs are the two-space-indented keys
-//! under `jobs:`.
+//! and all features is in `builds`. These tests find a job or a step by its
+//! text (the jobs are the two-space-indented keys under `jobs:`), and read
+//! what YAML decides, the keys and the `run:` values, with a YAML parser
+//! (`yaml`), which also checks that each job and step they split from the
+//! text is one YAML reads.
 //!
 //! Not a test target itself: Cargo only builds `tests/*.rs` and
 //! `tests/*/main.rs`.
@@ -45,16 +58,20 @@ mod escalation;
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
+use yaml_rust2::Yaml;
 
 mod coverage;
 mod flakiness;
+mod fuzz;
 mod release;
+mod required;
 mod shell;
 mod sweep;
+mod yaml;
 
 use shell::{
-    SKIP_COUNT, blank_quotes, exits_with_rc, failed_list_exits, fails_the_step, if_branch,
-    lists_failed_rc, pipes_nextest, run_script, shell_masks, turns_checks_off,
+    SKIP_COUNT, exits_with_rc, failed_list_exits, fails_the_step, if_branch, lists_failed_rc,
+    pipes_nextest, run_script, shell_masks, turns_checks_off,
 };
 
 fn root() -> PathBuf {
@@ -89,14 +106,19 @@ fn workflows() -> Vec<(String, String)> {
 }
 
 /// `(job id, job text)` for every job: the two-space-indented keys under
-/// `jobs:`, each up to the next one.
+/// `jobs:`, each up to the next one. Found by their text; each job and step
+/// a guard reads is checked against how YAML reads the workflow
+/// (`yaml::split_problems`, `yaml::structure_problems`).
 fn jobs(workflow: &str) -> Vec<(String, String)> {
     let Some(body) = workflow.split("\njobs:\n").nth(1) else {
         return Vec::new();
     };
     let mut jobs: Vec<(String, String)> = Vec::new();
     for line in body.lines() {
-        let is_key = line.starts_with("  ") && !line.starts_with("   ") && line.ends_with(':');
+        let is_key = line.starts_with("  ")
+            && !line.starts_with("   ")
+            && !line.trim_start().starts_with('#')
+            && line.ends_with(':');
         if is_key {
             let id = line.trim().trim_end_matches(':').to_string();
             jobs.push((id, String::new()));
@@ -283,12 +305,14 @@ fn steps(job: &str) -> Vec<String> {
         let indent = line.len() - line.trim_start().len();
         if line.starts_with("      - ") {
             steps.push(String::new());
+        } else if indent <= 6 && line.trim_start().starts_with('#') {
+            // A comment at a step's indent or less is YAML's, whatever
+            // follows it, and belongs to no step: inside a step's block
+            // value, a line is deeper.
+            continue;
         } else if !line.trim().is_empty() && indent < 6 {
             // A key back at the job's own level ends its steps.
             break;
-        } else if indent == 6 && line.trim_start().starts_with('#') {
-            // A comment between steps belongs to neither.
-            continue;
         }
         if let Some(step) = steps.last_mut() {
             step.push_str(line);
@@ -298,17 +322,6 @@ fn steps(job: &str) -> Vec<String> {
     steps
 }
 
-/// The step's own key on line `i` of its text, if the line holds one: the
-/// first line's after `- `, the others' at eight spaces.
-fn step_key(i: usize, line: &str) -> Option<&str> {
-    if i == 0 {
-        line.strip_prefix("      - ")
-    } else {
-        line.strip_prefix("        ")
-            .filter(|rest| !rest.starts_with(' '))
-    }
-}
-
 /// The step's `name:`, or its first line when it has none.
 fn step_name(step: &str) -> &str {
     let first = step.lines().next().unwrap_or("").trim();
@@ -316,22 +329,31 @@ fn step_name(step: &str) -> &str {
 }
 
 /// What in `workflow` itself can change how every one of its bash steps
-/// runs, each named: a workflow-level `defaults:`, whose shell template
-/// (`true {0}`) can run no script at all, and `BASH_ENV`, `SHELLOPTS` or
-/// `BASHOPTS`, which bash reads before a step's script.
+/// runs, each named: a workflow-level `defaults:` (a key as YAML reads
+/// it, quoted or not), whose shell template (`true {0}`) can run no script
+/// at all, and [`SHELL_ENV`] anywhere in its text but a comment line.
 fn workflow_escapes(workflow: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for line in workflow.lines() {
-        if line.starts_with("defaults:") {
-            found.push(
-                "a workflow-level `defaults:`, which can change the shell every step runs \
-                 under"
-                    .into(),
-            );
+    match yaml::document(workflow) {
+        Ok(doc) => {
+            let top = doc.as_hash();
+            if top.is_some_and(|top| yaml::get(top, "defaults").is_some()) {
+                found.push(
+                    "a workflow-level `defaults:`, which can change the shell every step runs \
+                     under"
+                        .into(),
+                );
+            }
+            if top.is_some_and(|top| yaml::get(top, MERGE_KEY).is_some()) {
+                found.push(merge_key_escape("the workflow"));
+            }
         }
-        let names_shell_env = ["BASH_ENV", "SHELLOPTS", "BASHOPTS"]
-            .iter()
-            .any(|name| line.contains(name));
+        Err(e) => found.push(format!(
+            "a workflow YAML cannot read ({e}), so the guard cannot read its keys"
+        )),
+    }
+    for line in workflow.lines() {
+        let names_shell_env = SHELL_ENV.iter().any(|name| line.contains(name));
         if names_shell_env && !line.trim_start().starts_with('#') {
             found.push(format!(
                 "`{}` in the workflow, which can change how every bash step runs",
@@ -342,71 +364,102 @@ fn workflow_escapes(workflow: &str) -> Vec<String> {
     found
 }
 
+/// The variables bash reads, from its environment or once set, that change
+/// how it runs a script: `BASH_ENV` (a file it sources first), `SHELLOPTS`
+/// and `BASHOPTS` (options it starts with), and `POSIXLY_CORRECT` (POSIX
+/// mode, which expands aliases in a script). Set in an `env:` at any level,
+/// in `$GITHUB_ENV` by an earlier step, or in the script itself.
+const SHELL_ENV: [&str; 4] = ["BASH_ENV", "SHELLOPTS", "BASHOPTS", "POSIXLY_CORRECT"];
+
+/// YAML's merge key, which this parser keeps as a key of its own.
+const MERGE_KEY: &str = "<<";
+
+/// The escape a merge key is on `place` (the workflow, a job or a step).
+fn merge_key_escape(place: &str) -> String {
+    format!(
+        "a merge key (`<<`) on {place}, whose keys the guard does not merge in, so it \
+         cannot say what they hold"
+    )
+}
+
 /// What would let `step` fail without failing its job, each named, empty
-/// when the step runs on every run and its failure fails the job. On the
-/// step or its job: an `if:`, which can skip it, or a `continue-on-error`
-/// other than `false` (the default), which ignores its failure. On the
-/// job: a `needs:`, which skips the job with a job it needs, or a
-/// `defaults:`; on the step, a `shell:` other than `bash`; on the workflow,
-/// what [`workflow_escapes`] names: each can run its script under other
-/// rules. In its script: a shell-level mask ([`shell_masks`]). `allowed`
-/// lists the `if:` and `needs:` lines (`key: value`, as written) a caller
-/// accepts, such as the live steps' owner gate.
+/// when the step runs on every run and its failure fails the job. Each key
+/// is read as YAML reads it (`yaml`), a quoted key or one with a space
+/// before its colon included, from a step and a job that YAML reads as the
+/// guard split them (`yaml::split_problems`). On the step or its job: an
+/// `if:`, which can skip it, or a `continue-on-error` other than `false`
+/// (the default), which ignores its failure. On the job: a `needs:`, which
+/// skips the job with a job it needs, or a `defaults:`; on the step, a
+/// `shell:` other than `bash`; on the workflow, what [`workflow_escapes`]
+/// names: each can run its script under other rules. Anywhere, a merge key
+/// (`<<`), whose keys the guard does not read. In its script, the `run:`
+/// value YAML reads with each of the job's matrix values its expressions
+/// name spliced in, as the runner splices them: a shell-level mask, or any
+/// other expression ([`shell_masks`]). `allowed` lists
+/// the `if:` and `needs:` lines (`key: value`, the value as YAML reads it)
+/// a caller accepts, such as the live steps' owner gate.
 fn escapes(workflow: &str, job: &str, step: &str, allowed: &[&str]) -> Vec<String> {
     let mut found = workflow_escapes(workflow);
-    for (i, line) in step.lines().enumerate() {
-        let Some(key) = step_key(i, line).map(str::trim_end) else {
-            continue;
-        };
-        if key.starts_with("if:") && !allowed.contains(&key) {
-            found.push(format!("a step-level `{key}`, which can skip it"));
+    found.extend(yaml::split_problems(workflow, job, step));
+    let job = yaml::job_mapping(job);
+    let allows = |key: &str, value: &Yaml| {
+        let line = format!("{key}: {}", yaml::text(value));
+        allowed.iter().any(|allowed| *allowed == line)
+    };
+    let is_false = |value: &Yaml| *value == Yaml::Boolean(false);
+    match yaml::step_mapping(step) {
+        Ok(step) => {
+            for (key, value) in &step {
+                let shown = format!("{}: {}", yaml::text(key), yaml::text(value));
+                match yaml::text(key).as_str() {
+                    "if" if !allows("if", value) => {
+                        found.push(format!("a step-level `{shown}`, which can skip it"));
+                    }
+                    "continue-on-error" if !is_false(value) => {
+                        found.push(format!("`{shown}` on the step, which ignores its failure"));
+                    }
+                    "shell" if *value != Yaml::String("bash".into()) => found.push(format!(
+                        "`{shown}` on the step, a shell other than bash, which can run its \
+                         script under other rules"
+                    )),
+                    MERGE_KEY => found.push(merge_key_escape("the step")),
+                    _ => {}
+                }
+            }
         }
-        if let Some(value) = key.strip_prefix("continue-on-error:")
-            && value.trim() != "false"
-        {
-            found.push(format!("`{key}` on the step, which ignores its failure"));
-        }
-        if let Some(shell) = key.strip_prefix("shell:")
-            && shell.trim() != "bash"
-        {
-            found.push(format!(
-                "`{key}` on the step, a shell other than bash, which can run its script \
-                 under other rules"
-            ));
-        }
+        Err(e) => found.push(format!(
+            "a step YAML cannot read ({e}), so the guard cannot read its keys"
+        )),
     }
-    for line in job.lines() {
-        // The job's own keys sit at 4 spaces.
-        let Some(key) = line
-            .strip_prefix("    ")
-            .filter(|rest| !rest.starts_with(' '))
-            .map(str::trim_end)
-        else {
-            continue;
-        };
-        if key.starts_with("if:") && !allowed.contains(&key) {
-            found.push(format!(
-                "a job-level `{key}`, which can skip the job and the step with it"
-            ));
+    match &job {
+        Ok(job) => {
+            for (key, value) in job {
+                let shown = format!("{}: {}", yaml::text(key), yaml::text(value));
+                match yaml::text(key).as_str() {
+                    "if" if !allows("if", value) => found.push(format!(
+                        "a job-level `{shown}`, which can skip the job and the step with it"
+                    )),
+                    "continue-on-error" if !is_false(value) => {
+                        found.push(format!("`{shown}` on its job, which ignores its failure"));
+                    }
+                    "needs" if !allows("needs", value) => found.push(format!(
+                        "a job-level `{shown}`, which skips the job when a job it needs fails \
+                         or is skipped"
+                    )),
+                    "defaults" => found.push(
+                        "a job-level `defaults:`, which can change the shell its steps run under"
+                            .into(),
+                    ),
+                    MERGE_KEY => found.push(merge_key_escape("the job")),
+                    _ => {}
+                }
+            }
         }
-        if let Some(value) = key.strip_prefix("continue-on-error:")
-            && value.trim() != "false"
-        {
-            found.push(format!("`{key}` on its job, which ignores its failure"));
-        }
-        if key.starts_with("needs:") && !allowed.contains(&key) {
-            found.push(format!(
-                "a job-level `{key}`, which skips the job when a job it needs fails or is \
-                 skipped"
-            ));
-        }
-        if key.starts_with("defaults:") {
-            found.push(
-                "a job-level `defaults:`, which can change the shell its steps run under".into(),
-            );
-        }
+        Err(e) => found.push(format!(
+            "a job YAML cannot read ({e}), so the guard cannot read its keys"
+        )),
     }
-    found.extend(shell_masks(step));
+    found.extend(shell_masks(step, job.as_ref().ok()));
     found
 }
 
@@ -416,12 +469,22 @@ fn failure_escapes(workflow: &str, job: &str, step: &str) -> Vec<String> {
     escapes(workflow, job, step, &[])
 }
 
-/// A step that runs nextest against the live API: it runs `nextest run`
-/// with the repository's key in its env (the scripted harness step blanks
-/// the key, and the unit-test steps have none).
+/// The repository's key, as a step's `env:` gives it.
+const REPOSITORY_KEY: &str = "${{ secrets.GEMINI_API_KEY }}";
+
+/// Whether a step's `env:` gives it the repository's key, as YAML reads it.
+fn reads_the_key(step: &str) -> bool {
+    yaml::step_env(step, "GEMINI_API_KEY").as_deref() == Some(REPOSITORY_KEY)
+}
+
+/// A step that runs nextest against the live API: its `run:` runs
+/// `nextest run` with the repository's key in its env (the scripted
+/// harness step blanks the key, and the unit-test steps have none).
 fn is_live_nextest_step(step: &str) -> bool {
-    command_lines(step).any(|line| line.contains("nextest run"))
-        && step.contains("GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}")
+    run_script(step)
+        .iter()
+        .any(|line| line.contains("nextest run"))
+        && reads_the_key(step)
 }
 
 /// The flakiness report counts a step's tests only when the step retries,
@@ -1050,12 +1113,60 @@ fn the_live_step_check_catches_what_it_claims_to() {
             "          cargo nextest run --workspace --run-ignored all --no-fail-fast --success-output=final 2>&1 |",
             "          echo \"$(cargo nextest run --workspace --run-ignored all --no-fail-fast --success-output=final 2>&1)\" |",
         ),
-        // ... or a shell for the whole workflow that never runs a script.
+        // ... a shell for the whole workflow that never runs a script, ...
         mutated(
             &all,
             "release.yml",
             "\njobs:\n",
             "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
+        // ... P8: an alias that runs `true` for the nextest line, ...
+        mutated(
+            &all,
+            "release.yml",
+            "          set -euo pipefail\n          # Fail on an empty key: every integration test",
+            "          set -euo pipefail\n          shopt -s expand_aliases\n          alias cargo=true\n          # Fail on an empty key: every integration test",
+        ),
+        // ... the same in POSIX mode, which expands aliases without
+        // `shopt`, with the alias set through `BASH_ALIASES`, or POSIX mode
+        // from the step's env, ...
+        mutated(
+            &all,
+            "release.yml",
+            "          set -euo pipefail\n          # Fail on an empty key: every integration test",
+            "          set -euo pipefail\n          set -o posix\n          BASH_ALIASES[cargo]=true\n          # Fail on an empty key: every integration test",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "          set -euo pipefail\n          # Fail on an empty key: every integration test",
+            "          set -euo pipefail\n          declare \"BASH_ALIASES[cargo]=true\"\n          # Fail on an empty key: every integration test",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n          NEXTEST_RETRIES: 2\n      - name: Check formatting",
+            "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n          NEXTEST_RETRIES: 2\n          POSIXLY_CORRECT: 1\n      - name: Check formatting",
+        ),
+        // ... a mask in an expression the runner splices into the script, ...
+        mutated(
+            &all,
+            "release.yml",
+            "--no-fail-fast --success-output=final 2>&1 | tee /tmp/integration.log",
+            "--no-fail-fast ${{ '|| true' }} --success-output=final 2>&1 | tee /tmp/integration.log",
+        ),
+        // ... or `continue-on-error` written so the text never matched it.
+        mutated(
+            &all,
+            "rust.yml",
+            "      - name: Run integration tests (${{ matrix.group }})\n",
+            "      - name: Run integration tests (${{ matrix.group }})\n        \"continue-on-error\": true\n",
+        ),
+        mutated(
+            &all,
+            "release.yml",
+            "      - name: Run harness integration tests\n",
+            "      - name: Run harness integration tests\n        continue-on-error : true\n",
         ),
     ];
     for (i, workflows) in broken.iter().enumerate() {
@@ -1078,9 +1189,7 @@ fn piped_nextest_problems(workflows: &[(String, String)]) -> (usize, Vec<String>
             for step in steps(&body).iter().filter(|step| pipes_nextest(step)) {
                 piped += 1;
                 let script = run_script(step);
-                let turned_off = script
-                    .iter()
-                    .any(|line| turns_checks_off(&blank_quotes(line)));
+                let turned_off = script.iter().any(|line| turns_checks_off(line));
                 if script.first().map(String::as_str) != Some("set -euo pipefail") || turned_off {
                     problems.push(format!("{name} job {job}, step `{}`", step_name(step)));
                 }
@@ -1148,7 +1257,7 @@ fn scripted_step_problems(workflow: &str) -> Vec<String> {
         ];
     };
     let mut problems = Vec::new();
-    if !command_lines(&step).any(|line| line == "GEMINI_API_KEY: \"\"") {
+    if yaml::step_env(&step, "GEMINI_API_KEY").as_deref() != Some("") {
         problems.push(format!(
             "the scripted suite runs with the key blanked (`GEMINI_API_KEY: \"\"`):\n{step}"
         ));
@@ -1202,6 +1311,23 @@ fn the_scripted_harness_suite_fails_its_required_check() {
                 run.trim_start().trim_start_matches("run: ")
             ),
         ),
+        // What YAML joins to the command: a deeper continuation line, or a
+        // folded block, which the text once read line by line.
+        workflow.replace(run, &format!("{run}          || true\n")),
+        workflow.replace(
+            run,
+            &run.replace("run: cargo", "run: >\n          cargo")
+                .replace(")'\n", ")'\n          || true\n"),
+        ),
+        // ... or an expression, which the runner splices in before bash
+        // reads the script.
+        workflow.replace(
+            run,
+            &run.replace(
+                "antigravity_scripted)'\n",
+                "antigravity_scripted)' ${{ '|| true' }}\n",
+            ),
+        ),
         // Ignored, skipped, or skipped with a job it needs.
         workflow.replace(run, &format!("        continue-on-error: true\n{run}")),
         workflow.replace(
@@ -1234,94 +1360,183 @@ fn the_scripted_harness_suite_fails_its_required_check() {
 
 #[test]
 fn the_failure_escape_check_reads_the_step_and_its_job() {
-    let workflow = "name: X\n\non:\n  push:\n\nenv:\n  A: b\n\njobs:\n";
+    let head = "name: X\n\non:\n  push:\n\nenv:\n  A: b\n\njobs:\n";
+    // The escapes of `step`, the last step of a job `floor` whose keys
+    // before it are `job`, in a workflow that starts with `top`.
+    let check = |top: &str, job: &str, step: &str, allowed: &[&str]| {
+        let job = format!("{job}{step}");
+        escapes(&format!("{top}  floor:\n{job}"), &job, step, allowed)
+    };
     let job = "    runs-on: x\n    steps:\n";
     let step = "      - name: Floor\n        run: check\n        env:\n          if: not-a-key\n";
-    assert!(failure_escapes(workflow, job, step).is_empty());
-    for broken in [
-        "      - name: Floor\n        if: always()\n        run: check\n",
-        "      - if: github.event_name == 'push'\n        run: check\n",
-        "      - name: Floor\n        continue-on-error: true\n        run: check\n",
-        "      - name: Floor\n        continue-on-error: ${{ matrix.ok }}\n        run: check\n",
+    assert!(check(head, job, step, &[]).is_empty());
+    for (broken, names) in [
+        (
+            "      - name: Floor\n        if: always()\n        run: check\n",
+            "`if: always()`",
+        ),
+        (
+            "      - if: github.event_name == 'push'\n        run: check\n",
+            "step-level `if:",
+        ),
+        (
+            "      - name: Floor\n        continue-on-error: true\n        run: check\n",
+            "`continue-on-error: true` on the step",
+        ),
+        (
+            "      - name: Floor\n        continue-on-error: ${{ matrix.ok }}\n        run: check\n",
+            "`continue-on-error: ${{ matrix.ok }}` on the step",
+        ),
+        // P4: a key as YAML reads it, quoted, spaced or in a flow mapping,
+        (
+            "      - name: Floor\n        \"continue-on-error\": true\n        run: check\n",
+            "`continue-on-error: true` on the step",
+        ),
+        (
+            "      - name: Floor\n        continue-on-error : true\n        run: check\n",
+            "`continue-on-error: true` on the step",
+        ),
+        (
+            "      - name: Floor\n        'if': always()\n        run: check\n",
+            "`if: always()`",
+        ),
+        (
+            "      - {name: Floor, continue-on-error: true, run: check}\n",
+            "`continue-on-error: true` on the step",
+        ),
+        // ... past a comment, or merged in from a mapping the guard does
+        // not expand.
+        (
+            "      - name: Floor\n        run: check\n    # a comment\n        continue-on-error: true\n",
+            "`continue-on-error: true` on the step",
+        ),
+        (
+            "      - name: Floor\n        <<: {continue-on-error: true}\n        run: check\n",
+            "merge key",
+        ),
     ] {
+        let found = check(head, job, broken, &[]);
         assert!(
-            !failure_escapes(workflow, job, broken).is_empty(),
-            "{broken}"
+            found.iter().any(|escape| escape.contains(names)),
+            "{broken}: want an escape naming {names}, found {found:?}"
         );
     }
     assert!(
-        failure_escapes(
-            workflow,
+        check(
+            head,
             job,
-            "      - name: Floor\n        continue-on-error: false\n        run: check\n"
+            "      - name: Floor\n        continue-on-error: false\n        run: check\n",
+            &[]
         )
         .is_empty()
     );
-    let lenient = "    runs-on: x\n    continue-on-error: true\n    steps:\n";
-    assert!(!failure_escapes(workflow, lenient, step).is_empty());
-    let skipped = "    runs-on: x\n    if: github.event_name != 'pull_request'\n    steps:\n";
-    assert!(!failure_escapes(workflow, skipped, step).is_empty());
-    // A step's `if:` is the step's, not the job's.
-    let job_with_step_if =
-        "    runs-on: x\n    steps:\n      - name: Other\n        if: always()\n";
-    assert!(failure_escapes(workflow, job_with_step_if, step).is_empty());
-    // A job that needs another is skipped with it; a job's `defaults:` or a
-    // step's shell can run the script under other rules; and the script
-    // itself can mask the failure.
-    for job in [
-        "    runs-on: x\n    needs: check\n    steps:\n",
-        "    runs-on: x\n    needs: [check, test]\n    steps:\n",
-        "    runs-on: x\n    defaults:\n      run:\n        shell: bash {0}\n    steps:\n",
+    // The job's keys: ignored or skipped, also as YAML reads them (P5), a
+    // job it needs, or a `defaults:` that can run the script under other
+    // rules.
+    for (lenient, names) in [
+        (
+            "    runs-on: x\n    continue-on-error: true\n    steps:\n",
+            "on its job",
+        ),
+        (
+            "    runs-on: x\n    \"continue-on-error\": true\n    steps:\n",
+            "on its job",
+        ),
+        (
+            "    runs-on: x\n    continue-on-error : true\n    steps:\n",
+            "on its job",
+        ),
+        (
+            "    runs-on: x\n    if: github.event_name != 'pull_request'\n    steps:\n",
+            "job-level `if:",
+        ),
+        (
+            "    runs-on: x\n    needs: check\n    steps:\n",
+            "`needs: check`",
+        ),
+        (
+            "    runs-on: x\n    needs: [check, test]\n    steps:\n",
+            "`needs: [check, test]`",
+        ),
+        (
+            "    runs-on: x\n    defaults:\n      run:\n        shell: bash {0}\n    steps:\n",
+            "job-level `defaults:`",
+        ),
+        (
+            "    runs-on: x\n    <<: {continue-on-error: true}\n    steps:\n",
+            "merge key",
+        ),
     ] {
-        assert!(!failure_escapes(workflow, job, step).is_empty(), "{job}");
+        let found = check(head, lenient, step, &[]);
+        assert!(
+            found.iter().any(|escape| escape.contains(names)),
+            "{lenient}: want an escape naming {names}, found {found:?}"
+        );
     }
+    // A step's `if:` is the step's, not the job's.
+    let other = "    runs-on: x\n    steps:\n      - name: Other\n        if: always()\n        run: other\n";
+    assert!(check(head, other, step, &[]).is_empty());
+    // The step's shell, and its script as YAML reads it, can mask the
+    // failure: a continuation line YAML joins to the command (P1), a
+    // folded block.
     for broken in [
         "      - name: Floor\n        shell: sh -c 'exit 0' {0}\n        run: check\n",
         "      - name: Floor\n        run: check || true\n",
         "      - name: Floor\n        run: |\n          set +e\n          check\n",
+        "      - name: Floor\n        run: check\n          || true\n",
+        "      - name: Floor\n        run: >\n          set -euo pipefail\n          check || true\n",
     ] {
-        assert!(
-            !failure_escapes(workflow, job, broken).is_empty(),
-            "{broken}"
-        );
+        assert!(!check(head, job, broken, &[]).is_empty(), "{broken}");
     }
     assert!(
-        failure_escapes(
-            workflow,
+        check(
+            head,
             job,
-            "      - name: Floor\n        shell: bash\n        run: check\n"
+            "      - name: Floor\n        shell: bash\n        run: check\n",
+            &[]
         )
         .is_empty()
     );
     // The workflow's own `defaults:`, whose shell template can run no
-    // script at all, or a variable bash reads before every script, wherever
-    // the workflow sets it.
-    for broken in [
-        workflow.replace(
+    // script at all, quoted or not, or a variable bash reads before every
+    // script, wherever the workflow sets it.
+    for top in [
+        head.replace(
             "\njobs:\n",
             "\ndefaults:\n  run:\n    shell: true {0}\n\njobs:\n",
         ),
-        workflow.replace("  A: b\n", "  BASH_ENV: ./mask.sh\n"),
+        head.replace(
+            "\njobs:\n",
+            "\n\"defaults\":\n  run:\n    shell: true {0}\n\njobs:\n",
+        ),
+        head.replace("  A: b\n", "  BASH_ENV: ./mask.sh\n"),
+        format!("{head}  x:\n    steps:\n      - run: echo \"SHELLOPTS=x\" >> \"$GITHUB_ENV\"\n"),
+        // POSIX mode, which expands aliases in a script, from the env.
+        head.replace("  A: b\n", "  POSIXLY_CORRECT: 1\n"),
         format!(
-            "{workflow}  x:\n    steps:\n      - run: echo \"SHELLOPTS=x\" >> \"$GITHUB_ENV\"\n"
+            "{head}  x:\n    steps:\n      - run: echo \"POSIXLY_CORRECT=1\" >> \"$GITHUB_ENV\"\n"
         ),
     ] {
-        assert!(!failure_escapes(&broken, job, step).is_empty(), "{broken}");
+        assert!(!check(&top, job, step, &[]).is_empty(), "{top}");
     }
     assert!(
-        failure_escapes(
-            &format!("# BASH_ENV is not set here.\n{workflow}"),
+        check(
+            &format!("# BASH_ENV is not set here.\n{head}"),
             job,
-            step
+            step,
+            &[]
         )
         .is_empty()
     );
+    // A job the guard split without its step is not the job YAML reads.
+    assert!(!escapes(&format!("{head}  floor:\n{job}{step}"), job, step, &[]).is_empty());
     // What a caller allows is allowed, exactly as written, and no more.
-    let gated = "    runs-on: x\n    needs: check\n    if: github.repository_owner == 'me'\n";
+    let gated =
+        "    runs-on: x\n    needs: check\n    if: github.repository_owner == 'me'\n    steps:\n";
     let allowed = ["needs: check", "if: github.repository_owner == 'me'"];
-    assert!(escapes(workflow, gated, step, &allowed).is_empty());
-    assert!(!escapes(workflow, gated, step, &allowed[..1]).is_empty());
-    assert!(!escapes(workflow, gated, step, &["needs: check", "if: always()"]).is_empty());
+    assert!(check(head, gated, step, &allowed).is_empty());
+    assert!(!check(head, gated, step, &allowed[..1]).is_empty());
+    assert!(!check(head, gated, step, &["needs: check", "if: always()"]).is_empty());
 }
 
 #[test]
