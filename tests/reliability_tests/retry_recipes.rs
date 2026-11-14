@@ -1,8 +1,13 @@
 //! The retry recipes the docs and examples show: `docs/RELIABILITY.md`'s
-//! backon recipe matches `examples/retry_with_backoff.rs`, and every retry
-//! or poll loop bounds its attempts, sleeps between them, honors
-//! `Retry-After` without overflow, caps its delay and, bounded by a count,
-//! adds jitter (D-069).
+//! backon recipe matches `examples/retry_with_backoff.rs`,
+//! `docs/AGENTS_AND_BACKGROUND.md`'s poll decides as
+//! `examples/deep_research.rs` does, and every retry or poll loop bounds
+//! its attempts, sleeps on every path back to its head, does not give up
+//! on an error `is_retryable()` accepts, honors `Retry-After` without
+//! overflow, caps its delay and, bounded by a count, adds jitter, each as
+//! far as a lexical reading can tell ([`retry_loops`], D-069).
+
+use std::ops::Range;
 
 use crate::recipe_source::{DocBlock, code_lines, doc_sources, scanned_blocks};
 use crate::source_scan;
@@ -237,7 +242,8 @@ fn open_of(b: &[u8], close: usize) -> Option<usize> {
 }
 
 /// The method chain in `b` from `at`, each `.name(..)`, `.field`,
-/// `.await` and `?` in turn: where it ends, and the methods it calls.
+/// `.await` and `?` in turn: where it ends, and the methods it calls, each
+/// `?` as `"?"`.
 fn postfix(b: &[u8], mut at: usize) -> (usize, Vec<String>) {
     let mut methods = Vec::new();
     loop {
@@ -246,6 +252,7 @@ fn postfix(b: &[u8], mut at: usize) -> (usize, Vec<String>) {
             k += 1;
         }
         if b.get(k) == Some(&b'?') {
+            methods.push("?".to_string());
             at = k + 1;
             continue;
         }
@@ -310,9 +317,47 @@ fn receiver_start(b: &[u8], dot: usize) -> usize {
     }
 }
 
+/// Whether the operand at `b[start..end]` can overflow: `+`, `-` or `*`
+/// (or `+=`, `-=`, `*=`) applies to it, each of which panics on overflow,
+/// for an `Instant` and a `Duration` alike, or a `checked_add`,
+/// `checked_sub` or `checked_mul` on its chain, or with it as the
+/// argument, has its `None` unwrapped ([`unwraps_checked`]).
+fn overflows(b: &[u8], start: usize, end: usize) -> bool {
+    arithmetic_on(b, start, end) || unwraps_checked(b, start, end)
+}
+
+/// The `checked_` arithmetic whose `None` panics when unwrapped.
+const CHECKED: [&str; 3] = ["checked_add(", "checked_sub(", "checked_mul("];
+
+/// Whether a `checked_add`, `checked_sub` or `checked_mul` on the operand
+/// at `b[start..end]` (on its chain: `wait.checked_add(d).unwrap()`), or
+/// with it as the whole argument (`now.checked_add(wait).expect(..)`), is
+/// followed by `unwrap()` or `expect(`: the panic `+` has, spelled out.
+fn unwraps_checked(b: &[u8], start: usize, end: usize) -> bool {
+    let unwrapped = |methods: &[String]| methods.iter().any(|m| m == "unwrap" || m == "expect");
+    let chain = String::from_utf8_lossy(&b[start..end]);
+    let on_chain = CHECKED.iter().any(|call| {
+        chain.match_indices(call).any(|(at, _)| {
+            let rest = &chain[at..];
+            rest.contains(".unwrap()") || rest.contains(".expect(")
+        })
+    });
+    // The argument: the `(` that opens just before it, past spaces, and
+    // the `)` just after it.
+    let open = b[..start].iter().rposition(|c| *c != b' ');
+    let close = b[end..].iter().position(|c| *c != b' ').map(|k| end + k);
+    let in_call = match (open, close) {
+        (Some(open), Some(close)) if b[open] == b'(' && b[close] == b')' => CHECKED
+            .iter()
+            .any(|call| b[..=open].ends_with(call.as_bytes()))
+            .then(|| postfix(b, close + 1).1),
+        _ => None,
+    };
+    on_chain || in_call.is_some_and(|methods| unwrapped(&methods))
+}
+
 /// Whether `+`, `-` or `*` (or `+=`, `-=`, `*=`) applies to the operand at
-/// `b[start..end]`: each panics on overflow, for an `Instant` and a
-/// `Duration` alike.
+/// `b[start..end]`.
 fn arithmetic_on(b: &[u8], start: usize, end: usize) -> bool {
     let mut k = start;
     while k > 0 && b[k - 1] == b' ' {
@@ -567,16 +612,284 @@ fn argument(text: &str) -> &str {
     text
 }
 
+/// `k` moved past any whitespace in `b`.
+fn skip_spaces(b: &[u8], k: usize) -> usize {
+    k + b.get(k..).map_or(0, |rest| {
+        rest.iter().take_while(|c| c.is_ascii_whitespace()).count()
+    })
+}
+
+/// The identifier that starts at `b[k]`, if one does there (not inside a
+/// longer one); empty otherwise.
+fn word_at(b: &[u8], k: usize) -> &[u8] {
+    if k >= b.len() || (k > 0 && ident_byte(b[k - 1])) {
+        return &[];
+    }
+    let len = b[k..].iter().take_while(|&&c| ident_byte(c)).count();
+    &b[k..k + len]
+}
+
+/// The `{` that opens the block of the `if`, `match` or loop whose
+/// keyword is at or before `k`: the first one from `k` to `end` outside
+/// parentheses and brackets.
+fn opener(b: &[u8], k: usize, end: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (j, &c) in b.iter().enumerate().take(end).skip(k) {
+        match c {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b'{' if depth == 0 => return Some(j),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Where the block-like expression at `k` (a block, an `if` with its
+/// `else` chain, a `match` or a loop) ends, just after its last `}`.
+fn block_end(b: &[u8], k: usize, end: usize) -> Option<usize> {
+    let mut close = if b.get(k) == Some(&b'{') {
+        close_of(b, k)?
+    } else if matches!(
+        word_at(b, k),
+        b"if" | b"match" | b"loop" | b"while" | b"for"
+    ) {
+        close_of(b, opener(b, k, end)?)?
+    } else {
+        return None;
+    };
+    loop {
+        let next = skip_spaces(b, close + 1);
+        if word_at(b, next) != b"else" {
+            return Some((close + 1).min(end));
+        }
+        close = close_of(b, opener(b, next, end)?)?;
+    }
+}
+
+/// The arms of the `match` whose block is `b[open..=close]`: each one's
+/// pattern with its guard, and its body, as byte ranges.
+fn match_arms(b: &[u8], open: usize, close: usize) -> Vec<(Range<usize>, Range<usize>)> {
+    let mut arms = Vec::new();
+    let mut k = skip_spaces(b, open + 1);
+    while k < close {
+        let mut depth = 0usize;
+        let Some(arrow) = (k..close).find(|&j| {
+            match b[j] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            depth == 0 && b[j..].starts_with(b"=>")
+        }) else {
+            break;
+        };
+        let body = skip_spaces(b, arrow + 2);
+        // A block-like body ends at its `}`, unless a call or a `?`
+        // follows; any other at the `,` that ends the arm.
+        let end = block_end(b, body, close)
+            .filter(|&end| !matches!(b.get(skip_spaces(b, end)), Some(b'.' | b'?')))
+            .unwrap_or_else(|| {
+                let mut depth = 0usize;
+                (body..close)
+                    .find(|&j| {
+                        match b[j] {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                            _ => {}
+                        }
+                        depth == 0 && b[j] == b','
+                    })
+                    .unwrap_or(close)
+            });
+        arms.push((k..arrow, body..end));
+        k = skip_spaces(b, end);
+        if b.get(k) == Some(&b',') {
+            k = skip_spaces(b, k + 1);
+        }
+    }
+    arms
+}
+
+/// Whether the `{` at `open` starts a closure's or an async block's body,
+/// whose `return` and `?` are its own.
+fn closure_body(b: &[u8], open: usize) -> bool {
+    let before = b[..open].trim_ascii_end();
+    before.ends_with(b"|") || before.ends_with(b"move") || before.ends_with(b"async")
+}
+
+/// Whether `guard`, a match arm's pattern and guard or an `if`'s
+/// condition, holds only for an error a retry can fix: it calls
+/// `is_retryable()` with no `!` before it.
+fn retryable_branch(guard: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(guard);
+    text.match_indices("is_retryable").any(|(at, _)| {
+        let mut k = if at > 0 && guard[at - 1] == b'.' {
+            receiver_start(guard, at - 1)
+        } else {
+            at - guard[..at]
+                .iter()
+                .rev()
+                .take_while(|&&c| ident_byte(c) || c == b':')
+                .count()
+        };
+        while k > 0 && matches!(guard[k - 1], b' ' | b'(') {
+            k -= 1;
+        }
+        k == 0 || guard[k - 1] != b'!'
+    })
+}
+
+/// At a point in a loop's body: `None` when no path reaches it, otherwise
+/// whether every path that does has passed a sleep.
+type Slept = Option<bool>;
+
+/// Where two paths meet: each that reaches must have slept.
+fn join(a: Slept, b: Slept) -> Slept {
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some(a), Some(b)) => Some(a && b),
+    }
+}
+
+/// What the paths through a loop's body do ([`Paths::walk`]): whether one
+/// goes back to the loop's head with no sleep on it, and whether one
+/// returns or breaks in the arm or branch that `is_retryable()` guards.
+#[derive(Default)]
+struct Paths {
+    sleepless: bool,
+    gives_up: bool,
+}
+
+impl Paths {
+    /// Reads `b[k..end]` from `slept` and returns the state at `end`. A
+    /// `sleep(` call sleeps; `continue` goes back to the head (so must
+    /// have slept); `return` and `break` leave; an `if` or a `match` runs
+    /// one branch or arm, each read from the state before it; a nested
+    /// loop's paths, and a closure's body, are their own.
+    fn walk(
+        &mut self,
+        b: &[u8],
+        mut k: usize,
+        end: usize,
+        mut slept: Slept,
+        retrying: bool,
+    ) -> Slept {
+        while k < end {
+            if b[k] == b'{' {
+                let close = close_of(b, k).map_or(end, |close| close.min(end));
+                if !closure_body(b, k) {
+                    slept = self.walk(b, k + 1, close, slept, retrying);
+                }
+                k = close + 1;
+                continue;
+            }
+            let word = word_at(b, k);
+            let after = k + word.len().max(1);
+            match word {
+                b"if" => (k, slept) = self.branch(b, k, end, slept, retrying),
+                b"match" => {
+                    let Some(open) = opener(b, after, end) else {
+                        return slept;
+                    };
+                    let close = close_of(b, open).map_or(end, |close| close.min(end));
+                    let arms = match_arms(b, open, close);
+                    if !arms.is_empty() {
+                        slept = arms.into_iter().fold(None, |met, (guard, body)| {
+                            let retries = retrying || retryable_branch(&b[guard]);
+                            join(met, self.walk(b, body.start, body.end, slept, retries))
+                        });
+                    }
+                    k = close + 1;
+                }
+                b"loop" | b"while" | b"for" => {
+                    k = block_end(b, k, end).unwrap_or(end);
+                }
+                // A `let ... else` block leaves; the path goes on without it.
+                b"else" => {
+                    let open = skip_spaces(b, after);
+                    k = match close_of(b, open).filter(|_| b[open] == b'{') {
+                        Some(close) => {
+                            self.walk(b, open + 1, close.min(end), slept, retrying);
+                            close + 1
+                        }
+                        None => after,
+                    };
+                }
+                b"return" | b"break" => {
+                    self.gives_up |= retrying && slept.is_some();
+                    slept = None;
+                    k = after;
+                }
+                b"continue" => {
+                    self.sleepless |= slept == Some(false);
+                    slept = None;
+                    k = after;
+                }
+                b"sleep" if b.get(skip_spaces(b, after)) == Some(&b'(') => {
+                    slept = slept.map(|_| true);
+                    k = after;
+                }
+                _ => k = after,
+            }
+        }
+        slept
+    }
+
+    /// The `if` at `k` and its `else` chain: where it ends, and the state
+    /// after it. A branch whose condition calls `is_retryable()` is the
+    /// retrying one; its `else` is not.
+    fn branch(
+        &mut self,
+        b: &[u8],
+        k: usize,
+        end: usize,
+        slept: Slept,
+        retrying: bool,
+    ) -> (usize, Slept) {
+        let Some(open) = opener(b, k + 2, end) else {
+            return (end, slept);
+        };
+        let close = close_of(b, open).map_or(end, |close| close.min(end));
+        let retries = retrying || retryable_branch(&b[k + 2..open]);
+        let then = self.walk(b, open + 1, close, slept, retries);
+        let next = skip_spaces(b, close + 1);
+        if word_at(b, next) != b"else" {
+            return (close + 1, join(then, slept));
+        }
+        let other = skip_spaces(b, next + "else".len());
+        if word_at(b, other) == b"if" {
+            let (to, otherwise) = self.branch(b, other, end, slept, retrying);
+            return (to, join(then, otherwise));
+        }
+        let close = close_of(b, other).map_or(end, |close| close.min(end));
+        let otherwise = self.walk(b, other + 1, close, slept, retrying);
+        (close + 1, join(then, otherwise))
+    }
+}
+
+/// Whether an `.await` in `text` has a `?` on the chain after it
+/// (`.await?`, `.await.map_err(..)?`): an exit on the first error.
+fn awaits_with_try(text: &str) -> bool {
+    let b = text.as_bytes();
+    text.match_indices(".await").any(|(at, _)| {
+        let after = at + ".await".len();
+        !b.get(after).is_some_and(|&c| ident_byte(c))
+            && postfix(b, after).1.iter().any(|m| m == "?")
+    })
+}
+
 const UNBOUNDED: &str = "does not bound its attempts by a count or a deadline";
-const NO_SLEEP: &str = "does not sleep between attempts";
+const NO_SLEEP: &str = "does not sleep on every path back to its head: a `continue`, or the \
+     end of its body, that no sleep comes before";
 const DEAF: &str = "ignores the server's retry_after()";
-const GIVES_UP: &str = "ends on the first transient error: it sends a request with `?`, \
-     or never checks is_retryable()";
+const GIVES_UP: &str = "ends on the first transient error: a `?` on an awaited chain, a \
+     return or break in its is_retryable() arm, or no is_retryable() at all";
 const STALLS: &str = "does not bound each request by the time left (timeout(left, ..))";
 const UNCAPPED: &str = "sleeps with no ceiling: growth needs a .min(), and a retry_after() a \
      .min() or a comparison of the wait with the time left";
-const OVERFLOWS: &str = "applies +, - or * to an uncapped retry_after(), which panics on a \
-     Retry-After too large";
+const OVERFLOWS: &str = "applies +, - or * to an uncapped retry_after(), or unwraps checked_ \
+     arithmetic on one, which panics on a Retry-After too large";
 const NO_JITTER: &str = "has no jitter, so clients that failed together retry together";
 
 /// One retry or poll loop in a block: its first line (and that line's
@@ -599,10 +912,14 @@ struct RetryLoop {
 ///   a maximum and incremented, or a comparison with a deadline or an
 ///   `elapsed()` (a deadline only declared above the loop, or named in a
 ///   string, is none);
-/// - sleep between attempts;
+/// - sleep on every path back to its head ([`Paths`]): no `continue`
+///   that no sleep comes before, in its arm or a block around it, and no
+///   way through to the end of the body that misses one;
 /// - when it sends requests, read the server's `retry_after()`, and retry
 ///   what `is_retryable()` says to rather than end on the first transient
-///   error, as a `?` on an awaited request does;
+///   error: no `?` on the chain after an `.await`, and no `return` or
+///   `break` in the arm or `if` branch that `is_retryable()` guards (not
+///   negated);
 /// - when a deadline bounds a poll, bound each request by the time left
 ///   (`timeout(`);
 /// - cap the delay it sleeps: growth reaches the sleep through a `.min(`,
@@ -610,7 +927,8 @@ struct RetryLoop {
 ///   that holds it with the time left (a line that names the variable and
 ///   a deadline, an `elapsed()` or a value built from one, and compares);
 /// - apply no `+`, `-` or `*` to an uncapped `retry_after()`, inline, in a
-///   variable or in a closure along its chain;
+///   variable or in a closure along its chain, and unwrap no `checked_add`,
+///   `checked_sub` or `checked_mul` on one or of one ([`overflows`]);
 /// - when a count bounds it, add a random value that reaches the sleep.
 ///
 /// D-069 records these rules and their limits.
@@ -710,17 +1028,27 @@ fn retry_loops(block: &DocBlock) -> Vec<RetryLoop> {
                     })
                 })
                 .collect();
+            let bytes = text.as_bytes();
+            let mut paths = Paths::default();
+            if let Some(open) = opener(bytes, at, bytes.len()) {
+                let close = close_of(bytes, open).unwrap_or(bytes.len());
+                // The end of the body goes back to the head too.
+                let end = paths.walk(bytes, open + 1, close, Some(false), false);
+                paths.sleepless |= end == Some(false);
+            }
             let mut problems = Vec::new();
             if !(counted || timed) {
                 problems.push(UNBOUNDED);
             }
-            if sleeps.is_empty() {
+            if sleeps.is_empty() || paths.sleepless {
                 problems.push(NO_SLEEP);
             }
             if requests && !has("retry_after()") {
                 problems.push(DEAF);
             }
-            if (calls.polls && !has("is_retryable")) || (requests && has(".await?")) {
+            if (calls.polls && !has("is_retryable"))
+                || (requests && (awaits_with_try(&text) || paths.gives_up))
+            {
                 problems.push(GIVES_UP);
             }
             if calls.polls && timed && !has("timeout(") {
@@ -732,10 +1060,9 @@ fn retry_loops(block: &DocBlock) -> Vec<RetryLoop> {
             {
                 problems.push(UNCAPPED);
             }
-            let bytes = text.as_bytes();
             if uncapped_operands(&text, &held)
                 .into_iter()
-                .any(|(from, to)| arithmetic_on(bytes, from, to))
+                .any(|(from, to)| overflows(bytes, from, to))
             {
                 problems.push(OVERFLOWS);
             }
@@ -757,8 +1084,9 @@ fn retry_loops(block: &DocBlock) -> Vec<RetryLoop> {
 }
 
 /// A retry or poll loop shown in the docs or an example bounds its
-/// attempts, sleeps between them, honors the server's `Retry-After`
-/// without overflow, caps its delay and, bounded by a count, adds jitter
+/// attempts, sleeps on every path back to its head, gives up on no error
+/// `is_retryable()` accepts, honors the server's `Retry-After` without
+/// overflow, caps its delay and, bounded by a count, adds jitter
 /// ([`retry_loops`]), as `docs/RELIABILITY.md`'s recipe does:
 /// `InteractionRequest`'s rustdoc loop once retried at full speed with no
 /// bound, `Client::execute`'s ignored `retry_after`, the background poll in
@@ -824,6 +1152,123 @@ fn every_retry_loop_in_the_docs_is_bounded_and_waits() {
     }
 }
 
+// =============================================================================
+// The background poll in docs/AGENTS_AND_BACKGROUND.md and its runnable example
+// =============================================================================
+
+/// `text` with its whitespace collapsed, and a trailing comma and the
+/// braces of a block dropped.
+fn flat(text: &str) -> String {
+    let text = text.trim().trim_end_matches(',').trim();
+    let text = text
+        .strip_prefix('{')
+        .and_then(|inner| inner.strip_suffix('}'))
+        .unwrap_or(text);
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// What the poll in `block` decides, as `(when, then)` in order: each arm
+/// of its `match` on a status request's outcome, with the arms of its
+/// `match` on the status in place of the arm that holds that one, then
+/// the first `if` after them, its comparison with the deadline. Comments,
+/// string text and print statements don't count.
+fn poll_decisions(block: &DocBlock) -> Vec<(String, String)> {
+    let mut code = code_lines(&block.lines).join(" ");
+    for print in ["eprintln!(", "println!("] {
+        while let Some(at) = code.find(print) {
+            let b = code.as_bytes();
+            let close = close_of(b, at + print.len() - 1).expect("a print closes");
+            let end = close + 1 + usize::from(b.get(close + 1) == Some(&b';'));
+            code.replace_range(at..end, "");
+        }
+    }
+    let b = code.as_bytes();
+    let block_of = |at: usize| {
+        let open = opener(b, at, b.len()).expect("a block follows");
+        (open, close_of(b, open).expect("the block closes"))
+    };
+    let mut decided = Vec::new();
+    let outcome = code
+        .find("match timeout(")
+        .unwrap_or_else(|| panic!("{}: the poll matches each request's outcome", block.at));
+    let (open, close) = block_of(outcome);
+    for (when, then) in match_arms(b, open, close) {
+        let Some(status) = code[then.clone()].find("match response.status") else {
+            decided.push((flat(&code[when]), flat(&code[then])));
+            continue;
+        };
+        let (open, close) = block_of(then.start + status);
+        for (when, then) in match_arms(b, open, close) {
+            decided.push((flat(&code[when]), flat(&code[then])));
+        }
+    }
+    let guard = (close..b.len())
+        .find(|&k| word_at(b, k) == b"if")
+        .unwrap_or_else(|| panic!("{}: the poll compares with its deadline", block.at));
+    let (open, close) = block_of(guard);
+    decided.push((flat(&code[guard..open]), flat(&code[open..=close])));
+    decided
+}
+
+/// The example's decisions as the doc's poll would make them, the one
+/// difference the doc states undone: the example returns an `Option`,
+/// `Some` once the run completes, and `None` where the doc's poll gives up
+/// at the deadline (a request cut off by the time left, or a wait that
+/// would outlast it) with an error.
+fn example_as_doc(decided: Vec<(String, String)>) -> Vec<(String, String)> {
+    decided
+        .into_iter()
+        .map(|(when, then)| {
+            let then = if when == "Err(_)" || when.contains("deadline") {
+                then.replace("Ok(None)", "Err(\"\".into())")
+            } else {
+                then.replace("Ok(Some(response))", "Ok(response)")
+            };
+            (when, then)
+        })
+        .collect()
+}
+
+/// Whether `block` builds every `deadline` it assigns with `checked_add`,
+/// so a caller's deadline too far off is an error, not a panic.
+fn checked_deadline(block: &DocBlock) -> bool {
+    let deadlines: Vec<String> = assignments(&code_lines(&block.lines))
+        .into_iter()
+        .filter(|(name, _)| name == "deadline")
+        .map(|(_, rhs)| rhs)
+        .collect();
+    !deadlines.is_empty() && deadlines.iter().all(|rhs| rhs.contains(".checked_add("))
+}
+
+/// `docs/AGENTS_AND_BACKGROUND.md`'s poll and `examples/deep_research.rs`,
+/// which the doc says runs it, decide alike: the same terminal statuses,
+/// the same retryable arm and the same comparison with the deadline, with
+/// only the difference the doc states. The example once dropped
+/// statuses the doc's poll ends on, and nothing compared the two. Each
+/// builds its deadline with `checked_add`.
+#[test]
+fn the_poll_in_agents_and_background_md_matches_its_example() {
+    let doc = recipe("docs/AGENTS_AND_BACKGROUND.md", "is_retryable");
+    let example = recipe("examples/deep_research.rs", "is_retryable");
+    let decided = poll_decisions(&doc);
+    assert_eq!(decided, example_as_doc(poll_decisions(&example)));
+    for when in [
+        "Err(_)",
+        "InteractionStatus::Completed",
+        "InteractionStatus::Failed | InteractionStatus::Cancelled | InteractionStatus::Incomplete | InteractionStatus::BudgetExceeded",
+        "Ok(Err(e)) if e.is_retryable()",
+        "if wait >= deadline.saturating_duration_since(Instant::now())",
+    ] {
+        assert!(
+            decided.iter().any(|(w, _)| w == when),
+            "no {when}: {decided:#?}"
+        );
+    }
+    for poll in [&doc, &example] {
+        assert!(checked_deadline(poll), "{}: an unchecked deadline", poll.at);
+    }
+}
+
 fn block(text: &str) -> DocBlock {
     DocBlock {
         at: "x".into(),
@@ -850,22 +1295,59 @@ fn the_retry_loop_check_finds_each_defect() {
     // line is none.
     let hidden = "loop {\n    // tokio::time::sleep(e.retry_after()) here\n    /* sleep(e.retry_after()) */ let s = \"sleep(e.retry_after())\";\n    # tokio::time::sleep(d).await;\n    if attempt < MAX && e.is_retryable() {}\n    attempt += 1;\n}";
     assert_eq!(problems(hidden), [NO_SLEEP, DEAF, NO_JITTER]);
-    let sound = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let jitter = step.mul_f64(random());\n        tokio::time::sleep(e.retry_after().unwrap_or(step + jitter).min(MAX_DELAY)).await;\n    }\n    attempt += 1;\n}";
+    let sound = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let jitter = step.mul_f64(random());\n        tokio::time::sleep(e.retry_after().unwrap_or(step + jitter).min(MAX_DELAY)).await;\n    } else {\n        return Err(e);\n    }\n    attempt += 1;\n}";
     assert_eq!(problems(sound), Vec::<&str>::new());
-    let ranged = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let delay = e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY);\n        tokio::time::sleep(delay).await;\n    }\n}";
+    let ranged = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let delay = e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY);\n        tokio::time::sleep(delay).await;\n    } else {\n        return Err(e);\n    }\n}";
     assert_eq!(problems(ranged), Vec::<&str>::new());
     // A count that is checked but never incremented bounds nothing.
-    let stuck = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step).min(MAX_DELAY)).await;\n    }\n}";
+    let stuck = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step).min(MAX_DELAY)).await;\n    } else {\n        return Err(e);\n    }\n}";
     assert_eq!(problems(stuck), [UNBOUNDED]);
     // A count without jitter, and a server's wait taken whole.
-    let herd = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    }\n}";
+    let herd = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(step)).await;\n    } else {\n        return Err(e);\n    }\n}";
     assert_eq!(problems(herd), [UNCAPPED, NO_JITTER]);
     // Jitter is a random value that reaches the sleep, not a name that
     // happens to contain "rand"; growth needs no spaces around its `*`.
-    let named = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let operand = step.mul_f64(0.5);\n        let brand = rand_seed();\n        delay = (delay + operand).min(MAX_DELAY);\n        tokio::time::sleep(e.retry_after().unwrap_or(delay).min(MAX_DELAY)).await;\n    }\n}";
+    let named = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        let operand = step.mul_f64(0.5);\n        let brand = rand_seed();\n        delay = (delay + operand).min(MAX_DELAY);\n        tokio::time::sleep(e.retry_after().unwrap_or(delay).min(MAX_DELAY)).await;\n    } else {\n        return Err(e);\n    }\n}";
     assert_eq!(problems(named), [NO_JITTER]);
-    let tight = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        delay = delay*2;\n        tokio::time::sleep(e.retry_after().unwrap_or(jittered(delay)).min(MAX_DELAY) + delay).await;\n    }\n}";
+    let tight = "for attempt in 1..=MAX_ATTEMPTS {\n    if e.is_retryable() {\n        delay = delay*2;\n        tokio::time::sleep(e.retry_after().unwrap_or(jittered(delay)).min(MAX_DELAY) + delay).await;\n    } else {\n        return Err(e);\n    }\n}";
     assert_eq!(problems(tight), [UNCAPPED]);
+    // A sleep only in a branch leaves the other way to the end of the body
+    // without one, and a `continue` needs one before it, in its arm or
+    // around it, not in another arm.
+    let branch = "while attempt < MAX_ATTEMPTS {\n    if e.is_retryable() {\n        tokio::time::sleep(e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY)).await;\n    }\n    attempt += 1;\n}";
+    assert_eq!(problems(branch), [NO_SLEEP]);
+    let arms = |retry: &str| {
+        format!(
+            "for attempt in 1..=MAX_ATTEMPTS {{\n    match client.execute(request.clone()).await {{\n        Ok(r) => return Ok(r),\n{retry}        Err(e) => return Err(e.into()),\n    }}\n}}"
+        )
+    };
+    let wait = "tokio::time::sleep(e.retry_after().unwrap_or(jittered(step)).min(MAX_DELAY)).await";
+    let retry = |then: &str| {
+        format!("        Err(e) if e.is_retryable() => {{\n            {wait};\n{then}        }}\n")
+    };
+    assert_eq!(
+        problems(&arms(&retry("            continue;\n"))),
+        Vec::<&str>::new()
+    );
+    assert_eq!(
+        problems(&arms(&format!(
+            "        Err(e) if e.is_retryable() && attempt == 1 => continue,\n        Err(e) if e.is_retryable() => {wait},\n"
+        ))),
+        [NO_SLEEP]
+    );
+    // A `return` or `break` in the arm `is_retryable()` guards gives up on
+    // an error it says to retry; one in a branch that negates it, or after
+    // a `let ... else`, does not.
+    assert_eq!(problems(&arms(&retry("            break;\n"))), [GIVES_UP]);
+    let negated = format!(
+        "for attempt in 1..=MAX_ATTEMPTS {{\n    let Err(e) = client.execute(request.clone()).await else {{\n        break;\n    }};\n    if !e.is_retryable() {{\n        return Err(e.into());\n    }}\n    {wait};\n}}"
+    );
+    assert_eq!(problems(&negated), Vec::<&str>::new());
+    let sleepless = negated.replace(
+        &format!("    {wait};\n"),
+        &format!("    if attempt > 1 {{\n        {wait};\n    }}\n"),
+    );
+    assert_eq!(problems(&sleepless), [NO_SLEEP]);
     // A poll bounded by its deadline compares with it inside the loop; a
     // deadline only declared above the loop, or named in an error
     // message, bounds nothing. A deadline loop may wait as long as the
@@ -948,9 +1430,14 @@ type Edits<'a> = &'a [(&'a str, &'a str)];
 /// the example's without the cap on their growth (or doubling by
 /// addition), comparing the clock rather than the wait with the deadline,
 /// applying `+` or `-` to a `Retry-After` (in a variable, inline or in a
-/// closure), or sending a status request with `?`; and the poll
-/// `examples/deep_research.rs` had, which ended on the first transient
-/// error and never bounded a request by the time left.
+/// closure) or unwrapping `checked_` arithmetic on one (E3), going back to the
+/// loop's head without the sleep (E1), sending a status request with `?`
+/// after any chain (E4), or returning or breaking in the retryable arm
+/// (E9); the example deciding other than the doc's poll does (E7, a
+/// terminal status dropped); the doc's deadline added with `+`; and the
+/// poll `examples/deep_research.rs` had, which ended on the first
+/// transient error and never bounded a request by the time left. (E1 to
+/// E9 name the mutations a review under #504 found passing.)
 #[test]
 fn the_retry_loop_check_fails_each_broken_recipe() {
     let only = |block: &DocBlock| {
@@ -1027,18 +1514,19 @@ fn the_retry_loop_check_fails_each_broken_recipe() {
             .map(|line| line.trim())
             .find(|line| line.starts_with("delay = (delay * 2).min("))
             .unwrap();
-        let broken: [(Edits, &[&str]); 8] = [
+        let broken: &[(Edits, &[&str])] = &[
             // Checking the clock, not the wait, against the deadline
             // leaves a Retry-After of u64::MAX seconds to sleep whole.
             (&[(GUARD, "if Instant::now() >= deadline {")], &[UNCAPPED]),
             // Arithmetic on a Retry-After overflows however it is
-            // spelled: inline, in a closure, or subtracted.
+            // spelled: inline (here in the retryable arm, which gives up
+            // there too), in a closure, or subtracted.
             (
                 &[(
                     WAIT,
                     "if Instant::now() + e.retry_after().unwrap_or(delay) >= deadline {\n    return Err(e.into());\n}",
                 )],
-                &[OVERFLOWS],
+                &[GIVES_UP, OVERFLOWS],
             ),
             (
                 &[(
@@ -1062,11 +1550,54 @@ fn the_retry_loop_check_fails_each_broken_recipe() {
                 ],
                 &[OVERFLOWS],
             ),
+            // E3: `checked_` arithmetic whose `None` is unwrapped panics as
+            // `+` does, on the wait or with it as the argument; one whose
+            // `None` is handled does not.
+            (
+                &[(
+                    GUARD,
+                    "if Instant::now().checked_add(wait).unwrap() >= deadline {",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    GUARD,
+                    "if Instant::now().checked_add(wait).expect(\"in range\") >= deadline {",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    GUARD,
+                    "if Instant::now() >= deadline.checked_sub(wait).unwrap() {",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| asked.checked_add(delay).unwrap());",
+                )],
+                &[OVERFLOWS],
+            ),
+            (
+                &[(
+                    GUARD,
+                    "if Instant::now().checked_add(wait).is_none_or(|end| end >= deadline) {",
+                )],
+                &[],
+            ),
             // Doubling by addition is growth too.
             (&[(grow, "delay += delay;")], &[UNCAPPED]),
             (&[(grow, "delay = delay + delay;")], &[UNCAPPED]),
-            // A status request sent with `?` ends the poll on its first
-            // transient error, whatever else the loop retries.
+            // E1: an in-progress status that goes back to the loop's head
+            // skips the sleep, and polls as fast as the server answers.
+            (&[("_ => {}", "_ => continue,")], &[NO_SLEEP]),
+            // A status request sent with `?`, after any chain (E4), ends
+            // the poll on its first transient error, whatever else the
+            // loop retries; so does a `return` or `break` in the arm
+            // `is_retryable()` guards (E9).
             (
                 &[(
                     "let mut wait = delay;",
@@ -1074,11 +1605,63 @@ fn the_retry_loop_check_fails_each_broken_recipe() {
                 )],
                 &[GIVES_UP],
             ),
+            (
+                &[(
+                    "let mut wait = delay;",
+                    "let mut wait = delay;\nlet _s = client.interactions().get(id).await.map_err(Box::new)?;",
+                )],
+                &[GIVES_UP],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| asked.max(delay));\nreturn Err(e.into());",
+                )],
+                &[GIVES_UP],
+            ),
+            (
+                &[(
+                    WAIT,
+                    "wait = e.retry_after().map_or(delay, |asked| asked.max(delay));\nbreak;",
+                )],
+                &[GIVES_UP],
+            ),
         ];
-        for (edits, want) in broken {
+        for &(edits, want) in broken {
             assert_eq!(only(&mutated(poll, edits)), want, "{}: {edits:?}", poll.at);
         }
     }
+
+    // The example's poll decides as the doc's does. E7: without
+    // Incomplete among its terminal statuses it polls a finished run to its
+    // budget and cancels it. The stated difference, `None` for an error,
+    // holds only at the deadline.
+    let decided = poll_decisions(&poll);
+    for edits in [
+        &[("| InteractionStatus::Incomplete", "")][..],
+        &[("|asked| asked.max(delay)", "|asked| asked")],
+        &[(
+            GUARD,
+            "if wait > deadline.saturating_duration_since(Instant::now()) {",
+        )],
+        &[(
+            "Ok(Err(e)) => return Err(e.into()),",
+            "Ok(Err(e)) => return Ok(None),",
+        )],
+    ] {
+        let broken = example_as_doc(poll_decisions(&mutated(&example, edits)));
+        assert_ne!(broken, decided, "{edits:?}");
+    }
+    // The doc's poll builds its deadline with `checked_add`; `+` panics
+    // on a caller's deadline too far off.
+    let unchecked = mutated(
+        &poll,
+        &[(
+            ".checked_add(deadline).ok_or(\"deadline too far off\")?",
+            " + deadline",
+        )],
+    );
+    assert!(!checked_deadline(&unchecked));
 
     assert_eq!(
         only(&block(OLD_DEEP_RESEARCH_POLL)),

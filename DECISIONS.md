@@ -3293,7 +3293,8 @@ passing mutation for each.
 **Decision.** The guard reads a loop that calls `is_retryable()`,
 `sleep(` or an awaited `.get(` (a `for` over items only through
 `is_retryable()`), follows each sleep's argument back through the
-assignments it is built from, and requires:
+assignments it is built from, follows the paths through its body, and
+requires:
 - **A ceiling.** Growth (`*`, `<<`, `.pow(`, `_mul(`, or a value built
   from itself with `+` or an `add(`) reaches the sleep only through a
   `.min(` over it. A `retry_after()` needs a `.min(` on its own method
@@ -3304,14 +3305,33 @@ assignments it is built from, and requires:
   ends the poll rather than the sleep.
 - **No overflow.** No `+`, `-` or `*` applies to an uncapped Retry-After:
   a `retry_after()` call with its receiver and chain, a variable assigned
-  one, or a closure parameter along its chain.
+  one, or a closure parameter along its chain. Nor is a `checked_add`,
+  `checked_sub` or `checked_mul` on its chain, or with it as the whole
+  argument, followed by `unwrap()` or `expect(`: the same panic.
 - **Jitter where a count bounds the loop.** A name that reads as random
   (`rand`, `RandomState`, `fastrand`, an `rng`) or as jitter reaches each
   sleep. A deadline poll of one interaction is not required to jitter: no
   crowd of clients failed with it.
-- **No early exit.** A poll checks `is_retryable()`, and no retry or poll
-  loop awaits a request with `?`; a deadline poll bounds each request with
-  `timeout(`.
+- **A sleep on every path back to the head.** Read through `if` and
+  `else` chains, `match` arms, `let ... else` and blocks, a `continue`
+  needs a `sleep(` call before it, in its arm or a block around it, and so
+  does each way through to the end of the body that does not return or
+  break first. A nested loop's paths, and a closure's body, are their own.
+- **No early exit.** A poll checks `is_retryable()`. In a loop that sends
+  requests, no `.await` has a `?` on the chain after it (`.await?`,
+  `.await.map_err(..)?`), and no `return` or `break` is in the match arm
+  or `if` branch whose guard or condition calls `is_retryable()` without a
+  `!`: a bound goes in the guard (`if e.is_retryable() && attempt < MAX`)
+  or after the match, as both recipes put it. A deadline poll bounds each
+  request with `timeout(`.
+- **The example runs the doc's poll.** `docs/AGENTS_AND_BACKGROUND.md`'s
+  poll and `examples/deep_research.rs` make the same decisions, compared as
+  code (comments, string text and prints aside): each arm of the `match` on
+  a status request's outcome and of the `match` on the status, and the
+  comparison of the wait with the deadline, with its body. The one
+  difference allowed is the one the doc states: the example returns
+  `Some` on completion and `None` where the doc's poll returns an error at
+  the deadline. Each builds its deadline with `checked_add`.
 
 Rejected: a `.min(` on the Retry-After in a deadline poll too. J-6 names
 the uncapped `max`, and a cap below the server's ask polls sooner than
@@ -3324,12 +3344,38 @@ passes through a function, a struct field or a shadowed name is not
 followed, and a `.min(` inside a closure on the chain
 (`.map(|a| a.min(MAX))`) reads as no cap; such a recipe is rewritten with
 the `.min(` on the chain. A comparison with the time left that bounds
-nothing still counts.
+nothing still counts. Names, not values, are read: a `.min(` with any
+argument is a cap (`.min(Duration::MAX)` too), and a name that reads as
+random is jitter (`let random = 0.5;` too). The paths read only the forms
+above: a labeled `continue` counts as its innermost loop's, a `?` ends no
+path (the early-exit rule reads an awaited one), a `sleep(` counts where
+it is called, awaited or not, and a `return` in the retryable arm counts
+even under an `if` that compares with a bound. A `checked_` call counts
+only on the Retry-After's own chain or with it as its whole argument.
 
 With these checks `tests/reliability_tests.rs` went over D-014's 2,000-line
 bar, so the recipe checks, the backon one and this guard, moved unchanged
 to `tests/reliability_tests/retry_recipes.rs`, a module of the same test
 binary (D-011).
+
+**Amended 2026-11-14 (#504, K-9).** The guard checked only that a sleep,
+a `.await?` or an operator was present, and this section said "no retry
+or poll loop awaits a request with `?`". A review under #504 found
+mutations of the doc's poll and its example that passed: a `continue`
+past the sleep (E1), `checked_add(wait).unwrap()` (E3),
+`.await.map_err(..)?` (E4), the example dropping `Incomplete` from its
+terminal statuses (E7), and a `return` in the `is_retryable()` arm (E9).
+The rules above now say what the guard reads: the sleep and early-exit
+rules follow the paths through the body, the overflow rule reads a
+`checked_` call whose `None` is unwrapped, and the doc's poll and its
+example are compared. Each mutation is a case in
+`the_retry_loop_check_fails_each_broken_recipe`. The doc's poll added the
+caller's deadline to the clock with `+`, which panics on one too far off;
+it uses `checked_add`, as the example does. The checks took
+`retry_recipes.rs` past D-014's bar, so the reading of the recipes'
+sources (the docs' code blocks, an example's file, and what a line of
+code holds) moved unchanged to `tests/reliability_tests/recipe_source.rs`,
+another module of the test binary (D-011).
 
 ## D-070 — The fuzz round trip compares the written JSON with the input where a type promises it (2026-11-10)
 

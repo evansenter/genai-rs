@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The background poll in `docs/AGENTS_AND_BACKGROUND.md` added the
+  caller's deadline to the clock with `+`, which panics on a `Duration`
+  too large to add, such as `Duration::MAX`. It uses `checked_add` and
+  returns an error instead, as `examples/deep_research.rs` does. Copy the
+  change into a poll built from it.
+
 ## [0.14.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.0.0 (swept 2026-11-07;
