@@ -530,8 +530,8 @@ first, as does a budget written as anything but a bare number. It also
 checks that each live step starts with `set -euo pipefail`, so
 `nextest | tee` keeps nextest's status, and that no shell-level mask it
 knows, `continue-on-error`, `if:` but the fork and owner gate or `needs:`
-but `needs: check` lets its failure pass. The flakiness report adds the
-markers up across the week.
+but `needs: check`, each read as a YAML parser reads it, lets its failure
+pass. The flakiness report adds the markers up across the week.
 
 A skip gets a marker when it can't tell a benign cause from a regression.
 For example, an MCP call that returns no tool evidence looks the same whether
@@ -576,9 +576,14 @@ nothing else; and that nothing the workflow guards know of skips it or
 passes its failure: an `if:`, `continue-on-error` or `needs:` on the step
 or its job, a `defaults:` on the job or the workflow, a shell other than
 bash, or a shell-level mask such as `|| true`, `; true`, `set +e` or an
-`exit` whose status may be 0 (`exit 0`, `exit "0"`). The coverage runs
-before it are held to the same. The guards read the workflow as text,
-against the forms D-058 lists: they catch the ways a step is known to be
+`exit` whose status may be 0 (`exit 0`, `exit "0"`). Each key, and the
+`run:` value, is read as a YAML parser reads it, so a quoted or spaced key
+(`"continue-on-error": true`) counts, as does an `|| true` on a deeper
+line below a plain `run:`, which YAML joins to the command. The coverage
+runs before it are held to the same, as are every `run:` step of the
+checks branch protection requires and the fuzz run, which Fuzz Gate
+reads. The script within a `run:` value is read as text, against the
+forms D-058 lists: the guards catch the ways a step is known to be
 weakened, not every way a script can compute its status.
 
 ## Coverage oracle

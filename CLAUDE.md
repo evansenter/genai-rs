@@ -399,10 +399,12 @@ wheel's protos with `python3`).
   offline test of the retry helper runs in them), that no `if:` or `needs:`
   (but the live steps' owner gate and `needs: check`), `continue-on-error`,
   `defaults:`, other shell or shell-level mask it knows (`|| true`,
-  `; true`, `set +e`, an `exit` whose status may be 0; `set -euo pipefail`
-  first in a longer script, and wherever nextest is piped) lets the floor, a
-  coverage run, the release gate, a live nextest step or the scripted
-  harness step pass a failure (D-058 lists what it reads), and release's
+  `; true`, `set +e`, an `exit` whose status may be 0, an `alias`;
+  `set -euo pipefail` first in a longer script, and wherever nextest is
+  piped), each key and `run:` value read as a YAML parser reads it, lets
+  the floor, a coverage run, the release gate, a live nextest step, the
+  scripted harness step, any `run:` step of a required check's job or the
+  fuzz run pass a failure (D-058 lists what it reads), and release's
   push-run gate, which lets only the jobs a push skips by design be skipped
   and wants all six Cross Platform legs, and `api-surface-sweep`'s
   spec-watch and issue-pointer steps.
@@ -411,6 +413,7 @@ wheel's protos with `python3`).
   Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the
   five Integration Tests groups. A live group skipped on a fork PR counts as
   passing; renaming a job or group means updating branch protection too.
+  `tests/ci_workflows/required.rs` holds its `REQUIRED_JOBS` to this list.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
   `ci-flakiness-report.yml` (daily; counts failures, the tests nextest
   retried to a pass, the retries `retry_request!` made inside a test

@@ -2502,6 +2502,51 @@ them `|| exit "0"`, `|| [ -s log ]`, an `rc=0` before `exit "$rc"`, a
 workflow-level `defaults:`, `shopt -u -o pipefail`, `bash -c` and a budget
 written `-gt "300"`; each is now a case in the mutation tests.
 
+**Amended 2026-11-14 (#504, K-7, K-8).** The #504 grade of 2026-11-13 found
+that the guard read the workflows as text, so two claims of the 2026-11-10
+amendment did not hold: that the floor step runs its one command "and
+nothing else", and that a guarded step has no `continue-on-error`. Each of
+these passed every guard: an `|| true` on a deeper line below the floor's
+plain `run:` (P1) or the release gate's (P3), which YAML joins to the
+command; `"continue-on-error": true` or `continue-on-error : true` on the
+floor step, the coverage job or a sweep step (P4, P5, P5b); and
+`shopt -s expand_aliases` then `alias cargo=true` in a live step (P8). So
+did a mask on a required check's own steps, which the guard never read:
+`|| true` on Test Suite's nextest run, on the antigravity unit run or on
+Clippy, and `continue-on-error` on strict-unknown's run. And so did one
+on the fuzz run, or `continue-on-error` on its job, though Fuzz Gate
+passes on that job's result.
+- The guards read the workflows with a YAML parser, `yaml-rust2`, a
+  dev-dependency. It is the maintained fork of `yaml-rust`, which is
+  unmaintained, as `serde_yaml` is archived. It reads YAML 1.2, needs
+  Rust 1.85 (the crate's MSRV is 1.88), and fails on a duplicated key
+  rather than keep its last value. Each key a guard checks, on the
+  workflow, a job or a step, is the key YAML reads, quoted or with a space
+  before its colon. A merge key (`<<`), which the parser does not expand,
+  is rejected. A step's script is its `run:` value as YAML reads it: a
+  plain value's deeper lines and a folded block's lines are joined as
+  YAML joins them before the script is read.
+- The guards still find a job or a step by its text. Each one `escapes`
+  reads must be a job and a step YAML reads, every key included, and a
+  test holds every workflow's split to YAML's. A comment at a step's
+  indent or less no longer ends the step.
+- `alias`, and `shopt -s expand_aliases`, are rejected, as a function is.
+- Every `run:` step of the jobs whose checks are required on `main` is
+  held to `failure_escapes`. `REQUIRED_JOBS` in
+  `tests/ci_workflows/required.rs` lists the jobs, and a test holds the
+  list to CLAUDE.md's. The only `if:` and `needs:` allowed are the live
+  groups' gate and `needs: check`, and the owner gate on a step that
+  reads the key. Two steps were rewritten into the forms the guard reads,
+  doing what they did: Check's package check counts the test-only files
+  (an empty count, grep's error, fails too), and the antigravity smoke
+  loop keeps each attempt's status in `rc`.
+- The fuzz job's `run:` steps are held to the same, with its
+  `needs: changes` and its path-check `if:` allowed. The fuzz run starts
+  with `set -euo pipefail` and must read `seeds/$TARGET`.
+
+The script inside a `run:` value is still read as text, against the forms
+the 2026-11-10 amendment names and with the limits it gives.
+
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
 **Context.** #504's final grade put Docs at A-: five contradictions and
