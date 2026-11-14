@@ -38,7 +38,7 @@
 #      rewrite retitled but kept the subject and most of the words of,
 #      still matches, while two entries that say the same of different
 #      code, or share a few words, do not: no two different entries in any
-#      section this CHANGELOG has had open alike (#504, K-13). A keep-both
+#      section this CHANGELOG has had open alike (D-NEXT-KE). A keep-both
 #      merge that re-adds an entry's old text beside its rewrite leaves a
 #      contradictory pair that every other rule passes. Checked where rule
 #      1 is, across its `###` subsections.

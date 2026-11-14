@@ -3542,3 +3542,39 @@ on another.
 **Consequences.** Breaking for an exhaustive `GenerationConfig` struct
 literal (D-007). The request oracle leaves the field empty: its keys are the
 API's, not the crate's.
+
+## D-NEXT-KE — The CHANGELOG lint matches a duplicate entry by its opening words, not its exact title (2026-11-14)
+
+**Context.** Rule 6 of `.github/scripts/check_changelog.sh` failed two
+entries in a section that share a first line or a bold title, compared
+exactly. A keep-both merge that puts an entry's old text back beside a
+rewrite passed whenever the rewrite changed that title: three plain Fixed
+entries beside the Breaking entries that replaced them, two Breaking
+entries beside their retitled rewrites, and `**A bold one.**` beside
+`**Breaking: a bold one.**` (#504's 2026-11-13 grade, K-13). Comparing
+titles case-insensitively, and a plain entry's first sentence with a
+title, as the grade proposed, catches only the last: the others reword,
+reorder or extend the title.
+
+**Decision.** An entry opens with the first sentence of its bold title, or
+of its first paragraph when it has none, a `Breaking:` marker aside. Two
+openings in a section match when they name the same code span first (or
+neither names one) and hold the same words, or the shorter holds at least
+3, 85% of them are in the other, and the shared words are 45% of both
+together. A word is case-folded, a code span is one word, and one-letter
+words, a few function words and a plural's `s` are left out. The header of
+the script states the rule; its harness pins each probe, a sentence-case
+pair, and six look-alikes that must pass, and each threshold or condition,
+removed, fails it. Rejected: the exact case-insensitive match, which
+misses five of the six probes; dropping the first-code-span condition,
+which fails two entries that say the same of different types (`A` and `B`
+"have two new public fields"); and a token similarity without the 45%
+share, which fails a short opening whose words a long one holds.
+
+**Consequences.** It is a heuristic. The thresholds were set against the
+CHANGELOG's history: across all 100 versions of the file, every section
+named, no two different entries match; the only duplicates there are
+ones whose first lines match, which the exact rule already reported. A rewrite that changes an entry's subject (its first code
+span) or most of its words still passes as a new entry, and two genuinely
+different entries that open alike fail: reword one, which a reader needs
+anyway.
