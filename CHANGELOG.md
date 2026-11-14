@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CreateDecisionRequest::new(DEFAULT_DECISION_MODEL, input)` and
   `add_question(id, Question::noul(..) / choice(..) / score(..))`;
   `NoulCriteria` describes a noul question's outcomes. The response's
-  `prompt_feedback` carries a `BlockReason` when the input was blocked.
+  `prompt_feedback` carries a `BlockReason` when the input is blocked, as
+  the bindings document; no live response has carried one yet.
   `DEFAULT_DECISION_MODEL` (`gemini-decision-1`) is the one model the
   endpoint serves. `Question`, `Answer` and `BlockReason` keep unknown
   types (D-074; `examples/decisions.rs`).

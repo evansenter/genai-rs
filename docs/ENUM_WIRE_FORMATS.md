@@ -211,7 +211,7 @@ known variant of `Tool`, `ResponseFormat` and `TranscriptionMode` has an
 | `Question` | tagged by `"type"` | `{"type": "noul", "instructions": "...", "criteria": {"true_description": "..."}}` / `{"type": "choice", ..., "criteria": {"id": "description"}}` / `{"type": "score", ..., "criteria": ["level 0", "level 1"]}` | All three verified live 2026-11-14; see [Decisions](#decisions) |
 | `Answer` | tagged by `"type"` | `{"type": "noul", "noul": 0.97, "confidence": 0.97}` / `{"type": "choice", "choice": "a", ...}` / `{"type": "score", "score": 0.2, ...}` | All three served live 2026-11-14; see [Decisions](#decisions) |
 | `BlockReason` | snake_case | `"safety"`, `"other"`, `"blocklist"`, `"prohibited_content"`, `"image_safety"` | From the google-genai 3.3.0 bindings; never served (no probe sent input a filter would block) |
-| `DecisionInput` | string or `[Content]` | `"text"` / `[{"type": "text", ...}, {"type": "image", ...}]` | Both verified live 2026-11-14; one bare content block is accepted too, and the crate sends one as a one-item list |
+| `DecisionInput` | string or `[Content]` | `"text"` / `[{"type": "text", ...}, {"type": "image", ...}]` | Both verified live 2026-11-14. The crate sends one block as a one-item list |
 | `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `prebuilt`/`prompted` verified live 2026-09-24 |
 | `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Verified live 2026-09-24 |
 | `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | Create bodies are tagged by it. The first two verified live 2026-09-24 (`oauth2` create validates that `token_url` is reachable) |
@@ -1168,9 +1168,11 @@ type as the answer's `type`:
   a string. `Answer` reads an absent field as its zero (protobuf JSON omits
   zeros); a field of the wrong type, or an unknown `type`, keeps the answer
   whole as `Answer::Unknown`.
-- `input` was taken as a string, one text block and a list of a text block
-  and an inline image, and `instructions` as a string, one text block and a
-  list of them. The crate sends `instructions` as a string.
+- `input` is a string, one content block or a list of them, and a
+  question's `instructions` a string, one text block or a list of them (the
+  bindings' arms). The crate sends `input` as a string or a list, and
+  `instructions` as a string. Which forms the endpoint took is under
+  [Sweep 3.0.0 → 3.3.0](INTERACTIONS_API_GAP.md#sweep-300--330-2026-11-14).
 - `prompt_feedback` (`block_reason`, `block_reason_message`) was not
   served; its shape is the bindings'.
 

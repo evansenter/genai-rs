@@ -336,7 +336,7 @@ jobs:
           # which the flakiness report counts (count_retried_flakes.sh).
           for ex in simple_interaction streaming stateful_interaction explicit_turns \
                     auto_function_calling manual_function_calling structured_output \
-                    pdf_input files_api multi_turn_agent_manual_stateless; do
+                    pdf_input files_api multi_turn_agent_manual_stateless decisions; do
             echo "::group::cargo run --example $ex"
             retried=0
             if ! timeout --kill-after=30s 300s cargo run --example "$ex"; then

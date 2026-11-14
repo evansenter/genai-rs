@@ -4019,7 +4019,10 @@ integration group) calls it live.
 
 **Consequences.** `prompt_feedback` and `BlockReason` were never served
 (no probe sent input a filter would block), so they rest on the bindings
-alone; a reason the API sends that the bindings lack reads as `Unknown`. A
+alone, and the gap tracker lists them as open ("Modeled, not yet served"
+under the 3.3.0 sweep); a reason the API sends that the bindings lack reads
+as `Unknown`. A
 second decision model, or `DEFAULT_DECISION_MODEL`'s retirement, is a
-one-line change to the constant. The resource answers 404 on `/v1`, like
-every resource but files and file search stores.
+one-line change to the constant. The resource answers 404 on `/v1`, as
+agents, environments, webhooks, credentials, voices and triggers do; `/v1`
+serves only interactions, files and file search stores.
