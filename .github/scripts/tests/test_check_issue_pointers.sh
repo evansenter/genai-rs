@@ -49,14 +49,15 @@ printf '%s\n' 'echo "tracked in #500"' >"$T/.github/scripts/tests/test_x.sh"
 printf '%s\n' 'Untracked: tracked in #500.' >"$T/NOTES.md"
 git -C "$T" add docs src CHANGELOG.md DECISIONS.md tests .github
 
-# A `gh` that answers `api repos/{owner}/{repo}/issues/N` from
-# $WORK/issues/N (a JSON object, `404`, or `fail`), `issue list` from
-# $GH_LIST and `issue view` from $GH_VIEW (either fails when it is `fail`),
-# and logs every other call, with its --body, to $WORK/gh.log.
+# A `gh` that answers `api repos/{owner}/{repo}/issues/N`, a lookup and
+# nothing more, from $WORK/issues/N (a JSON object, `404`, or `fail`),
+# `issue list` from $GH_LIST and `issue view` from $GH_VIEW (either fails
+# when it is `fail`), and logs every other call, with its --body, to
+# $WORK/gh.log: an `api` call with a method or a field is logged too.
 mkdir -p "$WORK/bin" "$WORK/issues"
 cat >"$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-if [ "$1" = api ]; then
+if [ "$1" = api ] && [ $# -eq 2 ]; then
     n=${2##*/}
     answer=$(cat "$GH_ISSUES/$n" 2>/dev/null || echo 404)
     case "$answer" in

@@ -2637,9 +2637,10 @@ found three gaps, each of whose probes passed all 77 ci_coverage tests.
   strict-unknown's unit step. The guard now rejects a line of
   `.config/nextest.toml` that names `retries` (or holds a TOML `\u`
   escape, which can spell it), `NEXTEST_RETRIES` named in any case
-  anywhere in a workflow but a live nextest step's own `env:`, `--retries`,
-  and `--config-file` or `--tool-config-file`. It reads the text, so a
-  name a script builds at run time is not read.
+  anywhere in a workflow but a live nextest step's own `env:`, or in a
+  composite action, `--retries`, and `--config-file` or
+  `--tool-config-file`. It reads the text, so a name a script builds at
+  run time is not read.
 - The K-7 amendment said each key a guard checks is the key YAML reads. It
   held for the keys `escapes` checks, and now says so. `coverage.rs` read
   the summary step's `if:` as text, and `builds.rs` the Cross Platform

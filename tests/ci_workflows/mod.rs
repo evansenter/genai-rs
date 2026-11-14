@@ -113,6 +113,32 @@ fn workflows() -> Vec<(String, String)> {
     found
 }
 
+/// `(path under .github/, text)` for every composite action in
+/// `.github/actions/`, which a workflow step runs with `uses:`.
+fn actions() -> Vec<(String, String)> {
+    let dir = root().join(".github/actions");
+    let mut found: Vec<(String, String)> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+        .map(|entry| entry.expect("dir entry").path().join("action.yml"))
+        .filter(|path| path.exists())
+        .map(|path| {
+            let name = path
+                .strip_prefix(root().join(".github"))
+                .expect("under .github")
+                .to_string_lossy()
+                .replace('\\', "/");
+            (name, read(&path))
+        })
+        .collect();
+    found.sort();
+    assert!(
+        !found.is_empty(),
+        "found no composite action in {}",
+        dir.display()
+    );
+    found
+}
+
 /// `(job id, job text)` for every job: the two-space-indented keys under
 /// `jobs:`, each up to the next one. Found by their text; each job and step
 /// a guard reads is checked against how YAML reads the workflow
@@ -511,7 +537,8 @@ fn sets_retries(line: &str) -> bool {
 const OTHER_CONFIG: [&str; 2] = ["--config-file", "--tool-config-file"];
 
 /// Problems with how nextest's retries are set, and the live nextest steps
-/// (`workflow:job`), given every workflow and `.config/nextest.toml`.
+/// (`workflow:job`), given every workflow and composite action (`files`)
+/// and `.config/nextest.toml`.
 ///
 /// The flakiness report counts a step's tests only when the step retries,
 /// which `count_retried_flakes.sh` reads from the step header GitHub
@@ -521,18 +548,15 @@ const OTHER_CONFIG: [&str; 2] = ["--config-file", "--tool-config-file"];
 /// reads it), which the header always lists, and every live nextest step
 /// sets it. Rejected: `NEXTEST_RETRIES` named anywhere else in a workflow
 /// (another step's env, a job's or the workflow's, which reach every step
-/// under them, a script, `$GITHUB_ENV`), in any case, since Windows reads
-/// an environment variable's name in any; a `--retries` flag, or a
+/// under them, a script, `$GITHUB_ENV`) or in a composite action, in any
+/// case, since Windows reads an environment variable's name in any; a `--retries` flag, or a
 /// `--config-file` or `--tool-config-file` that loads other settings; and
 /// a `retries` key in any profile or override of `.config/nextest.toml`,
 /// which every run reads. Each passed every guard, and a test retried to a
 /// pass that way was never counted (the #504 grade of 2026-11-14, L-5).
 /// The check reads the text: a name the script builds at run time is not
 /// read (D-058).
-fn retry_problems(
-    workflows: &[(String, String)],
-    nextest_toml: &str,
-) -> (Vec<String>, Vec<String>) {
+fn retry_problems(files: &[(String, String)], nextest_toml: &str) -> (Vec<String>, Vec<String>) {
     let mut live = Vec::new();
     let mut problems = Vec::new();
     for (at, line) in nextest_toml.lines().enumerate() {
@@ -546,7 +570,7 @@ fn retry_problems(
         }
     }
     let names_retries = |line: &&str| line.to_ascii_uppercase().contains("NEXTEST_RETRIES");
-    for (name, text) in workflows {
+    for (name, text) in files {
         for line in command_lines(text) {
             if line.contains("--retries") && !line.starts_with("NEXTEST_RETRIES") {
                 problems.push(format!("{name}: `{line}` (set NEXTEST_RETRIES instead)"));
@@ -587,8 +611,8 @@ fn retry_problems(
         }
         if command_lines(text).filter(names_retries).count() > in_steps {
             problems.push(format!(
-                "{name}: NEXTEST_RETRIES in a workflow or job `env:`, or another key outside \
-                 a step, which sets retries for every step under it"
+                "{name}: NEXTEST_RETRIES outside a workflow's step (in a workflow or job \
+                 `env:`, or a composite action), which sets retries for every step it reaches"
             ));
         }
     }
@@ -600,7 +624,9 @@ fn retry_problems(
 #[test]
 fn nextest_retries_are_set_in_the_step_env() {
     let nextest_toml = read(&root().join(".config/nextest.toml"));
-    let (live, problems) = retry_problems(&workflows(), &nextest_toml);
+    let mut files = workflows();
+    files.extend(actions());
+    let (live, problems) = retry_problems(&files, &nextest_toml);
     // rust.yml's integration groups and harness step, and release.yml's two
     // live steps: the parser must still find them.
     for expected in [
@@ -628,7 +654,8 @@ fn nextest_retries_are_set_in_the_step_env() {
 
 #[test]
 fn the_retry_check_catches_what_it_claims_to() {
-    let all = workflows();
+    let mut all = workflows();
+    all.extend(actions());
     let config = read(&root().join(".config/nextest.toml"));
     assert!(retry_problems(&all, &config).1.is_empty());
     let strict = "          RUSTFLAGS: --cfg genai_strict_unknown\n        run: cargo nextest run --workspace\n";
@@ -706,6 +733,13 @@ fn the_retry_check_catches_what_it_claims_to() {
             "rust.yml",
             "      - name: Run unit tests in strict mode\n",
             "      - run: echo \"NEXTEST_RETRIES=2\" >> \"$GITHUB_ENV\"\n      - name: Run unit tests in strict mode\n",
+        ),
+        // ... from a composite action a step runs, ...
+        mutated(
+            &all,
+            "actions/setup-mold/action.yml",
+            "      run: |\n",
+            "      run: |\n        echo \"NEXTEST_RETRIES=2\" >> \"$GITHUB_ENV\"\n",
         ),
         // ... as a flag, or from another config file.
         mutated(

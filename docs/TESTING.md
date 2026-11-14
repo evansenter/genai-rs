@@ -362,9 +362,9 @@ Every live nextest step sets `NEXTEST_RETRIES: 2` in its env, so a test
 that fails and then passes leaves its job green. Nothing else sets a
 retry, since the report below counts only a live step's: no `--retries`
 flag, no `NEXTEST_RETRIES` on another step, a job or the workflow, in a
-script or through `$GITHUB_ENV`, no other nextest config file, and no
-`retries` key in `.config/nextest.toml`, which every run reads
-(`tests/ci_workflows/` checks each). The example smoke loops retry by
+script, through `$GITHUB_ENV` or in a composite action, no other nextest
+config file, and no `retries` key in `.config/nextest.toml`, which every
+run reads (`tests/ci_workflows/` checks each). The example smoke loops retry by
 hand, since `cargo run` has none, and print `EXAMPLE_RETRIED <name> <failed
 tries>` when an example passed only on a retry. The daily
 `ci-flakiness-report.yml` reads the retry jobs' logs from every finished run
