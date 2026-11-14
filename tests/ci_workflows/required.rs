@@ -12,8 +12,8 @@ use super::{
 
 /// A `rust.yml` job whose check branch protection requires on `main`, and
 /// the `if:` and `needs:` lines (`key: value`) it may carry.
-pub(super) struct RequiredJob {
-    pub(super) id: &'static str,
+struct RequiredJob {
+    id: &'static str,
     allowed: &'static [&'static str],
 }
 
@@ -22,7 +22,7 @@ pub(super) struct RequiredJob {
 /// holds the two together). The live groups run only where the key is,
 /// after Check; a step in any of them that reads the key may carry the
 /// same owner gate ([`LIVE_GATE`]).
-pub(super) const REQUIRED_JOBS: [RequiredJob; 8] = [
+const REQUIRED_JOBS: [RequiredJob; 8] = [
     RequiredJob {
         id: "check",
         allowed: &[],
@@ -189,11 +189,10 @@ fn the_required_step_check_catches_what_it_claims_to() {
     }
 }
 
-/// The checks CLAUDE.md's "Required on `main`" bullet lists, as written:
-/// the names it lists one by one, and its last item, `the <count> <name>
-/// groups`, as `(count, name)`.
-fn claude_md_required() -> (BTreeSet<String>, (usize, String)) {
-    let claude = read(&root().join("CLAUDE.md"));
+/// The checks CLAUDE.md's "Required on `main`" bullet lists, as written
+/// in `claude`: the names it lists one by one, and its last item, `the
+/// <count> <name> groups`, as `(count, name)`.
+fn claude_md_required(claude: &str) -> (BTreeSet<String>, (usize, String)) {
     let start = claude
         .find("\n- Required on `main`")
         .expect("CLAUDE.md lists the checks required on main");
@@ -228,33 +227,80 @@ fn claude_md_required() -> (BTreeSet<String>, (usize, String)) {
     (names, (count, groups.1.to_owned()))
 }
 
+/// How [`REQUIRED_JOBS`], named as `workflow` shows them, differs from the
+/// checks `claude` (CLAUDE.md) lists as required; empty when they agree.
+fn required_list_problems(workflow: &str, claude: &str) -> Vec<String> {
+    let all = jobs(workflow);
+    let mut names = BTreeSet::new();
+    let mut problems = Vec::new();
+    for required in &REQUIRED_JOBS {
+        match all.iter().find(|(id, _)| id == required.id) {
+            Some((_, body)) => names.extend(display_names(required.id, body)),
+            None => problems.push(format!("rust.yml has no job {}", required.id)),
+        }
+    }
+    let (listed, (count, group)) = claude_md_required(claude);
+    let prefix = format!("{group} (");
+    let (grouped, single): (BTreeSet<String>, BTreeSet<String>) = names
+        .into_iter()
+        .partition(|name| name.starts_with(&prefix));
+    if single != listed {
+        problems.push(format!(
+            "REQUIRED_JOBS holds {single:?}, but CLAUDE.md requires {listed:?}"
+        ));
+    }
+    if grouped.len() != count {
+        problems.push(format!(
+            "CLAUDE.md requires the {count} {group} groups; REQUIRED_JOBS holds {grouped:?}"
+        ));
+    }
+    problems
+}
+
 /// [`REQUIRED_JOBS`] is the list CLAUDE.md gives (and branch protection
 /// holds, which only the owner can read): a check required there but not
 /// held here, or held here but no longer required, fails.
 #[test]
 fn the_required_jobs_are_the_ones_claude_md_lists() {
     let workflow = rust_yml();
-    let all = jobs(&workflow);
-    let mut names = BTreeSet::new();
-    for required in &REQUIRED_JOBS {
-        let (_, body) = all
-            .iter()
-            .find(|(id, _)| id == required.id)
-            .unwrap_or_else(|| panic!("rust.yml has no job {}", required.id));
-        names.extend(display_names(required.id, body));
+    let claude = read(&root().join("CLAUDE.md"));
+    let problems = required_list_problems(&workflow, &claude);
+    assert!(
+        problems.is_empty(),
+        "REQUIRED_JOBS and CLAUDE.md's required list differ:\n  {}",
+        problems.join("\n  ")
+    );
+    // A check added to the list, one dropped from it, a group count that
+    // moved, or a required job renamed in rust.yml: each fails.
+    let broken = [
+        (
+            workflow.clone(),
+            claude.replace("Format, Clippy,", "Format, Clippy, Shell Scripts,"),
+        ),
+        (
+            workflow.clone(),
+            claude.replace("Format, Clippy,", "Format,"),
+        ),
+        (
+            workflow.clone(),
+            claude.replace(
+                "five Integration Tests groups",
+                "six Integration Tests groups",
+            ),
+        ),
+        (
+            workflow.replace("    name: Clippy\n", "    name: Lint\n"),
+            claude.clone(),
+        ),
+    ];
+    for (i, (mutated_workflow, mutated_claude)) in broken.iter().enumerate() {
+        assert!(
+            *mutated_workflow != workflow || *mutated_claude != claude,
+            "mutation {i} did not apply"
+        );
+        assert!(
+            !required_list_problems(mutated_workflow, mutated_claude).is_empty(),
+            "mutation {i} went unnoticed"
+        );
     }
-    let (listed, (count, group)) = claude_md_required();
-    let prefix = format!("{group} (");
-    let (grouped, single): (BTreeSet<String>, BTreeSet<String>) = names
-        .into_iter()
-        .partition(|name| name.starts_with(&prefix));
-    assert_eq!(
-        single, listed,
-        "REQUIRED_JOBS and CLAUDE.md's required checks differ"
-    );
-    assert_eq!(
-        grouped.len(),
-        count,
-        "CLAUDE.md requires the {count} {group} groups; REQUIRED_JOBS holds {grouped:?}"
-    );
 }
