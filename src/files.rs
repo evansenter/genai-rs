@@ -3,7 +3,8 @@
 //!
 //! Files are stored for 48 hours. Limits: 2 GB per file, 20 GB per project.
 //! Manage them through the [`Files`] handle from [`Client::files`]:
-//! [`upload`](Files::upload), [`get`](Files::get), [`list`](Files::list),
+//! [`upload`](Files::upload), [`upload_as`](Files::upload_as) (under a name
+//! you choose), [`get`](Files::get), [`list`](Files::list),
 //! [`delete`](Files::delete) and
 //! [`wait_until_active`](Files::wait_until_active).
 //!
@@ -20,6 +21,8 @@
 //! [`GenaiError::InvalidInput`] before any request; the ID is
 //! percent-encoded into one path segment. A file that doesn't exist is a
 //! 403 ending in "or it may not exist", not a 404.
+//! [`upload_as`](Files::upload_as) takes the name the new file gets in the
+//! same form.
 //!
 //! # Example
 //!
@@ -59,6 +62,7 @@ use upload::file_display_name;
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::http::files::UploadFileBody;
 use crate::paging;
 pub use crate::poll::PollOptions;
 use crate::poll::PollStep;
@@ -338,7 +342,9 @@ impl<'a> Files<'a> {
     /// A path upload streams from disk with bounded memory (about 8 MB of
     /// read buffer) whatever the file size, up to the 2 GB limit. Some files,
     /// videos especially, need processing before use: see
-    /// [`wait_until_active`](Self::wait_until_active).
+    /// [`wait_until_active`](Self::wait_until_active). The API names the
+    /// file; [`upload_as`](Self::upload_as) uploads under a name you choose,
+    /// which a retry cannot duplicate.
     ///
     /// # Errors
     ///
@@ -387,26 +393,91 @@ impl<'a> Files<'a> {
     /// # }
     /// ```
     pub async fn upload(self, upload: FileUpload) -> Result<FileMetadata, GenaiError> {
+        self.upload_file(None, upload).await
+    }
+
+    /// Uploads a file under a name you choose, `files/<id>`, and returns its
+    /// metadata: the file is served under that
+    /// [`name`](FileMetadata::name).
+    ///
+    /// A chosen name makes the upload idempotent. The API keeps one file per
+    /// name, so a second upload under a name in use fails with a 409
+    /// ([`GenaiError::Api`], `status_code` 409, its message starting
+    /// `ALREADY_EXISTS`) instead of making a second file. A retry after a
+    /// lost response that gets the 409 knows the first try landed, and
+    /// [`get`](Self::get) reads it; the error is not
+    /// [retryable](GenaiError::is_retryable). The 409 comes when the upload
+    /// finalizes, after its bytes are sent, so to save resending a large
+    /// file, `get` the name first. A deleted file's name can be used again.
+    ///
+    /// The ID is up to 40 lowercase letters, digits and dashes, and does not
+    /// begin or end with a dash. Unlike Python's `files.upload`, a bare ID is
+    /// not given the `files/` prefix: the name is the full one, as every
+    /// [`Files`] method takes. Everything else is as for
+    /// [`upload`](Self::upload), the display name included: it is still the
+    /// file name of a path upload unless
+    /// [`FileUpload::with_display_name`] sets one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`], before any request, for a name
+    /// that is not `files/<id>` (see [names](crate::files#names)) or whose
+    /// ID is over 40 characters, and for the inputs
+    /// [`upload`](Self::upload) rejects. Returns [`GenaiError::Api`] with
+    /// status 400 for an ID with other characters, before the bytes are
+    /// sent, and with status 409 when a file of that name exists. Otherwise
+    /// as [`upload`](Self::upload).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{FileUpload, GenaiError};
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), GenaiError> {
+    /// let upload = FileUpload::from_path("q4-report.pdf");
+    /// let file = match client.files().upload_as("files/q4-report", upload).await {
+    ///     Ok(file) => file,
+    ///     // An earlier try landed, though its response was lost.
+    ///     Err(GenaiError::Api { status_code: 409, .. }) => {
+    ///         client.files().get("files/q4-report").await?
+    ///     }
+    ///     Err(e) => return Err(e),
+    /// };
+    /// assert_eq!(file.name, "files/q4-report");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn upload_as(
+        self,
+        name: &str,
+        upload: FileUpload,
+    ) -> Result<FileMetadata, GenaiError> {
+        crate::http::files::check_chosen_file_name(name)?;
+        self.upload_file(Some(name), upload).await
+    }
+
+    /// Uploads `upload`, under `name` when one is chosen.
+    async fn upload_file(
+        self,
+        name: Option<&str>,
+        upload: FileUpload,
+    ) -> Result<FileMetadata, GenaiError> {
         let (source, mime_type, display_name) = upload.into_parts()?;
         match source {
             UploadSource::Path(path) => {
                 let display_name = display_name.or_else(|| file_display_name(&path));
-                crate::http::files::upload_path(
-                    &self.client.http,
-                    &path,
-                    &mime_type,
-                    display_name.as_deref(),
-                )
-                .await
+                let fields = UploadFileBody {
+                    name,
+                    display_name: display_name.as_deref(),
+                };
+                crate::http::files::upload_path(&self.client.http, &path, &mime_type, fields).await
             }
             UploadSource::Bytes(data) => {
-                crate::http::files::upload_bytes(
-                    &self.client.http,
-                    data,
-                    &mime_type,
-                    display_name.as_deref(),
-                )
-                .await
+                let fields = UploadFileBody {
+                    name,
+                    display_name: display_name.as_deref(),
+                };
+                crate::http::files::upload_bytes(&self.client.http, data, &mime_type, fields).await
             }
         }
     }

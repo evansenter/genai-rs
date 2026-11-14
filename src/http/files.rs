@@ -9,6 +9,7 @@ use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
 use crate::files::{FileListResponse, FileMetadata, FileUploadResponse};
 use crate::wire::WireEvent;
+use serde::Serialize;
 use std::path::Path;
 
 // --- API Functions ---
@@ -101,6 +102,58 @@ pub(super) async fn finish_resumable_upload(
     Ok(response.text().await?)
 }
 
+/// The `file` object of a Files API upload's start request: the settings of
+/// the bindings' `UploadFileConfig` the crate sends (camelCase on the wire).
+/// The MIME type goes in the session's `X-Goog-Upload-Header-Content-Type`
+/// header instead.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UploadFileBody<'a> {
+    /// A chosen `files/<id>` ([`Files::upload_as`](crate::Files::upload_as)),
+    /// which the file is served under. Without one the API names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) display_name: Option<&'a str>,
+}
+
+/// The start request's JSON body, `{"file": {...}}`.
+#[derive(Serialize)]
+struct UploadStart<'a> {
+    file: UploadFileBody<'a>,
+}
+
+/// The longest file ID a chosen name takes.
+const MAX_CHOSEN_FILE_ID_CHARS: usize = 40;
+
+/// Checks a name chosen for an upload
+/// ([`Files::upload_as`](crate::Files::upload_as)): a `files/<id>` resource
+/// name, as every Files method takes, whose ID is at most 40 characters.
+///
+/// A longer ID passes the upload's start request and fails its finalize,
+/// after the bytes are sent, with an unexplained `400 Failed to create
+/// file.`, so it is caught here. The API checks the ID's characters itself
+/// (lowercase letters, digits and dashes, no dash first or last), at the
+/// start request, before any bytes are sent.
+///
+/// # Errors
+///
+/// Returns [`GenaiError::InvalidInput`] for a name that is not `files/<id>`
+/// or whose ID is longer than 40 characters.
+pub(crate) fn check_chosen_file_name(name: &str) -> Result<(), GenaiError> {
+    file_resource_path(name)?;
+    let id_chars = name
+        .strip_prefix("files/")
+        .map_or(0, |id| id.chars().count());
+    if id_chars > MAX_CHOSEN_FILE_ID_CHARS {
+        return Err(GenaiError::InvalidInput(format!(
+            "a chosen file name's ID takes at most {MAX_CHOSEN_FILE_ID_CHARS} characters \
+             (lowercase letters, digits and dashes); {name:?} has {id_chars}"
+        )));
+    }
+    Ok(())
+}
+
 /// Starts a Files API upload session and returns its upload URL.
 ///
 /// Emits [`WireEvent::UploadStart`] under `request_id`.
@@ -110,7 +163,7 @@ async fn start_upload_session(
     file_label: &str,
     file_size: u64,
     mime_type: &str,
-    display_name: Option<&str>,
+    file: UploadFileBody<'_>,
 ) -> Result<String, GenaiError> {
     let mime_type_value = mime_type_header(mime_type)?;
     if ctx.has_inspectors() {
@@ -122,13 +175,9 @@ async fn start_upload_session(
         });
     }
 
-    let metadata = match display_name {
-        Some(name) => serde_json::json!({ "file": { "displayName": name } }),
-        None => serde_json::json!({ "file": {} }),
-    };
     ResumableUpload {
         url: ctx.upload_url("files"),
-        metadata: &metadata,
+        metadata: &UploadStart { file },
         file_size,
         mime_type: mime_type_value,
         file_name: None,
@@ -172,25 +221,26 @@ pub async fn upload_bytes(
     ctx: &HttpContext,
     file_data: Vec<u8>,
     mime_type: &str,
-    display_name: Option<&str>,
+    fields: UploadFileBody<'_>,
 ) -> Result<FileMetadata, GenaiError> {
     let file_size = file_data.len() as u64;
     check_upload_size(file_size)?;
     tracing::debug!(
-        "Uploading file: size={} bytes, mime_type={}, display_name={:?}",
+        "Uploading file: size={} bytes, mime_type={}, name={:?}, display_name={:?}",
         file_size,
         mime_type,
-        display_name
+        fields.name,
+        fields.display_name
     );
 
     let request_id = ctx.next_request_id();
     let upload_url = start_upload_session(
         ctx,
         request_id,
-        display_name.unwrap_or("(unnamed)"),
+        fields.display_name.or(fields.name).unwrap_or("(unnamed)"),
         file_size,
         mime_type,
-        display_name,
+        fields,
     )
     .await?;
     finish_upload(ctx, request_id, &upload_url, file_size, file_data.into()).await
@@ -207,7 +257,7 @@ pub async fn upload_path(
     ctx: &HttpContext,
     path: &Path,
     mime_type: &str,
-    display_name: Option<&str>,
+    fields: UploadFileBody<'_>,
 ) -> Result<FileMetadata, GenaiError> {
     let read_error = |e: std::io::Error| {
         GenaiError::InvalidInput(format!("Failed to read file '{}': {e}", path.display()))
@@ -217,25 +267,20 @@ pub async fn upload_path(
     let file_size = file.metadata().await.map_err(read_error)?.len();
     check_upload_size(file_size)?;
     tracing::debug!(
-        "Uploading file: path={}, size={} bytes, mime_type={}",
+        "Uploading file: path={}, size={} bytes, mime_type={}, name={:?}",
         path.display(),
         file_size,
         mime_type,
+        fields.name,
     );
 
     let request_id = ctx.next_request_id();
-    let file_label = display_name
+    let file_label = fields
+        .display_name
         .map(str::to_string)
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    let upload_url = start_upload_session(
-        ctx,
-        request_id,
-        &file_label,
-        file_size,
-        mime_type,
-        display_name,
-    )
-    .await?;
+    let upload_url =
+        start_upload_session(ctx, request_id, &file_label, file_size, mime_type, fields).await?;
 
     finish_upload(ctx, request_id, &upload_url, file_size, file_body(file)).await
 }
@@ -372,6 +417,56 @@ mod tests {
         assert_eq!(
             list_files_url(None, Some("a/b&c=d+e")),
             format!("{base}?pageToken=a%2Fb%26c%3Dd%2Be")
+        );
+    }
+
+    #[test]
+    fn a_chosen_file_name_is_a_files_name_with_an_id_of_at_most_40_characters() {
+        let id40 = "a".repeat(40);
+        check_chosen_file_name(&format!("files/{id40}")).unwrap();
+        check_chosen_file_name("files/q4-report").unwrap();
+        // The API judges the characters, at the start request: they pass here.
+        check_chosen_file_name("files/Q4_Report").unwrap();
+
+        let long = check_chosen_file_name(&format!("files/{id40}b")).unwrap_err();
+        assert!(
+            matches!(&long, GenaiError::InvalidInput(m) if m.contains("at most 40") && m.contains("has 41")),
+            "{long:?}"
+        );
+        // Characters, not bytes: 40 two-byte characters pass the length check.
+        check_chosen_file_name(&format!("files/{}", "é".repeat(40))).unwrap();
+
+        // The shape every Files method takes: the prefix, one non-empty
+        // segment, no dot segment.
+        for name in [
+            "q4-report",
+            "files/",
+            "files/a/b",
+            "files/..",
+            "fileSearchStores/a",
+        ] {
+            assert!(
+                matches!(
+                    check_chosen_file_name(name),
+                    Err(GenaiError::InvalidInput(_))
+                ),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_upload_start_body_wraps_the_file_fields_set() {
+        let body = |name, display_name| {
+            serde_json::to_value(UploadStart {
+                file: UploadFileBody { name, display_name },
+            })
+            .unwrap()
+        };
+        assert_eq!(body(None, None), serde_json::json!({"file": {}}));
+        assert_eq!(
+            body(Some("files/q4-report"), Some("Q4 report")),
+            serde_json::json!({"file": {"name": "files/q4-report", "displayName": "Q4 report"}})
         );
     }
 

@@ -461,6 +461,15 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         .upload(FileUpload::from_bytes(b"hi".to_vec(), "text/plain").with_display_name("f"))
         .await
         .expect("files.upload");
+    // A chosen name goes out as the file's `name`.
+    client
+        .files()
+        .upload_as(
+            "files/f",
+            FileUpload::from_bytes(b"hi".to_vec(), "text/plain").with_display_name("f"),
+        )
+        .await
+        .expect("files.upload_as");
     client.webhooks().ping("wh-1").await.expect("webhooks.ping");
     client.triggers().run("t-1").await.expect("triggers.run");
     client
@@ -506,7 +515,7 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
             }
         }
     }
-    assert_eq!(bodies, 22, "one body per call above");
+    assert_eq!(bodies, 23, "one body per call above");
     for (site, _) in ALLOWED {
         if !used.contains(site) {
             problems.push(format!(
@@ -1256,6 +1265,14 @@ async fn every_query_key_a_verb_sends_is_a_binding_query_parameter() {
         .upload(FileUpload::from_bytes(b"hi".to_vec(), "text/plain"))
         .await
         .expect("files.upload");
+    client
+        .files()
+        .upload_as(
+            "files/f",
+            FileUpload::from_bytes(b"hi".to_vec(), "text/plain"),
+        )
+        .await
+        .expect("files.upload_as");
     client.files().get("files/f").await.expect("files.get");
     client
         .files()

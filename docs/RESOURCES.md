@@ -122,7 +122,7 @@ become `with_*` setters.
 | `instructions=` a text block or a list of them | Not modeled: `instructions` is sent as a string, which says the same as one text block |
 | `client.files.upload(file=path, config={"mime_type": m, "display_name": n})` | `client.files().upload(FileUpload::from_path(path).with_mime_type(m).with_display_name(n))` |
 | `client.files.upload(file=io_object, config={"mime_type": m})` | `client.files().upload(FileUpload::from_bytes(data, m))` |
-| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled (D-039): the API serves the file under the chosen name, and a second upload under it is a `409`, but `FileUpload` is shared with store uploads, which take no name, so it needs a files-only shape. It is the bindings' `UploadFileConfig.name`, listed with that reason in the coverage oracle's `UNMAPPED` |
+| `client.files.upload(file=path, config={"name": n})` (a chosen `files/<id>`) | `client.files().upload_as(n, FileUpload::from_path(path))`, with `n` the full `files/<id>`: Python adds a missing `files/` prefix, and the crate rejects a bare ID. A second upload under a name in use is a `409 ALREADY_EXISTS`, so a retry cannot make a second file (D-039) |
 | `client.files.get(name=)` | `client.files().get(name)` |
 | `client.files.list(config={"page_size": n, "page_token": t})` (one page) | `client.files().list().with_page_size(n).with_page_token(t).send()` |
 | iterating `client.files.list()` | `client.files().list().items()` (or `.pages()`) |

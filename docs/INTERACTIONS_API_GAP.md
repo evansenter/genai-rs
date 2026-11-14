@@ -447,6 +447,21 @@ from here rather than repeated.
 
 - **A file that doesn't exist** is a 403 whose message ends in "or it may not
   exist", not a 404 (2026-09-24).
+- **A chosen name** (`Files::upload_as`, the start request's
+  `{"file": {"name": "files/<id>"}}`; 2026-11-14): the file is served under
+  it, and a second upload under it passes the start request and fails at
+  finalize, after the bytes, with `409 <id> already exists.`
+  (`ALREADY_EXISTS`), which a genai-rs caller sees as `GenaiError::Api`
+  with `status_code` 409 and a message starting `ALREADY_EXISTS: `. A
+  deleted file's name took a new upload. The ID takes lowercase letters,
+  digits and dashes, not first or last: an uppercase letter, `_`, `.`, a
+  leading or trailing dash, an empty ID, a second segment and a bare ID
+  without `files/` are each a 400 at the start request ("File resource name
+  may only contain lowercase alphanumeric characters or dashes (-) and
+  cannot begin or end with a dash"). A 40-character ID uploads; a
+  41-character one passes the start request and fails at finalize with
+  `400 Failed to create file.`, which is why the crate checks the length
+  itself.
 - Uploads, paging and processing failures are under Files in
   `docs/ENUM_WIRE_FORMATS.md`, and the unmodeled verbs under
   [Resource residue](#resource-residue-live-2026-11-05).
@@ -549,18 +564,17 @@ reasons in `docs/RESOURCES.md`. Probed live 2026-11-05:
   for both verbs, so the oracle maps both to it.
 - **Deferred** (in the bindings, but the crate sends none of them:
   `tests/ci_coverage.rs` lists the three endpoints in
-  `ENDPOINTS_WITHOUT_A_VERB`, `tests/request_wire_oracle.rs` the triggers
-  `filter` in `NOT_SENT`, and `src/coverage_oracle/` the upload's `name` in
-  `UNMAPPED`):
+  `ENDPOINTS_WITHOUT_A_VERB`, and `tests/request_wire_oracle.rs` the
+  triggers `filter` in `NOT_SENT`):
   `files.download` (an uploaded file is a `400 Only GENERATED files can be
   downloaded`), `files.register_files` (`401 API keys are not supported`),
-  `files.upload(config={"name"})` (live 2026-11-07: the file is served
-  under the chosen name, and a second upload under it fails at finalize
-  with `409 ... already exists`; not modeled, D-039),
   `file_search_stores.download_media`
   (needs a `file_citation` `media_id`, never served) and
   `triggers.list(filter_=)` (every expression tried is a `400 Invalid filter
-  expression`, syntax undocumented).
+  expression`, syntax undocumented). `files.upload(config={"name"})` was
+  deferred here too (live 2026-11-07: the file is served under the chosen
+  name, and a second upload under it is a `409`) until 2026-11-14, when it
+  became `Files::upload_as` (D-039; the record is under [Files](#files)).
 
 ## Spec-only query parameters (live, 2026-11-09)
 

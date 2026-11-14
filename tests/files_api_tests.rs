@@ -1,6 +1,6 @@
-//! Files API: upload (from disk, streamed, and from memory), get, list
-//! (one page and across pages), delete, readiness polling, and use in an
-//! interaction.
+//! Files API: upload (from disk, streamed, and from memory, and under a
+//! chosen name), get, list (one page and across pages), delete, readiness
+//! polling, and use in an interaction.
 //!
 //! ```bash
 //! cargo nextest run --test files_api_tests --run-ignored all
@@ -107,6 +107,52 @@ async fn test_upload_bytes() {
 
     // Clean up
     client.files().delete(&file.name).await.unwrap();
+}
+
+/// A chosen name: the file is served under it, and a second upload under the
+/// same name fails at finalize with the API's 409 `ALREADY_EXISTS` instead of
+/// making a second file (live 2026-11-14).
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_upload_as_serves_the_chosen_name_and_refuses_a_second_upload() {
+    let client = get_client();
+    // `genai-rs-test-name-<secs>-<nanos>` is at most 39 characters, within
+    // the 40 an ID takes.
+    let name = format!("files/{}", common::test_resource_name("name"));
+    let upload = || {
+        FileUpload::from_bytes(
+            b"A file uploaded under a chosen name.".to_vec(),
+            "text/plain",
+        )
+    };
+
+    let file = client
+        .files()
+        .upload_as(&name, upload())
+        .await
+        .expect("upload under a chosen name");
+    let second = client.files().upload_as(&name, upload()).await;
+    let read = client.files().get(&name).await;
+    // Clean up first, so a failed assertion below does not leak the file.
+    client
+        .files()
+        .delete(&name)
+        .await
+        .expect("delete the named file");
+
+    assert_eq!(file.name, name);
+    assert!(file.uri.ends_with(&name), "{}", file.uri);
+    assert_eq!(read.expect("get by the chosen name").name, name);
+    let error = second.expect_err("a second upload under the same name");
+    match &error {
+        GenaiError::Api {
+            status_code: 409,
+            message,
+            ..
+        } => assert!(message.starts_with("ALREADY_EXISTS: "), "{message}"),
+        other => panic!("expected the 409 for a name in use, got {other:?}"),
+    }
+    assert!(!error.is_retryable());
 }
 
 /// Tests getting file metadata.
