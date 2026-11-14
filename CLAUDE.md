@@ -398,12 +398,12 @@ wheel's protos with `python3`).
   reason), the coverage floor (one command, and no key in its step but
   `name:` and `run:`) and its library-only pattern, the steps the
   flakiness report counts (no offline test of the retry helper runs in
-  them, and nextest retries are set in a live step's env and nowhere
-  else, `.config/nextest.toml` included), that no `if:` or `needs:` (but
-  the live steps' owner gate and `needs: check`), `continue-on-error`,
-  `defaults:`, other shell or shell-level mask it knows (`|| true`,
-  `; true`, `set +e`, an `exit` whose status may be 0, an `alias` or
-  alias expansion turned on, a loop
+  them, and the workflows, composite actions and `.config/nextest.toml`
+  write a nextest retry only in a live step's env), that no `if:` or
+  `needs:` (but the live steps' owner gate and `needs: check`),
+  `continue-on-error`, `defaults:`, other shell or shell-level mask it
+  knows (`|| true`, `; true`, `set +e`, an `exit` whose status may be 0,
+  an `alias` or alias expansion turned on, a loop
   that drops a pass's failure, a `${{ }}` expression but a matrix value of
   plain words, read spliced in; `set -euo pipefail` first in a longer
   script, and wherever nextest is piped), each key and `run:` value read as

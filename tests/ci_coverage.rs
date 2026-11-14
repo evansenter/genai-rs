@@ -17,17 +17,16 @@
 //! the `Api-Revision` value is the one the bindings pin.
 //!
 //! The workflows themselves are guarded in `tests/ci_workflows/`: no nextest
-//! run fails fast, retries are set in `NEXTEST_RETRIES` where the flakiness
-//! report sees them, trybuild's `ui_tests` stay off beta, every scheduled
-//! workflow and every push to main escalates its failures, a PR runs the
-//! Windows leg, the flakiness report reads every retry it claims to count,
-//! Code Coverage writes its summary on every run, and no shell-level mask
-//! or YAML key the guards know lets a guarded step's failure pass, a
-//! required check's or the fuzz run's among them, each read as YAML reads
-//! it. Two
-//! docs facts are guarded in `tests/doc_guards/`: `docs/TESTING.md`'s
-//! test-kind table places every test file under its kind, and every guide
-//! is doctested.
+//! run fails fast, retries are set as `NEXTEST_RETRIES` in a live step's
+//! env, where the log echoes them, trybuild's `ui_tests` stay off beta,
+//! every scheduled workflow and every push to main escalates its failures,
+//! a PR runs the Windows leg, the flakiness report reads every retry it
+//! claims to count, Code Coverage writes its summary on every run, and no
+//! shell-level mask or YAML key the guards know lets a guarded step's
+//! failure pass, a required check's or the fuzz run's among them, each
+//! read as YAML reads it. Two docs facts are guarded in
+//! `tests/doc_guards/`: `docs/TESTING.md`'s test-kind table places every
+//! test file under its kind, and every guide is doctested.
 
 #![allow(
     clippy::unwrap_used,

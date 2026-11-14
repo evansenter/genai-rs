@@ -359,12 +359,17 @@ implementation is answered with an error result, not a failure, so a
 ### Flakes and retries
 
 Every live nextest step sets `NEXTEST_RETRIES: 2` in its env, so a test
-that fails and then passes leaves its job green. Nothing else sets a
-retry, since the report below counts only a live step's: no `--retries`
-flag, no `NEXTEST_RETRIES` on another step, a job or the workflow, in a
-script, through `$GITHUB_ENV` or in a composite action, no other nextest
-config file, and no `retries` key in `.config/nextest.toml`, which every
-run reads (`tests/ci_workflows/` checks each). The example smoke loops retry by
+that fails and then passes leaves its job green. No other retry is
+written, since the report below counts only a live step's: no
+`--retries` flag, no `NEXTEST_RETRIES` on another step, a job or the
+workflow, in a workflow's script or `$GITHUB_ENV` write, or in a
+composite action, no other nextest config file, and no `retries` key in
+`.config/nextest.toml`, which every run reads. `tests/ci_workflows/`
+checks each in the text of the workflows, the composite actions and
+`.config/nextest.toml`; a script a step runs is not read (D-058). The
+report reads only `rust.yml`'s runs, so `release.yml`'s two live steps,
+which retry too, are not counted: their live tests are the ones
+`rust.yml`'s live jobs run. The example smoke loops retry by
 hand, since `cargo run` has none, and print `EXAMPLE_RETRIED <name> <failed
 tries>` when an example passed only on a retry. The daily
 `ci-flakiness-report.yml` reads the retry jobs' logs from every finished run
@@ -603,7 +608,8 @@ The coverage runs before it are held to the same, as are every `run:`
 step of the checks branch protection requires and the fuzz run, which
 Fuzz Gate reads. Fuzz Gate and the path check that decides whether the
 targets run are pinned whole in `tests/ci_workflows/fuzz.rs`, each job's
-keys as YAML reads them and its script by its command lines, so a change
+keys as YAML reads them and its script line by line as written (a `\`
+continuation not joined), comment and blank lines dropped, so a change
 to either is a change to its pin. The script within a `run:` value is read as text,
 against the forms D-058 lists: the guards catch the ways a step is known
 to be weakened, not every way a script can compute its status.
