@@ -24,8 +24,8 @@ use common::http_stub::{Recorded, Reply, Stub, hold_clock};
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, AutoFunctionStreamEvent, CallableFunction, Client, FileUpload,
-    FunctionDeclaration, FunctionFuture, GenaiError, PollOptions, StreamChunk, StreamEvent,
-    ToolService,
+    FunctionDeclaration, FunctionError, FunctionFuture, GenaiError, PollOptions, StreamChunk,
+    StreamEvent, ToolService,
 };
 use serde_json::{Value, json};
 
@@ -1035,6 +1035,82 @@ async fn auto_functions_do_not_resolve_other_namespaces() {
     };
     assert_eq!(execution.name, "other:svc_fn");
     assert!(execution.is_error(), "{execution:?}");
+}
+
+/// An error whose `Display` leaves its cause to `source()`, as
+/// `GenaiError::Http`'s does.
+#[derive(Debug)]
+struct Transport(std::io::Error);
+
+impl std::fmt::Display for Transport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HTTP request error")
+    }
+}
+
+impl std::error::Error for Transport {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+struct TransportFailure;
+
+impl CallableFunction for TransportFailure {
+    fn declaration(&self) -> FunctionDeclaration {
+        FunctionDeclaration::builder("svc_transport_fails")
+            .with_description("fails with a transport error")
+            .build()
+    }
+
+    fn call(&self, _args: Value) -> FunctionFuture<'_> {
+        Box::pin(async move {
+            Err(FunctionError::ExecutionError(Box::new(Transport(
+                std::io::Error::other("connection refused"),
+            ))))
+        })
+    }
+}
+
+struct TransportFailureService;
+
+impl ToolService for TransportFailureService {
+    fn tools(&self) -> Vec<Arc<dyn CallableFunction>> {
+        vec![Arc::new(TransportFailure)]
+    }
+}
+
+/// A failed call sends the model the error and each cause below it
+/// (D-049): with the error's `Display` alone it would read only "HTTP
+/// request error".
+#[tokio::test]
+async fn auto_functions_tell_the_model_every_cause_of_a_failed_call() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            function_call_response("int-1", "call-1", "svc_transport_fails"),
+        ),
+        Reply::json(200, text_response("int-2", "done")),
+    ])
+    .await;
+
+    let result = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(TransportFailureService))
+        .create_with_auto_functions()
+        .await
+        .unwrap();
+
+    let error =
+        json!({"error": "Function execution error: HTTP request error: connection refused"});
+    let [execution] = result.executions.as_slice() else {
+        panic!("expected one execution: {:?}", result.executions);
+    };
+    assert_eq!(execution.result, error);
+    assert_eq!(stub.requests()[1].json()["input"][0]["result"], error);
 }
 
 #[tokio::test]
