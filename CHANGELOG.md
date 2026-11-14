@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-11-13
+## [0.14.0] - 2026-11-14
 
 Tracks the Interactions API as of `google-genai` 3.0.0 (swept 2026-11-07;
 OpenAPI spec snapshot of 2026-11-13) and Antigravity harness 0.1.23
