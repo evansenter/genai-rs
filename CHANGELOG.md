@@ -42,6 +42,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty one. Migration: a pattern on `Complete(response)` becomes
   `Complete { response, .. }`, and a `Complete` you build takes
   `extra: Default::default()` (or a `serde_json::Map` of keys).
+- **Breaking: `AutoFunctionStreamChunk::ExecutingFunctions` has an
+  `extra` field, `ExecutingFunctions { response, pending_calls, extra }`**,
+  holding the unread keys of the `interaction.completed` event of the round
+  that calls the functions, as `Complete`'s holds the final round's
+  (D-054). The auto-function stream dropped them: only the final round's
+  came, on `Complete`, so a loop that ended on `MaxLoopsReached` passed on
+  none. Every round's now comes on its own chunk, the last round's on its
+  `ExecutingFunctions` before `MaxLoopsReached`. The chunk's JSON form
+  writes a non-empty `extra` beside `data` and reads it back; a chunk
+  written by 0.15.0 reads back with an empty one. Migration: a
+  pattern listing `ExecutingFunctions { response, pending_calls }` adds
+  `extra` or `..`, and an `ExecutingFunctions` you build takes
+  `extra: Default::default()` (or a `serde_json::Map` of keys).
 - **A tagged union read with a non-string `type` is typed
   `<non-string: ...>`, not `<missing type>`.** `Step`, `StepDelta`,
   `Content`, `Annotation`, `Tool`, `ResponseFormat`, `TranscriptionMode`,

@@ -296,7 +296,7 @@ while let Some(result) = stream.next().await {
 | `AutoFunctionStreamChunk` | Meaning |
 |---------------------------|---------|
 | `Delta { delta, extra }` | Incremental payload from the model, the same `StepDelta` as basic streaming, with the `step.delta` event's unread keys in `extra` |
-| `ExecutingFunctions { response, pending_calls }` | Calls detected; about to execute |
+| `ExecutingFunctions { response, pending_calls, extra }` | Calls detected; about to execute, with that round's `interaction.completed` unread keys in `extra` |
 | `FunctionResults(Vec<FunctionExecutionResult>)` | Execution finished for this round |
 | `Complete { response, extra }` | Terminal: no more function calls, with that round's `interaction.completed` unread keys in `extra` |
 | `MaxLoopsReached(response)` | Terminal: the round limit was hit |
@@ -305,12 +305,13 @@ while let Some(result) = stream.next().await {
 `ExecutingFunctions` and `FunctionResults` are generated client-side, so
 their `event_id` is always `None`. Only track ids from API events. The loop
 reads a round's lifecycle events itself (`interaction.created`, status
-updates, `step.start`, `step.stop` and `interaction.completed`); a caller
-that wants them, or their `extra`, streams with `create_stream()` instead.
-The `interaction.completed` of the round that ends the loop with no
-function calls is the exception: its interaction and its `extra` come on
-`Complete`. A loop that ends on `MaxLoopsReached` passes on no round's
-completed-event `extra`.
+updates, `step.start` and `step.stop`); a caller that wants them, or their
+`extra`, streams with `create_stream()` instead. Each round's
+`interaction.completed` comes on the loop's verdict on that round: its
+interaction and its `extra` on `ExecutingFunctions` when the round calls
+functions, and on `Complete` when it ends the loop with none. A loop that
+ends on `MaxLoopsReached` ends after a round that called functions, so
+that round's `extra` came on its `ExecutingFunctions`.
 
 To end up with the same `AutoFunctionResult` as the non-streaming call, feed
 every chunk to an accumulator:

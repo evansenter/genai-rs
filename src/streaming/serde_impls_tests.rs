@@ -380,6 +380,7 @@ fn test_executing_functions_new_format_roundtrip() {
                 args: json!({"b": 2}),
             },
         ],
+        extra: Default::default(),
     };
 
     let json_str = serde_json::to_string(&chunk).expect("Serialization should succeed");
@@ -394,12 +395,96 @@ fn test_executing_functions_new_format_roundtrip() {
         AutoFunctionStreamChunk::ExecutingFunctions {
             response,
             pending_calls,
+            extra,
         } => {
             assert_eq!(response.id.as_deref(), Some("interaction-new"));
             assert_eq!(pending_calls.len(), 2);
             assert_eq!(pending_calls[0].name, "func1");
             assert_eq!(pending_calls[1].name, "func2");
+            assert!(extra.is_empty());
         }
         _ => panic!("Expected ExecutingFunctions variant"),
     }
+}
+
+/// A function-calling round's `extra`, its `interaction.completed` event's
+/// unread keys, is written beside `data` and read back; an empty one is not
+/// written, and a map without one (0.15.0's) reads back with an empty one.
+#[test]
+fn an_executing_functions_chunk_keeps_its_extra() {
+    let mut extra = serde_json::Map::new();
+    extra.insert("future_key".to_string(), json!({"nested": [1, "two"]}));
+    let response = InteractionResponse {
+        id: Some("int-1".to_string()),
+        status: crate::InteractionStatus::RequiresAction,
+        ..Default::default()
+    };
+    let pending_calls = vec![OwnedFunctionCallInfo {
+        id: "call-1".to_string(),
+        name: "get_weather".to_string(),
+        args: json!({"city": "Tokyo"}),
+    }];
+    let chunk = AutoFunctionStreamChunk::ExecutingFunctions {
+        response: Box::new(response.clone()),
+        pending_calls: pending_calls.clone(),
+        extra: extra.clone(),
+    };
+
+    let value = serde_json::to_value(&chunk).unwrap();
+    assert_eq!(value["chunk_type"], "executing_functions");
+    assert_eq!(value["data"]["response"]["id"], "int-1");
+    assert_eq!(value["data"]["pending_calls"][0]["name"], "get_weather");
+    assert_eq!(
+        value["extra"],
+        json!({"future_key": {"nested": [1, "two"]}})
+    );
+    let AutoFunctionStreamChunk::ExecutingFunctions {
+        response: read_response,
+        pending_calls: read_calls,
+        extra: read,
+    } = serde_json::from_value(value.clone()).unwrap()
+    else {
+        panic!("expected an ExecutingFunctions");
+    };
+    assert_eq!(read, extra);
+    assert_eq!(read_response.id.as_deref(), Some("int-1"));
+    assert_eq!(read_calls, pending_calls);
+    // And the written form again, unchanged.
+    assert_eq!(
+        serde_json::to_value(AutoFunctionStreamChunk::ExecutingFunctions {
+            response: read_response,
+            pending_calls: read_calls,
+            extra: read,
+        })
+        .unwrap(),
+        value
+    );
+
+    let empty = AutoFunctionStreamChunk::ExecutingFunctions {
+        response: Box::new(response),
+        pending_calls,
+        extra: Default::default(),
+    };
+    let value = serde_json::to_value(&empty).unwrap();
+    assert!(value.get("extra").is_none(), "{value}");
+
+    // The form 0.15.0 wrote: `data` alone, no `extra`.
+    let old = json!({
+        "chunk_type": "executing_functions",
+        "data": {
+            "response": {"id": "int-1", "status": "requires_action"},
+            "pending_calls": [{"id": "call-1", "name": "get_weather", "args": {"city": "Tokyo"}}]
+        }
+    });
+    let AutoFunctionStreamChunk::ExecutingFunctions {
+        response,
+        pending_calls,
+        extra: read,
+    } = serde_json::from_value(old).unwrap()
+    else {
+        panic!("expected an ExecutingFunctions");
+    };
+    assert!(read.is_empty());
+    assert_eq!(response.id.as_deref(), Some("int-1"));
+    assert_eq!(pending_calls[0].name, "get_weather");
 }

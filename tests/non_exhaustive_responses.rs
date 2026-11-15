@@ -327,10 +327,6 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
         "the bare mode string (`\"auto\"`), which has no fields",
     ),
     (
-        "src/streaming.rs:AutoFunctionStreamChunk::ExecutingFunctions",
-        ROUND_VERDICT,
-    ),
-    (
         "src/streaming.rs:AutoFunctionStreamChunk::FunctionResults",
         LOOP_MADE,
     ),
@@ -359,20 +355,13 @@ const VARIANTS_WITHOUT_EXTRA: &[(&str, &str)] = &[
 ];
 
 /// Why an auto-function chunk with no SSE event behind it keeps no `extra`.
+/// The chunks built from a round's events keep theirs: `Delta` its
+/// `step.delta` event's, and `ExecutingFunctions` and `Complete` the round's
+/// `interaction.completed` keys (D-054).
 const LOOP_MADE: &str = "made by the auto-function loop, with no SSE event behind it: the \
-     loop's executions, or its verdict once the rounds run out; the results and the response \
-     inside keep their own `extra`";
-
-/// Why the loop's verdict on a round that calls functions keeps no
-/// `extra`. `Delta`, passed on from a `step.delta` event, keeps that
-/// event's, and `Complete` the final round's `interaction.completed` keys
-/// (D-054).
-const ROUND_VERDICT: &str = "the loop's verdict on a round's `interaction.completed` event \
-     when the round calls functions: the interaction keeps its own `extra`, but the keys \
-     beside it in the event reach `execute_stream()` only. A scope line, not a principle: \
-     the map is empty on every event the API sends today, as `step.delta`'s is, and \
-     carrying it would make this variant take an `extra` too, a breaking change the owner \
-     asked for on `Complete` alone (D-034, D-054)";
+     loop's executions, or its verdict once the rounds run out, whose last round's \
+     `interaction.completed` keys came on that round's `ExecutingFunctions`; the results and \
+     the response inside keep their own `extra`";
 
 /// Why an `InputEvent` arm keeps no `extra`.
 const INPUT_EVENT: &str = "an arm of the `InputEvent` oneof, `{\"<arm>\": payload}`, which \

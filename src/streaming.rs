@@ -60,14 +60,17 @@ mod serde_impls;
 /// when the model returns a response without function calls. A round's SSE
 /// event of a type this crate does not recognize is passed on as
 /// [`Unknown`](Self::Unknown); the round's other lifecycle events
-/// (`interaction.created`, `status_update`, `step.start`, `step.stop`,
-/// `interaction.completed`) are the loop's to read, and reach a caller of
-/// [`execute_stream()`](crate::Client::execute_stream) only. The
-/// `interaction.completed` of the round that ends the loop with no function
-/// calls is the one exception: its interaction and the keys beside it that
-/// the crate does not read come on [`Complete`](Self::Complete). A loop that
-/// ends on [`MaxLoopsReached`](Self::MaxLoopsReached) passes on no round's
-/// completed-event keys.
+/// (`interaction.created`, `status_update`, `step.start`, `step.stop`) are
+/// the loop's to read, and reach a caller of
+/// [`execute_stream()`](crate::Client::execute_stream) only. Each round's
+/// `interaction.completed` is passed on in the loop's verdict on it: its
+/// interaction and the keys beside it that the crate does not read come on
+/// [`ExecutingFunctions`](Self::ExecutingFunctions) when the round calls
+/// functions, and on [`Complete`](Self::Complete) when it ends the loop
+/// with none. A loop that ends on
+/// [`MaxLoopsReached`](Self::MaxLoopsReached) ends after a round that
+/// called functions, so that round's keys came on its
+/// `ExecutingFunctions`.
 ///
 /// # Forward Compatibility
 ///
@@ -109,12 +112,18 @@ pub enum AutoFunctionStreamChunk {
     /// so `response.function_calls()` holds them too, along with any call a
     /// server-run tool already answered.
     ExecutingFunctions {
-        /// The round's response, its steps assembled from the stream. Boxed,
-        /// so that a `Delta` chunk stays small (#490).
+        /// The round's response: the
+        /// [`StreamChunk::Completed`](crate::StreamChunk::Completed)
+        /// `interaction`, its steps assembled from the stream. Boxed, so
+        /// that a `Delta` chunk stays small (#490).
         response: Box<InteractionResponse>,
         /// The function calls about to be executed: the response's calls
         /// with no result in it, never empty.
         pending_calls: Vec<OwnedFunctionCallInfo>,
+        /// That round's `interaction.completed` event's keys the crate
+        /// does not read, as [`StreamChunk::extra`](crate::StreamChunk::extra)
+        /// holds them. Empty for every event the API sends today.
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Function execution completed with results.
@@ -147,6 +156,9 @@ pub enum AutoFunctionStreamChunk {
     /// The response contains the last response from the model, which likely still
     /// contains pending function calls. Use [`AutoFunctionResultAccumulator`] to
     /// collect all function execution results from prior `FunctionResults` chunks.
+    /// The loop makes this chunk with no SSE event behind it: the last
+    /// round's `interaction.completed` keys came on that round's
+    /// [`ExecutingFunctions`](Self::ExecutingFunctions).
     ///
     /// This allows debugging why the model is stuck in a loop while preserving
     /// all partial results.
