@@ -379,8 +379,8 @@ impl<'a> InteractionBuilder<'a> {
                         // whole. The tail is read below, outside the
                         // per-chunk timeout, which must not fail a finished
                         // round. The event's unread keys go on the round's
-                        // ExecutingFunctions, or on Complete if it is the
-                        // last.
+                        // ExecutingFunctions if it calls functions, or on
+                        // Complete if it calls none.
                         StreamChunk::Completed { interaction, extra } => {
                             completed = Some((*interaction, extra));
                             break;

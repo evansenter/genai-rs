@@ -2366,8 +2366,8 @@ ends on such a round, so it passes on no completed-event keys.
 *Amended 2026-11-15 (0.16 breaking batch).* The owner asked for that
 round's keys too. `AutoFunctionStreamChunk::ExecutingFunctions` gains an
 `extra`, and the loop moves a round's `StreamChunk::Completed` `extra` into
-it when the round calls functions, as it moves the final round's into
-`Complete`. Its `{chunk_type, data}` form writes a non-empty `extra` beside
+it when the round calls functions, as it moves the keys of the round that
+ends the loop with no function calls into `Complete`. Its `{chunk_type, data}` form writes a non-empty `extra` beside
 `data` and reads it back, and a 0.15.0 log reads back with an empty one. The
 guard's `ExecutingFunctions` row and its `ROUND_VERDICT` reason are gone.
 The amendment above no longer holds where it says that round's keys reach
