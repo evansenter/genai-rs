@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Files::upload_as(name, upload)` uploads under a name you choose**, a
+  full `files/<id>` (google-genai's `files.upload(config={"name": ...})`).
+  The file is served under that name, and a second upload under a name in
+  use fails with a 409 (`GenaiError::Api`, its message starting
+  `ALREADY_EXISTS`, not retryable) instead of making a second file, so a
+  retry after a lost response cannot leave a duplicate. The ID takes up to
+  40 lowercase letters, digits and dashes; a name that is not `files/<id>`,
+  or a longer ID, fails with `GenaiError::InvalidInput` before any request
+  (#539, D-039; the "A chosen name" section of `docs/MULTIMODAL.md`).
+
 ### Changed
 
 - **Breaking: `FunctionError::ExecutionError`'s `Display` is `Function

@@ -69,7 +69,7 @@ clean exit means it worked. A cheap subset is smoke-run in CI
 | `audio_input` | Speech-to-text on `DEFAULT_TRANSCRIPTION_MODEL`: `TranscriptionConfig` word timings (verbatim mode) and `source_text` (smart mode), on speech from `DEFAULT_TTS_MODEL` |
 | `video_input` | Inline video; `VideoProcessing::segment()` to clip the window and frame rate |
 | `pdf_input` | PDFs via `document_data`; a `.txt` file via `document_from_file` (sent as text) |
-| `files_api` | `files().upload(FileUpload::from_path(..))`, `wait_until_active`, `Content::from_file`, list (one page and `items()`), get, delete, `FileUpload::from_bytes` |
+| `files_api` | `files().upload(FileUpload::from_path(..))`, `wait_until_active`, `Content::from_file`, list (one page and `items()`), get, delete, `FileUpload::from_bytes`, `upload_as` (a chosen name, and the 409 for a second upload under it) |
 
 ## Output
 

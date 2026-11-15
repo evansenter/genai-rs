@@ -24,6 +24,7 @@ use crate::file_search_stores::{
     WhiteSpaceConfig,
 };
 use crate::http::file_search_stores::{ImportFileBody, UploadDocumentBody};
+use crate::http::files::UploadFileBody;
 use crate::http::webhooks::WebhookInput;
 use crate::request::{
     AgentConfig, AntigravityConfig, CodeMenderConfig, DeepResearchConfig, DynamicConfig,
@@ -722,6 +723,17 @@ fn document_options() -> DocumentOptions {
             extra: serde_json::Map::new(),
         }),
     }
+}
+
+/// The settings a Files API upload's start request sends, as the `file`
+/// object of its body: the chosen name of `Files::upload_as` and the display
+/// name. (`tests/request_wire_oracle.rs` checks the whole body, wrapping
+/// included, against `legacy.File`.)
+pub(super) fn file_uploads() -> Vec<Value> {
+    vec![to_value(&UploadFileBody {
+        name: Some("files/q4-report"),
+        display_name: Some("Q4 report"),
+    })]
 }
 
 /// The JSON that starts a document upload.

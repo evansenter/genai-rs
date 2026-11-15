@@ -5,6 +5,11 @@
 //! it expires (48 hours) or you delete it. `FileUpload::from_path` streams
 //! from disk, so a large file is never loaded into memory.
 //!
+//! `upload_as` uploads under a name you choose (`files/<id>`, the ID up to
+//! 40 lowercase letters, digits and dashes). A second upload under a name in
+//! use is a 409, so retrying an upload whose response was lost cannot leave
+//! a duplicate file.
+//!
 //! Run with: `cargo run --example files_api`
 
 #![allow(
@@ -14,10 +19,10 @@
 )]
 
 use futures_util::TryStreamExt;
-use genai_rs::{Client, Content, FileMetadata, FileUpload, PollOptions};
+use genai_rs::{Client, Content, FileMetadata, FileUpload, GenaiError, PollOptions};
 use std::env;
 use std::error::Error;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const NOTES: &str = "\
 Ferrymead Engineering release notes, v4.2
@@ -47,16 +52,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Deleted {}", file.name);
     result?;
 
-    // Bytes already in memory can skip the filesystem.
-    let bytes_file = client
-        .files()
-        .upload(
-            FileUpload::from_bytes(NOTES.as_bytes().to_vec(), "text/plain")
-                .with_display_name("notes-from-memory.txt"),
-        )
-        .await?;
-    println!("\nUploaded from memory: {}", bytes_file.name);
-    client.files().delete(&bytes_file.name).await?;
+    // Bytes already in memory can skip the filesystem. This upload chooses
+    // its name, unique per run, so trying it twice cannot make two files.
+    let name = format!(
+        "files/release-notes-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    );
+    let upload = || {
+        FileUpload::from_bytes(NOTES.as_bytes().to_vec(), "text/plain")
+            .with_display_name("notes-from-memory.txt")
+    };
+    let named = client.files().upload_as(&name, upload()).await?;
+    println!("\nUploaded from memory as {}", named.name);
+    let retry = client.files().upload_as(&name, upload()).await;
+    client.files().delete(&name).await?;
+    println!("Deleted {name}");
+
+    if named.name != name {
+        return Err(format!("asked for {name}, got {}", named.name).into());
+    }
+    match retry {
+        Err(GenaiError::Api {
+            status_code: 409,
+            message,
+            ..
+        }) => println!("A second upload as {name}: 409 {message}"),
+        other => return Err(format!("expected a 409 for the second upload, got {other:?}").into()),
+    }
 
     Ok(())
 }

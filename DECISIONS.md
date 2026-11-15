@@ -1440,7 +1440,7 @@ non-string value now returns `<non-string: 7>`, not `7`, and
 `drift_report` keys it the same way. The enum guard checks both macros'
 templates for `#[non_exhaustive]` and an `Unknown` variant.
 
-## D-039 — A chosen Files API upload name stays unmodeled (2026-11-07)
+## D-039 — A chosen Files API upload name stays unmodeled (2026-11-07, superseded 2026-11-14)
 
 **Context.** google-genai's `files.upload(config={"name": ...})` sends a
 chosen `files/<id>` in the upload's start request. Probed live on
@@ -1465,7 +1465,36 @@ today.
 choose the name; a retry after a lost upload response can leave a duplicate
 file, which expires after 48 hours. `legacy.UploadFileConfig` is in the
 coverage oracle's `UNMAPPED` list with this reason, so modeling the name
-means removing that entry (tracked in #539).
+means removing that entry, as the amendment below did (#539).
+
+**Amended 2026-11-14 (#539).** Superseded: the owner chose to model the
+name, and the shape is a separate verb, `Files::upload_as(name, upload)`,
+not a wrapper. Re-probed live (docs/INTERACTIONS_API_GAP.md, Files): the
+file is served under the chosen name, and a second upload under it fails at
+finalize with `409 ALREADY_EXISTS`, which a caller sees as
+`GenaiError::Api` with status 409, not retryable. The verb fits better than
+an `impl Into<...>` wrapper for four reasons. The name is the one setting
+the wrapper would add, and it is what the verb is for, so D-016 makes it a
+positional argument; a wrapper would be a second upload type beside
+`FileUpload`, hard to name apart from it, carrying one optional field.
+`EnvironmentFiles::upload(environment_id, path, upload)` already takes the
+chosen location of what it creates positionally, and `force_delete` is the
+precedent for a Python config option with behavior of its own becoming a
+verb. `Files::upload` keeps its signature, so the change is additive and
+every existing `docs/RESOURCES.md` row stands. And the 409 contract is the
+verb's, documented on it, and the live-per-handle guard holds it to a live
+test of its own (`tests/files_api_tests.rs`), which is what #539 asked for.
+The name is a full `files/<id>`, checked locally as every Files method's
+is; Python's bare-ID shorthand is not taken. The crate also rejects an ID
+over 40 characters before any request, since the API accepts one at the
+start request and fails it at finalize, after the bytes are sent, with an
+unexplained `400 Failed to create file.`; the API's character rule
+(lowercase letters, digits and dashes, no dash first or last) is left to
+the API, which enforces it at the start request with a 400 that states it.
+The coverage oracle checks the start request's `file` object against
+`legacy.UploadFileConfig` (a `FileUpload` case), so the class left
+`UNMAPPED`; its `mimeType`, which the crate sends as the session's
+`X-Goog-Upload-Header-Content-Type` header, is a reasoned `NOT_SENT` entry.
 
 ## D-040 — The bindings snapshot carries query parameters, the legacy endpoints and the Api-Revision (2026-11-07)
 
