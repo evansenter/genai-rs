@@ -489,6 +489,19 @@ implementation module `src/steps/mod.rs` at 774, the largest test file
 `tests/antigravity_harness.rs` at 1,808), so it has no allowlist; a file
 that must stay over would need an entry there with its reason.
 
+**And the voices create request (2026-11-14).** Hand-writing
+`VoiceSpec`'s redacting `Debug` (D-067's 2026-11-14 amendment) took
+`src/voices.rs` to 818 lines before its tests, so its create request moved
+out, a pure move with public paths unchanged (`genai_rs::voices::*`
+re-exports it):
+
+| From | To |
+|------|----|
+| `VoiceSpec`, `ReplicatedVoice` and `CreateVoiceRequest` in `src/voices.rs` | `src/voices/create.rs` |
+
+Counted before any `#[cfg(test)]` module: `src/voices.rs` 575 lines,
+`src/voices/create.rs` 252.
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)
