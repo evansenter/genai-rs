@@ -548,11 +548,7 @@ impl<'de> Deserialize<'de> for Answer {
         match Fallback::read(&value, read_known_answer) {
             Ok(answer) => Ok(answer),
             Err(fallback) => {
-                let answer_type = value
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                let answer_type = crate::wire_enum::unknown_tag(&value);
                 tracing::warn!(
                     "Keeping a decision answer whole in Answer::Unknown: {} (Evergreen)",
                     fallback.describe("Answer", &answer_type)

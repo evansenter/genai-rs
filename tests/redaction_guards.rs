@@ -431,19 +431,14 @@ fn the_wire_lists_are_read() {
 /// Hand-written `Debug` impls the destructure check reads that do not
 /// destructure, by type, each with the reason. One that destructures, or
 /// is no longer read, fails the check until it leaves the list.
-const NOT_DESTRUCTURED: &[(&str, &str)] = &[(
-    "InteractionBuilder",
-    "redacts nothing itself: it prints its tools and environment, whose `Debug` redacts, \
-     through `self`. How its own `extra` prints is the owner's open call, and its `Debug` \
-     is rewritten with it",
-)];
+const NOT_DESTRUCTURED: &[(&str, &str)] = &[];
 
 #[test]
 fn a_redacting_debug_destructures_its_type() {
     let sources = source_scan::library_sources();
     let read = read_debugs(&sources);
     let redacting = read.iter().filter(|debug| debug.redacts).count();
-    // Twenty-five impls redact today; fewer than twenty means the scan
+    // Thirty-one impls redact today; fewer than twenty means the scan
     // stopped finding them.
     assert!(
         redacting >= 20,

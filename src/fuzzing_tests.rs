@@ -81,12 +81,14 @@ fn regression_unknown_event_named_like_a_known_chunk_type() {
 }
 
 /// `step`, `step_delta` and `content`, 2026-11-04, once the check compared
-/// the first read with the second: an input with no string `type` (here a
-/// bare number) reads as `Unknown` tagged `"<missing type>"`, and the write
-/// puts that tag in its data. Intended (pinned in `tools_tests.rs`,
-/// `annotation_tests.rs` and `serialize_tests.rs`), so [`Normalize`]
-/// expects it, at the top level and nested. (Under `genai_strict_unknown` these
-/// inputs don't parse, and the targets skip them.)
+/// the first read with the second: an input with no `type` (here a bare
+/// number) reads as `Unknown` tagged `"<missing type>"`, one whose `type` is
+/// not a string as `Unknown` tagged `"<non-string: ...>"` (D-075), and the
+/// write puts that tag in its data. Intended (pinned in `tools_tests.rs`,
+/// `annotation_tests.rs`, `serialize_tests.rs` and
+/// `tests/unknown_variant_tests.rs`), so [`Normalize`] expects it, at the
+/// top level and nested. (Under `genai_strict_unknown` these inputs don't
+/// parse, and the targets skip them.)
 #[cfg(not(genai_strict_unknown))]
 #[test]
 fn regression_typeless_input_is_tagged_missing_type() {
@@ -98,6 +100,15 @@ fn regression_typeless_input_is_tagged_missing_type() {
         normalized_round_trip::<StepDelta>(json);
         normalized_round_trip::<Content>(json);
     }
+    // The tag each is given, and writes back.
+    let non_string: Step = serde_json::from_str(r#"{"type":5,"x":1}"#).unwrap();
+    assert_eq!(non_string.unknown_step_type(), Some("<non-string: 5>"));
+    assert_eq!(
+        serde_json::to_string(&non_string).unwrap(),
+        r#"{"type":"<non-string: 5>","x":1}"#
+    );
+    let missing: Step = serde_json::from_str("0").unwrap();
+    assert_eq!(missing.unknown_step_type(), Some("<missing type>"));
     normalized_round_trip::<Step>(r#"{"type":"model_output","content":[{"text":"no type"}]}"#);
     // 2026-11-13, when the property tests first compared a step's first
     // write: a code execution result's content blocks, which `Normalize`

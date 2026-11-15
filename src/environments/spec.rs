@@ -643,9 +643,10 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
 ///     .into();
 /// ```
 ///
-/// `Debug` prints an `Unknown` spec's JSON through the wire's redaction, so
-/// an environment variable's value in it prints as `[REDACTED]`, as it does
-/// in a remote environment's.
+/// `Debug` prints an `Unknown` spec's JSON with every string `[REDACTED]`
+/// and its keys kept, as a remote environment's unread `env` prints. A type
+/// that describes that JSON (`<non-string: ...>`, `<unrecognized: ...>`)
+/// prints as described from the redacted JSON.
 #[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub enum EnvironmentSpec {
@@ -670,12 +671,33 @@ impl std::fmt::Debug for EnvironmentSpec {
             Self::Unknown {
                 environment_type,
                 data,
-            } => f
-                .debug_struct("Unknown")
-                .field("environment_type", environment_type)
-                .field("data", &redact::json(data))
-                .finish(),
+            } => {
+                let printed = redact::json_strings(data);
+                let describes = !data["type"].is_string() && *environment_type == spec_type(data);
+                let printed_type = if describes {
+                    spec_type(&printed)
+                } else {
+                    environment_type.clone()
+                };
+                f.debug_struct("Unknown")
+                    .field("environment_type", &printed_type)
+                    .field("data", &printed)
+                    .finish()
+            }
         }
+    }
+}
+
+/// The type an environment is read with from `value`: `"remote"` for an
+/// object with no `type` (or a `null` one), an object's string `type`, a
+/// non-string one as `wire_enum!` types it (D-001), and `<unrecognized:
+/// ...>` for JSON that is neither an object nor a string.
+fn spec_type(value: &serde_json::Value) -> String {
+    match value.get("type") {
+        _ if !value.is_object() => format!("<unrecognized: {value}>"),
+        None | Some(serde_json::Value::Null) => "remote".to_string(),
+        Some(serde_json::Value::String(t)) => t.clone(),
+        Some(other) => crate::wire_enum::non_string_descriptor(other),
     }
 }
 
@@ -744,56 +766,31 @@ impl<'de> Deserialize<'de> for EnvironmentSpec {
         D: Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        match &value {
-            serde_json::Value::String(id) => Ok(Self::Id(id.clone())),
-            serde_json::Value::Object(obj) => {
-                // Only a missing (or null) `type` reads as "remote". Any other
-                // non-string one is an unrecognized type, typed as `wire_enum!`
-                // types it and kept whole, so it is written back as it came
-                // (D-001).
-                let env_type = match obj.get("type") {
-                    None | Some(serde_json::Value::Null) => "remote".to_string(),
-                    Some(serde_json::Value::String(t)) => t.clone(),
-                    Some(other) => crate::wire_enum::non_string_descriptor(other),
-                };
-                if env_type == "remote" {
-                    match serde_json::from_value::<RemoteEnvironment>(value.clone()) {
-                        Ok(env) => Ok(Self::Remote(env)),
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to parse remote environment: {}. \
-                                 Preserving in Unknown variant.",
-                                e
-                            );
-                            Ok(Self::Unknown {
-                                environment_type: "remote".to_string(),
-                                data: value,
-                            })
-                        }
-                    }
-                } else {
-                    tracing::warn!(
-                        "Encountered unknown EnvironmentSpec type '{}' - using Unknown variant (Evergreen)",
-                        env_type
-                    );
-                    Ok(Self::Unknown {
-                        environment_type: env_type,
-                        data: value,
-                    })
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    "Encountered unknown EnvironmentSpec shape: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    environment_type: format!("<unrecognized: {value}>"),
-                    data: value,
-                })
-            }
+        if let serde_json::Value::String(id) = &value {
+            return Ok(Self::Id(id.clone()));
         }
+        // Only an object whose `type` is "remote", missing or null reads as
+        // remote. Anything else, a non-string `type` included, is kept whole,
+        // so it is written back as it came (D-001).
+        let environment_type = spec_type(&value);
+        if environment_type == "remote" {
+            match serde_json::from_value::<RemoteEnvironment>(value.clone()) {
+                Ok(env) => return Ok(Self::Remote(env)),
+                Err(e) => tracing::warn!(
+                    "Failed to parse remote environment: {}. Preserving in Unknown variant.",
+                    e
+                ),
+            }
+        } else {
+            tracing::warn!(
+                "Encountered unknown EnvironmentSpec type '{}' - using Unknown variant (Evergreen)",
+                environment_type
+            );
+        }
+        Ok(Self::Unknown {
+            environment_type,
+            data: value,
+        })
     }
 }
 

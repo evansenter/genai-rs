@@ -489,6 +489,19 @@ implementation module `src/steps/mod.rs` at 774, the largest test file
 `tests/antigravity_harness.rs` at 1,808), so it has no allowlist; a file
 that must stay over would need an entry there with its reason.
 
+**And the voices create request (2026-11-14).** Hand-writing
+`VoiceSpec`'s redacting `Debug` (D-067's 2026-11-14 amendment) took
+`src/voices.rs` to 818 lines before its tests, so its create request moved
+out, a pure move with public paths unchanged (`genai_rs::voices::*`
+re-exports it):
+
+| From | To |
+|------|----|
+| `VoiceSpec`, `ReplicatedVoice` and `CreateVoiceRequest` in `src/voices.rs` | `src/voices/create.rs` |
+
+Counted before any `#[cfg(test)]` module: `src/voices.rs` 575 lines,
+`src/voices/create.rs` 252.
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)
@@ -2097,6 +2110,10 @@ closed issue or none, and makes no `gh` call but the issue lookups. Only
 The sweep passes it, `tests/ci_workflows/sweep.rs` pins that command, and
 the script's harness asserts that a bare run writes nothing.
 
+**Amended 2026-11-14.** The owner keeps a bare "#N item M" a provenance
+tag, not a pointer, and `check_issue_pointers.sh` leaves it unmatched: a
+pointer to an item says "tracked in #N item M".
+
 ## D-052 — A live test does not retry a known flake inside itself (2026-11-07)
 
 **Context.** D-046 made the flakiness report fail on any test that needs a
@@ -2753,6 +2770,13 @@ guarded command can run another program from outside the script text: a
 required check's test step is held to its masks, not to its command, so
 an `--exclude` on it passes.
 
+**Amended 2026-11-14.** The owner keeps two things as they are. The
+flakiness report does not count `release.yml`'s live retries (the retry
+bullet above, and `docs/TESTING.md`): their tests are the ones `rust.yml`'s
+live jobs run, whose retries it counts. And a required check's test
+command is not pinned against a flag such as `--exclude` (the second limit
+above): a stated limit, not a gap to close.
+
 ## D-059 — Two docs guards, and every Rust block compiled or explained (2026-11-08)
 
 **Context.** #504's final grade put Docs at A-: five contradictions and
@@ -3025,6 +3049,10 @@ the builder has no setter for it, and the gap tracker records a re-probe
 on this date that found `parent` still ignored. Should a later probe find
 the API honoring it, a setter comes back with that probe's test.
 
+**Amended 2026-11-14.** No probe of whether the endpoints take an access
+token is made unless OAuth support is wanted: the owner's decision, which
+keeps the API key the crate's one credential, as above.
+
 ## D-061 — The request oracle builds no value through a constructor, and checks request-only enumeration values (2026-11-09)
 
 **Context.** #504's 2026-11-08 grade found three holes in the request side
@@ -3230,6 +3258,13 @@ the bare close, the failed halt, the drain after a timeout, and the
 refusal of each of `chat`, `send_streaming` and `next_trigger_turn`
 (K-2), which no test held beyond `chat`'s.
 
+**Amended 2026-11-14.** The owner keeps two behaviors as they are. A
+session-start hook that overruns its budget stays `InitFailed` with no
+source, not `Timeout` (the J-10 amendment). And the first `chat` or
+`send_streaming` after a session end the client never saw sends the
+drain's one `haltRequest` before it refuses (the K-3 amendment): a halt
+into a session that has ended is harmless, and is accepted.
+
 ---
 
 ## D-063 — A harness path the caller names is used as given (2026-11-09)
@@ -3328,6 +3363,10 @@ helpers: `optional`, `values` for a header or environment map, `json`,
 `AgentBuilder`'s `Debug` destructures it too. `tests/redaction_guards.rs`
 fails on a placeholder spelled anywhere else in the library's non-test
 code, a doc comment aside.
+
+**Amended 2026-11-14.** A `type` makes a value under `properties` a schema
+only when it names a JSON Schema type (or lists such names); D-067's
+amendment of that date (#578).
 
 ---
 
@@ -3578,9 +3617,66 @@ reads its type with a `..` rest, a catch-all arm (`_`, a binding such as
 pattern with `..` and drops two fields fails it, and so do a `Tool` arm
 turned into `_other =>` and a `Client` `Debug` that uses `..`. Patterns
 inside a macro's arguments are not read. `InteractionBuilder`'s `Debug`,
-which holds `Client` and the tools and reads its fields through `self`, is
-listed as an exception until the owner decides how its `extra` prints.
+which holds `Client` and the tools and reads its fields through `self`, was
+listed as an exception until the owner decided how its `extra` prints; it
+destructures since (the amendment below).
 Omission is the safe direction, so this holds the convention, not a leak.
+
+**Amended 2026-11-14 (#555 item 3, #578).** The owner settled the calls
+this decision left open, and a leak in the walk's schema exemption closed:
+- A replicated voice's `key` is a secret: it works as a voice name in any
+  request. It was listed above among the values printed as they are. The
+  wire's walk redacts it by value, not by name. A string that starts with
+  `voicekey_` (`VOICE_KEY_PREFIX`), the prefix the API reads a voice name
+  with as a key (`docs/INTERACTIONS_API_GAP.md`, Models), prints as
+  `[REDACTED]` wherever it appears, under any key, in a list or as a whole
+  body. A name rule could not do it: `key` is too common a name to redact
+  everywhere (a function's arguments, a schema's properties), and a request
+  sends the key under `voice`, beside prebuilt names that are no secret,
+  and under a prompted voice's `base_voice`, which the API reads as a key
+  too (and refuses). `Voice`'s `Debug` is hand-written, printing `key`
+  through `redact::optional` and `extra` through `redact::map`, and so are
+  `SpeechConfig`'s and `PromptedVoice`'s, whose voice and base voice print
+  redacted when one is a key (`redact::voice_name`, on the same prefix);
+  each has its row in the sentinel test, `PromptedVoice` through a
+  `CreateVoiceRequest` and a `Voice`'s `prompted` echo. A URL is not
+  walked: the voice verbs take a stored voice's id, which a key is not.
+  `tests/redaction_guards.rs` reads names, not values, so a new type that
+  holds a key under another name needs its row, as any other does.
+- `InteractionBuilder`'s and `InteractionRequest`'s `Debug` print the
+  request-side `extra` through `redact::map`, as the other impls here print
+  theirs. `InteractionRequest`'s `Debug` is hand-written for it, and
+  `InteractionBuilder`'s destructures its type, so `NOT_DESTRUCTURED` is
+  empty. `InteractionResponse`'s and every other derived `extra` still print
+  as they are, for the reason above.
+- An unknown `EnvironmentSpec`'s JSON prints with every string redacted
+  (`redact::json_strings`), its keys kept, as `RemoteEnvironment`'s unread
+  `env` does: both are environment JSON the crate could not read, where a
+  value cannot be told from a name, and the stricter rule now holds for
+  both (it printed through the wire's walk, which redacts only the names it
+  knows). `LOUD_WIRE` has no such split: its walk reads names and never
+  knows whether the crate read the JSON, so it treats both alike (an
+  `env`'s string entries, a `value` beneath an `env` or beside `"type":
+  "environment_variable"`, and the names on its lists). A strict `env` on
+  the wire would hide the credential IDs that the wire and a read `EnvVar`'s
+  `Debug` both print. The promise runs one way, `Debug` redacting at least
+  what the wire does, and holds. An unknown spec's type that describes its
+  JSON (`<non-string: ...>` for an object whose `type` is not a string,
+  `<unrecognized: ...>` for JSON that is not an object) prints described
+  from the redacted JSON, so no string of it prints there either; a type
+  name prints as it is.
+- Under `properties` beside `"type": "object"`, the walk read a value as a
+  schema whenever it held a `SCHEMA_KEYWORDS` key, `type` with any value, so
+  `{"type": "object", "properties": {"token": {"type": "bearer", "value":
+  ...}}}` printed the credential. A `type` counts now only when it names a
+  JSON Schema type (`SCHEMA_TYPES`: `string`, `number`, `integer`,
+  `boolean`, `object`, `array`, `null`, ignoring case, since Gemini's
+  `Schema` writes `"STRING"`) or is a non-empty list of them; the other
+  keywords count as they did. The `"type": "object"` beside the map still
+  matches ignoring case, and
+  `test_redact_fields_leaves_a_schemas_property_names_alone` now holds an
+  upper-case `"OBJECT"` schema whose `api_key` property keeps its schema, so
+  a case-sensitive match fails it (#578).
 
 ## D-068 — The guards share one source walker and one handle discovery, in `tests/common/source_scan.rs` (2026-11-09)
 
@@ -3951,6 +4047,11 @@ has an `antigravity` feature, which only its harness target requires
 documents it and adds it to its normalizer in `src/fuzzing_wire.rs`, or the
 target fails on it.
 
+**Amended 2026-11-14 (D-075).** A tagged union's `type` that is not a
+string becomes `"<non-string: ...>"` now; only a missing (or `null`) one
+becomes `"<missing type>"`. Either way the tag is written into the data, and
+the check follows it as before.
+
 ## D-071 — Two normalizations stay, documented: a single input object, and an `f32` beyond its range (2026-11-10)
 
 **Context.** The audit found two more first-read changes. `InteractionInput`
@@ -3983,7 +4084,8 @@ that JSON through the wire's redaction (`redact::json`), as `Tool`'s does
 an unknown tool's, so an `env` value in such an object still prints as
 `[REDACTED]`, as it did when the object read as remote (amended at the
 Wave J merge, D-067); the API has not been seen to send a non-string
-`type`.
+`type`. (Amended 2026-11-14: it prints every string redacted now, as an
+unread `env` does; D-067's amendment of that date.)
 
 And for `AllowlistEntry`: an empty `domain` is not written, so an entry
 read with `"domain": ""` is written back without it, as one read without a
@@ -4121,3 +4223,47 @@ second decision model, or `DEFAULT_DECISION_MODEL`'s retirement, is a
 one-line change to the constant. The resource answers 404 on `/v1`, as
 agents, environments, webhooks, credentials, voices and triggers do; `/v1`
 serves only interactions, files and file search stores.
+
+## D-075 — A tagged union types a non-string `type` as a string enum does (2026-11-14)
+
+**Context.** A tagged union read with a `type` that is not a string keeps
+the value whole as `Unknown`, as D-001 asks, but typed it `<missing type>`,
+as if there were no tag: `Step`, `StepDelta`, `Content`, `Annotation`,
+`Tool`, `ResponseFormat`, `TranscriptionMode`, `Answer` and
+`VideoProcessing`'s object form, each through its own
+`.as_str().unwrap_or("<missing type>")`. `wire_enum!` types a non-string
+value `<non-string: {value}>` (D-038), and so do a bare `VideoProcessing`
+and `EnvironmentSpec`'s object (D-071). So `{"type": 5}` read as `{}` did,
+and the unions disagreed with the string enums.
+
+**Decision.** The owner's rule: a missing tag stays `<missing type>`, and a
+non-string tag is `<non-string: {value}>`, through one crate-private
+helper, `wire_enum::unknown_tag`, which each of those unions calls. A
+`null` tag is missing, as a `null` reads as absent for every optional field
+(`WireFields`, and D-071's environment `type`), and a value that is not an
+object has no tag. The two unions with a bare-string arm,
+`TranscriptionMode` and `VideoProcessing`, type a bare value that is
+neither a string nor an object as a string enum types it
+(`wire_enum::unknown_type`): a bare `7` is `<non-string: 7>`. The unions
+that write their type back (`Step`, `StepDelta`, `Content`, `Annotation`,
+`Tool`) write the new string as the `type`, as they wrote `<missing type>`;
+the fuzz round trip already expects the tag it was given (D-070). Writing
+the original non-string back, as `wire_enum!` does, was not asked for. A
+non-string tag is described with the secrets the wire redacts redacted
+(`redact::json`, D-067): the type is printed (`Tool`'s `Debug`, which
+redacts the data beside it, and each read's warning), and the merged
+unions write it back as the tag, a string the wire's walk cannot read
+inside. The tag stays whole in the data. The rule is a `type` tag's: the
+stream chunks' `chunk_type`, a tag in the crate's own serialized form,
+keeps its markers (`<missing chunk_type>`, `<non-string chunk_type>`), and
+the unions typed by their shape (`ToolChoice`, `NetworkConfig`) keep
+`<unrecognized: ...>`.
+
+**Consequences.** `unknown_<context>_type()` of a union read with a
+non-string `type` returns `<non-string: ...>` where it returned
+`<missing type>`, and the written JSON carries that tag. No type changes,
+but a caller that matched `<missing type>` for a non-string tag sees the
+new string, with a secret in the tag redacted.
+`tests/unknown_variant_tests.rs`'s `type_tags` reads every union with both
+kinds of tag, and a tag holding a secret, and the fuzz invariants
+(`src/fuzzing.rs`, `fuzz/README.md`) name both markers.

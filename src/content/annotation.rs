@@ -518,11 +518,7 @@ impl<'de> Deserialize<'de> for Annotation {
         match Fallback::read(&value, read_known) {
             Ok(annotation) => Ok(annotation),
             Err(fallback) => {
-                let annotation_type = value
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                let annotation_type = crate::wire_enum::unknown_tag(&value);
 
                 tracing::warn!(
                     "Keeping an annotation whole in Annotation::Unknown: {}.",

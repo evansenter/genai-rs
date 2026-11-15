@@ -464,11 +464,7 @@ impl<'de> Deserialize<'de> for StepDelta {
         match Fallback::read(&value, read_known) {
             Ok(delta) => Ok(delta),
             Err(fallback) => {
-                let delta_type = value
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                let delta_type = crate::wire_enum::unknown_tag(&value);
 
                 // `StepDelta` itself is not strict: an unknown type, or a
                 // known one with a malformed field, is kept whole. A value

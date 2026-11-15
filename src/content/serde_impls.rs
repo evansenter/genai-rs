@@ -157,11 +157,7 @@ impl<'de> Deserialize<'de> for Content {
         match Fallback::read(&value, read_known) {
             Ok(content) => Ok(content),
             Err(fallback) => {
-                let content_type = value
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                let content_type = crate::wire_enum::unknown_tag(&value);
 
                 // An unknown type and a known type with a field the crate
                 // cannot read both keep the whole object; the cause says

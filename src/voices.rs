@@ -28,11 +28,15 @@
 use crate::client::Client;
 use crate::errors::GenaiError;
 use crate::paging;
+use crate::redact;
 use crate::response::UsageMetadata;
 use crate::serde_util::{ResourceName, deserialize_lenient_timestamp};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+mod create;
+pub use create::{CreateVoiceRequest, ReplicatedVoice, VoiceSpec};
 
 struct ForVoice;
 impl ResourceName for ForVoice {
@@ -93,7 +97,10 @@ impl VoiceAudio {
 }
 
 /// The prompt a prompted voice was designed from.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+///
+/// `Debug` prints a replicated voice's key ([`Voice::key`]) set as the
+/// base voice as `[REDACTED]`, as `LOUD_WIRE` does.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct PromptedVoice {
@@ -101,12 +108,31 @@ pub struct PromptedVoice {
     pub input: String,
     /// A prebuilt voice to start the design from, such as `"achird"`
     /// (google-genai 2.34.0). Accepted, validated (an unknown name is a
-    /// `400 INVALID_ARGUMENT`) and echoed back.
+    /// `400 INVALID_ARGUMENT`) and echoed back. A replicated voice's key
+    /// here is read as a replicated base voice, which the API refuses
+    /// (`docs/INTERACTIONS_API_GAP.md`, Models).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_voice: Option<String>,
     /// Fields the crate does not model yet, preserved for roundtrip.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// A base voice can be a replicated voice's key, a secret (D-067): printed
+// redacted, and `extra` through the wire's walk.
+impl std::fmt::Debug for PromptedVoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            input,
+            base_voice,
+            extra,
+        } = self;
+        f.debug_struct("PromptedVoice")
+            .field("input", input)
+            .field("base_voice", &redact::voice_name(base_voice.as_deref()))
+            .field("extra", &redact::map(extra))
+            .finish()
+    }
 }
 
 impl PromptedVoice {
@@ -128,7 +154,10 @@ impl PromptedVoice {
 }
 
 /// A voice, as returned by `/v1beta/voices`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+///
+/// `Debug` prints a replicated voice's [`key`](Self::key) as `[REDACTED]`: it
+/// is a secret, which `LOUD_WIRE` redacts too.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct Voice {
@@ -174,7 +203,9 @@ pub struct Voice {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompted: Option<PromptedVoice>,
     /// Client-managed key (`voicekey_...`), returned only for a replicated
-    /// voice created with `store: false`.
+    /// voice created with `store: false`. A secret, since it works as a
+    /// voice name: `Debug` and `LOUD_WIRE` print it redacted, here and
+    /// wherever a request sends it as one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// When a custom voice expires (one year after creation, observed).
@@ -192,6 +223,53 @@ pub struct Voice {
     /// Unmodeled fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// The key is a secret (D-067): printed redacted, and `extra` through the
+// wire's walk, which redacts a key there too.
+impl std::fmt::Debug for Voice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            id,
+            voice_type,
+            display_name,
+            description,
+            language_code,
+            region_code,
+            accent,
+            persona,
+            context,
+            gender,
+            pitch,
+            model,
+            prompted,
+            key,
+            expire_time,
+            sample_audio,
+            usage,
+            extra,
+        } = self;
+        f.debug_struct("Voice")
+            .field("id", id)
+            .field("voice_type", voice_type)
+            .field("display_name", display_name)
+            .field("description", description)
+            .field("language_code", language_code)
+            .field("region_code", region_code)
+            .field("accent", accent)
+            .field("persona", persona)
+            .field("context", context)
+            .field("gender", gender)
+            .field("pitch", pitch)
+            .field("model", model)
+            .field("prompted", prompted)
+            .field("key", &redact::optional(key.as_ref()))
+            .field("expire_time", expire_time)
+            .field("sample_audio", sample_audio)
+            .field("usage", usage)
+            .field("extra", &redact::map(extra))
+            .finish()
+    }
 }
 
 /// Response from listing voices.
@@ -213,209 +291,6 @@ pub struct VoiceListResponse {
 }
 
 paging::impl_list_page!(VoiceListResponse, voices: Voice);
-
-/// The voice definition inside a [`CreateVoiceRequest`].
-#[derive(Clone, Debug, Default, Serialize, PartialEq)]
-pub struct VoiceSpec {
-    /// How to make the voice.
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub voice_type: Option<VoiceType>,
-    /// Prompt, required for [`VoiceType::Prompted`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompted: Option<PromptedVoice>,
-    /// Source and consent audio, required for [`VoiceType::Replicated`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub replicated: Option<ReplicatedVoice>,
-    /// Display name for a stored voice.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    /// Model to design with; the API defaults to its latest voice model.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    /// Summary of timbre, personality and tone.
-    ///
-    /// This and the discovery fields below are stored with the voice, served
-    /// back on create, get and list, and matched by [`ListVoices`]'s
-    /// filters. They are free text, except
-    /// [`pitch`](Self::pitch).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// BCP-47 language tag, e.g. `en-US`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub language_code: Option<String>,
-    /// Region code, e.g. `US`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub region_code: Option<String>,
-    /// Accent descriptor, e.g. `General American`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub accent: Option<String>,
-    /// Persona, e.g. `Storyteller & Narrator`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub persona: Option<String>,
-    /// Usage context, e.g. `Content & Media`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<String>,
-    /// Perceived gender presentation, e.g. `male`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gender: Option<String>,
-    /// Perceived pitch.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pitch: Option<VoicePitch>,
-    /// Anything else to send that is not modeled here.
-    ///
-    /// The bindings' `sample_audio` is output only: a value sent on create
-    /// is ignored, and the response carries a sample the API generated, so
-    /// it is read on [`Voice::sample_audio`] and not
-    /// modeled here.
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-/// Source and consent recordings for a replicated voice.
-#[derive(Clone, Debug, Serialize, PartialEq)]
-pub struct ReplicatedVoice {
-    /// Audio of the voice to replicate.
-    pub source_audio: VoiceAudio,
-    /// The speaker's recorded consent.
-    pub consent_audio: VoiceAudio,
-}
-
-/// Request body for [`Voices::create`].
-///
-/// ```
-/// use genai_rs::CreateVoiceRequest;
-///
-/// let request = CreateVoiceRequest::prompted("A calm, low-pitched narrator.")
-///     .with_display_name("narrator");
-/// assert_eq!(request.store, Some(true));
-/// ```
-#[derive(Clone, Debug, Default, Serialize, PartialEq)]
-pub struct CreateVoiceRequest {
-    /// The voice to create.
-    pub voice: VoiceSpec,
-    /// Whether Google stores the voice (returns an `id`) or returns a
-    /// client-held `key`. Prompted voices require `true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub store: Option<bool>,
-}
-
-impl CreateVoiceRequest {
-    /// A voice designed from `prompt`, stored by Google (the API rejects
-    /// prompted voices with `store: false`).
-    #[must_use]
-    pub fn prompted(prompt: impl Into<String>) -> Self {
-        Self {
-            voice: VoiceSpec {
-                voice_type: Some(VoiceType::Prompted),
-                prompted: Some(PromptedVoice::new(prompt)),
-                ..Default::default()
-            },
-            store: Some(true),
-        }
-    }
-
-    /// A voice replicated from `source` audio, with the speaker's recorded
-    /// `consent`. Not stored unless [`with_store`](Self::with_store) is set;
-    /// the response then carries a `key` instead of an `id`.
-    #[must_use]
-    pub fn replicated(source: VoiceAudio, consent: VoiceAudio) -> Self {
-        Self {
-            voice: VoiceSpec {
-                voice_type: Some(VoiceType::Replicated),
-                replicated: Some(ReplicatedVoice {
-                    source_audio: source,
-                    consent_audio: consent,
-                }),
-                ..Default::default()
-            },
-            store: None,
-        }
-    }
-
-    /// Sets the display name.
-    #[must_use]
-    pub fn with_display_name(mut self, name: impl Into<String>) -> Self {
-        self.voice.display_name = Some(name.into());
-        self
-    }
-
-    /// Starts a prompted voice's design from a prebuilt voice, such as
-    /// `"achird"`. A replicated voice has no prompt to base, so there it
-    /// only logs a warning.
-    #[must_use]
-    pub fn with_base_voice(mut self, voice: impl Into<String>) -> Self {
-        match self.voice.prompted.take() {
-            Some(prompted) => self.voice.prompted = Some(prompted.with_base_voice(voice)),
-            None => tracing::warn!(
-                "CreateVoiceRequest::with_base_voice has no effect on a replicated voice"
-            ),
-        }
-        self
-    }
-
-    /// Sets whether Google stores the voice.
-    #[must_use]
-    pub const fn with_store(mut self, store: bool) -> Self {
-        self.store = Some(store);
-        self
-    }
-
-    /// Sets the description, a summary of timbre, personality and tone.
-    #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.voice.description = Some(description.into());
-        self
-    }
-
-    /// Sets the language, a BCP-47 tag such as `en-US`.
-    #[must_use]
-    pub fn with_language_code(mut self, language_code: impl Into<String>) -> Self {
-        self.voice.language_code = Some(language_code.into());
-        self
-    }
-
-    /// Sets the region, e.g. `US`.
-    #[must_use]
-    pub fn with_region_code(mut self, region_code: impl Into<String>) -> Self {
-        self.voice.region_code = Some(region_code.into());
-        self
-    }
-
-    /// Sets the accent, e.g. `General American`.
-    #[must_use]
-    pub fn with_accent(mut self, accent: impl Into<String>) -> Self {
-        self.voice.accent = Some(accent.into());
-        self
-    }
-
-    /// Sets the persona, e.g. `Storyteller & Narrator`.
-    #[must_use]
-    pub fn with_persona(mut self, persona: impl Into<String>) -> Self {
-        self.voice.persona = Some(persona.into());
-        self
-    }
-
-    /// Sets the usage context, e.g. `Content & Media`.
-    #[must_use]
-    pub fn with_context(mut self, context: impl Into<String>) -> Self {
-        self.voice.context = Some(context.into());
-        self
-    }
-
-    /// Sets the gender presentation, e.g. `male`.
-    #[must_use]
-    pub fn with_gender(mut self, gender: impl Into<String>) -> Self {
-        self.voice.gender = Some(gender.into());
-        self
-    }
-
-    /// Sets the pitch.
-    #[must_use]
-    pub fn with_pitch(mut self, pitch: VoicePitch) -> Self {
-        self.voice.pitch = Some(pitch);
-        self
-    }
-}
 
 /// The catalog filters of a [`ListVoices`]. Every page of a listing carries
 /// the same filters: the API rejects a page token sent with other filters.

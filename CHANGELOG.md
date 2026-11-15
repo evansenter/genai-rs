@@ -42,6 +42,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty one. Migration: a pattern on `Complete(response)` becomes
   `Complete { response, .. }`, and a `Complete` you build takes
   `extra: Default::default()` (or a `serde_json::Map` of keys).
+- **A tagged union read with a non-string `type` is typed
+  `<non-string: ...>`, not `<missing type>`.** `Step`, `StepDelta`,
+  `Content`, `Annotation`, `Tool`, `ResponseFormat`, `TranscriptionMode`,
+  `Answer` and `VideoProcessing` now type a `{"type": 5, ...}` as a string
+  enum types a non-string value (`unknown_step_type()` returns
+  `Some("<non-string: 5>")`), and the unions that write their type back
+  (`Step`, `StepDelta`, `Content`, `Annotation`, `Tool`) write that string
+  as the `type`. A missing or `null` `type` stays `<missing type>`. A bare
+  non-string `TranscriptionMode` (`7`) is `<non-string: 7>` too, as a bare
+  `VideoProcessing` already was. A secret in the tag that `LOUD_WIRE`
+  redacts (an `api_key`, a `token`) is `[REDACTED]` in that string; the
+  `Unknown`'s data keeps the tag as it came (D-075).
+- **`Debug` and `LOUD_WIRE` redact a replicated voice's key.** `Voice::key`
+  prints as `Some("[REDACTED]")`, and a `SpeechConfig` whose voice is a key,
+  or a `PromptedVoice` whose base voice is one, prints it the same way;
+  `LOUD_WIRE`, the `wire` tracing target and `WireEvent`'s `Debug` redact a
+  string that starts with `voicekey_` wherever it appears in a body, a
+  request's voice name included (D-067).
+- **`InteractionBuilder`'s, `InteractionRequest`'s, `Voice`'s,
+  `VoiceSpec`'s, `PromptedVoice`'s and `SpeechConfig`'s `Debug` print
+  `extra` through the wire's redaction**, so a secret there under a name `LOUD_WIRE` redacts (an
+  `api_key`, a `token`) prints as `[REDACTED]`, as it does in a `Tool`'s or
+  a `RemoteEnvironment`'s `extra` (D-067).
+- **An unknown `EnvironmentSpec`'s `Debug` prints every string in its JSON
+  as `[REDACTED]`**, keeping the keys, as a `RemoteEnvironment`'s unread
+  `env` prints, rather than only what the wire's redaction reads as a secret.
+  A type that describes that JSON (`<non-string: ...>`, `<unrecognized:
+  ...>`) prints described from the redacted JSON (D-067).
 
 ### Removed
 
@@ -57,6 +85,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on it never matched (D-056). Migration: delete the match arm. A failing
   tool's error reaches the model as that result, and the crate logs it at
   `warn`.
+
+### Fixed
+
+- **`LOUD_WIRE` printed a secret field under a schema's `properties` when its
+  object held a `type` that names no JSON Schema type.** Beside `"type":
+  "object"`, `{"properties": {"token": {"type": "bearer", "value": ...}}}`
+  read the `token` entry as a schema and printed its value. A `type` now makes
+  a value under `properties` a schema only when it names a JSON Schema type
+  (`string`, `number`, `integer`, `boolean`, `object`, `array`, `null`, in any
+  case, as Gemini's upper-case `STRING`) or lists such names, so the entry is
+  read as the secret field it is. `WireEvent`'s `Debug` and the `wire`
+  tracing target share the fix (D-067).
+
 
 ## [0.15.0] - 2026-11-14
 

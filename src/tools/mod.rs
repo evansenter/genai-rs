@@ -527,11 +527,7 @@ impl<'de> Deserialize<'de> for Tool {
         match Fallback::read(&value, read_known) {
             Ok(tool) => Ok(tool),
             Err(fallback) => {
-                let tool_type = value
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                let tool_type = crate::wire_enum::unknown_tag(&value);
                 tracing::warn!(
                     "Keeping a tool whole in Tool::Unknown: {}. This may indicate a new \
                      API feature or a malformed response.",

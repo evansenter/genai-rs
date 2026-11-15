@@ -369,11 +369,13 @@ impl<'de> Deserialize<'de> for TranscriptionMode {
         match read_known_mode(&value) {
             Ok(mode) => Ok(mode),
             Err(fallback) => {
-                let mode_type = value
-                    .as_str()
-                    .or_else(|| value.get("type").and_then(serde_json::Value::as_str))
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                // A bare mode is typed as a string enum's value is, and an
+                // object by its tag (D-075).
+                let mode_type = if value.is_object() {
+                    crate::wire_enum::unknown_tag(&value)
+                } else {
+                    crate::wire_enum::unknown_type(&value)
+                };
                 tracing::warn!(
                     "Keeping a transcription mode whole in TranscriptionMode::Unknown: {} \
                      (Evergreen)",
@@ -488,7 +490,10 @@ impl TranscriptionConfig {
 /// Common voices include: Aoede, Charon, Fenrir, Kore, Puck, and others.
 /// See [Google's TTS documentation](https://aistudio.google.com/docs/speech-generation)
 /// for the full list of available voices.
-#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+///
+/// `Debug` prints a replicated voice's key ([`Voice::key`](crate::Voice::key))
+/// set as the voice as `[REDACTED]`, as `LOUD_WIRE` does.
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct SpeechConfig {
     /// The voice to use for speech synthesis.
     ///
@@ -513,6 +518,25 @@ pub struct SpeechConfig {
     /// ones (D-001).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// A voice name can be a replicated voice's key, a secret (D-067): printed
+// redacted, and `extra` through the wire's walk.
+impl std::fmt::Debug for SpeechConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            voice,
+            language,
+            speaker,
+            extra,
+        } = self;
+        f.debug_struct("SpeechConfig")
+            .field("voice", &crate::redact::voice_name(voice.as_deref()))
+            .field("language", language)
+            .field("speaker", speaker)
+            .field("extra", &crate::redact::map(extra))
+            .finish()
+    }
 }
 
 impl SpeechConfig {

@@ -523,11 +523,7 @@ impl<'de> Deserialize<'de> for Step {
         match Fallback::read(&value, read_known) {
             Ok(step) => Ok(step),
             Err(fallback) => {
-                let step_type = value
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<missing type>")
-                    .to_string();
+                let step_type = crate::wire_enum::unknown_tag(&value);
 
                 // An unknown type and a known type with a field the crate
                 // cannot read both keep the whole object; the cause says

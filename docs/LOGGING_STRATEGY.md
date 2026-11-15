@@ -59,16 +59,23 @@ inside them are attributed to the request.
   `[REDACTED]` too, on every Interactions API type that holds one: the
   retrieval configs' `api_key` (and one nested in their `custom_config`), a
   credential's or credential update's secrets, a webhook's signing secret,
-  an `EnvVar`'s plain value, and the header values of an MCP server
+  an `EnvVar`'s plain value, the header values of an MCP server
   (`McpServerConfig`, `Tool::McpServer`) or an allowlist entry's
-  `transform`, keeping the header and variable names. So `dbg!(request)`
-  or `tracing::debug!(?builder)` prints none of them, nor does the `Debug`
-  of an `InteractionBuilder`, `InteractionRequest` or response that carries
-  one, or of a `wire::WireEvent`. The `extra` map of each of these types
-  (a `Tool`, an allowlist entry, an `EnvVar`, a `RemoteEnvironment`) and of
-  a webhook, and an unknown tool's payload, print such a secret redacted
-  too; any other `extra` map or `Unknown` payload, JSON the crate does not
-  model, prints as it is.
+  `transform`, keeping the header and variable names, and a replicated
+  voice's key (`Voice::key`, and a `SpeechConfig` voice or a
+  `PromptedVoice` base voice that is one). So
+  `dbg!(request)` or `tracing::debug!(?builder)` prints none of them, nor
+  does the `Debug` of an `InteractionBuilder`, `InteractionRequest` or
+  response that carries one, or of a `wire::WireEvent`. The `extra` map of
+  each of these types (a `Tool`, an allowlist entry, an `EnvVar`, a
+  `RemoteEnvironment`, a `Voice`, a `PromptedVoice`, a `SpeechConfig`), of
+  a webhook and of an `InteractionBuilder` or `InteractionRequest`, and an
+  unknown tool's payload, print such a secret redacted too, and an unknown
+  environment prints every string in it redacted, its type too where that
+  type describes its JSON; any other `extra` map or `Unknown` payload, JSON
+  the crate does not model, prints as it is. A tagged union's type read
+  from a `type` tag that is not a string describes the tag with such a
+  secret redacted.
 - At `debug`, request and response bodies are logged in full: prompts, base64
   media, function arguments and results. Treat debug logs as sensitive, and
   don't enable them in production unless you mean to.
@@ -125,12 +132,15 @@ frame.
   an `env` map, and a string directly in an `env` (an MCP server's
   variables); and every header value under `headers` (MCP servers),
   `transform` (environment allowlist entries) or `httpHeaders` (a harness
-  model endpoint), keeping the header and variable names. A JSON Schema's
-  property names (the keys of a `properties` map beside `"type":
-  "object"`, such as a function declaration's `env` or `api_key`
-  parameter) are not read as fields when the value under one is a schema,
-  so that schema prints; any other value under a `properties` key is read
-  as data and redacted as usual. The `wire` tracing target redacts the same
+  model endpoint), keeping the header and variable names; and a string that
+  starts with `voicekey_` (a replicated voice's key, also sent as a voice
+  name) anywhere, so prompt or model text that happens to start with that
+  prefix prints redacted too. A JSON Schema's property names (the keys of a
+  `properties` map beside `"type": "object"`, such as a function
+  declaration's `env` or `api_key` parameter) are not read as fields when
+  the value under one is a schema (a `type` naming a JSON Schema type, in
+  any case, or another schema keyword), so that schema prints; any other
+  value under a `properties` key is read as data and redacted as usual. The `wire` tracing target redacts the same
   fields, in harness messages too.
 - **Uploads** print as `>>> UPLOAD "video.mp4" (video/mp4, 150.25 MB)`.
 

@@ -919,3 +919,153 @@ mod non_string_unknown_arms {
         assert!(method.unknown_method_type().unwrap().starts_with(MARKER));
     }
 }
+
+/// The `type` tag of every tagged union, through the one helper they share
+/// (D-075): a missing (or `null`) tag is `<missing type>`, and a tag that is
+/// not a string is `<non-string: ...>`, as a string enum types a non-string
+/// value. The tag is written back as that string.
+mod type_tags {
+    use genai_rs::{
+        Annotation, Answer, Content, ResponseFormat, Step, StepDelta, Tool, TranscriptionMode,
+        VideoProcessing,
+    };
+    use serde::de::DeserializeOwned;
+    use serde_json::{Value, json};
+
+    /// Reads `wire` as `T` and returns its `Unknown` type and what it writes.
+    fn read<T: DeserializeOwned + serde::Serialize>(
+        wire: &Value,
+        unknown_type: impl Fn(&T) -> Option<String>,
+    ) -> (String, Value) {
+        let value: T = serde_json::from_value(wire.clone()).unwrap();
+        let tag = unknown_type(&value).expect("read as Unknown");
+        (tag, serde_json::to_value(&value).unwrap())
+    }
+
+    /// Each union's `Unknown` type for `wire`, by name, and what it writes
+    /// back (`None` for the unions that write their data as it came).
+    fn every_union(wire: &Value) -> Vec<(&'static str, String, Option<Value>)> {
+        let merged = |(tag, written): (String, Value)| (tag, Some(written));
+        let as_is = |(tag, _): (String, Value)| (tag, None);
+        let rows = [
+            (
+                "Step",
+                merged(read::<Step>(wire, |v| {
+                    v.unknown_step_type().map(Into::into)
+                })),
+            ),
+            (
+                "StepDelta",
+                merged(read::<StepDelta>(wire, |v| {
+                    v.unknown_delta_type().map(Into::into)
+                })),
+            ),
+            (
+                "Content",
+                merged(read::<Content>(wire, |v| {
+                    v.unknown_content_type().map(Into::into)
+                })),
+            ),
+            (
+                "Annotation",
+                merged(read::<Annotation>(wire, |v| {
+                    v.unknown_annotation_type().map(Into::into)
+                })),
+            ),
+            (
+                "Tool",
+                merged(read::<Tool>(wire, |v| {
+                    v.unknown_tool_type().map(Into::into)
+                })),
+            ),
+            (
+                "ResponseFormat",
+                as_is(read::<ResponseFormat>(wire, |v| {
+                    v.unknown_format_type().map(Into::into)
+                })),
+            ),
+            (
+                "TranscriptionMode",
+                as_is(read::<TranscriptionMode>(wire, |v| {
+                    v.unknown_mode_type().map(Into::into)
+                })),
+            ),
+            (
+                "Answer",
+                as_is(read::<Answer>(wire, |v| {
+                    v.unknown_answer_type().map(Into::into)
+                })),
+            ),
+            (
+                "VideoProcessing",
+                as_is(read::<VideoProcessing>(wire, |v| {
+                    v.unknown_processing_type().map(Into::into)
+                })),
+            ),
+        ];
+        rows.into_iter()
+            .map(|(name, (tag, written))| (name, tag, written))
+            .collect()
+    }
+
+    #[test]
+    fn a_non_string_tag_is_typed_as_a_string_enum_types_it() {
+        for (tag, marker) in [
+            (json!(5), "<non-string: 5>"),
+            (json!(true), "<non-string: true>"),
+            (json!(["text"]), r#"<non-string: ["text"]>"#),
+            (json!({"name": "text"}), r#"<non-string: {"name":"text"}>"#),
+        ] {
+            let wire = json!({"type": tag, "x": 1});
+            for (name, unknown_type, written) in every_union(&wire) {
+                assert_eq!(unknown_type, marker, "{name}, {wire}");
+                if let Some(written) = written {
+                    assert_eq!(written, json!({"type": marker, "x": 1}), "{name}");
+                }
+            }
+        }
+    }
+
+    /// A non-string tag is described with what the wire redacts redacted:
+    /// the type is printed, and the merged unions write it back as text the
+    /// wire's walk cannot read inside. The data keeps the tag whole.
+    #[test]
+    fn a_non_string_tag_is_described_without_its_secrets() {
+        let wire = json!({"type": {"api_key": "S3CRET", "name": "n"}, "x": 1});
+        let marker = r#"<non-string: {"api_key":"[REDACTED]","name":"n"}>"#;
+        for (name, unknown_type, written) in every_union(&wire) {
+            assert_eq!(unknown_type, marker, "{name}");
+            if let Some(written) = written {
+                assert_eq!(written, json!({"type": marker, "x": 1}), "{name}");
+            }
+        }
+        let tool: Tool = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(tool.unknown_data(), Some(&wire));
+        assert!(!format!("{tool:?}").contains("S3CRET"), "{tool:?}");
+    }
+
+    #[test]
+    fn a_missing_tag_stays_missing_type() {
+        for wire in [json!({"x": 1}), json!({"type": null, "x": 1})] {
+            for (name, unknown_type, written) in every_union(&wire) {
+                assert_eq!(unknown_type, "<missing type>", "{name}, {wire}");
+                if let Some(written) = written {
+                    assert_eq!(written, json!({"type": "<missing type>", "x": 1}), "{name}");
+                }
+            }
+        }
+    }
+
+    /// The two unions whose arms include a bare string type a bare value that
+    /// is not a string as a string enum does; the object-only unions read
+    /// such a value as having no tag.
+    #[test]
+    fn a_bare_value_is_typed_by_its_union_shape() {
+        let bare: VideoProcessing = serde_json::from_value(json!(7)).unwrap();
+        assert_eq!(bare.unknown_processing_type(), Some("<non-string: 7>"));
+        let bare: TranscriptionMode = serde_json::from_value(json!(7)).unwrap();
+        assert_eq!(bare.unknown_mode_type(), Some("<non-string: 7>"));
+        let bare: Tool = serde_json::from_value(json!(7)).unwrap();
+        assert_eq!(bare.unknown_tool_type(), Some("<missing type>"));
+    }
+}
