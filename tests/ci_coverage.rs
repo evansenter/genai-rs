@@ -768,7 +768,10 @@ const ENDPOINTS: &[(&str, &[&str])] = &[
         "POST /upload/{}/fileSearchStores/{}:uploadToFileSearchStore",
         &["FileSearchStores::upload"],
     ),
-    ("POST /upload/{}/files", &["Files::upload"]),
+    (
+        "POST /upload/{}/files",
+        &["Files::upload", "Files::upload_as"],
+    ),
     (
         "PUT /upload/{}/environments/{}/files/{}",
         &["EnvironmentFiles::upload"],

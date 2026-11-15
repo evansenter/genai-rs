@@ -1,5 +1,6 @@
 //! [`FileUpload`]: a file to upload, from disk or from memory, for
-//! [`Files::upload`](crate::Files::upload) and
+//! [`Files::upload`](crate::Files::upload),
+//! [`Files::upload_as`](crate::Files::upload_as) and
 //! [`FileSearchStores::upload`](crate::FileSearchStores::upload).
 
 use crate::errors::GenaiError;
@@ -36,9 +37,14 @@ pub(crate) enum UploadSource {
     Bytes(Vec<u8>),
 }
 
-/// A file to upload with [`Files::upload`](crate::Files::upload) or
+/// A file to upload with [`Files::upload`](crate::Files::upload),
+/// [`Files::upload_as`](crate::Files::upload_as) or
 /// [`FileSearchStores::upload`](crate::FileSearchStores::upload): a path or
 /// bytes in memory, with an optional MIME type and display name.
+///
+/// A store's documents take no resource name of their own, so the name a
+/// file is uploaded under is not a setting here: it is
+/// [`Files::upload_as`](crate::Files::upload_as)'s first argument.
 ///
 /// ```
 /// use genai_rs::FileUpload;

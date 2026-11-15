@@ -42,9 +42,10 @@ use crate::steps::Step;
 use bodies::{
     agent_config_types, agent_configs, agent_requests, agents, credential_requests,
     credential_updates, decision_requests, document_imports, document_uploads,
-    environment_requests, environment_specs, file_search_store_requests, generation_configs,
-    inputs, model_requests, response_formats, safety_settings, samples, to_value, trigger_params,
-    trigger_updates, values, voice_requests, webhook_config, webhook_updates, webhooks,
+    environment_requests, environment_specs, file_search_store_requests, file_uploads,
+    generation_configs, inputs, model_requests, response_formats, safety_settings, samples,
+    to_value, trigger_params, trigger_updates, values, voice_requests, webhook_config,
+    webhook_updates, webhooks,
 };
 use content::{contents, steps, tools};
 
@@ -94,6 +95,12 @@ pub(super) const NOT_SENT: &[Allowed] = &[
         "interactions.SpeakerConfig.speakers",
         "The crate sends speech_config as the list arm, accepted on every TTS model \
          (live 2026-09-24); the {speakers} object arm is read, never sent.",
+    ),
+    (
+        "legacy.UploadFileConfig.mimeType",
+        "Sent as the upload session's X-Goog-Upload-Header-Content-Type header, \
+         which the API stores as the file's mimeType, rather than in the start \
+         request's `file` object beside the name and display name.",
     ),
     (
         "voices.VoiceInput.sample_audio",
@@ -251,6 +258,7 @@ fn cases() -> Vec<Case> {
             "legacy.CreateFileSearchStoreConfig",
             file_search_store_requests(),
         ),
+        case("FileUpload", "legacy.UploadFileConfig", file_uploads()),
         case(
             "DocumentUpload",
             "legacy.UploadToFileSearchStoreConfig",

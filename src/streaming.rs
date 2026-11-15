@@ -35,7 +35,7 @@
 //!         AutoFunctionStreamChunk::FunctionResults(results) => {
 //!             println!("[Got {} results]", results.len());
 //!         }
-//!         AutoFunctionStreamChunk::Complete(_response) => {
+//!         AutoFunctionStreamChunk::Complete { .. } => {
 //!             println!("[Done]");
 //!         }
 //!         _ => {} // Handle unknown future variants
@@ -62,7 +62,12 @@ mod serde_impls;
 /// [`Unknown`](Self::Unknown); the round's other lifecycle events
 /// (`interaction.created`, `status_update`, `step.start`, `step.stop`,
 /// `interaction.completed`) are the loop's to read, and reach a caller of
-/// [`execute_stream()`](crate::Client::execute_stream) only.
+/// [`execute_stream()`](crate::Client::execute_stream) only. The
+/// `interaction.completed` of the round that ends the loop with no function
+/// calls is the one exception: its interaction and the keys beside it that
+/// the crate does not read come on [`Complete`](Self::Complete). A loop that
+/// ends on [`MaxLoopsReached`](Self::MaxLoopsReached) passes on no round's
+/// completed-event keys.
 ///
 /// # Forward Compatibility
 ///
@@ -122,7 +127,16 @@ pub enum AutoFunctionStreamChunk {
     ///
     /// This is the last event in the stream, yielded when the model returns
     /// a response that doesn't request any function calls.
-    Complete(Box<InteractionResponse>),
+    Complete {
+        /// The response of the round with no function calls: the
+        /// [`StreamChunk::Completed`](crate::StreamChunk::Completed)
+        /// `interaction`, its steps assembled from the stream.
+        response: Box<InteractionResponse>,
+        /// That round's `interaction.completed` event's keys the crate
+        /// does not read, as [`StreamChunk::extra`](crate::StreamChunk::extra)
+        /// holds them. Empty for every event the API sends today.
+        extra: serde_json::Map<String, serde_json::Value>,
+    },
 
     /// Maximum function call loops reached.
     ///
@@ -172,7 +186,7 @@ impl AutoFunctionStreamChunk {
     /// Check if this chunk is a Complete variant.
     #[must_use]
     pub const fn is_complete(&self) -> bool {
-        matches!(self, Self::Complete(_))
+        matches!(self, Self::Complete { .. })
     }
 
     /// Returns the chunk type name if this is an unknown chunk type.
@@ -242,7 +256,7 @@ impl AutoFunctionStreamChunk {
 ///                 print!("{}", text);
 ///             }
 ///         }
-///         AutoFunctionStreamChunk::Complete(_) => {
+///         AutoFunctionStreamChunk::Complete { .. } => {
 ///             println!("\n[Done]");
 ///         }
 ///         _ => {}
@@ -604,7 +618,7 @@ impl AutoFunctionResultAccumulator {
                 self.executions.extend(results);
                 None
             }
-            AutoFunctionStreamChunk::Complete(response) => Some(AutoFunctionResult {
+            AutoFunctionStreamChunk::Complete { response, .. } => Some(AutoFunctionResult {
                 response: *response,
                 executions: std::mem::take(&mut self.executions),
                 reached_max_loops: false,

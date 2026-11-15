@@ -1,4 +1,5 @@
-//! The Files API: upload, metadata, list, delete and the wait.
+//! The Files API: upload (under a chosen name too), metadata, list, delete
+//! and the wait.
 
 use super::*;
 
@@ -151,6 +152,117 @@ async fn files_upload_from_bytes_without_a_display_name_sends_empty_metadata() {
     );
     assert_eq!(start.json(), json!({"file": {}}));
     assert_eq!(finish.body, b"a,b\n");
+}
+
+/// A named upload's start body carries the chosen name beside the display
+/// name, which a path upload still takes from the file name.
+#[tokio::test]
+async fn files_upload_as_sends_the_chosen_name_in_the_start_body() {
+    let (_dir, path) = temp_file("q4.txt", b"north,12\n");
+    let uploaded = |name: &str| {
+        Reply::json(
+            200,
+            json!({"file": {"name": name, "mimeType": "text/plain", "uri": "u"}}),
+        )
+    };
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        uploaded("files/q4-report"),
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f2"),
+        uploaded("files/q4-csv"),
+    ])
+    .await;
+    let client = stub.client();
+
+    let file = client
+        .files()
+        .upload_as("files/q4-report", FileUpload::from_path(&path))
+        .await
+        .unwrap();
+    assert_eq!(file.name, "files/q4-report");
+    client
+        .files()
+        .upload_as(
+            "files/q4-csv",
+            FileUpload::from_bytes(b"a,b\n".to_vec(), "text/csv").with_display_name("Q4"),
+        )
+        .await
+        .unwrap();
+
+    let [path_start, path_finish, bytes_start, bytes_finish] = stub.requests().try_into().unwrap();
+    assert_eq!(path_start.target, "/upload/v1beta/files");
+    assert_eq!(
+        path_start.json(),
+        json!({"file": {"name": "files/q4-report", "displayName": "q4.txt"}})
+    );
+    assert_eq!(path_finish.body, b"north,12\n");
+    assert_eq!(
+        bytes_start.header("x-goog-upload-header-content-type"),
+        Some("text/csv")
+    );
+    assert_eq!(
+        bytes_start.json(),
+        json!({"file": {"name": "files/q4-csv", "displayName": "Q4"}})
+    );
+    assert_eq!(bytes_finish.body, b"a,b\n");
+}
+
+/// A name that is not `files/<id>`, or whose ID is over 40 characters (which
+/// the API would accept at the start request and fail at finalize, after the
+/// bytes), fails before any request.
+#[tokio::test]
+async fn files_upload_as_rejects_a_malformed_or_overlong_name_before_any_request() {
+    let stub = Stub::replying(vec![]).await;
+    let client = stub.client();
+    let too_long = format!("files/{}", "a".repeat(41));
+    for name in ["q4-report", "files/", "files/a/b", too_long.as_str()] {
+        let result = client
+            .files()
+            .upload_as(name, FileUpload::from_bytes(b"x".to_vec(), "text/plain"))
+            .await;
+        assert!(
+            matches!(result, Err(GenaiError::InvalidInput(_))),
+            "{name}: {result:?}"
+        );
+    }
+    assert!(stub.requests().is_empty(), "{:?}", stub.requests());
+}
+
+/// A name in use fails at finalize, after the bytes are sent, with the
+/// API's 409 `ALREADY_EXISTS`, which no retry passes.
+#[tokio::test]
+async fn files_upload_as_a_name_in_use_is_a_409_that_is_not_retryable() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        Reply::json(
+            409,
+            json!({"error": {"code": 409, "message": "q4-report already exists.",
+                             "status": "ALREADY_EXISTS"}}),
+        ),
+    ])
+    .await;
+
+    let error = stub
+        .client()
+        .files()
+        .upload_as(
+            "files/q4-report",
+            FileUpload::from_bytes(b"x".to_vec(), "text/plain"),
+        )
+        .await
+        .unwrap_err();
+
+    match &error {
+        GenaiError::Api {
+            status_code: 409,
+            message,
+            ..
+        } => assert_eq!(message, "ALREADY_EXISTS: q4-report already exists."),
+        other => panic!("expected the 409, got {other:?}"),
+    }
+    assert!(!error.is_retryable());
+    let [_, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(finish.body, b"x", "the bytes went out before the 409");
 }
 
 fn files_page(names: &[&str], next: Option<&str>) -> Reply {

@@ -250,7 +250,7 @@ impl<'a> InteractionBuilder<'a> {
     ///         AutoFunctionStreamChunk::FunctionResults(results) => {
     ///             println!("[Got {} results]", results.len());
     ///         }
-    ///         AutoFunctionStreamChunk::Complete(response) => {
+    ///         AutoFunctionStreamChunk::Complete { response, .. } => {
     ///             println!("\n[Complete: {} tokens]", response.usage.as_ref()
     ///                 .and_then(|u| u.total_tokens).unwrap_or(0));
     ///         }
@@ -375,9 +375,10 @@ impl<'a> InteractionBuilder<'a> {
                         // Completed response, so its function calls are
                         // whole. The tail is read below, outside the
                         // per-chunk timeout, which must not fail a finished
-                        // round.
-                        StreamChunk::Completed { interaction, .. } => {
-                            completed = Some(*interaction);
+                        // round. The event's unread keys go on the final
+                        // round's Complete.
+                        StreamChunk::Completed { interaction, extra } => {
+                            completed = Some((*interaction, extra));
                             break;
                         }
                         StreamChunk::Error { message, code, .. } => {
@@ -406,17 +407,21 @@ impl<'a> InteractionBuilder<'a> {
                 // stream lets that pass, but the loop can't go on without
                 // the round's response. Nothing says the request was at
                 // fault, so the round ends as a cut-off one does: retryable.
-                let response = completed.ok_or_else(|| GenaiError::StreamInterrupted {
-                    message: "the round's stream ended on an unrecognized event, with no \
-                              interaction.completed to run the loop on"
-                        .to_string(),
-                    source: None,
-                })?;
+                let (response, completed_extra) =
+                    completed.ok_or_else(|| GenaiError::StreamInterrupted {
+                        message: "the round's stream ended on an unrecognized event, with no \
+                                  interaction.completed to run the loop on"
+                            .to_string(),
+                        source: None,
+                    })?;
 
                 match state.read_round(response)? {
                     Round::Done(response) => {
                         yield AutoFunctionStreamEvent::new(
-                            AutoFunctionStreamChunk::Complete(Box::new(response)),
+                            AutoFunctionStreamChunk::Complete {
+                                response: Box::new(response),
+                                extra: completed_extra,
+                            },
                             last_event_id,
                         );
                         // Read the round's stream to its end before this one

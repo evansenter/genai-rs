@@ -60,7 +60,7 @@ become `with_*` setters.
 | `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id, base_agent)...)` |
 | `client.agents.create(..., agent_config={"type": "antigravity", "model": m, "max_total_tokens": n})` | `Agent::new(id, base_agent).with_agent_config(AntigravityConfig::new().with_model(m).with_max_total_tokens(n))` |
 | `client.agents.get(id)` | `client.agents().get(id)` |
-| `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).with_parent(p).send()` |
+| `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).send()` (no `parent`: see below) |
 | (no equivalent) | `client.agents().list().pages()` / `.items()` |
 | `client.agents.delete(id)` | `client.agents().delete(id)` |
 | `client.interactions.create(...)` | `client.interaction()...create()` (the builder) or `client.execute(request)`; unchanged, on `Client` |
@@ -122,7 +122,7 @@ become `with_*` setters.
 | `instructions=` a text block or a list of them | Not modeled: `instructions` is sent as a string, which says the same as one text block |
 | `client.files.upload(file=path, config={"mime_type": m, "display_name": n})` | `client.files().upload(FileUpload::from_path(path).with_mime_type(m).with_display_name(n))` |
 | `client.files.upload(file=io_object, config={"mime_type": m})` | `client.files().upload(FileUpload::from_bytes(data, m))` |
-| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled (D-039): the API serves the file under the chosen name, and a second upload under it is a `409`, but `FileUpload` is shared with store uploads, which take no name, so it needs a files-only shape. It is the bindings' `UploadFileConfig.name`, listed with that reason in the coverage oracle's `UNMAPPED` |
+| `client.files.upload(file=path, config={"name": n})` (a chosen `files/<id>`) | `client.files().upload_as(n, FileUpload::from_path(path))`, with `n` the full `files/<id>`: Python adds a missing `files/` prefix, and the crate rejects a bare ID. A second upload under a name in use is a `409 ALREADY_EXISTS`, so a retry cannot make a second file (D-039) |
 | `client.files.get(name=)` | `client.files().get(name)` |
 | `client.files.list(config={"page_size": n, "page_token": t})` (one page) | `client.files().list().with_page_size(n).with_page_token(t).send()` |
 | iterating `client.files.list()` | `client.files().list().items()` (or `.pages()`) |
@@ -173,9 +173,10 @@ leaves it in place. Its document exists, pending, as soon as the import is
 accepted, so an import that timed out is not retried: the error names the
 operation and the document, and a second import makes a second document.
 
-Python's `agents.list` takes `parent`, and `with_parent` sends it, but the
-API ignores it: a listing lists every agent whatever the value (see the
+Python's `agents.list` takes `parent`, but the API ignores it: a listing
+lists every agent whatever the value (see the
 [gap tracker](INTERACTIONS_API_GAP.md#spec-only-query-parameters-live-2026-11-09)).
+So `ListAgents` has no setter for it; drop the argument.
 
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them. genai-rs sends one value per
@@ -196,7 +197,7 @@ A `None` positional argument becomes an omitted setter.
 |------|-----|
 | `client.create_agent(&agent)` | `client.agents().create(&agent)` |
 | `client.get_agent(id)` | `client.agents().get(id)` |
-| `client.list_agents(size, token, parent)` | `client.agents().list().with_page_size(size).with_page_token(token).with_parent(parent).send()` |
+| `client.list_agents(size, token, parent)` | `client.agents().list().with_page_size(size).with_page_token(token).send()` (`parent` was ignored, and is gone) |
 | `client.delete_agent(id)` | `client.agents().delete(id)` |
 | `client.get_interaction(id)` | `client.interactions().get(id)` |
 | `client.get_interaction_with_input(id)` | `client.interactions().get_with_input(id)` |

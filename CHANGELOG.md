@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Files::upload_as(name, upload)` uploads under a name you choose**, a
+  full `files/<id>` (google-genai's `files.upload(config={"name": ...})`).
+  The file is served under that name, and a second upload under a name in
+  use fails with a 409 (`GenaiError::Api`, its message starting
+  `ALREADY_EXISTS`, not retryable) instead of making a second file, so a
+  retry after a lost response cannot leave a duplicate. The ID takes up to
+  40 lowercase letters, digits and dashes; a name that is not `files/<id>`,
+  or a longer ID, fails with `GenaiError::InvalidInput` before any request
+  (#539, D-039; the "A chosen name" section of `docs/MULTIMODAL.md`).
+
 ### Changed
 
+- **Breaking: `FunctionError::ExecutionError`'s `Display` is `Function
+  execution error` alone**, no longer followed by the error it holds, which
+  stays its `source()`. A reporter that walks the chain (anyhow's `{:#}`,
+  eyre) printed that error twice; it now prints it once, as it does for
+  `GenaiError::Http` since 0.15.0 (D-049). The `{"error": ...}` a failed
+  tool call sends the model, in the auto-function loop and on an
+  Antigravity agent, is unchanged: it writes the whole chain, so the model
+  still gets the cause. Migration: where you read the tool's error from a
+  `FunctionError`'s text, walk `source()` (or use your reporter's chain
+  form), or match `FunctionError::ExecutionError(e)` and read
+  `e.to_string()`, which is the text that followed
+  `Function execution error: `.
+- **Breaking: `AutoFunctionStreamChunk::Complete` is a struct variant,
+  `Complete { response, extra }`**, and `extra` holds the unread keys of
+  the `interaction.completed` event of the round with no function calls,
+  the one that ends the loop, as `StreamChunk::Completed`'s `extra` does
+  (D-054). The auto-function stream dropped them. The chunk's JSON form writes a non-empty `extra` beside
+  `data` and reads it back; a chunk written by 0.15.0 reads back with an
+  empty one. Migration: a pattern on `Complete(response)` becomes
+  `Complete { response, .. }`, and a `Complete` you build takes
+  `extra: Default::default()` (or a `serde_json::Map` of keys).
 - **A tagged union read with a non-string `type` is typed
   `<non-string: ...>`, not `<missing type>`.** `Step`, `StepDelta`,
   `Content`, `Annotation`, `Tool`, `ResponseFormat`, `TranscriptionMode`,
@@ -28,8 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   string that starts with `voicekey_` wherever it appears in a body, a
   request's voice name included (D-067).
 - **`InteractionBuilder`'s, `InteractionRequest`'s, `Voice`'s,
-  `PromptedVoice`'s and `SpeechConfig`'s `Debug` print `extra` through the
-  wire's redaction**, so a secret there under a name `LOUD_WIRE` redacts (an
+  `VoiceSpec`'s, `PromptedVoice`'s and `SpeechConfig`'s `Debug` print
+  `extra` through the wire's redaction**, so a secret there under a name `LOUD_WIRE` redacts (an
   `api_key`, a `token`) prints as `[REDACTED]`, as it does in a `Tool`'s or
   a `RemoteEnvironment`'s `extra` (D-067).
 - **An unknown `EnvironmentSpec`'s `Debug` prints every string in its JSON
@@ -37,6 +70,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `env` prints, rather than only what the wire's redaction reads as a secret.
   A type that describes that JSON (`<non-string: ...>`, `<unrecognized:
   ...>`) prints described from the redacted JSON (D-067).
+
+### Removed
+
+- **Breaking: `ListAgents::with_parent` is removed.** The API takes
+  `parent` on the agents listing and ignores it: a listing with any value,
+  or none, lists every agent the key owns (`docs/INTERACTIONS_API_GAP.md`,
+  "Spec-only query parameters"), so the setter filtered nothing (D-060).
+  Migration: drop the `.with_parent(..)` call; the listing returns the same
+  agents without it.
+- **Breaking: `AntigravityError::ToolDispatch` is removed.** Nothing raised
+  it: a custom tool that fails, and a call to a tool the agent does not
+  have, go to the model as `{"error": ...}` and the turn goes on, so a match
+  on it never matched (D-056). Migration: delete the match arm. A failing
+  tool's error reaches the model as that result, and the crate logs it at
+  `warn`.
 
 ### Fixed
 
@@ -49,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   case, as Gemini's upper-case `STRING`) or lists such names, so the entry is
   read as the secret field it is. `WireEvent`'s `Debug` and the `wire`
   tracing target share the fix (D-067).
+
 
 ## [0.15.0] - 2026-11-14
 
