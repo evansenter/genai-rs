@@ -1307,6 +1307,129 @@ async fn streaming_auto_functions_pass_on_unread_keys_and_unknown_events() {
     assert_eq!(complete.event_id.as_deref(), Some("evt-3"));
 }
 
+/// A round that calls functions passes on its `interaction.completed`
+/// event's unread keys in its `ExecutingFunctions` chunk's `extra`, and the
+/// round that ends the loop its own in `Complete`'s, each round's keys on
+/// its own chunk (D-054).
+#[tokio::test]
+async fn streaming_auto_functions_pass_on_each_rounds_completed_keys() {
+    let calling_round = json!({
+        "event_type": "interaction.completed",
+        "interaction": function_call_response("int-1", "call-1", "svc_fn"),
+        "future_summary": {"round": 1},
+    });
+    let final_round = json!({
+        "event_type": "interaction.completed",
+        "interaction": text_response("int-2", "done"),
+        "future_summary": {"round": 2},
+    });
+    let stub = Stub::replying(vec![
+        Reply::sse(&[&format!("data: {calling_round}\n\n")]),
+        Reply::sse(&[&format!("data: {final_round}\n\n")]),
+    ])
+    .await;
+
+    let chunks: Vec<_> = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .create_stream_with_auto_functions()
+        .map(|event| event.unwrap().chunk)
+        .collect()
+        .await;
+
+    let [executing, results, complete] = chunks.as_slice() else {
+        panic!("expected the calling round's two chunks and the completion: {chunks:?}");
+    };
+    let AutoFunctionStreamChunk::ExecutingFunctions {
+        response,
+        pending_calls,
+        extra,
+    } = executing
+    else {
+        panic!("{executing:?}");
+    };
+    assert_eq!(response.id.as_deref(), Some("int-1"));
+    assert_eq!(pending_calls[0].id, "call-1");
+    assert_eq!(
+        extra,
+        json!({"future_summary": {"round": 1}}).as_object().unwrap(),
+        "the event's type is not in it"
+    );
+    assert!(
+        matches!(results, AutoFunctionStreamChunk::FunctionResults(r) if r.len() == 1),
+        "{results:?}"
+    );
+    let AutoFunctionStreamChunk::Complete { response, extra } = complete else {
+        panic!("{complete:?}");
+    };
+    assert_eq!(response.id.as_deref(), Some("int-2"));
+    assert_eq!(
+        extra,
+        json!({"future_summary": {"round": 2}}).as_object().unwrap()
+    );
+}
+
+/// A loop that ends at `max_function_call_loops` ends after a round that
+/// called functions: that round's `interaction.completed` keys come on its
+/// `ExecutingFunctions`, before `MaxLoopsReached`, which the loop makes
+/// with no event behind it.
+#[tokio::test]
+async fn streaming_auto_functions_at_max_loops_pass_on_the_last_rounds_completed_keys() {
+    let stub = Stub::start(|_, n| {
+        let event = json!({
+            "event_type": "interaction.completed",
+            "interaction": function_call_response(&format!("int-{n}"), &format!("call-{n}"), "svc_fn"),
+            "future_summary": {"round": n},
+        });
+        Reply::sse(&[&format!("data: {event}\n\n")])
+    })
+    .await;
+
+    let chunks: Vec<_> = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("loop forever")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .with_max_function_call_loops(2)
+        .create_stream_with_auto_functions()
+        .map(|event| event.unwrap().chunk)
+        .collect()
+        .await;
+
+    let extras: Vec<_> = chunks
+        .iter()
+        .filter_map(|chunk| match chunk {
+            AutoFunctionStreamChunk::ExecutingFunctions { extra, .. } => {
+                Some(extra["future_summary"].clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        extras,
+        [json!({"round": 0}), json!({"round": 1})],
+        "{chunks:?}"
+    );
+    let [
+        ..,
+        last_executing,
+        _,
+        AutoFunctionStreamChunk::MaxLoopsReached(last),
+    ] = chunks.as_slice()
+    else {
+        panic!("the stream ends on the last round's chunks and MaxLoopsReached: {chunks:?}");
+    };
+    assert!(
+        matches!(last_executing, AutoFunctionStreamChunk::ExecutingFunctions { response, .. } if response.id == last.id),
+        "{last_executing:?}"
+    );
+    assert_eq!(last.id.as_deref(), Some("int-1"));
+}
+
 /// The live tests' `consume_auto_function_stream` records an unknown event
 /// and reads on, as `consume_stream` does. The auto-function stream passes
 /// one on now, so a helper that panicked on it would fail every live

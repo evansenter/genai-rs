@@ -329,12 +329,14 @@ pub(super) fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunc
             }),
         (
             arb_interaction_response(),
-            prop::collection::vec(arb_owned_function_call_info(), 0..5)
+            prop::collection::vec(arb_owned_function_call_info(), 0..5),
+            prop::collection::btree_map("[a-z_]{1,8}", arb_json_value(), 0..3)
         )
-            .prop_map(|(response, pending_calls)| {
+            .prop_map(|(response, pending_calls, extra)| {
                 AutoFunctionStreamChunk::ExecutingFunctions {
                     response: Box::new(response),
                     pending_calls,
+                    extra: extra.into_iter().collect(),
                 }
             }),
         prop::collection::vec(arb_function_execution_result(), 0..5)

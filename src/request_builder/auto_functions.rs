@@ -212,9 +212,12 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// - `Delta`: Incremental content from the model (text, thoughts, etc.),
     ///   with the `step.delta` event's unread keys in its `extra`
-    /// - `ExecutingFunctions`: Notification when function calls are about to execute
+    /// - `ExecutingFunctions`: Notification when function calls are about to
+    ///   execute, with the round's `interaction.completed` unread keys in its
+    ///   `extra`
     /// - `FunctionResults`: Results from executed functions
-    /// - `Complete`: Final response when no more function calls are needed
+    /// - `Complete`: Final response when no more function calls are needed,
+    ///   with that round's `interaction.completed` unread keys in its `extra`
     /// - `Unknown`: An SSE event of a type this crate does not recognize,
     ///   with its JSON
     ///
@@ -375,8 +378,9 @@ impl<'a> InteractionBuilder<'a> {
                         // Completed response, so its function calls are
                         // whole. The tail is read below, outside the
                         // per-chunk timeout, which must not fail a finished
-                        // round. The event's unread keys go on the final
-                        // round's Complete.
+                        // round. The event's unread keys go on the round's
+                        // ExecutingFunctions if it calls functions, or on
+                        // Complete if it calls none.
                         StreamChunk::Completed { interaction, extra } => {
                             completed = Some((*interaction, extra));
                             break;
@@ -443,6 +447,7 @@ impl<'a> InteractionBuilder<'a> {
                             AutoFunctionStreamChunk::ExecutingFunctions {
                                 response: Box::new(response),
                                 pending_calls: calls.clone(),
+                                extra: completed_extra,
                             },
                             None,
                         );

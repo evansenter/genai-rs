@@ -405,6 +405,13 @@ on a `status_update`, kept as it came and not parsed), and what is left of `meta
 key. The map writes a non-empty `extra` beside `data`, as `"extra": {...}`,
 and reads it back; maps without it read back with an empty one.
 
+A function-calling round streamed live on 2026-11-15 (`gemini-3.8-flash`)
+ended in an `interaction.completed` holding `event_type` and `interaction`
+alone (the interaction `requires_action`), as did the round that sent its
+result back (`completed`). `Completed`'s `extra` was empty on both, so the
+`extra` the auto-function stream's `ExecutingFunctions` and `Complete`
+carry from it was too.
+
 ### Annotation
 
 A union tagged by `"type"` (previously a single struct). Each known variant

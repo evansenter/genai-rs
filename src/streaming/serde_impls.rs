@@ -1,8 +1,8 @@
 //! The JSON form of [`AutoFunctionStreamChunk`] and [`AutoFunctionStreamEvent`]:
 //! a `chunk_type` tag with its payload under `data`, and an event's `chunk`
-//! beside its optional `event_id`. A `Delta`'s or a `Complete`'s non-empty
-//! `extra` is written beside `data`, as `extra`, as `StreamChunk`'s form
-//! writes one.
+//! beside its optional `event_id`. A `Delta`'s, an `ExecutingFunctions`' or
+//! a `Complete`'s non-empty `extra` is written beside `data`, as `extra`, as
+//! `StreamChunk`'s form writes one.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,7 @@ impl Serialize for AutoFunctionStreamChunk {
             Self::ExecutingFunctions {
                 response,
                 pending_calls,
+                extra,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("chunk_type", "executing_functions")?;
@@ -38,6 +39,9 @@ impl Serialize for AutoFunctionStreamChunk {
                     "pending_calls": pending_calls,
                 });
                 map.serialize_entry("data", &data)?;
+                if !extra.is_empty() {
+                    map.serialize_entry("extra", extra)?;
+                }
                 map.end()
             }
             Self::FunctionResults(results) => {
@@ -133,9 +137,10 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
         // Written by an `Unknown` whose type collides with a known one.
         let marked_unknown = value.get("unknown") == Some(&serde_json::Value::Bool(true));
 
-        // A `Delta`'s or a `Complete`'s `extra`, written only when it has
-        // keys; a chunk without one (a `Delta` 0.12.0 wrote, a `Complete`
-        // 0.15.0 wrote) reads back with an empty one.
+        // A `Delta`'s, an `ExecutingFunctions`' or a `Complete`'s `extra`,
+        // written only when it has keys; a chunk without one (a `Delta`
+        // 0.12.0 wrote, an `ExecutingFunctions` or a `Complete` 0.15.0
+        // wrote) reads back with an empty one.
         let extra = || match value.get("extra") {
             Some(serde_json::Value::Object(extra)) => extra.clone(),
             _ => serde_json::Map::new(),
@@ -188,6 +193,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
                 Ok(Self::ExecutingFunctions {
                     response,
                     pending_calls,
+                    extra: extra(),
                 })
             }
             "function_results" => {
