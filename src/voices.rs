@@ -290,7 +290,11 @@ pub struct VoiceListResponse {
 paging::impl_list_page!(VoiceListResponse, voices: Voice);
 
 /// The voice definition inside a [`CreateVoiceRequest`].
-#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+///
+/// `Debug` prints [`extra`](Self::extra) through `LOUD_WIRE`'s redaction,
+/// so a replicated voice's key ([`Voice::key`]) sent there prints as
+/// `[REDACTED]`, as it does on the wire.
+#[derive(Clone, Default, Serialize, PartialEq)]
 pub struct VoiceSpec {
     /// How to make the voice.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
@@ -344,6 +348,45 @@ pub struct VoiceSpec {
     /// modeled here.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+// `extra` can carry a replicated voice's key, a secret (D-067): printed
+// through the wire's walk, as `PromptedVoice`'s is.
+impl std::fmt::Debug for VoiceSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            voice_type,
+            prompted,
+            replicated,
+            display_name,
+            model,
+            description,
+            language_code,
+            region_code,
+            accent,
+            persona,
+            context,
+            gender,
+            pitch,
+            extra,
+        } = self;
+        f.debug_struct("VoiceSpec")
+            .field("voice_type", voice_type)
+            .field("prompted", prompted)
+            .field("replicated", replicated)
+            .field("display_name", display_name)
+            .field("model", model)
+            .field("description", description)
+            .field("language_code", language_code)
+            .field("region_code", region_code)
+            .field("accent", accent)
+            .field("persona", persona)
+            .field("context", context)
+            .field("gender", gender)
+            .field("pitch", pitch)
+            .field("extra", &redact::map(extra))
+            .finish()
+    }
 }
 
 /// Source and consent recordings for a replicated voice.

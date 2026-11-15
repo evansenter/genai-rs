@@ -134,7 +134,8 @@ frame.
   `transform` (environment allowlist entries) or `httpHeaders` (a harness
   model endpoint), keeping the header and variable names; and a string that
   starts with `voicekey_` (a replicated voice's key, also sent as a voice
-  name) anywhere. A JSON Schema's property names (the keys of a
+  name) anywhere, so prompt or model text that happens to start with that
+  prefix prints redacted too. A JSON Schema's property names (the keys of a
   `properties` map beside `"type": "object"`, such as a function
   declaration's `env` or `api_key` parameter) are not read as fields when
   the value under one is a schema (a `type` naming a JSON Schema type, in

@@ -116,8 +116,13 @@ fn debug_never_prints_a_secret() {
         serde_json::from_value(json!({"type": {"api_key": SECRET}, "x": 1})).unwrap();
     // A replicated voice's key as a prompted voice's base voice, sent and
     // echoed.
-    let base_voice_request =
+    let mut base_voice_request =
         CreateVoiceRequest::prompted("A calm narrator.").with_base_voice(VOICE_KEY);
+    // And as an unmodeled field of the voice it creates.
+    base_voice_request
+        .voice
+        .extra
+        .insert("voice_hint".to_string(), json!(VOICE_KEY));
     let base_voice_echo: Voice = serde_json::from_value(json!({
         "id": "voice_1",
         "prompted": {"input": "A calm narrator.", "base_voice": VOICE_KEY, "auth": {"token": SECRET}},
@@ -484,7 +489,7 @@ fn debug_never_prints_a_secret() {
         ),
         ("EnvironmentSpec::Unknown (object type)", &["note"]),
         ("Tool::Unknown (object type)", &["api_key"]),
-        ("CreateVoiceRequest", &["A calm narrator."]),
+        ("CreateVoiceRequest", &["A calm narrator.", "voice_hint"]),
         ("Voice (base voice)", &["voice_1", "auth"]),
     ];
     let arm_names: Vec<String> = tool_arms
