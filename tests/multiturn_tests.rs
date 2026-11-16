@@ -265,6 +265,13 @@ async fn test_conversation_branch() {
 /// replayed thoughts from turn 1 can restate the instruction, so it often
 /// still follows it (4 of 6 runs for a conditional rule, verified live
 /// 2026-09-24). The stored record is read back with a GET.
+///
+/// Turn 2 asks something the rule does not cover. A capital question there
+/// put an answered capital in the history, which outweighed the resent rule
+/// often enough to flake (#519): turn 3 named Berlin in 3 of 80 probe runs
+/// and 2 of 20 runs of this test on 2026-11-15, against 0 of 80 and 0 of 20
+/// with this turn 2. Turn 3's stored record shows the resent instruction
+/// landed, and its answer that it applies.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_system_instruction_not_inherited() {
@@ -300,7 +307,7 @@ async fn test_system_instruction_not_inherited() {
     let turn2 = retry_request!([client, turn1_id] => {
         stateful_builder(&client)
             .with_previous_interaction(&turn1_id)
-            .with_text("What is the capital of France?")
+            .with_text("What is 7 times 6?")
             .create()
             .await
     })
@@ -328,6 +335,13 @@ async fn test_system_instruction_not_inherited() {
             .await
     })
     .expect("Turn 3 failed");
+    assert_eq!(
+        stored_instruction(turn3.id.clone().expect("turn 3 id"))
+            .await
+            .as_deref(),
+        Some(RULE),
+        "turn 3 should record the instruction it resent"
+    );
     let text = turn3.as_text().expect("Turn 3 should have text");
     assert_response_semantic(
         &client,

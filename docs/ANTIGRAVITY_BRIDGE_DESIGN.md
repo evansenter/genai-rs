@@ -584,6 +584,28 @@ Subagent names (0.1.23, 2026-11-07, live
 action still carries no name, as on 0.1.5 through 0.1.18, so
 `ToolAction::subagent_name()` is `None`.
 
+A tool-less agent's silent model calls (0.1.23, 2026-11-15, live, the
+`cancellable_turn` example; #519): with every builtin off
+(`Capabilities::none()`), the prompt "Write an extremely detailed
+3000-word essay on the history of the bicycle. Include many sections and
+go slowly." stalled 3 of 12 runs in its first model call, which streamed
+nothing for 122 s, for 146 s, and past the example's 180 s turn budget
+(that request was still waiting on the model when the timeout's halt
+cancelled it). The first two ended on the harness's "encountered an
+improper format stop reason. Please retry with a properly formatted
+function call." (an error step, `httpCode` 0, "Model produced invalid
+output."): a malformed tool call. The harness retried the call, and the
+retry streamed the essay as text. What the call held is not visible on the
+wire. Of the example's 40 attempts in 38 CI runs from 2026-11-09 on, 5
+halted only after 137 to 178 s and 2 timed out. The reworded prompt,
+"Write an extremely detailed 3000-word essay on the history of the
+bicycle, with many sections. Write the essay itself as your reply, in
+plain text: do not call any tools and do not write any files.", streamed
+text within 27 s in 32 of 32 runs, with no error step. It makes three
+edits at once: it adds the last sentence, drops "go slowly" and folds
+"Include many sections" into the first sentence. They were measured
+together, so which of them stops the tool call is not known.
+
 ## Python SDK parity (google-antigravity 0.1.23)
 
 Every option the 0.1.23 Python SDK exposes for the harness, and what this

@@ -2248,6 +2248,21 @@ every retry branch prints the marker, that the counter reads the same
 word and classifies the codes in one place as `retry.rs` names them, and
 that no step the report counts runs the helper's offline tests.
 
+**Amended 2026-11-15 (#519).** The stall the `cancel_handle` test met
+also made the `cancellable_turn` example a chronic flake, and it now has
+a known shape: the tool-less agent answered the essay prompt with a tool
+call, which streamed nothing for minutes and failed as malformed before
+the harness retried it (recorded in
+`docs/ANTIGRAVITY_BRIDGE_DESIGN.md`). The test's fix, a halt at a
+deadline whatever has streamed, does not fit the example, whose claim is
+that a halt keeps the partial answer. So the example's prompt is reworded
+instead: it asks for the essay as the reply, in plain text with no tools
+or files, and no longer asks the model to go slowly. The reworded prompt
+has not stalled; its edits were measured together, so which one stops
+the tool call is not known. The example now checks both halves of its
+claim, failing when the turn runs on more than 30 s after the halt or
+keeps no text, and every failure lists on stderr what the turn streamed.
+
 ## D-053 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
 
 **Context.** `is_retryable()` called every 5xx transient and every 4xx but
@@ -2363,27 +2378,27 @@ reach `execute_stream()` only, and carrying them is another breaking
 change, for the owner to ask for. A loop that ends on `MaxLoopsReached`
 ends on such a round, so it passes on no completed-event keys.
 
-*Amended 2026-11-15 (0.16 breaking batch).* The owner asked for that
-round's keys too. `AutoFunctionStreamChunk::ExecutingFunctions` gains an
-`extra`, and the loop moves a round's `StreamChunk::Completed` `extra` into
-it when the round calls functions, as it moves the keys of the round that
-ends the loop with no function calls into `Complete`. Its `{chunk_type, data}` form writes a non-empty `extra` beside
-`data` and reads it back, and a 0.15.0 log reads back with an empty one. The
-guard's `ExecutingFunctions` row and its `ROUND_VERDICT` reason are gone.
-The amendment above no longer holds where it says that round's keys reach
-`execute_stream()` only and that a loop ending on `MaxLoopsReached` passes
-on no completed-event keys: that loop's last round called functions, so its
-keys come on its `ExecutingFunctions`, before the `MaxLoopsReached` the loop
-makes with no event behind it. Every round's `interaction.completed` keys
-now reach the auto-function stream; the envelope keys of
-`interaction.created`, `status_update`, `step.start` and `step.stop` still
-reach only `execute_stream()`. An `ExecutingFunctions` event's
-`event_id` stays `None`, as the loop makes the chunk. A live probe on this
-date found both rounds' `interaction.completed` carrying `event_type` and
-`interaction` alone (`docs/ENUM_WIRE_FORMATS.md`, "StreamChunk"), so the
-map is empty today, as `Complete`'s and `Delta`'s are. Breaking (D-007),
-with a CHANGELOG migration: a pattern listing the variant's fields adds
-`extra` or `..`, and a literal takes `extra`.
+*Amended 2026-11-15 (0.16 breaking batch).* The owner asked for that round's
+keys too. `AutoFunctionStreamChunk::ExecutingFunctions` gains an `extra`,
+and the loop moves a round's `StreamChunk::Completed` `extra` into it when
+the round calls functions, as it moves the keys of the round that ends the
+loop with no function calls into `Complete`. Its `{chunk_type, data}` form
+writes a non-empty `extra` beside `data` and reads it back, and a 0.15.0 log
+reads back with an empty one. The guard's `ExecutingFunctions` row and its
+`ROUND_VERDICT` reason are gone. The amendment above no longer holds where
+it says that round's keys reach `execute_stream()` only and that a loop
+ending on `MaxLoopsReached` passes on no completed-event keys: that loop's
+last round called functions, so its keys come on its `ExecutingFunctions`,
+before the `MaxLoopsReached` the loop makes with no event behind it. Every
+round's `interaction.completed` keys now reach the auto-function stream; the
+envelope keys of `interaction.created`, `status_update`, `step.start` and
+`step.stop` still reach only `execute_stream()`. An `ExecutingFunctions`
+event's `event_id` stays `None`, as the loop makes the chunk. A live probe
+on this date found both rounds' `interaction.completed` carrying
+`event_type` and `interaction` alone (`docs/ENUM_WIRE_FORMATS.md`,
+"StreamChunk"), so the map is empty today, as `Complete`'s and `Delta`'s
+are. Breaking (D-007), with a CHANGELOG migration: a pattern listing the
+variant's fields adds `extra` or `..`, and a literal takes `extra`.
 
 ---
 
