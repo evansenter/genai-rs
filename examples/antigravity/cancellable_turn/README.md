@@ -12,9 +12,10 @@ button, a signal handler, and a watchdog at once.
 
 This example asks for a long essay and halts once 200 characters of
 *answer text* have streamed, then shows the partial answer that survived.
-It fails if that much text has not arrived within two minutes, listing on
-stderr what the turn streamed instead (events by kind, thinking, tool
-actions and the harness's error steps).
+It fails if the turn runs on more than 30 seconds after the halt, keeps no
+answer text, or never streams enough to halt on before its 180-second
+budget, listing on stderr what the turn streamed (events by kind,
+thinking, tool actions and the harness's error steps).
 
 ## The part worth reading twice
 
@@ -60,7 +61,9 @@ LOUD_WIRE=haltRequest,trajectoryStateUpdate cargo run --example cancellable_turn
   call. Nothing streams while the model writes it, the call fails as
   malformed minutes later, and the harness retries the model call, so a
   halt keyed on answer text waits the whole time. The prompt asks for the
-  essay as the reply, not in a tool or a file.
+  essay as the reply, in plain text with no tools or files, and sets no
+  pace; `docs/ANTIGRAVITY_BRIDGE_DESIGN.md` records how that wording was
+  measured.
 - **Take the handle before starting the turn.**
 - **Cancelling before any output is a no-op** — there is no turn to halt
   yet and the request is dropped.

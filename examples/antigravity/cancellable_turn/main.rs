@@ -38,15 +38,18 @@
 //! - Ask for the answer *in the reply*. On harness 0.1.23 an agent with no
 //!   tools enabled can still answer a request for long writing with a tool
 //!   call. Nothing streams while the model writes it, the call fails as
-//!   malformed minutes later, and the harness retries the model call. So
-//!   the prompt asks for the essay as the reply, not in a tool or a file.
+//!   malformed minutes later, and the harness retries the model call. The
+//!   prompt here asks for the essay as the reply, in plain text with no
+//!   tools or files, and sets no pace; `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`
+//!   records how that wording was measured.
 //! - Cancelling before the turn starts is a no-op: there is nothing to halt,
 //!   and the halt is dropped.
 //! - After a halt the harness logs `context canceled` on stderr. That is the
 //!   expected trace of a successful halt, not an error.
-//! - A turn that streams too little answer text to halt on within
-//!   `ANSWER_DEADLINE` fails, listing on stderr what did arrive: events by
-//!   kind, thinking, tool actions and the harness's error steps.
+//! - The run fails if the turn runs on past `MUST_END_WITHIN` after the
+//!   halt, keeps no answer text, or never streams enough to halt on before
+//!   its budget. Each failure lists on stderr what the turn streamed:
+//!   events by kind, thinking, tool actions and the harness's error steps.
 //!
 //! ## Requirements
 //!
@@ -64,7 +67,7 @@
 //!
 //! Asking for a long essay, then halting once 200 characters arrive.
 //! [stream] 226 chars of answer text — sending halt
-//! ✓ Turn ended 0.0s after the halt (budget was 180s)
+//! ✓ Turn ended 0.0s after the halt (bound 30s)
 //!
 //! Partial answer (226 chars kept, after 0 chars of thinking):
 //!   # The Mechanical Miracle: A Comprehensive History of the Bicycle ...
@@ -80,6 +83,7 @@
 
 use futures_util::StreamExt;
 use genai_rs::antigravity::{AgentEvent, AntigravityAgent, Capabilities};
+use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -95,15 +99,17 @@ use std::time::{Duration, Instant};
 /// zero chars kept).
 const HALT_AFTER_CHARS: usize = 200;
 
-/// Generous: if the halt is ignored, we want to see *that*, not a timeout
-/// that looks like a clean stop.
-const TURN_BUDGET: Duration = Duration::from_secs(180);
+/// The turn must end within this long of the halt. A halt that works ends
+/// it at once; a turn that ignores the halt runs on for minutes to finish
+/// the essay, so a bound far below that tells the two apart.
+const MUST_END_WITHIN: Duration = Duration::from_secs(30);
 
-/// The halt must be sent within this long of the prompt. Answer text
-/// normally starts within a minute; a turn with too little by now will not
-/// show a halt mid-answer, so it fails here, with what did arrive, rather
-/// than at `TURN_BUDGET`.
-const ANSWER_DEADLINE: Duration = Duration::from_secs(120);
+/// The turn's own timeout. Far above `MUST_END_WITHIN`, so an ignored halt
+/// fails that check rather than ending on a timeout that looks like a stop,
+/// and above the minutes a silent model call can take before the harness
+/// retries it, so a turn that recovers still reaches the halt. A turn with
+/// too little answer text by then fails, listing what did arrive.
+const TURN_BUDGET: Duration = Duration::from_secs(180);
 
 /// The essay is asked for as the reply itself: see "Things to know".
 const PROMPT: &str = "Write an extremely detailed 3000-word essay on the history of the \
@@ -111,7 +117,7 @@ const PROMPT: &str = "Write an extremely detailed 3000-word essay on the history
                       in plain text: do not call any tools and do not write any files.";
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = match std::env::var("GEMINI_API_KEY") {
         Ok(key) if !key.trim().is_empty() => key,
         _ => {
@@ -156,32 +162,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Asking for a long essay, then halting once {HALT_AFTER_CHARS} characters arrive.");
 
     let started = Instant::now();
-    let answer_deadline = tokio::time::Instant::now() + ANSWER_DEADLINE;
     let mut seen = Seen::default();
-    let (outcome, halted_at) = {
+    let (outcome, halted_at, ended) = {
         let mut stream = agent.send_streaming(PROMPT).await?;
 
         let mut halt_tx = Some(halt_tx);
         let mut halted_at = None;
 
-        let outcome: Result<String, Box<dyn std::error::Error>> = loop {
-            // Until the halt is sent, the answer deadline bounds each wait.
-            let next = if halt_tx.is_some() {
-                match tokio::time::timeout_at(answer_deadline, stream.next()).await {
-                    Ok(next) => next,
-                    Err(_) => {
-                        break Err(format!(
-                            "{HALT_AFTER_CHARS} chars of answer text did not arrive within \
-                             {}s, so nothing was halted",
-                            ANSWER_DEADLINE.as_secs()
-                        )
-                        .into());
-                    }
-                }
-            } else {
-                stream.next().await
-            };
-            let event = match next {
+        let outcome: Result<String, Box<dyn Error>> = loop {
+            let event = match stream.next().await {
                 Some(Ok(event)) => event,
                 Some(Err(err)) => break Err(err.into()),
                 None => break Err("the stream ended before the turn finished".into()),
@@ -208,50 +197,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => {}
             }
         };
-        (outcome, halted_at)
+        (outcome, halted_at, Instant::now())
     };
-    let elapsed = started.elapsed();
+    let elapsed = ended.duration_since(started);
 
     let answer = match outcome {
         Ok(answer) => answer,
         Err(err) => {
-            eprintln!(
-                "After {:.1}s the turn had streamed {seen}",
-                elapsed.as_secs_f64()
-            );
             canceller.abort();
-            if let Err(shutdown) = agent.shutdown().await {
-                eprintln!("shutdown also failed: {shutdown}");
-            }
-            return Err(match halted_at {
+            let err = match halted_at {
                 Some(_) => format!("the turn did not end after the halt: {err}").into(),
                 None => err,
-            });
+            };
+            return fail(agent, &seen, elapsed, err).await;
         }
     };
 
     match canceller.await.expect("canceller task") {
         Some(Ok(())) => {}
-        Some(Err(err)) => return Err(err.into()),
+        Some(Err(err)) => return fail(agent, &seen, elapsed, err.into()).await,
         None => {
-            agent.shutdown().await?;
-            return Err(format!(
-                "the turn finished after only {} chars of answer text ({} thinking), below \
-                 the {HALT_AFTER_CHARS} needed to trigger a halt — nothing was cancelled, \
-                 so this run shows nothing",
-                seen.text_chars, seen.thinking_chars
-            )
-            .into());
+            let err = format!(
+                "the turn finished after only {} chars of answer text, below the \
+                 {HALT_AFTER_CHARS} needed to trigger a halt — nothing was cancelled, so \
+                 this run shows nothing",
+                seen.text_chars
+            );
+            return fail(agent, &seen, elapsed, err.into()).await;
         }
     }
 
-    if let Some(halted_at) = halted_at {
-        println!(
-            "✓ Turn ended {:.1}s after the halt (budget was {}s)",
-            halted_at.elapsed().as_secs_f64(),
-            TURN_BUDGET.as_secs()
+    // The check that proves the halt worked: the turn stopped promptly,
+    // long before it would have finished the essay on its own.
+    let halted_at = halted_at.expect("the canceller halts only once the stream sent the signal");
+    let after_halt = ended.duration_since(halted_at);
+    if after_halt >= MUST_END_WITHIN {
+        let err = format!(
+            "the turn ran on {:.1}s after the halt, past the {}s bound — the halt did not \
+             stop it",
+            after_halt.as_secs_f64(),
+            MUST_END_WITHIN.as_secs()
         );
+        return fail(agent, &seen, elapsed, err.into()).await;
     }
+    if answer.is_empty() {
+        let err = "the halted turn kept none of the answer text it had streamed";
+        return fail(agent, &seen, elapsed, err.into()).await;
+    }
+    println!(
+        "✓ Turn ended {:.1}s after the halt (bound {}s)",
+        after_halt.as_secs_f64(),
+        MUST_END_WITHIN.as_secs()
+    );
 
     // Partial output is the deliverable, not a consolation prize.
     println!(
@@ -262,14 +259,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let preview: String = answer.chars().take(160).collect();
     println!("  {preview}...");
 
-    if answer.is_empty() {
-        agent.shutdown().await?;
-        return Err("the halted turn kept none of the answer text it had streamed".into());
-    }
-    if elapsed >= TURN_BUDGET {
-        agent.shutdown().await?;
-        return Err("the turn ran to its budget — the halt did not stop it".into());
-    }
     println!("\n✓ The turn resolved normally — cancellation is not an error.");
 
     agent.shutdown().await?;
@@ -277,8 +266,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// What the turn streamed, by kind: printed when the turn fails, so a run
-/// that never reaches the halt shows what the agent did instead.
+/// Every failure ends here: it lists on stderr what the turn streamed, so a
+/// failed run shows what the agent did instead, then shuts the agent down
+/// and returns `err`.
+async fn fail(
+    agent: AntigravityAgent,
+    seen: &Seen,
+    elapsed: Duration,
+    err: Box<dyn Error>,
+) -> Result<(), Box<dyn Error>> {
+    eprintln!(
+        "After {:.1}s the turn had streamed {seen}",
+        elapsed.as_secs_f64()
+    );
+    if let Err(shutdown) = agent.shutdown().await {
+        eprintln!("shutdown also failed: {shutdown}");
+    }
+    Err(err)
+}
+
+/// What the turn streamed, by kind, for `fail` to list.
 #[derive(Default)]
 struct Seen {
     text_events: usize,

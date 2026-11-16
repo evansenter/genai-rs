@@ -597,9 +597,14 @@ function call." (an error step, `httpCode` 0, "Model produced invalid
 output."): a malformed tool call. The harness retried the call, and the
 retry streamed the essay as text. What the call held is not visible on the
 wire. Of the example's 40 attempts in 38 CI runs from 2026-11-09 on, 5
-halted only after 137 to 178 s and 2 timed out. Asking for the essay "as
-your reply, in plain text: do not call any tools and do not write any
-files" streamed text within 27 s in 32 of 32 runs, with no error step.
+halted only after 137 to 178 s and 2 timed out. The reworded prompt,
+"Write an extremely detailed 3000-word essay on the history of the
+bicycle, with many sections. Write the essay itself as your reply, in
+plain text: do not call any tools and do not write any files.", streamed
+text within 27 s in 32 of 32 runs, with no error step. It makes three
+edits at once: it adds the last sentence, drops "go slowly" and folds
+"Include many sections" into the first sentence. They were measured
+together, so which of them stops the tool call is not known.
 
 ## Python SDK parity (google-antigravity 0.1.23)
 

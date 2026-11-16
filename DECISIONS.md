@@ -2255,10 +2255,13 @@ call, which streamed nothing for minutes and failed as malformed before
 the harness retried it (recorded in
 `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`). The test's fix, a halt at a
 deadline whatever has streamed, does not fit the example, whose claim is
-that a halt keeps the partial answer. So it is fixed at its cause: the
-prompt asks for the essay as the reply, without tools or files. A turn
-that still streams too little answer text within two minutes fails then,
-listing what it streamed, rather than at the turn's 180 s budget.
+that a halt keeps the partial answer. So the example's prompt is reworded
+instead: it asks for the essay as the reply, in plain text with no tools
+or files, and no longer asks the model to go slowly. The reworded prompt
+has not stalled; its edits were measured together, so which one stops
+the tool call is not known. The example now checks both halves of its
+claim, failing when the turn runs on more than 30 s after the halt or
+keeps no text, and every failure lists on stderr what the turn streamed.
 
 ## D-053 — `is_retryable` retries 408 and every 5xx but six that name a permanent condition (2026-11-07)
 
