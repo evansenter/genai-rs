@@ -35,10 +35,18 @@
 //!   handler and a watchdog at once.
 //! - Thinking deltas are not answer text. Halting mid-thought keeps nothing;
 //!   trigger on `TextDelta` if partial output is the point.
+//! - Ask for the answer *in the reply*. On harness 0.1.23 an agent with no
+//!   tools enabled can still answer a request for long writing with a tool
+//!   call. Nothing streams while the model writes it, the call fails as
+//!   malformed minutes later, and the harness retries the model call. So
+//!   the prompt asks for the essay as the reply, not in a tool or a file.
 //! - Cancelling before the turn starts is a no-op: there is nothing to halt,
 //!   and the halt is dropped.
 //! - After a halt the harness logs `context canceled` on stderr. That is the
 //!   expected trace of a successful halt, not an error.
+//! - A turn that streams too little answer text to halt on within
+//!   `ANSWER_DEADLINE` fails, listing on stderr what did arrive: events by
+//!   kind, thinking, tool actions and the harness's error steps.
 //!
 //! ## Requirements
 //!
@@ -55,11 +63,11 @@
 //! === Cancellable Turn ===
 //!
 //! Asking for a long essay, then halting once 200 characters arrive.
-//! [stream] 200 chars produced — sending halt
-//! ✓ Turn ended 0.4s after the halt (budget was 180s)
+//! [stream] 226 chars of answer text — sending halt
+//! ✓ Turn ended 0.0s after the halt (budget was 180s)
 //!
-//! Partial answer (312 chars kept):
-//!   The history of the bicycle begins in the early nineteenth century...
+//! Partial answer (226 chars kept, after 0 chars of thinking):
+//!   # The Mechanical Miracle: A Comprehensive History of the Bicycle ...
 //!
 //! ✓ The turn resolved normally — cancellation is not an error.
 //! ```
@@ -72,6 +80,7 @@
 
 use futures_util::StreamExt;
 use genai_rs::antigravity::{AgentEvent, AntigravityAgent, Capabilities};
+use std::fmt;
 use std::time::{Duration, Instant};
 
 /// Halt once this much *answer text* has streamed. Keying off real output
@@ -89,6 +98,17 @@ const HALT_AFTER_CHARS: usize = 200;
 /// Generous: if the halt is ignored, we want to see *that*, not a timeout
 /// that looks like a clean stop.
 const TURN_BUDGET: Duration = Duration::from_secs(180);
+
+/// The halt must be sent within this long of the prompt. Answer text
+/// normally starts within a minute; a turn with too little by now will not
+/// show a halt mid-answer, so it fails here, with what did arrive, rather
+/// than at `TURN_BUDGET`.
+const ANSWER_DEADLINE: Duration = Duration::from_secs(120);
+
+/// The essay is asked for as the reply itself: see "Things to know".
+const PROMPT: &str = "Write an extremely detailed 3000-word essay on the history of the \
+                      bicycle, with many sections. Write the essay itself as your reply, \
+                      in plain text: do not call any tools and do not write any files.";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -136,47 +156,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Asking for a long essay, then halting once {HALT_AFTER_CHARS} characters arrive.");
 
     let started = Instant::now();
-    let (answer, produced, thought, halted_at) = {
-        let mut stream = agent
-            .send_streaming(
-                "Write an extremely detailed 3000-word essay on the history of \
-                 the bicycle. Include many sections and go slowly.",
-            )
-            .await?;
+    let answer_deadline = tokio::time::Instant::now() + ANSWER_DEADLINE;
+    let mut seen = Seen::default();
+    let (outcome, halted_at) = {
+        let mut stream = agent.send_streaming(PROMPT).await?;
 
         let mut halt_tx = Some(halt_tx);
-        let mut produced = 0usize;
-        let mut thought = 0usize;
         let mut halted_at = None;
-        let mut answer = String::new();
 
-        while let Some(event) = stream.next().await {
-            match event? {
-                AgentEvent::TextDelta(chunk) => {
-                    produced += chunk.chars().count();
-                    if produced >= HALT_AFTER_CHARS
+        let outcome: Result<String, Box<dyn std::error::Error>> = loop {
+            // Until the halt is sent, the answer deadline bounds each wait.
+            let next = if halt_tx.is_some() {
+                match tokio::time::timeout_at(answer_deadline, stream.next()).await {
+                    Ok(next) => next,
+                    Err(_) => {
+                        break Err(format!(
+                            "{HALT_AFTER_CHARS} chars of answer text did not arrive within \
+                             {}s, so nothing was halted",
+                            ANSWER_DEADLINE.as_secs()
+                        )
+                        .into());
+                    }
+                }
+            } else {
+                stream.next().await
+            };
+            let event = match next {
+                Some(Ok(event)) => event,
+                Some(Err(err)) => break Err(err.into()),
+                None => break Err("the stream ended before the turn finished".into()),
+            };
+            seen.record(&event);
+            match event {
+                AgentEvent::TextDelta(_) => {
+                    if seen.text_chars >= HALT_AFTER_CHARS
                         && let Some(tx) = halt_tx.take()
                     {
-                        println!("[stream] {produced} chars of answer text — sending halt");
+                        println!(
+                            "[stream] {} chars of answer text — sending halt",
+                            seen.text_chars
+                        );
                         let _ = tx.send(());
                         halted_at = Some(Instant::now());
                     }
                 }
-                // Counted separately and never used as the halt trigger:
-                // see HALT_AFTER_CHARS.
-                AgentEvent::ThinkingDelta(chunk) => thought += chunk.chars().count(),
                 // The turn RESOLVES rather than erroring — this arm is the
                 // one that runs after a cancel, not an error arm.
-                AgentEvent::Finished(response) => {
-                    answer = response.text().trim().to_string();
-                    break;
-                }
+                AgentEvent::Finished(response) => break Ok(response.text().trim().to_string()),
+                // Counted in `seen`, never a halt trigger: see
+                // HALT_AFTER_CHARS.
                 _ => {}
             }
-        }
-        (answer, produced, thought, halted_at)
+        };
+        (outcome, halted_at)
     };
     let elapsed = started.elapsed();
+
+    let answer = match outcome {
+        Ok(answer) => answer,
+        Err(err) => {
+            eprintln!(
+                "After {:.1}s the turn had streamed {seen}",
+                elapsed.as_secs_f64()
+            );
+            canceller.abort();
+            if let Err(shutdown) = agent.shutdown().await {
+                eprintln!("shutdown also failed: {shutdown}");
+            }
+            return Err(match halted_at {
+                Some(_) => format!("the turn did not end after the halt: {err}").into(),
+                None => err,
+            });
+        }
+    };
 
     match canceller.await.expect("canceller task") {
         Some(Ok(())) => {}
@@ -184,10 +236,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => {
             agent.shutdown().await?;
             return Err(format!(
-                "the turn streamed only {produced} chars of answer text \
-                 ({thought} thinking), below the {HALT_AFTER_CHARS} needed to \
-                 trigger a halt — nothing was cancelled, so this run shows \
-                 nothing"
+                "the turn finished after only {} chars of answer text ({} thinking), below \
+                 the {HALT_AFTER_CHARS} needed to trigger a halt — nothing was cancelled, \
+                 so this run shows nothing",
+                seen.text_chars, seen.thinking_chars
             )
             .into());
         }
@@ -203,12 +255,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Partial output is the deliverable, not a consolation prize.
     println!(
-        "\nPartial answer ({} chars kept, after {thought} chars of thinking):",
-        answer.chars().count()
+        "\nPartial answer ({} chars kept, after {} chars of thinking):",
+        answer.chars().count(),
+        seen.thinking_chars
     );
     let preview: String = answer.chars().take(160).collect();
     println!("  {preview}...");
 
+    if answer.is_empty() {
+        agent.shutdown().await?;
+        return Err("the halted turn kept none of the answer text it had streamed".into());
+    }
     if elapsed >= TURN_BUDGET {
         agent.shutdown().await?;
         return Err("the turn ran to its budget — the halt did not stop it".into());
@@ -218,4 +275,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     agent.shutdown().await?;
 
     Ok(())
+}
+
+/// What the turn streamed, by kind: printed when the turn fails, so a run
+/// that never reaches the halt shows what the agent did instead.
+#[derive(Default)]
+struct Seen {
+    text_events: usize,
+    text_chars: usize,
+    thinking_events: usize,
+    thinking_chars: usize,
+    tool_actions: Vec<String>,
+    tool_calls: Vec<String>,
+    errors: Vec<String>,
+    other: Vec<String>,
+}
+
+impl Seen {
+    fn record(&mut self, event: &AgentEvent) {
+        match event {
+            AgentEvent::TextDelta(chunk) => {
+                self.text_events += 1;
+                self.text_chars += chunk.chars().count();
+            }
+            AgentEvent::ThinkingDelta(chunk) => {
+                self.thinking_events += 1;
+                self.thinking_chars += chunk.chars().count();
+            }
+            AgentEvent::ToolAction {
+                action, decision, ..
+            } => {
+                let action: String = format!("{action:?}").chars().take(120).collect();
+                self.tool_actions.push(format!("{decision:?} {action}"));
+            }
+            AgentEvent::ToolCallDispatched { name, .. } => self.tool_calls.push(name.clone()),
+            AgentEvent::Error { message, severity } => {
+                self.errors.push(format!("{severity:?}: {message}"));
+            }
+            AgentEvent::Finished(_) => {}
+            AgentEvent::Unknown { event_type, .. } => self.other.push(event_type.clone()),
+            _ => self.other.push("unrecognized event".to_string()),
+        }
+    }
+}
+
+impl fmt::Display for Seen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "{} text deltas ({} chars), {} thinking deltas ({} chars)",
+            self.text_events, self.text_chars, self.thinking_events, self.thinking_chars
+        )?;
+        writeln!(f, "  tool actions: {:?}", self.tool_actions)?;
+        writeln!(f, "  custom tool calls: {:?}", self.tool_calls)?;
+        writeln!(f, "  error steps: {:?}", self.errors)?;
+        write!(f, "  other events: {:?}", self.other)
+    }
 }
